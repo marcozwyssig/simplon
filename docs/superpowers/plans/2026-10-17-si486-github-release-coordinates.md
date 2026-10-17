@@ -27,8 +27,8 @@ this plan argues from it.
 - **No evidence port** on `release:github-publish`.
 - The token comes only from `githubpackages.token()`: never an argument, never a file.
 - **Repository and API base:** `GITHUB_REPOSITORY` and `GITHUB_API_URL` win when set. Otherwise both come
-  from origin's URL: `github.com` maps to `https://api.github.com`, any other host to
-  `https://<host>/api/v3`.
+  from a github.com origin URL, as `https://api.github.com`. *Amended during the build by a security
+  ruling (ledger, Task 1): an Enterprise host is named only by `GITHUB_API_URL`, never derived from origin.*
 - **A 404 is "absent" only after `GET /repos/{r}` answered 200.**
 - A **published** release is never modified. Two or more drafts for one tag are refused, naming every URL.
 - The coordinates are **offered, not placed**, and all three are `unattended: true`.

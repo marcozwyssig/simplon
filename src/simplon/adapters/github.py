@@ -80,7 +80,9 @@ def where(origin: str = "") -> tuple[str, str]:
             f"no GitHub repository to ask: GITHUB_REPOSITORY and GITHUB_API_URL are "
             f"{'set' if name else 'not set'} / {'set' if api else 'not set'}, and origin is "
             f"{'not a github.com URL' if origin else 'not set'} - a GitHub Enterprise is named by "
-            f"GITHUB_API_URL, never read off a remote. The Release workflow sets both; by hand, export them")
+            f"GITHUB_API_URL, never read off a remote. The Release workflow sets both; by hand, export them. On "
+            f"the container route the launcher forwards neither, so declare "
+            f"`launcher: env: pass: [GITHUB_REPOSITORY, GITHUB_API_URL]` (si#467) to carry them in")
     return name or located[0], api or located[1]
 
 
@@ -91,6 +93,11 @@ def repository(origin: str = "") -> Repository:
         token = githubpackages.token()
     except githubpackages.PackageError as missing:
         raise Unanswered(str(missing)) from None
+    except OSError as no_gh:
+        # `token()` falls back to `gh auth token`, and on a host without `gh` that is FileNotFoundError, not
+        # a PackageError - found by si#486's final review as a traceback where a sentence belongs.
+        raise Unanswered(f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). "
+                         f"Export GITHUB_TOKEN; in GitHub Actions it is automatic") from None
     client = Github(auth=Auth.Token(token), base_url=api, timeout=TIMEOUT_S, retry=None, per_page=PER_PAGE,
                     lazy=False)
     try:

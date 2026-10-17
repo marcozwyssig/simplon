@@ -211,3 +211,29 @@ def test_draft_without_an_artifact_is_refused_by_name(api):
         githubrelease.draft("", "v1.0.0")
     with pytest.raises(ValueError, match="no artifact 'nope'"):
         githubrelease.draft("nope", "v1.0.0")
+
+
+# --- the final review's fix pass ------------------------------------------------------------------------
+
+def test_draft_checks_the_answer_is_still_a_draft(api, capsys):
+    # arrange: GitHub answers the reuse with a release that is no longer a draft
+    api["releases"].append(githubstandin.release(7, "v1.0.0", draft=True))
+    api["force_public"] = True
+
+    # act / assert: a release made public before the build is red, and said
+    assert githubrelease.draft("notes", "v1.0.0") == 1
+    assert "not a draft" in _said(capsys)
+
+
+def test_reuse_and_publish_keep_a_prerelease_a_prerelease(api, monkeypatch):
+    # arrange: a draft somebody marked as a pre-release by hand
+    _origin_has(monkeypatch, "a" * 40)
+    api["releases"].append({**githubstandin.release(7, "v2.0.0-rc1", draft=True), "prerelease": True})
+
+    # act
+    assert githubrelease.draft("notes", "v2.0.0-rc1") == 0
+    assert githubrelease.publish("v2.0.0-rc1") == 0
+
+    # assert: neither PATCH turned it into a full release
+    patches = [body for method, _, body in api["requests"] if method == "PATCH"]
+    assert len(patches) == 2 and all(body.get("prerelease") is True for body in patches)

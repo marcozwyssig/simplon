@@ -143,3 +143,27 @@ def test_releases_past_the_page_bound_is_unanswered(standin):
     with pytest.raises(github.Unanswered) as refused:
         github.releases_for(github.repository(), "v1.0.0")
     assert "1000" in str(refused.value)
+
+
+def test_no_token_and_no_gh_is_unanswered_with_a_message(monkeypatch):
+    # arrange: the venv route on a host without `gh` - `run` raises FileNotFoundError for the missing tool
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", githubstandin.REPO)
+    monkeypatch.setenv("GITHUB_API_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("PATH", "/nonexistent")
+
+    # act / assert
+    with pytest.raises(github.Unanswered) as refused:
+        github.repository()
+    assert "GITHUB_TOKEN" in str(refused.value)
+
+
+def test_the_refusal_names_the_launcher_pass_for_the_container_route(monkeypatch):
+    # arrange: an Enterprise origin, and the container route forwards neither GITHUB_* variable
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("GITHUB_API_URL", raising=False)
+
+    # act / assert
+    with pytest.raises(github.Unanswered) as refused:
+        github.where("git@ghe.example:o/n.git")
+    assert "launcher: env: pass: [GITHUB_REPOSITORY, GITHUB_API_URL]" in str(refused.value)

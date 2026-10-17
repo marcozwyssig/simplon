@@ -10,7 +10,8 @@ not its behaviour. One repository, `o/n`, and only the five routes the adapter c
     PATCH /repos/o/n/releases/<id>           update
 
 `state["fail"]` forces a status for a `(method, path prefix)`; `state["keep_draft"]` makes a PATCH answer
-200 while leaving `draft` as it was (a proxy, a race); `state["requests"]` records every call.
+200 while leaving `draft` as it was (a proxy, a race); `state["force_public"]` makes a PATCH answer with the release public whatever was asked;
+`state["requests"]` records every call.
 """
 from __future__ import annotations
 
@@ -58,7 +59,9 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
 
         def _dressed(self, rel: dict) -> dict:
             base = self._base()
-            return {**rel, "url": f"{base}/repos/{REPO}/releases/{rel['id']}",
+            # `prerelease` always, as GitHub sends it: without it PyGithub completes the object with a GET of
+            # the release's own url, which is a request the real API never needs
+            return {"prerelease": False, **rel, "url": f"{base}/repos/{REPO}/releases/{rel['id']}",
                     # A draft's page is not under its tag, as on GitHub: `releases/tag/untagged-<hash>`.
                     "html_url": f"https://github.example/{REPO}/releases/tag/"
                                 + (f"untagged-{rel['id']}" if rel["draft"] else rel["tag_name"])}
@@ -109,11 +112,13 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
                     self._send(404, {"message": "Not Found"})
                     return
                 assert isinstance(body, dict)
-                for key in ("body", "name", "tag_name"):
+                for key in ("body", "name", "tag_name", "prerelease"):
                     if key in body:
                         target[key] = body[key]
                 if "draft" in body and not shared["keep_draft"]:
                     target["draft"] = bool(body["draft"])
+                if shared.get("force_public"):
+                    target["draft"] = False
                 self._send(200, self._dressed(target))
             else:
                 self._send(404, {"message": "Not Found"})

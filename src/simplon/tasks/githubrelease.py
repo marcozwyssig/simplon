@@ -75,11 +75,14 @@ def draft(name: str = "", tag: str = "") -> int:
         if not usable:
             return 1
         if found is not None:
-            found.update_release(name=version, message=body, draft=True)
-            log.ok(f"reused the draft release {version} an earlier run left, with this run's notes")
-            return 0
-        repo.create_git_release(version, name=version, message=body, draft=True,
-                                target_commitish=gitops.head_commit())
+            # `prerelease` is passed back as it is: PyGithub sends False for it otherwise, and a draft somebody
+            # marked as a pre-release by hand would become a full release (si#486's final review)
+            made = found.update_release(name=version, message=body, draft=True, prerelease=found.prerelease)
+            said = f"reused the draft release {version} an earlier run left, with this run's notes"
+        else:
+            made = repo.create_git_release(version, name=version, message=body, draft=True,
+                                           target_commitish=gitops.head_commit())
+            said = f"created the draft release {version}; it is published after the image is"
     except github.Unanswered as unanswered:
         log.error(f"no draft release for {version}: {unanswered}")
         return 1
@@ -89,7 +92,13 @@ def draft(name: str = "", tag: str = "") -> int:
     except requests.exceptions.RequestException as unreachable:
         log.error(f"GitHub could not be reached for the draft release {version}: {unreachable}")
         return 1
-    log.ok(f"created the draft release {version}; it is published after the image is")
+    # THE ANSWER, NOT THE STATUS, as `publish` asks it: a release GitHub reports public before the build is
+    # the one outcome this step exists to prevent, and it must not be logged as a draft.
+    if not made.draft:
+        log.error(f"GitHub answered the draft release for {version} as not a draft ({made.html_url}): it is "
+                  f"public before anything was built. Check it by hand")
+        return 1
+    log.ok(said)
     return 0
 
 
@@ -114,7 +123,7 @@ def publish(tag: str = "") -> int:
                       f"before the build")
             return 1
         done = found.update_release(name=found.name or version, message=found.body or "", draft=False,
-                                    tag_name=version)
+                                    prerelease=found.prerelease, tag_name=version)
     except github.Unanswered as unanswered:
         log.error(f"{version} was not published: {unanswered}")
         return 1
