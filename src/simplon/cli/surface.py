@@ -204,7 +204,7 @@ PACKAGES = frozenset({"tasks"})
 #: product's own classes (spec step 5) are where it moves to LIBRARY - promised then, not before.
 INTERNAL = frozenset({
     "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap", "domain.artifactschema",
-    "domain.catalogue", "domain.clitaxonomy", "domain.manifestmodel", "domain.ports", "domain.runners",
+    "domain.catalogue", "domain.clitaxonomy", "domain.launcherenv", "domain.manifestmodel", "domain.ports", "domain.runners",
     "domain.signatures", "domain.task", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })
 

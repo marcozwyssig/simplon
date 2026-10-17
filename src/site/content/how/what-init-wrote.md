@@ -83,6 +83,11 @@ default needs no `--orch-dir`. Passing one that contradicts the line is refused,
 that carries no such line. Each file is reported as `unchanged`, `replaced` or `written`. A hand edit to
 a launcher is lost, as with `--force`.
 
+It also reads `<product>.yaml` for the one thing the launchers carry from it: the variable names under
+`launcher: env: pass:`, which the container route forwards by name (si#467, see
+[the manifest](../manifest/#launcher---the-variables-that-cross-into-the-kernels-container)). Run it again
+after editing that list. On the container route the kernel refuses a launcher whose list no longer matches.
+
 ## Two routes, one CLI
 
 The launcher runs the kernel either as Python in a virtual environment on this host or as a container,

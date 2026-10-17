@@ -195,7 +195,7 @@ no product manifest, command or import is affected either way.
 Short enough to state, and the half you most need, because everything else is yours:
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
-`domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.manifestmodel` ·
+`domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.launcherenv` · `domain.manifestmodel` ·
 `domain.ports` · `domain.runners` · `domain.signatures` · `domain.task` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
 

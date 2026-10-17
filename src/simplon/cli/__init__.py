@@ -31,7 +31,7 @@ from simplon.domain import clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
 from simplon.domain.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
-from simplon.domain import manifest, results, task
+from simplon.domain import launcherenv, manifest, results, task
 from simplon.domain.command import AggregateCommand, Command, TaskCommand
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
@@ -678,6 +678,17 @@ def main(*, app: typer.Typer, context: ProductContext,
     runhost.register(run_host())
 
     taxonomy = context.manifest().taxonomy()
+    # si#467: ON THE CONTAINER ROUTE ONLY, the launcher that started this container has to forward what the
+    # manifest's `launcher: env: pass:` declares. The launcher is bash and carries its own rendered copy of
+    # the list, so a launcher not re-rendered after the list changed would hand this kernel a variable
+    # unset - indistinguishable from one the host never set. `DELIVERY_ROUTE=inside` is the launcher's
+    # own statement that this is that route; the venv route has no container and nothing to compare.
+    if os.environ.get("DELIVERY_ROUTE") == "inside":
+        stale = launcherenv.stale_launcher(
+            launcherenv.declared(context.manifest_data(), str(context.manifest_path)),
+            os.environ, launcher(context.name))
+        if stale:
+            log.die(stale)
 
     # Environment-first selection (#15): a leading `dev|test|uat|prod` token picks the target
     # environment and is consumed here; with none, the descriptor default (dev) applies. So Typer only

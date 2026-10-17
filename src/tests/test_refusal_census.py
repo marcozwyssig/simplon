@@ -234,9 +234,6 @@ READS_INLINE = {
 #: What this cannot see, said rather than discovered: a manifest value passed in as an ARGUMENT by a
 #: caller that read it, rather than fetched through a borrowed function.
 BORROWS_A_READER = {
-    "cli": "hands `labinstance.declared_id` and `outputs.log_directory` to `runhost.RunHost` as references "
-           "for the run transcript's header and the step logs (si#391); it calls neither and refuses "
-           "nothing on what they return",
     "tasks.firngen": "`generate` asks `toolchain.invocation` for the docker line `toolchain:run` would build "
                      "(si#400 4b), which reads the product's `layout` itself; this module rules on firn's JSON "
                      "report and on files, never on the manifest",
@@ -462,6 +459,28 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     misspelling here at all.
     #   - what would the fix cost a product that violated it? One key renamed, in the file the refusal
     #     names, before anything has run.
+    # --- launcherenv.py (si#467) ---------------------------------------------------------------------
+    # Seven, all diagnosis, and the sorting question is worth answering out loud for the two unknown-key
+    # refusals because `layout:`'s look the same and are billed as expression. Here the refused manifest
+    # could NOT have produced a working product: `launcher: { env: { pas: [VSCE_PAT] } }` declares the
+    # section precisely because a command needs the variable on the container route, and ignoring the key
+    # forwards nothing - the command then fails, there, with no word about why. `layout:`'s typo leaves a
+    # product that builds the wrong tree and still works; this one leaves a product that does not.
+    #
+    # The rest: a section, `env:` or `pass:` of the wrong shape declares nothing; a name that is not an
+    # environment variable name cannot even be written into the launcher's space-separated list; and a
+    # name the launcher sets on the kernel's container itself - read off the two templates, `LAUNCH_*` with
+    # them - would put the host's `HOME` or `PYTHONPATH` over the container's and break it. That last one
+    # Marco classified a diagnosis on 2026-10-16 (si#467). A name the launcher already forwards is accepted, so there
+    # is no expression rule here at all.
+    ("launcherenv", "declared", "section must be a mapping with"): DIAGNOSIS,
+    ("launcherenv", "declared", "it takes `env:`"): DIAGNOSIS,
+    ("launcherenv", "declared", "env' must be a mapping with"): DIAGNOSIS,
+    ("launcherenv", "declared", "it takes `pass:`"): DIAGNOSIS,
+    ("launcherenv", "declared", "must be a list of variable names"): DIAGNOSIS,
+    ("launcherenv", "declared", "which is not an environment"): DIAGNOSIS,
+    ("launcherenv", "declared", "which the launcher sets on the"): DIAGNOSIS,
+
     ("layout", "declared", "must be a mapping of"): DIAGNOSIS,
     ("layout", "declared", "does not take"): EXPRESSION,
     ("layout", "_relative", "is empty, which says nothing"): DIAGNOSIS,
