@@ -161,6 +161,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_fetch typeOf simplon.architecture.Module {
     path = "adapters.fetch"
   }
+  module m_adapters_github typeOf simplon.architecture.Module {
+    path = "adapters.github"
+  }
   module m_adapters_githubpackages typeOf simplon.architecture.Module {
     path = "adapters.githubpackages"
   }

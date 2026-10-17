@@ -53,6 +53,13 @@ dependencies = [
   "pydantic>=2.13.4,<3", # the manifest schema, written against the v2 API. v3 is a rewrite boundary.
   "jinja2>=3.1.4,<4",    # the clabrender template engine. Environment/Template are the whole surface
                          # in use and are 3.x-stable, so the major is the API boundary.
+  "PyGithub>=2.10.0,<3", # the GitHub Release coordinates (si#486). A HARD dependency by Marco's decision of
+                         # 2026-10-17, not an extra: release:github-* are kernel tasks. Brings pynacl,
+                         # requests, pyjwt[crypto], typing-extensions and urllib3; measured on PyPI that day,
+                         # each has a wheel for every platform the kernel installs on (PyNaCl 1.6.2 ships
+                         # cp38-abi3-win_arm64, the rest are py3-none-any, and pyjwt's crypto extra is the
+                         # cryptography floored below). 3.x is PyGithub's announced break (lazy by
+                         # default), so the major is the ceiling.
   "cryptography>=46.0.0",  # WireGuard X25519 keygen, imported lazily. A FLOOR, deliberately with no
                            # ceiling: 46.0.0 is the FIRST release publishing win_arm64 wheels, and
                            # below it pip builds from source and needs a Rust toolchain, so a product
