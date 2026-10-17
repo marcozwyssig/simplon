@@ -408,11 +408,24 @@ def ranges_under_test(root: Path, body: str, first: Version) -> dict[Version, tu
     for version in documented_versions(body):
         if version < first:
             continue
-        earlier = [other for other in released if other < version]
-        if not earlier:
+        start, end = range_of(released, version)
+        if not start:
             continue
-        found[version] = (tag_of(earlier[-1]), tag_of(version) if version in released else "HEAD")
+        found[version] = (start, end)
     return found
+
+
+def range_of(released: list[Version], version: Version) -> tuple[str, str]:
+    """The `git` range `version` describes: from the newest tag BELOW it to its own tag, or to `HEAD`
+    while it is not tagged yet. An empty start means no earlier tag - the whole history.
+
+    ONE RULE FOR THE GATE AND FOR THE NOTES (si#477). `release:notes` used to start at the newest tag
+    overall, which is the same thing only while `version` is not tagged. Once it is - cut before the
+    notes, or a rerun - it was its own starting point, the range was empty, and the notes said "no merge
+    since" the very release they were written for, green.
+    """
+    earlier = [other for other in released if other < version]
+    return (tag_of(earlier[-1]) if earlier else "", tag_of(version) if version in released else "HEAD")
 
 
 # --- the gate --------------------------------------------------------------------------------------
@@ -602,10 +615,19 @@ def _assess(root: Path, spec: Declared) -> int:
 # --- release:notes - the notes generated from the same walk (si#344 C.3, decision 16) ---------------------
 
 def render(root: Path, tag: str) -> str:
-    """The notes for `tag`: one bullet per merge since the previous `vX.Y.Z` tag, newest first. Pure over git."""
+    """The notes for `tag`: one bullet per merge in the range `range_of` gives it, newest first. Pure over git.
+
+    A `tag` that is not a `vX.Y.Z` version cannot be placed among the tags, so it is measured from the
+    newest one to `HEAD`, as every tag was before si#477. `write` refuses only an empty tag, and that is
+    kept: a new refusal here would be a change to what a product may pass, not part of this fix.
+    """
     released = released_versions(root)
-    previous = tag_of(released[-1]) if released else ""
-    merges = merges_in(root, previous, "HEAD")
+    version = version_of(tag[1:]) if tag.startswith("v") else None
+    if version is not None:
+        previous, end = range_of(released, version)
+    else:
+        previous, end = (tag_of(released[-1]) if released else ""), "HEAD"
+    merges = merges_in(root, previous, end)
     lines = [f"## {tag}", ""]
     if not merges:
         lines.append(f"no merge since {previous}." if previous else "no merge in this repository yet.")
