@@ -932,6 +932,32 @@ The parameter **name is checked against what the command declares**, which is si
 a renamed parameter breaks generation instead of becoming a `run:` line that fails on a runner three
 minutes into a job.
 
+**A value chosen at dispatch reaches the command through the environment, never through the script**
+(si#488). Name the variable instead of writing the value:
+
+```yaml
+    on:
+      workflow_dispatch:
+        inputs: { version: { required: true } }
+    jobs:
+      release:
+        env: { RELEASE_VERSION: "${{ inputs.version }}" }
+        steps:
+          - command: release tag
+            params: { tag: { env: RELEASE_VERSION } }
+```
+
+The step renders as `./<product>.sh release tag -- "$RELEASE_VERSION"`: GitHub writes nothing into the
+script, the shell expands the variable, and the double quotes keep whatever a person typed one
+argument. Writing `${{ inputs.version }}` into `params:` would put the input into the script itself,
+which is the injection the callout above declines. A plain `$RELEASE_VERSION` value would not work
+either: it is quoted like any literal and reaches the command as those characters.
+
+The variable must be **set by an `env:`** of the step, its job or the workflow, or be one GitHub sets
+itself (`GITHUB_*`, `RUNNER_*`, `CI`). A name set nowhere would expand to nothing and the command would
+run as if no value were given, so generation refuses it. A `params:` value that is neither a scalar
+nor `{ env: NAME }` is refused too: it used to reach the command as its Python text.
+
 **`derive:` on a step writes the pipeline the command tree already implies** (si#267). A step that
 declares it is not one step but a placeholder for however many the named groups carry:
 

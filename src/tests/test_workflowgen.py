@@ -21,6 +21,7 @@ never had.
 
 AAA throughout.
 """
+import re
 import textwrap
 
 import pytest
@@ -2191,3 +2192,88 @@ def test_a_positional_value_that_looks_like_an_option_still_reaches_the_position
     # assert
     assert rendered == f" --mode slow -- {shlex.quote(value)}"
     assert ctx.params == {"target": value, "mode": "slow"}
+
+
+# --- si#488: a dispatch input reaches a command through the environment, never interpolated ----------------
+# `params: { tag: { env: RELEASE_VERSION } }` renders as `"$RELEASE_VERSION"`: GitHub expands nothing into
+# the script, the shell expands the variable, and the value stays one argument whatever it holds. A plain
+# `$RELEASE_VERSION` value is shlex-quoted into `'$RELEASE_VERSION'` and does NOT expand (measured on si#463).
+
+def _env_steps(step: str, job_env: str = "", workflow_env: str = "") -> str:
+    return f"""
+    workflows:
+      ci:
+        on: [push]
+{workflow_env}        jobs:
+          build:
+            runner: github-ubuntu
+{job_env}            steps:
+{step}"""
+
+
+_JOB_ENV = "            env: { RELEASE_VERSION: '${{ inputs.version }}' }\n"
+# `release tag` consumes the notes, so its producer runs first in the same job (rule 5, si#344 C.4)
+_NOTES = "              - command: release notes\n                params: { tag: v0.0.1 }\n"
+
+
+def test_an_env_value_renders_as_a_double_quoted_variable_after_the_positional_separator(kernel_manifest):
+    # act
+    text = _render(kernel_manifest, _env_steps(
+        _NOTES + "              - command: release tag\n                params: { tag: { env: RELEASE_VERSION } }\n",
+        job_env=_JOB_ENV))
+
+    # assert
+    assert 'run: ./sample.sh release tag -- "$RELEASE_VERSION"' in text
+    run_lines = [line for line in text.splitlines() if "run:" in line]
+    assert not any("${{" in line for line in run_lines), run_lines
+
+
+def test_an_env_value_as_an_option_reads_the_steps_own_env(kernel_manifest):
+    text = _render(kernel_manifest, _env_steps(
+        "              - command: build image\n                env: { PLATFORM: linux/arm64 }\n"
+        "                params: { platform: { env: PLATFORM } }\n"))
+    assert 'run: ./sample.sh build image --platform "$PLATFORM"' in text
+
+
+def test_an_env_value_may_be_set_at_the_workflow_level_or_by_github(kernel_manifest):
+    workflow_env = "        env: { PLATFORM: linux/amd64 }\n"
+    text = _render(kernel_manifest, _env_steps(
+        "              - command: build image\n                params: { platform: { env: PLATFORM } }\n",
+        workflow_env=workflow_env))
+    assert '--platform "$PLATFORM"' in text
+    text = _render(kernel_manifest, _env_steps(
+        _NOTES + "              - command: release tag\n                params: { tag: { env: GITHUB_REF_NAME } }\n"))
+    assert '-- "$GITHUB_REF_NAME"' in text
+
+
+def test_the_rendered_value_stays_one_argument_in_a_real_shell(kernel_manifest):
+    # arrange: the line exactly as rendered, with the launcher replaced by printf so the shell's own
+    # word-splitting is what is measured
+    import subprocess
+    text = _render(kernel_manifest, _env_steps(
+        _NOTES + "              - command: release tag\n                params: { tag: { env: RELEASE_VERSION } }\n",
+        job_env=_JOB_ENV))
+    line = next(l for l in text.splitlines() if "run: ./sample.sh release tag" in l)
+    tail = line.split("run: ./sample.sh release tag", 1)[1]
+
+    # act
+    out = subprocess.run(["bash", "-c", "printf '<%s>\\n'" + tail], capture_output=True, text=True,
+                         env={"RELEASE_VERSION": "v1.2.3; rm -rf / $(touch pwned)"}, check=True).stdout
+
+    # assert: `--` and the whole value, unsplit and unexecuted
+    assert out.splitlines() == ["<-->", "<v1.2.3; rm -rf / $(touch pwned)>"]
+
+
+@pytest.mark.parametrize("value, words", [
+    ("{ env: 'RELEASE-VERSION' }", "is not an environment variable name"),
+    ("{ env: '' }", "is not an environment variable name"),
+    ("{ env: NOWHERE_SET }", "NOWHERE_SET is set by no `env:`"),
+    ("[v1, v2]", "must be a scalar or `{ env: NAME }`"),
+    ("{ env: RELEASE_VERSION, default: v1 }", "must be a scalar or `{ env: NAME }`"),
+    ("{ value: v1 }", "must be a scalar or `{ env: NAME }`"),
+])
+def test_a_value_that_is_not_a_scalar_or_a_set_variable_is_refused(kernel_manifest, value, words):
+    with pytest.raises(ValueError, match=re.escape(words)):
+        _render(kernel_manifest, _env_steps(
+            _NOTES + f"              - command: release tag\n                params: {{ tag: {value} }}\n",
+            job_env=_JOB_ENV))

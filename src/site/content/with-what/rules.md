@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 239 | nothing - the declaration had no working meaning |
+| diagnosis | 241 | nothing - the declaration had no working meaning |
 | expression rule | 38 | something it could otherwise have said |
-| **all load-time refusals** | **277** | |
+| **all load-time refusals** | **279** | |
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
