@@ -292,8 +292,14 @@ class _StepApp(App):
 
         A TICK CAN OUTLIVE THE SCREEN (si#499), the timer's version of si#265's and si#306's moment: the
         interval fires until Textual stops it, and one that lands after `on_unmount` finds no `#steps`.
-        `_bar` is the app's one marker for "there is a screen right now", so it answers here too."""
-        if self._bar is None:
+        `_bar` is the app's one marker for "there is a screen right now", so it answers here too.
+
+        AND THE WINDOW BEFORE IT (si#499 reopened): teardown removes the tree before `on_unmount` drops
+        `_bar`, so a tick inside that window passed the marker and found no `#steps` - measured in a full
+        suite run, through the guard above. `_bar` says the app was not yet unmounted, not that the panes
+        are still there; so the tick also asks for the two it reaches, and a tick racing teardown paints
+        nothing."""
+        if self._bar is None or not self.query("#steps") or not self.query("#details"):
             return
         for index, step in enumerate(self.pipeline.steps):
             if step.state == StepState.RUNNING:
