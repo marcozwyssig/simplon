@@ -161,3 +161,13 @@ def test_the_compatibility_hands_out_no_shared_mutable_value():
     # assert: nobody else sees it
     with pytest.warns(command.CompatWarning):
         assert "leaked" not in second.with_
+
+
+def test_the_warning_reads_as_english_for_every_kind():
+    # arrange: "a AggregateCommand" was the text the 0.33.0 notes had to quote
+    agg = command.AggregateCommand()
+
+    # act / assert
+    with pytest.warns(command.CompatWarning) as caught:
+        agg.impl
+    assert str(caught[0].message).startswith("AggregateCommand.impl is not a field of AggregateCommand;")

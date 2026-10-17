@@ -23,6 +23,277 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.33.0
+
+**What a product has to do:** 0.33.0 removes import paths, so a product whose own Python imports simplon
+has to move those imports in the same change that bumps the pin. Move both simplon pins to 0.33.0
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`; since 0.31.0 the
+container route stops when the two differ.
+
+1. **Move every old import (si#470, si#473).** The module aliases 0.31.0 promised until 0.33.0 are gone,
+   and `simplon.domain` is split into `simplon.model` and `simplon.manifest` with no alias window of its
+   own. The loader is `simplon.manifest.load`. An old path still fails at import, now as a `GoneError` (a
+   `ModuleNotFoundError`) that names the new home:
+
+   ```
+   simplon.log has moved to simplon.kernel.log; import it from there. The old path was removed in 0.33.0.
+   ```
+
+   The full table is in the next subsection. Measured over the default branches (#476 on 2026-10-16,
+   #481 on 2026-10-17):
+   - **netctl:** 124 old-path imports on 110 lines, and 13 `monkeypatch.setattr` strings naming an old
+     path.
+   - **biz-cockpit** 20 imports (on 16 lines), **asbundle** 16, **secure-windows-images** 7, **cleon** 6,
+     **agile-cockpit** 5.
+   - **firn:** 4 lines into `simplon.domain.*` (context 3, layout 1, outputs 1, environments 1), and its
+     55 task classes are regenerated, because `tasks.firnt` now writes `from simplon.model.task import
+     Task` and `from simplon.model.artifactschema import Port`.
+
+   The six products other than firn pin a simplon from before 0.31.0 (netctl 0.21.0, biz-cockpit 0.22.0,
+   asbundle 0.3.0, secure-windows-images 0.12.0, cleon 0.5.0, agile-cockpit 0.22.0). There the old paths
+   are the real modules, so nothing breaks until the bump, and the bump breaks every line at once. Each
+   has its own issue: netctl#1927, biz-cockpit#286, asbundle#74, secure-windows-images#63, cleon#79,
+   agile-cockpit#155.
+2. **netctl and asbundle: regenerate the generated CLI.** The task body module `simplon.tasks.tasks` is
+   now `simplon.tasks.taskverbs`, and both committed CLIs import the old name (netctl
+   `_generated_cli.py:751`, asbundle `generated_cli.py:287`). Today's generator writes the class modules
+   instead: `<product> support tasks generate`. Not measured: regenerating runs through the product's
+   CLI, which imports the stale module. If that import stops the regeneration, change the one line to
+   `simplon.tasks.taskverbs` by hand first.
+3. **Ask a command for its class (si#400, #474).** Each command of a loaded manifest is now a
+   `TaskCommand`, `Deploy`, `AggregateCommand` or `ReleaseCommand`, and `CommandSpec` is gone. A field of
+   the other kind still reads, as its empty value, with a `CompatWarning` until 0.34.0:
+
+   ```
+   CompatWarning: AggregateCommand.impl is not a field of AggregateCommand; it reads as empty until
+   simplon 0.34.0 removes it - ask isinstance(command, TaskCommand) instead
+   ```
+
+   Switch to `isinstance(spec, TaskCommand)` / `isinstance(spec, AggregateCommand)` before 0.34.0.
+   netctl's `test_manifest_parity.py`, `test_bringup.py` and `test_manifest_flag_agreement.py` read
+   `impl`, `depends_on`, `help`, `stop_on_failure` and `hidden` this way; they keep working and warn.
+   `CommandSpec`'s tuple protocol (unpacking, `_replace`, `_asdict`) is gone with no window. No consumer
+   used it (measured).
+4. **A product scaffolded from the firn profile (si#410, #472).** firn v0.2.0 renamed `firn check` to
+   `firn validate` with no alias. A `test model` command that keeps `argv: [check]` and moves its firn
+   pin to v0.2.0 fails with rc 2, `Unmatched argument at index 0: 'check'`; write `argv: [validate]`
+   together with the pin. Of the eight reachable manifests only `simplon.yaml` pins the firn image, and
+   it has moved.
+5. **Re-render the launcher when you want what 0.33.0's launcher brings:** `simplon init --dir .
+   --launchers-only` (si#407) rewrites only the two launchers. The new `.cmd` forwards `GH_TOKEN`
+   (si#479), and `launcher: env: pass:` (si#467) needs it. A launcher you do not re-render keeps working
+   as long as the manifest declares no `pass:` list.
+
+### Old import paths are tombstones (si#470, #476; si#473, #481)
+
+si#470 emptied si#399's alias tables on their deadline. si#473 split `simplon.domain`: `simplon.model`
+is the vocabulary (`task`, `command`, `artifactschema`, `carrierspec`) and imports nothing outside
+itself, a test holds that; `simplon.manifest` is everything else, with the loader as
+`simplon.manifest.load`. The layers are now kernel, model, manifest, adapters, tasks, ui, cli.
+`model.task` and `model.artifactschema` are library modules, because every generated task class
+imports them, a product's too.
+
+Every removed path is in `simplon.kernel.moved.GONE`, and an si#399 path that went into `domain` points
+past it, to its final home. `simplon.domain`, `simplon.orchestrator` and `simplon.orchestrator.model`
+fail as whole packages, naming where each module went; `from simplon import run` names the new home
+too. The tombstones go in 0.34.0 (`GONE_DUE_AFTER`). This table is generated from `GONE`:
+
+| Old path | New path |
+|---|---|
+| `simplon.artifactschema` | `simplon.model.artifactschema` |
+| `simplon.artifactsection` | `simplon.manifest.artifactsection` |
+| `simplon.awake` | `simplon.kernel.awake` |
+| `simplon.backend` | `simplon.adapters.backend` |
+| `simplon.bootstrap` | `simplon.cli.bootstrap` |
+| `simplon.carrierspec` | `simplon.model.carrierspec` |
+| `simplon.catalogue` | `simplon.manifest.catalogue` |
+| `simplon.checksum` | `simplon.adapters.checksum` |
+| `simplon.clablifecycle` | `simplon.adapters.clablifecycle` |
+| `simplon.clabrender` | `simplon.adapters.clabrender` |
+| `simplon.clitaxonomy` | `simplon.manifest.clitaxonomy` |
+| `simplon.completiongen` | `simplon.tasks.completiongen` |
+| `simplon.compose` | `simplon.adapters.compose` |
+| `simplon.context` | `simplon.manifest.context` |
+| `simplon.credentials` | `simplon.adapters.credentials` |
+| `simplon.degraded` | `simplon.kernel.degraded` |
+| `simplon.deployment` | `simplon.manifest.deployment` |
+| `simplon.devcontainer` | `simplon.adapters.devcontainer` |
+| `simplon.disk` | `simplon.adapters.disk` |
+| `simplon.diskguard` | `simplon.adapters.diskguard` |
+| `simplon.docker` | `simplon.adapters.docker` |
+| `simplon.domain.artifactschema` | `simplon.model.artifactschema` |
+| `simplon.domain.artifactsection` | `simplon.manifest.artifactsection` |
+| `simplon.domain.carrierspec` | `simplon.model.carrierspec` |
+| `simplon.domain.catalogue` | `simplon.manifest.catalogue` |
+| `simplon.domain.clitaxonomy` | `simplon.manifest.clitaxonomy` |
+| `simplon.domain.command` | `simplon.model.command` |
+| `simplon.domain.context` | `simplon.manifest.context` |
+| `simplon.domain.deployment` | `simplon.manifest.deployment` |
+| `simplon.domain.environments` | `simplon.manifest.environments` |
+| `simplon.domain.layout` | `simplon.manifest.layout` |
+| `simplon.domain.manifest` | `simplon.manifest.load` |
+| `simplon.domain.manifestmodel` | `simplon.manifest.manifestmodel` |
+| `simplon.domain.outputs` | `simplon.manifest.outputs` |
+| `simplon.domain.ports` | `simplon.manifest.ports` |
+| `simplon.domain.results` | `simplon.manifest.results` |
+| `simplon.domain.runners` | `simplon.manifest.runners` |
+| `simplon.domain.signatures` | `simplon.manifest.signatures` |
+| `simplon.domain.task` | `simplon.model.task` |
+| `simplon.domain.treeform` | `simplon.manifest.treeform` |
+| `simplon.domain.yamlkeys` | `simplon.manifest.yamlkeys` |
+| `simplon.environments` | `simplon.manifest.environments` |
+| `simplon.fetch` | `simplon.adapters.fetch` |
+| `simplon.filelock` | `simplon.kernel.filelock` |
+| `simplon.githubpackages` | `simplon.adapters.githubpackages` |
+| `simplon.healthgate` | `simplon.adapters.healthgate` |
+| `simplon.host` | `simplon.adapters.host` |
+| `simplon.hostpath` | `simplon.adapters.hostpath` |
+| `simplon.imagenames` | `simplon.adapters.imagenames` |
+| `simplon.interact` | `simplon.adapters.interact` |
+| `simplon.labegress` | `simplon.adapters.labegress` |
+| `simplon.labhost` | `simplon.adapters.labhost` |
+| `simplon.labinstance` | `simplon.adapters.labinstance` |
+| `simplon.labnet` | `simplon.adapters.labnet` |
+| `simplon.layout` | `simplon.manifest.layout` |
+| `simplon.linux` | `simplon.adapters.linux` |
+| `simplon.log` | `simplon.kernel.log` |
+| `simplon.manifestmodel` | `simplon.manifest.manifestmodel` |
+| `simplon.nexusproxy` | `simplon.adapters.nexusproxy` |
+| `simplon.oras` | `simplon.adapters.oras` |
+| `simplon.orchestrator.manifest` | `simplon.manifest.load` |
+| `simplon.orchestrator.model.treeform` | `simplon.manifest.treeform` |
+| `simplon.orchestrator.plan` | `simplon.kernel.plan` |
+| `simplon.orchestrator.product` | `simplon.kernel.product` |
+| `simplon.orchestrator.steps` | `simplon.kernel.steps` |
+| `simplon.orchestrator.tui` | `simplon.ui.tui` |
+| `simplon.outputs` | `simplon.manifest.outputs` |
+| `simplon.portainer` | `simplon.adapters.portainer` |
+| `simplon.ports` | `simplon.adapters.ports` |
+| `simplon.provenance` | `simplon.kernel.provenance` |
+| `simplon.pyvenv` | `simplon.adapters.pyvenv` |
+| `simplon.run` | `simplon.kernel.run` |
+| `simplon.runhost` | `simplon.kernel.runhost` |
+| `simplon.runners` | `simplon.manifest.runners` |
+| `simplon.signatures` | `simplon.manifest.signatures` |
+| `simplon.steplog` | `simplon.kernel.steplog` |
+| `simplon.surface` | `simplon.cli.surface` |
+| `simplon.taskgen` | `simplon.tasks.taskgen` |
+| `simplon.tasks.tasks` | `simplon.tasks.taskverbs` |
+| `simplon.tools` | `simplon.adapters.tools` |
+| `simplon.topology` | `simplon.adapters.topology` |
+| `simplon.tracker` | `simplon.adapters.tracker` |
+| `simplon.verdict` | `simplon.kernel.verdict` |
+| `simplon.waits` | `simplon.kernel.waits` |
+| `simplon.workflowgen` | `simplon.tasks.workflowgen` |
+| `simplon.yamlkeys` | `simplon.manifest.yamlkeys` |
+
+### A catalogue task is a generated class, and a command an object (si#400, #460, #461, #464, #465, #466, #468, #469, #474)
+
+Part 4 of si#400, in four steps after four spec revisions (#460, #461, #464, #465). In the firn model a
+task is an instance; what firn generates from each instance is a Python class.
+
+- **Every catalogue task is a `CatalogueTask` instance (#466).** Until now only the 18 with ports were;
+  the 36 without joined them. A command on a catalogue task references the catalogue's instance instead
+  of re-declaring it, so simplon's own exported model lost 25 such blocks (31 → 6).
+- **One generated class per catalogue task (#468)**, in `src/simplon/tasks/<task>.py`: `class
+  BuildImage(Task)` with its `KEY`, its ports as `ClassVar[Port]`, and its body in protected regions. A
+  new catalogue task, **`build:model`**, runs `firn gen --format=json` and rules on firn's own report:
+  W300, W301, a file firn deleted or kept, and output that is not firn's JSON are each rc 1. simplon's
+  `build model` uses it, and `test generated` now also reports a class file git neither tracks nor
+  ignores.
+- **Every body runs through a class (#469).** A catalogue coordinate runs its generated class; a product
+  task runs a class the kernel builds from its own `impl:`. `impl:` left the kernel's `catalogue.yaml`.
+  A generated CLI calls `<Class>().run(...)`. The 8 real-manifest CLI goldens changed only in `impl`
+  lines. `--help` imports only the classes of the coordinates a manifest places (0.319 s before, 0.314 s
+  after, median of 7).
+- **Commands are objects (#474):** `TaskCommand`, `Deploy(TaskCommand)`, `AggregateCommand` and
+  `ReleaseCommand(AggregateCommand)`, frozen dataclasses that mirror `simplon.pipeline`. Step 3 above is
+  what a product does about it. A `ReleaseCommand` answers `produces` as `{release: (<bundle>,)}` during
+  the window, so a declared bundle does not read as nothing.
+
+### A file artifact, fetched and checked (si#343, #457)
+
+`kind: file` in `artifacts:` has `path`, `url`, `sha256` and an optional `version_from: {file, key}`.
+`build:fetch` downloads `url`, checks the sha256, and only then renames the file into `path`. A file
+already there with its checksum is rc 0 and "nothing to fetch"; another checksum is rc 1 and nothing is
+stored. `build:image` may name a `file` entry in `contexts:`, and it goes in as `--build-context
+<name>=<dir>`. The binding is derived from `contexts:`, so a plan that builds the image before the fetch
+is refused at load.
+
+Measured in a scratch product with firn's case: Gradle 9.7.1 (151 MB) fetched in 22.3 s, again in 0.1 s
+as "already there with the declared sha256; nothing to fetch", and an image build with the file moved
+away refused before docker started. None of the eight manifests declares `kind: file` yet; firn#771 is
+the one it was built for.
+
+### `simplon init --launchers-only` (si#407, #459)
+
+`simplon init [<product>] --dir . --launchers-only` writes only `<product>.sh` and `<product>.cmd`,
+without `--force`. The manifest, `cli.py`, `requirements.txt` and `.gitignore` are not touched. It reads
+the orchestrator directory off the existing `.sh`, and it refuses with rc 2 and writes nothing when there
+is no launcher, no such line, or an `--orch-dir` that contradicts it. Each file is reported `unchanged`,
+`replaced` or `written`. This replaces the scaffold-and-copy step in the 0.31.0 notes. A hand edit to a
+launcher is lost.
+
+### `launcher: env: pass:` forwards named variables into the kernel's container (si#467, #478)
+
+```yaml
+launcher:
+  env:
+    pass: [NAME, ...]
+```
+
+On the container route the launcher forwards each name with `-e NAME`, never a value, and only when the
+host exports it; `toolchain:run` passes the same names on either route. Seven new load refusals, all
+diagnosis: the shape, an unknown key, a name that is not an env-var name, and a name the launcher sets
+itself (`HOME`, `PYTHONPATH`, `PYTHONUSERBASE`, the `DELIVERY_*` names it sets, `LAUNCH_*`). On the
+container route a launcher rendered for a different list is refused, naming the names and `simplon init
+--dir . --launchers-only`. A launcher from before 0.33.0 reads as the empty list, so a product that
+declares nothing keeps running. None of the eight reachable manifests writes `launcher:` yet.
+
+Measured on a real container-route run against the v0.32.0 image: the declared variable reached the
+kernel and the toolchain, an undeclared one did not, and the secret's value appeared 0 times in argv or
+output.
+
+### A deploy consumes its source (si#435, #453)
+
+`deploy:up` has an input port `source`, bound from `deploy: source: { artifacts: X }`. A `deploy: source:`
+that names an undeclared entry is now refused at load instead of when `deploy up` runs, and an aggregate
+that runs `deploy up` before the build of its image is refused. Over the eight manifests every load
+verdict is unchanged; biz-cockpit `deploy rollout` → `backend` and firn `deploy devcontainer-only` →
+`firn` are newly bound.
+
+### Evidence names what it tested (si#439, #452, #454)
+
+The gap the 0.32.0 notes left open is closed. `test:image` writes each run's daemon `id` beside its
+`reference`. A green record whose runs do not name both is refused, not read for its verdict alone.
+`release:image` compares every ref it pushes with the ids the evidence ran, and keeps two answers apart:
+never tested (the evidence ran another tag) and rebuilt after it was tested (same tag, new bytes). It
+refuses before login and push.
+
+Every record written before 0.33.0 has no `id`, so a release refuses once until `test image` runs again.
+A release job that builds, tests and releases in one job is not affected. #454 corrected two pages that
+still described the evidence as unread.
+
+### Smaller (si#471, #475; si#477, #480; si#479, #482; si#325, #458; si#410, #472; #446)
+
+- A generated workflow step renders a parameter as positional exactly when the CLI reads it so
+  (si#471). `release tag` with `params: { tag: v1.4.0 }` rendered `release tag --tag v1.4.0`, a usage
+  error; the sweep found `docs:reference` and `docs:acceptance` `output` wrong the same way. No product's
+  generated workflow changes; firn's `argument: true` workaround on `release tag` no longer does
+  anything.
+- `release notes --tag vX.Y.Z` takes its range from the newest tag before `vX.Y.Z` to that tag, or to
+  `HEAD` when it is not cut yet (si#477). Before, an already-cut tag got the merges after the newest tag,
+  measured as the wrong release's notes under the right heading.
+- The `.cmd` launcher forwards `GH_TOKEN`, as the `.sh` does since si#225, and skips the same names
+  (si#479). One list in `launcherenv.FORWARDED` now renders both. Measured on the rendered text only:
+  there is no `cmd.exe` on the machine.
+- `build:nuget-*` no longer sets `DOTNET_CLI_HOME`; `dotnet` gets `HOME=/work/build/home` like
+  `toolchain:run` (si#325). A stale `build/dotnet-home/` can be deleted.
+- simplon's own `test model` and `build model` pin `firn:v0.2.0` and run `validate` (si#410). The firn
+  profile's key is `validate` too; a scaffold with either key was byte-identical, so no product's surface
+  changes.
+- `deploy/image/image.pin` points at the published v0.32.0 image (#446).
+
 ## 0.32.0
 
 **What a product has to do:** move both simplon pins to 0.32.0 together, the one in `requirements.txt`
