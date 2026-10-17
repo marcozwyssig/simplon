@@ -5,13 +5,14 @@ BUILD pulls it with its own token; this one attaches files to a release, where a
 from a page. Same act, different reader, and the choice between them is the product's to make - a
 private repository can offer both, a public one has to decide what its licence lets it hand out.
 
-WHY `gh` AND NOT A GITHUB CLIENT. The mechanics a publisher needs here are two: create the release if
+WHY `gh` AND NOT THE GITHUB CLIENT. The mechanics a publisher needs here are two: create the release if
 nobody has yet, and replace an asset that is already there. `gh release create` and `gh release upload
 --clobber` are exactly those two, and the alternative measured against them - asbundle's
-PublishReleaseCommand - hand-rolls each in twenty lines of PyGithub plus a content-type table. A GitHub
-client in the KERNEL's dependencies is not twenty lines: `pyproject.toml` says why a published
-package's constraints are its consumers' constraints forever, and the token story `gh` already has is
-the same two sources `githubpackages.token` documents.
+PublishReleaseCommand - hand-rolls each in twenty lines of PyGithub plus a content-type table. This used
+to say, too, that a GitHub client in the kernel's dependencies costs every consumer its constraints. That
+argument is WITHDRAWN rather than restated: since si#486 the kernel has one (PyGithub, `adapters.github`,
+Marco's decision of 2026-10-17). What stands is the first reason, and moving this task onto the adapter
+is a ticket of its own, not a side effect of that one.
 
 WHAT IT DOES NOT DO: decide the version, name the files, or say which repository they belong to when the
 product has not. Those are the product's, and they arrive through the manifest's `assets:` section.

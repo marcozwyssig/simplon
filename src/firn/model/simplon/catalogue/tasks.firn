@@ -200,6 +200,26 @@ release_tag typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.tag
   }
 }
+release_github_unpublished typeOf simplon.pipeline.CatalogueTask {
+  key = "release:github-unpublished"
+  body = "simplon.tasks.githubrelease:unpublished"
+}
+release_github_draft typeOf simplon.pipeline.CatalogueTask {
+  key = "release:github-draft"
+  body = "simplon.tasks.githubrelease:draft"
+  input release_notes typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.release_notes
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+release_github_publish typeOf simplon.pipeline.CatalogueTask {
+  key = "release:github-publish"
+  body = "simplon.tasks.githubrelease:publish"
+  output github_release typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.github_release
+  }
+}
 docs_site typeOf simplon.pipeline.CatalogueTask {
   key = "docs:site"
   body = "simplon.tasks.site:build"

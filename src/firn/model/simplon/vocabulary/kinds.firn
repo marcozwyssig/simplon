@@ -163,3 +163,6 @@ tag typeOf simplon.pipeline.ArtifactKind {
 release typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
 }
+github_release typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.release
+}

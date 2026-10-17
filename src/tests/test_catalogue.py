@@ -191,8 +191,9 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # than conan's: GitHub does serve a Maven registry, so there is somewhere to publish to and a
     # transport would have been the weaker shape. What it adds beyond nuget is the read-back, because a
     # `gradle publish` with no publication configured exits 0 having uploaded nothing.
-    assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "image", "maven", "notes", "nuget",
-                                               "tag"]
+    assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "github-draft",
+                                               "github-publish", "github-unpublished", "image", "maven",
+                                               "notes", "nuget", "tag"]
 
 
 def test_an_unplaced_coordinate_reaches_the_generated_reference_and_a_placed_one_does_not():

@@ -356,6 +356,12 @@ def current_branch() -> str:
     return (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
 
 
+def origin_url() -> str:
+    """`remote.origin.url` as git has it, or "" when there is no origin."""
+    result = _git(["config", "--get", "remote.origin.url"])
+    return (result.out or "").strip() if result.ok else ""
+
+
 def ref_exists(ref: str) -> bool:
     """Whether `ref` resolves here. Used on `origin/<branch>`, where the distinction matters: a ref that
     does not exist is not an ancestor of anything, so without this check a repository with no remote

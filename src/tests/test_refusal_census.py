@@ -179,6 +179,9 @@ READS_INLINE = {
                       "and since si#344 B2 it hands `artifactsection.entry` the SECTION, never the "
                       "document, so it stays an inline reader",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
+    "tasks.githubrelease": "`_notes(name)` reads its `artifacts:` entry inline at the front of "
+                           "`release:github-draft`, the same shape as tasks.artifact, and hands "
+                           "`artifactsection.entry` the SECTION (si#486)",
     "tasks.fetchfile": "`fetch(name)` reads its `artifacts:` entry inline, the same shape as tasks.artifact, and "
                        "hands `declared` the SECTION; the version it reads is in the product tree (si#343)",
     "tasks.env": "`environments()` reads the document inline to answer a listing",

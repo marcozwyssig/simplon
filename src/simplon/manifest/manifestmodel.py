@@ -19,8 +19,9 @@ already did (`t_`), so no two sections can meet by construction:
     a_  an `artifacts:` entry (since si#344 B2 an image is one, of `kind: image`)
     s_  a kernel section                  d_  a section only the product reads
 
-An `artifacts:` entry of a kind refining `release` is the one `a_` child the Product does not own: the
-release aggregate that names it composes it (`ReleaseCommand.release`, si#344 C.3), and a kind refining
+An `artifacts:` entry a release aggregate names is the one `a_` child the Product does not own: that
+aggregate composes it (`ReleaseCommand.release`, si#344 C.3; an entry no aggregate names stays the
+Product's, si#486), and a kind refining
 `test-result` is exported as a `TestResult`, whose `about` the M2 derives.
 
 The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
@@ -256,13 +257,18 @@ class _Export:
             raise ModelExportError(f"artifacts: is a {type(entries).__name__}, not a mapping")
         # The class follows the kind (si#344 C.3), read through the kernel's refinement table: the model's
         # vocabulary IS the kernel's (simplon.vocabulary is generated from it), so a kind that refines
-        # `test-result` is a TestResult there too. A `release` entry is composed inside the aggregate that
-        # names it (`command`), so it is skipped here - firn would otherwise hold it twice.
+        # `test-result` is a TestResult there too. A `release` entry an aggregate NAMES is composed inside
+        # that aggregate (`command`), so it is skipped here - firn would otherwise hold it twice. One no
+        # aggregate names is the Product's like any other: si#486 measured the skip keyed on the KIND
+        # dropping it from the model without a word - a `github-release` a leaf produces, and a plain
+        # `release` declared ahead of the aggregate that will name it.
+        composed = {spec.release for members in self.manifest.commands.values()
+                    for spec in members.values() if isinstance(spec, ReleaseCommand)}
         for entry, body in entries.items():
             kind = body.get("kind") if isinstance(body, Mapping) else None
             if not isinstance(kind, str):
                 raise ModelExportError(f"artifacts: {entry} declares no kind the model can name")
-            if artifactsection.accepts(artifactsection.REFINES, "release", kind):
+            if entry in composed:
                 continue
             cls = "TestResult" if artifactsection.accepts(artifactsection.REFINES, "test-result", kind) else "Artifact"
             lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.{cls}",

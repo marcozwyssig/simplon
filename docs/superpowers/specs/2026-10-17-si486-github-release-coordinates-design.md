@@ -114,9 +114,13 @@ It is built on PyGithub, imported at module level like any hard dependency.
   So:
   - A set `GITHUB_REPOSITORY` / `GITHUB_API_URL` wins. That covers the venv route in Actions and the tests.
   - Otherwise both come from origin's URL (HTTPS or SSH form): `owner/name` from the path, and the API base
-    from the host. `github.com` maps to `https://api.github.com`; any other host maps to
-    `https://<host>/api/v3` (GitHub Enterprise).
-  - An origin that is not a GitHub URL, with neither variable set, refuses and names both variables.
+    from the host. `github.com` maps to `https://api.github.com`. **Amended during the build:** the first
+    draft also mapped any other host to `https://<host>/api/v3` (GitHub Enterprise). The commit security
+    review showed that this hands the github.com token to whatever host a checkout's remote names, against
+    `githubpackages`' "to GitHub, and to nowhere else". So an Enterprise host is named only by
+    `GITHUB_API_URL`, and on the container route it is carried in by `launcher: env: pass:`.
+  - An origin that is not a github.com URL, with neither variable set, refuses and names both variables
+    and the launcher pass.
   - There is no launcher change.
   - The API base is passed to PyGithub as `base_url`.
 - **Visibility first.** GitHub answers **404** for a repository the token cannot see, a misspelled repository
@@ -227,8 +231,9 @@ Each assertion is seen red: break the property and watch it fail.
    - **a 404 on the repository itself** (a token without access, or a misspelled repository).
 6a. Two drafts for one tag are refused, naming both. A draft beside a published release is treated as
     published.
-6b. Repository and API base are derived from origin for the HTTPS form, the SSH form and an Enterprise host.
-    A set variable wins over origin. A non-GitHub origin with no variable refuses.
+6b. Repository and API base are derived from a github.com origin, in the HTTPS and the SSH form. A set
+    variable wins over origin. Any other origin with no variable refuses, an Enterprise host included
+    (amended, see above).
 7. A publish without the tag on origin is refused, both when `remote_tag_commit` is `""` and when it is
    `None`.
 8. Empty or missing notes are refused by `draft`, with the message pinned against the real text.
