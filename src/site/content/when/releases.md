@@ -23,6 +23,69 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.34.0
+
+**What a product has to do:** 0.34.0 closes the two windows 0.33.0 opened, so a product on 0.33.0 that
+ran without a warning moves its pins and nothing else. A product on an older pin has no window left: every
+old import and every read of another kind's field fails on the bump, at once. Move both simplon pins
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`.
+
+1. **An old import path is a plain miss now (si#485).** The tombstones in `simplon.kernel.moved.GONE`
+   are gone, so an import of a path 0.33.0 removed is an ordinary `ModuleNotFoundError` (`from simplon import run`: an `ImportError`) that no longer names the
+   new home. The map is still on this
+   page: the table under "Old import paths are tombstones" in the 0.33.0 section below. Measured over the
+   default branches on 2026-10-18:
+   - **biz-cockpit** and **firn** are on 0.33.0 and import no old path. Nothing to do.
+   - **netctl** (pinned at 0.21.0) still imports old paths on 126 lines, **asbundle** (0.3.0) on 17,
+     **secure-windows-images** (0.12.0) on 7, **cleon** (0.5.0) on 6, **agile-cockpit** on 5. Their pins
+     predate 0.31.0, so those paths are real modules for them today, and their 0.33.0 migration issues
+     (netctl#1927, asbundle#74, secure-windows-images#63, cleon#79, agile-cockpit#155) now apply to
+     0.34.0 as they stand, without the tombstones' messages to steer by.
+2. **A command answers only its own kind's fields (si#485).** The `CompatWarning` read 0.33.0 kept
+   (`AggregateCommand.impl` reading as empty, and the like) is removed, and `CompatWarning` with it.
+   Reading another kind's field, `impl` or `with_` on an `AggregateCommand`, `depends_on` on a
+   `TaskCommand`, is an `AttributeError` like any unknown name. Ask `isinstance(command, TaskCommand)` / `isinstance(command, AggregateCommand)`
+   first. netctl's `test_manifest_parity.py`, `test_bringup.py` and `test_manifest_flag_agreement.py`
+   read fields this way, so they need that change together with the bump.
+3. **PyGithub is a hard dependency (si#486).** The kernel now talks to GitHub Releases itself, so a
+   product that installs simplon installs PyGithub too. A product that pins its whole environment adds
+   it, or lets the resolver.
+4. **A release aggregate makes its own bundle (si#489).** No member of a release aggregate may produce
+   the artifact named as its `release:`; that used to load and break the model export. Measured first:
+   only `simplon.yaml` has a release aggregate, and no member of it produces its bundle. Nothing to do.
+
+### A GitHub Release, and a release from a button (si#486, si#488, si#489, si#490, si#491)
+
+- **Three new coordinates (si#486), offered, not placed:** `release:github-unpublished` (is there a
+  release of this version, found, absent or unanswered), `release:github-draft` (a draft release with the
+  release-notes entry) and `release:github-publish`, which produces the new kind `github-release`. That
+  kind refines `release`, so an aggregate may name one as its bundle. They run over PyGithub with no
+  silent retry. The token goes to github.com, or to the API `GITHUB_API_URL` names.
+- **`params: { env: NAME }` (si#488).** A workflow step's parameter may name a variable; it renders as
+  `"$NAME"`, the shell expands it and it stays one argument. So a dispatch input reaches a command
+  without `${{ inputs.* }}` ever entering a `run:` line. A name nothing sets is refused at render.
+- **Rule 8, amended (si#489).** With `release:github-publish` in the plan, the published release is the
+  public statement, not the tag: every publish member and the tag come before it, and the tag may come
+  before the image. Without it the rule is unchanged.
+- **`workflows: <key>: release: <group> <name>` (si#490).** It derives the whole dispatch release from
+  the aggregate: `workflow_dispatch` with `version` and `dry_run` (default true), the permissions, a
+  per-version concurrency group, and one `release` job with the aggregate's plan as steps, the cut,
+  firn's stamp check, and every `publishes: true` leaf skipped on a dry run. Two new task fields feed it:
+  `publishes:` and `token: github`, which alone gets the run's `GITHUB_TOKEN`. The [manifest
+  page](../../how/manifest/) has the key.
+- **simplon releases itself that way (si#491).** `.github/workflows/release.yml` is generated now.
+  0.34.0 is the first release cut from the button: the version's spelling, the suite, the type gate, the
+  staleness gate and this guard run before the tag, so a red test leaves no tag behind. Typing `release
+  all` in a checkout still works and pushes the tag, but nothing publishes it any more. The Allure archive
+  left the release path (si#509); `ci.yml` keeps it.
+
+### Also in this release
+
+- **The TUI no longer dies on its own clock (si#499).** The 1 s tick could land after the screen was
+  gone, or during teardown, and raised `NoMatches` on `#steps`. Both are guarded now.
+- **#484** pinned the kernel image to v0.33.0, and **#496** corrected the 0.33.0 notes: firn was never
+  given simplon's own 55 task classes to regenerate. **#513** is these notes.
+
 ## 0.33.0
 
 **What a product has to do:** 0.33.0 removes import paths, so a product whose own Python imports simplon
