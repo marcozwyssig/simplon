@@ -221,61 +221,73 @@ def test_importing_an_old_path_says_where_it_went_at_the_line_that_imported(tmp_
         "simplon.gone.steps", "simplon.kernel.steps") in result.stderr, result.stderr
 
 
-#: si#399's old paths, a sample spanning both shapes: a module that moved, a child of the dissolved
-#: package, and the dissolved package itself - and, since si#473, `domain`'s. The whole list is
-#: `moved.GONE`; the sample is spelled out so a GONE that lost these would not pass by shrinking.
+#: si#399's old paths, a sample spanning both shapes: a module that moved, a child of a dissolved package,
+#: the dissolved package itself - and, since si#473, `domain`'s and the renamed `tasks.tasks`.
 SI399_GONE = ("orchestrator", "orchestrator.model", "orchestrator.steps", "orchestrator.product", "run", "log",
-              "context", "surface", "docker", "domain", "domain.context", "domain.manifest", "domain.task")
+              "context", "surface", "docker", "domain", "domain.context", "domain.manifest", "domain.task",
+              "tasks.tasks")
 
-
-def _new_homes(old: str) -> set[str]:
-    """Where an old path's modules went: its own tombstone's target, or every child's for a package."""
-    if old in moved.GONE:
-        return {moved.GONE[old]}
-    return {new for child, new in moved.GONE.items() if child.startswith(old + ".")}
+#: `domain`'s split (si#473) as it stood in `moved.GONE` until 0.34.0, frozen here: the split never had an
+#: alias window, so the website's table is the whole migration for a product, and it must stay complete
+#: after the tombstones went (si#485).
+DOMAIN_SPLIT = (
+    ('domain.artifactschema', 'simplon.model.artifactschema'),
+    ('domain.artifactsection', 'simplon.manifest.artifactsection'),
+    ('domain.carrierspec', 'simplon.model.carrierspec'),
+    ('domain.catalogue', 'simplon.manifest.catalogue'),
+    ('domain.clitaxonomy', 'simplon.manifest.clitaxonomy'),
+    ('domain.command', 'simplon.model.command'),
+    ('domain.context', 'simplon.manifest.context'),
+    ('domain.deployment', 'simplon.manifest.deployment'),
+    ('domain.environments', 'simplon.manifest.environments'),
+    ('domain.layout', 'simplon.manifest.layout'),
+    ('domain.manifest', 'simplon.manifest.load'),
+    ('domain.manifestmodel', 'simplon.manifest.manifestmodel'),
+    ('domain.outputs', 'simplon.manifest.outputs'),
+    ('domain.ports', 'simplon.manifest.ports'),
+    ('domain.results', 'simplon.manifest.results'),
+    ('domain.runners', 'simplon.manifest.runners'),
+    ('domain.signatures', 'simplon.manifest.signatures'),
+    ('domain.task', 'simplon.model.task'),
+    ('domain.treeform', 'simplon.manifest.treeform'),
+    ('domain.yamlkeys', 'simplon.manifest.yamlkeys'),
+)
 
 
 @pytest.mark.parametrize("old", SI399_GONE)
-def test_an_si399_old_path_is_gone_since_its_deadline(old):
-    """si#470: the promise was "removed in 0.33.0", and a removal nothing checks is a promise kept by
-    nobody. An old path is now what any unknown name is - a `ModuleNotFoundError` naming it - and no
-    stand-in module answers it quietly. Seen red with si#399's `MOVED` and `DISSOLVED` still filled.
-
-    si#473: and the failure names where the module went - a tombstone, not an alias. Seen red with `GONE`
-    emptied: the message was the bare "No module named"."""
+def test_an_old_path_is_a_plain_miss_since_the_tombstones_went(old):
+    """si#470 removed si#399's aliases for 0.33.0; si#473's tombstones named the new home through 0.33;
+    si#485 removed them for 0.34.0. An old path is now what any unknown name is - a `ModuleNotFoundError`
+    naming it - and nothing answers it, quietly or loudly. Seen red with `GONE` still filled: the message
+    named the new home."""
     with pytest.raises(ModuleNotFoundError) as caught:
         importlib.import_module(f"simplon.{old}")
 
     assert caught.value.name is not None and caught.value.name.startswith("simplon."), caught.value
-    homes = _new_homes(old) or _new_homes(caught.value.name.removeprefix("simplon."))
-    assert homes and all(home in str(caught.value) for home in homes), caught.value
+    assert not isinstance(caught.value, moved.GoneError), caught.value
 
 
 @pytest.mark.parametrize("old", ["run", "log", "context", "domain", "orchestrator"])
-def test_from_simplon_import_an_old_module_names_its_new_home(old):
-    """`from simplon import run` is the spelling most products used, and Python swallows a
-    ModuleNotFoundError named for the submodule it is looking for there - measured: the tombstone's message
-    became "cannot import name 'run' from 'simplon'". `simplon.__getattr__` answers it instead. Seen red
-    with that hook removed, and for a dissolved package with its `GONE_PACKAGES` clause removed."""
-    with pytest.raises(ModuleNotFoundError, match=re.escape(moved.gone_message(f"simplon.{old}"))):
+def test_from_simplon_import_an_old_module_is_a_plain_import_error(old):
+    """`from simplon import run`, the spelling most products used: Python's own "cannot import name" now,
+    since `simplon.__getattr__` has no tombstone left to raise."""
+    with pytest.raises(ImportError) as caught:
         exec(f"from simplon import {old}", {})
 
-
-def test_the_renamed_body_module_names_its_new_home_in_the_spelling_products_use():
-    """si#473 renamed `simplon.tasks.tasks` to `simplon.tasks.taskverbs` so `model.task` could be promised.
-    Measured 2026-10-17: netctl's and asbundle's committed generated CLIs say `import simplon.tasks.tasks`,
-    so that is the spelling held here. (`from simplon.tasks import tasks` would get Python's bare "cannot
-    import name", as `from simplon import run` did before `simplon.__getattr__`; no product writes it.)
-    Seen red without the `tasks.tasks` tombstone."""
-    with pytest.raises(ModuleNotFoundError, match=re.escape("simplon.tasks.taskverbs")):
-        exec("import simplon.tasks.tasks", {})
+    assert not isinstance(caught.value, moved.GoneError), caught.value
 
 
-@pytest.mark.parametrize("old, new", sorted(moved.GONE.items()))
-def test_every_tombstone_names_a_module_that_imports(old, new):
-    """A tombstone that names a home which does not import sends a product from one ImportError to the
-    next. Seen red by pointing `domain.context` at `simplon.domain.context`."""
-    assert importlib.import_module(new).__name__ == new
+def test_the_tombstone_mechanism_still_names_a_new_home(monkeypatch):
+    """The tables are empty, the mechanism is not: the next removal fills `GONE` and nothing else (as si#470
+    left `MOVED`). Held on a synthetic pair, through both doors - the finder and `simplon.__getattr__`."""
+    monkeypatch.setitem(moved.GONE, "gonetest", "simplon.kernel.steps")
+    for name in [n for n in sys.modules if n == "simplon.gonetest"]:
+        monkeypatch.delitem(sys.modules, name)
+
+    with pytest.raises(ModuleNotFoundError, match=re.escape(moved.gone_message("simplon.gonetest"))):
+        importlib.import_module("simplon.gonetest")
+    with pytest.raises(ModuleNotFoundError, match=re.escape(moved.gone_message("simplon.gonetest"))):
+        exec("from simplon import gonetest", {})
 
 
 def test_no_tombstone_shadows_a_module_that_exists():
@@ -532,7 +544,7 @@ def test_the_website_carries_every_move(old, new):
         f"the move simplon.{old} -> {new} is in no row of the table in {PAGE}")
 
 
-@pytest.mark.parametrize("old, new", sorted((o, n) for o, n in moved.GONE.items() if o.startswith("domain.")))
+@pytest.mark.parametrize("old, new", DOMAIN_SPLIT)
 def test_the_website_carries_every_module_of_the_domain_split(old, new):
     """si#473: the split shipped with no alias window, so the table is the whole migration for a product.
     A module missing from it is an error message pointing at a page that does not mention it."""
@@ -543,6 +555,9 @@ def test_the_website_carries_every_module_of_the_domain_split(old, new):
         f"the move simplon.{old} -> {new} is in no row of the table in {PAGE}")
 
 
-def test_the_website_quotes_the_tombstone_as_it_is_raised():
-    """A quoted error text is a second source for a string: pin it against the real message."""
-    assert moved.gone_message("simplon.log") in PAGE.read_text(encoding="utf-8")
+def test_the_website_no_longer_promises_a_tombstone():
+    """si#485: the page said the tombstones stand through 0.33 and quoted one. A quoted error text is a
+    second source for a string, and this one no longer exists - the page must not show it."""
+    page = PAGE.read_text(encoding="utf-8")
+    assert "The old path was removed in 0.33.0." not in page
+    assert "0.34.0" in page
