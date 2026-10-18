@@ -6,15 +6,13 @@ Each class carries only its own kind's fields. `CommandSpec`, which carried both
 command, answered `impl` on an aggregate and `depends_on` on a leaf with an empty value, and a consumer
 reading the other kind's field could not tell "this kind has none" from "this command declared none".
 netctl's tests read exactly that (`assert not spec.impl` on an aggregate, `spec.depends_on` on every
-command, measured 2026-10-16), so for one release window the base still answers the other kind's fields
-with their empty value - with a `CompatWarning` naming the field and the question to ask instead
-(`isinstance(command, TaskCommand)`). It is gone after `COMPAT_DUE_AFTER`, and a test notices the date.
+command, measured 2026-10-16), so 0.33 answered the other kind's fields with their empty value and a
+warning for one release window. 0.34.0 closed it (si#485): reading another kind's field is an
+`AttributeError` now - ask `isinstance(command, TaskCommand)` instead.
 """
 from __future__ import annotations
 
-import warnings
 from collections.abc import Mapping
-from types import MappingProxyType
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
@@ -22,14 +20,6 @@ from simplon.model.artifactschema import Port
 
 if TYPE_CHECKING:
     from simplon.model.task import Task
-
-#: The (major, minor) after which the read compatibility below goes: it ships in 0.33, so 0.34.0 removes it.
-COMPAT_DUE_AFTER = (0, 33)
-
-
-class CompatWarning(DeprecationWarning):
-    """A read of a field the command's own kind does not have (si#400 4d, one release window)."""
-
 
 class ParamPresentation(NamedTuple):
     """How a parameter is PRESENTED, never what it is (netctl#1437).
@@ -56,16 +46,6 @@ class ParamPresentation(NamedTuple):
     short_first: bool = False
 
 
-#: Every field one kind has and the other lacks, with the empty value the other kind reads it as. The maps
-#: are read-only: one object answers every command, so a consumer writing into what it read would otherwise
-#: write into every other command's answer too (final review of 4d).
-_EMPTY: Mapping[str, object] = MappingProxyType({})
-_OTHER_KIND: Mapping[str, object] = {
-    "impl": "", "task": "", "passthrough_args": False, "publishes": False, "token": "", "with_": _EMPTY, "params": _EMPTY, "produces": _EMPTY,
-    "consumes": _EMPTY, "ports": (),
-    "depends_on": (), "stop_on_failure": False, "parallel": False, "keep_awake": False, "passes": (),
-    "release": "",
-}
 
 
 @dataclass(frozen=True)
@@ -96,13 +76,6 @@ class Command:
     help: str = ""
     hidden: bool = False
     unattended: bool | None = None
-
-    def __getattr__(self, name: str) -> object:
-        # Reached only when normal lookup fails. Dunders raise at once: copy and pickle probe them.
-        if name.startswith("__") or name not in _OTHER_KIND:
-            raise AttributeError(name)
-        _warn(self, name, "reads as empty")
-        return _OTHER_KIND[name]
 
 
 @dataclass(frozen=True)
@@ -216,23 +189,5 @@ class AggregateCommand(Command):
 class ReleaseCommand(AggregateCommand):
     """An aggregate that names its release bundle: `simplon.pipeline.ReleaseCommand` (si#344 C.3).
 
-    Until 4d the bundle WAS `produces: {release: (<bundle>,)}`, so for the window `produces` answers that
-    and not the empty map every other aggregate reads: "declared a bundle" must not read as "declared
-    nothing", which is the ambiguity the window exists to end."""
+    Until 4d the bundle WAS `produces: {release: (<bundle>,)}`; it is `release` now, and nothing else."""
     release: str = ""
-
-    def __getattr__(self, name: str) -> object:
-        if name == "produces":
-            _warn(self, name, "reads as `{release: (<release>,)}`")
-            return MappingProxyType({"release": (self.release,)})
-        return super().__getattr__(name)
-
-
-def _warn(command: Command, name: str, reads: str) -> None:
-    kind = type(command).__name__
-    major, minor = COMPAT_DUE_AFTER
-    # stacklevel 3: past this helper and `__getattr__`, at the consumer's read
-    warnings.warn(
-        f"{kind}.{name} is not a field of {kind}; it {reads} until simplon {major}.{minor + 1}.0 removes "
-        f"it - ask isinstance(command, TaskCommand) instead", CompatWarning, stacklevel=3)
-

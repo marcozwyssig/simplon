@@ -57,112 +57,22 @@ MOVED_DUE_AFTER = (0, 32)
 
 
 #: Old import path (relative to `simplon`) -> where the module lives now: the TOMBSTONES (si#473). An old
-#: path here does not import - the alias period is over - but its failure says where the module went,
-#: instead of the bare "No module named" an unknown name gets. Two removals end here at once in 0.33.0:
-#: si#399's 65 paths, whose aliases si#470 removed on their deadline, each pointing at its FINAL home (the
-#: ones that went into `domain` point past it, into `model` or `manifest`), and the `domain.*` modules
-#: si#473 split, which never had an alias - and one rename, `tasks.tasks`. A tombstone is a diagnosis,
-#: not a way in: the import still fails, only the message changes.
-GONE: dict[str, str] = {
-    "artifactschema": "simplon.model.artifactschema",
-    "artifactsection": "simplon.manifest.artifactsection",
-    "awake": "simplon.kernel.awake",
-    "backend": "simplon.adapters.backend",
-    "bootstrap": "simplon.cli.bootstrap",
-    "carrierspec": "simplon.model.carrierspec",
-    "catalogue": "simplon.manifest.catalogue",
-    "checksum": "simplon.adapters.checksum",
-    "clablifecycle": "simplon.adapters.clablifecycle",
-    "clabrender": "simplon.adapters.clabrender",
-    "clitaxonomy": "simplon.manifest.clitaxonomy",
-    "completiongen": "simplon.tasks.completiongen",
-    "compose": "simplon.adapters.compose",
-    "context": "simplon.manifest.context",
-    "credentials": "simplon.adapters.credentials",
-    "degraded": "simplon.kernel.degraded",
-    "deployment": "simplon.manifest.deployment",
-    "devcontainer": "simplon.adapters.devcontainer",
-    "disk": "simplon.adapters.disk",
-    "diskguard": "simplon.adapters.diskguard",
-    "docker": "simplon.adapters.docker",
-    "domain.artifactschema": "simplon.model.artifactschema",
-    "domain.artifactsection": "simplon.manifest.artifactsection",
-    "domain.carrierspec": "simplon.model.carrierspec",
-    "domain.catalogue": "simplon.manifest.catalogue",
-    "domain.clitaxonomy": "simplon.manifest.clitaxonomy",
-    "domain.command": "simplon.model.command",
-    "domain.context": "simplon.manifest.context",
-    "domain.deployment": "simplon.manifest.deployment",
-    "domain.environments": "simplon.manifest.environments",
-    "domain.layout": "simplon.manifest.layout",
-    "domain.manifest": "simplon.manifest.load",
-    "domain.manifestmodel": "simplon.manifest.manifestmodel",
-    "domain.outputs": "simplon.manifest.outputs",
-    "domain.ports": "simplon.manifest.ports",
-    "domain.results": "simplon.manifest.results",
-    "domain.runners": "simplon.manifest.runners",
-    "domain.signatures": "simplon.manifest.signatures",
-    "domain.task": "simplon.model.task",
-    "domain.treeform": "simplon.manifest.treeform",
-    "domain.yamlkeys": "simplon.manifest.yamlkeys",
-    "environments": "simplon.manifest.environments",
-    "fetch": "simplon.adapters.fetch",
-    "filelock": "simplon.kernel.filelock",
-    "githubpackages": "simplon.adapters.githubpackages",
-    "healthgate": "simplon.adapters.healthgate",
-    "host": "simplon.adapters.host",
-    "hostpath": "simplon.adapters.hostpath",
-    "imagenames": "simplon.adapters.imagenames",
-    "interact": "simplon.adapters.interact",
-    "labegress": "simplon.adapters.labegress",
-    "labhost": "simplon.adapters.labhost",
-    "labinstance": "simplon.adapters.labinstance",
-    "labnet": "simplon.adapters.labnet",
-    "layout": "simplon.manifest.layout",
-    "linux": "simplon.adapters.linux",
-    "log": "simplon.kernel.log",
-    "manifestmodel": "simplon.manifest.manifestmodel",
-    "nexusproxy": "simplon.adapters.nexusproxy",
-    "oras": "simplon.adapters.oras",
-    "orchestrator.manifest": "simplon.manifest.load",
-    "orchestrator.model.treeform": "simplon.manifest.treeform",
-    "orchestrator.plan": "simplon.kernel.plan",
-    "orchestrator.product": "simplon.kernel.product",
-    "orchestrator.steps": "simplon.kernel.steps",
-    "orchestrator.tui": "simplon.ui.tui",
-    "outputs": "simplon.manifest.outputs",
-    "portainer": "simplon.adapters.portainer",
-    "ports": "simplon.adapters.ports",
-    "provenance": "simplon.kernel.provenance",
-    "pyvenv": "simplon.adapters.pyvenv",
-    "run": "simplon.kernel.run",
-    "runhost": "simplon.kernel.runhost",
-    "runners": "simplon.manifest.runners",
-    "signatures": "simplon.manifest.signatures",
-    "steplog": "simplon.kernel.steplog",
-    "surface": "simplon.cli.surface",
-    "taskgen": "simplon.tasks.taskgen",
-    # Renamed in 0.33.0 so `model.task` could be promised (si#473). Measured 2026-10-17: netctl's and
-    # asbundle's committed generated CLIs `import simplon.tasks.tasks`; regenerating them writes the
-    # class modules (`tasks.tasks_generate`, `tasks.tasks_catalogue`) instead, which is the real fix.
-    "tasks.tasks": "simplon.tasks.taskverbs",
-    "tools": "simplon.adapters.tools",
-    "topology": "simplon.adapters.topology",
-    "tracker": "simplon.adapters.tracker",
-    "verdict": "simplon.kernel.verdict",
-    "waits": "simplon.kernel.waits",
-    "workflowgen": "simplon.tasks.workflowgen",
-    "yamlkeys": "simplon.manifest.yamlkeys",
-}
+#: path here does not import, but its failure says where the module went instead of the bare "No module
+#: named". EMPTY SINCE 0.34.0 (si#485): si#399's 65 paths, `domain`'s split and `tasks.tasks` stood here
+#: through 0.33, the release that removed them, and came out on that deadline. An old path is now a plain
+#: `ModuleNotFoundError`; `with-what/surface.md` keeps the table of where each one went. The record stays,
+#: empty, for the next removal.
+GONE: dict[str, str] = {}
 
 #: Packages that no longer exist, and whose every old child is a tombstone above: importing one fails
-#: naming where each of its modules went. A dissolved package must be answered as a whole, because
-#: `simplon.orchestrator.steps` imports `simplon.orchestrator` first, and that is the import that fails.
-GONE_PACKAGES = frozenset({"domain", "orchestrator", "orchestrator.model"})
+#: naming where each of its modules went. Empty since 0.34.0 with `GONE`; si#473's were `domain`,
+#: `orchestrator` and `orchestrator.model`.
+GONE_PACKAGES: frozenset[str] = frozenset()
 
-#: The (major, minor) after which the tombstones themselves go: they stand through 0.33, the release that
-#: removed the paths, and 0.34.0 is the first without them (Marco, 2026-10-16). `test_surface.py` turns
-#: red on the release run of the first minor past this pair while `GONE` is not empty.
+#: The (major, minor) after which the tombstones themselves go: they stood through 0.33, and 0.34.0 is the
+#: first release without them (Marco, 2026-10-16). That promise was kept (si#485); the pair stays as its
+#: record until the next removal names its own. `test_surface.py` turns red on the release run of the first
+#: minor past this pair while `GONE` is not empty.
 GONE_DUE_AFTER = (0, 33)
 
 

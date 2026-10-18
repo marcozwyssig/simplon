@@ -8,23 +8,19 @@ import pytest
 from simplon.model import command
 
 
-def test_a_task_command_carries_its_own_fields_and_reads_the_aggregates_as_empty_with_a_warning():
-    # arrange
-    leaf = command.TaskCommand(help="h", impl="m:f", task="build:image")
-
-    # act / assert: netctl's tests read `depends_on` on every command (measured) - one release window
-    with pytest.warns(command.CompatWarning, match=r"TaskCommand\.depends_on"):
-        assert leaf.depends_on == ()
-    assert leaf.impl == "m:f"
-
-
-def test_an_aggregate_reads_impl_as_empty_with_a_warning():
-    # arrange: netctl asserts `not spec.impl` on an aggregate (measured)
-    agg = command.AggregateCommand(help="h", depends_on=("a",))
-
-    # act / assert
-    with pytest.warns(command.CompatWarning, match=r"AggregateCommand\.impl"):
-        assert agg.impl == ""
+@pytest.mark.parametrize("made, field", [
+    (lambda: command.TaskCommand(help="h", impl="m:f", task="build:image"), "depends_on"),
+    (lambda: command.AggregateCommand(help="h", depends_on=("a",)), "impl"),
+    (lambda: command.AggregateCommand(), "with_"),
+    (lambda: command.ReleaseCommand(depends_on=("a",), release="kernel-release"), "produces"),
+])
+def test_a_command_does_not_answer_the_other_kinds_fields(made, field):
+    """si#485: the 0.33 window that read another kind's field as empty, with a warning, is closed. A read
+    of one is an AttributeError like any unknown name - ask `isinstance(command, TaskCommand)` instead.
+    netctl's three tests that read through it were measured for 4d; at the 0.34.0 cut no consumer on 0.33
+    read through it (biz-cockpit, firn - measured 2026-10-18)."""
+    with pytest.raises(AttributeError):
+        getattr(made(), field)
 
 
 def test_an_unknown_field_is_still_an_attribute_error():
@@ -60,16 +56,6 @@ def test_task_class_is_resolved_only_when_asked():
 
     # assert
     assert cls.KEY == "vcs:push"
-
-
-def test_the_compatibility_is_gone_after_its_release():
-    # arrange: the checkout's own version, as test_surface reads it for MOVED_DUE_AFTER
-    from test_surface import _release_number
-
-    # act / assert
-    assert _release_number() <= command.COMPAT_DUE_AFTER, (
-        f"the read compatibility on Command was due to go after {command.COMPAT_DUE_AFTER}: delete "
-        f"`Command.__getattr__`, `_OTHER_KIND`, `CompatWarning` and these tests' compat cases")
 
 
 def test_a_release_aggregate_is_a_release_command_naming_its_bundle():
@@ -135,39 +121,3 @@ support:
 
     # act / assert
     assert isinstance(mf.spec_for("support.cluster", "fix"), command.Deploy)
-
-
-def test_a_release_command_still_answers_its_bundle_under_produces_for_the_window():
-    # arrange: before 4d the bundle WAS `produces: {release: (...)}`; reading it as empty would turn
-    # "declared a bundle" into "declared nothing", the ambiguity the window exists to end
-    release = command.ReleaseCommand(depends_on=("a",), release="kernel-release")
-
-    # act / assert
-    with pytest.warns(command.CompatWarning, match=r"ReleaseCommand\.produces"):
-        assert release.produces == {"release": ("kernel-release",)}
-
-
-def test_the_compatibility_hands_out_no_shared_mutable_value():
-    # arrange
-    first, second = command.AggregateCommand(), command.AggregateCommand()
-
-    # act: one consumer writes into what it read
-    with pytest.warns(command.CompatWarning):
-        try:
-            first.with_["leaked"] = 1
-        except TypeError:
-            pass
-
-    # assert: nobody else sees it
-    with pytest.warns(command.CompatWarning):
-        assert "leaked" not in second.with_
-
-
-def test_the_warning_reads_as_english_for_every_kind():
-    # arrange: "a AggregateCommand" was the text the 0.33.0 notes had to quote
-    agg = command.AggregateCommand()
-
-    # act / assert
-    with pytest.warns(command.CompatWarning) as caught:
-        agg.impl
-    assert str(caught[0].message).startswith("AggregateCommand.impl is not a field of AggregateCommand;")

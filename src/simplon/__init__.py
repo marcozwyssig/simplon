@@ -42,8 +42,8 @@ except ImportError:  # pragma: no cover - exercised by the source-tree path, not
 
 # A moved module's old import path stays importable, as the very same module object, until the release
 # `simplon.kernel.moved.MOVED_DUE_AFTER` names. No move is standing since 0.33.0 (si#470 removed si#399's
-# aliases), so the finder answers no alias; it stays installed for the next one. What it does answer since
-# si#473 is a removed path's TOMBSTONE (`moved.GONE`): the import still fails, naming the new home.
+# aliases), so the finder answers no alias; it stays installed for the next one. A removed path's TOMBSTONE
+# (`moved.GONE`, si#473) is answered the same way - and none is standing since 0.34.0 (si#485).
 from .kernel import moved as _moved  # noqa: E402
 
 _moved.install()

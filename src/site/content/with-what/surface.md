@@ -287,20 +287,11 @@ product that still imports a pre-si#399 path migrates once, straight to the new 
 | `simplon.domain.treeform` | `simplon.manifest.treeform` |
 | `simplon.domain.yamlkeys` | `simplon.manifest.yamlkeys` |
 
-**A removed path is a tombstone, not a bare miss.** The import still fails — there is no alias, and no
-stub to patch by mistake — but the error names the new home instead of "No module named":
-
-```
-simplon.log has moved to simplon.kernel.log; import it from there. The old path was removed in 0.33.0.
-```
-
-Every path si#399 moved and every `domain` module is in `simplon.kernel.moved.GONE`, each pointing at its
-final home: a pre-si#399 path that went into `domain` points past it, into `model` or `manifest`. A
-dissolved package (`orchestrator`, `orchestrator.model`, `domain`) fails naming where each of its modules
-went, because importing `simplon.orchestrator.steps` imports `simplon.orchestrator` first. The error is a
-`ModuleNotFoundError`, so a product that already catches one keeps working. The tombstones have their own
-deadline, `GONE_DUE_AFTER`: they stand through 0.33 and go in 0.34.0, with a test that turns red once a
-version past it is built.
+**Through 0.33 a removed path was a tombstone; since 0.34.0 it is a plain miss.** The tombstones of si#473
+named the new home in the error for the one release that removed the paths, and they went in 0.34.0 on
+their deadline (si#485), as the aliases had in 0.33.0. An old path is now a `ModuleNotFoundError` like any
+unknown name, and the tables above are the whole migration: find the old path in the left column and
+import from the right.
 
 **The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the
