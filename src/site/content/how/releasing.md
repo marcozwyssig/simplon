@@ -339,5 +339,8 @@ A publishing task that forgot the field would run on a rehearsal, which is why t
 release tasks are held to it by a test.
 
 `release:check` (si#487) will refuse a malformed version or a commit `main` does not carry *before*
-anything is built. Until it lands, those runs go red at the notes or at the stamping check instead, and
-nothing has been published yet when they do.
+anything is built. Until it lands, an off-`main` commit goes red at `release tag`, before the tag is
+pushed - but **a malformed version is not caught by anything the kernel derives**. Measured on simplon
+(si#491): `0.99.0`, without the `v`, passed the cut, the stamping check and the notes guard, and would have
+published. A product that cannot accept that puts its own check first in the aggregate, as simplon does
+with `release version`.

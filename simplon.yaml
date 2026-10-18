@@ -32,6 +32,14 @@ tasks:
     impl: "orchestrator.cli:region_guard"
     help: "Refuse a file with hand-written lines outside its protected region, naming them."
     unattended: true
+  # The release's first member (final review of si#491): until `release:check` (si#487), the one thing
+  # standing between a mistyped `0.99.0` on the button and a public tag plus a PyPI upload.
+  release-version:
+    impl: "orchestrator.cli:release_version"
+    help: "Refuse a release version not spelled vX.Y.Z, before anything is cut."
+    unattended: true
+    params:
+      tag: { help: "the version, exactly as its tag will be (e.g. v0.34.0)", metavar: "TAG" }
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -325,6 +333,8 @@ ci:
       # LEFT the aggregate (decision 1): its evidence comes from `build image` and `test image`, which share
       # the name `image` and so cannot be members, and PyPI publishes after the tag in any case. It runs in
       # release.yml's `image` job after `publish`; a failed push is finished by rerunning that job.
+      # FIRST, before the suite spends three minutes: a version spelled other than vX.Y.Z is refused here.
+      version: { task: release-version }
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -357,11 +367,11 @@ ci:
           image: kernel
           evidence: [kernel-checked]
       all:
-        depends_on: [suite, typecheck-python, generated, release-notes, notes, tag]
+        depends_on: [version, suite, typecheck-python, generated, release-notes, notes, tag]
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release: the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag."
+        help: "The release: the version's spelling, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml)."
 
 support:
   commands:
@@ -812,10 +822,10 @@ workflows:
         steps:
           - name: Cut the tag in this checkout
             note: |
-              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
-              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
-              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
-              go red, and the jobs after this one would never rehearse.
+              si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+              the check below would go red, and the jobs after this one would never rehearse.
+            if: ${{ inputs.dry_run }}
             run: |
               there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
               if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
@@ -824,6 +834,19 @@ workflows:
               fi
               git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
               git tag "$RELEASE_VERSION"
+          - name: The tag is on origin at this commit
+            note: |
+              On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+              the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+              would otherwise be re-created locally and publish a version origin does not carry - the
+              final review of si#491 (Important 2).
+            if: ${{ !inputs.dry_run }}
+            run: |
+              tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+                exit 1
+              fi
           - command: build wheel
           - name: The wheel that was built must be the tag
             note: |
@@ -866,10 +889,10 @@ workflows:
         steps:
           - name: Cut the tag in this checkout
             note: |
-              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
-              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
-              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
-              go red, and the jobs after this one would never rehearse.
+              si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+              the check below would go red, and the jobs after this one would never rehearse.
+            if: ${{ inputs.dry_run }}
             run: |
               there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
               if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
@@ -878,6 +901,19 @@ workflows:
               fi
               git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
               git tag "$RELEASE_VERSION"
+          - name: The tag is on origin at this commit
+            note: |
+              On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+              the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+              would otherwise be re-created locally and publish a version origin does not carry - the
+              final review of si#491 (Important 2).
+            if: ${{ !inputs.dry_run }}
+            run: |
+              tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+                exit 1
+              fi
           - uses: actions/configure-pages@v5
             with:
               enablement: true
@@ -906,10 +942,10 @@ workflows:
         steps:
           - name: Cut the tag in this checkout
             note: |
-              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
-              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
-              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
-              go red, and the jobs after this one would never rehearse.
+              si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+              the check below would go red, and the jobs after this one would never rehearse.
+            if: ${{ inputs.dry_run }}
             run: |
               there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
               if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
@@ -918,6 +954,19 @@ workflows:
               fi
               git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
               git tag "$RELEASE_VERSION"
+          - name: The tag is on origin at this commit
+            note: |
+              On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+              the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+              would otherwise be re-created locally and publish a version origin does not carry - the
+              final review of si#491 (Important 2).
+            if: ${{ !inputs.dry_run }}
+            run: |
+              tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+                exit 1
+              fi
           - note: The image declares linux/arm64 too (si#368); this runner is amd64.
             uses: docker/setup-qemu-action@v3
             with:

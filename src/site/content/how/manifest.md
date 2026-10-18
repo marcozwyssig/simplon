@@ -247,7 +247,9 @@ and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](
 it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to every member that
 takes one. simplon's own `release.yml` is the first workflow derived from such an aggregate (si#491):
 `release: release all` makes it the dispatch release, whose job runs the test leaves, the notes and the
-tag in this order, so a red test leaves no tag behind. PyPI, the site and the image publish in product
+tag in this order, so a red test leaves no tag behind. Typed in a checkout, `release all` still ends by
+pushing the tag - and for simplon nothing then publishes it, because only the button does; if `main`
+moves before the button is pressed, that version is refused there as taken. PyPI, the site and the image publish in product
 jobs after it, and a publish that fails there is finished by rerunning that job.
 
 ## Refining a platform command, and replacing one

@@ -582,13 +582,15 @@ def test_the_page_covers_the_tag_a_plain_git_pull_brings_down():
     assert "already claimed by someone else" in page
 
 
-def test_the_page_says_the_escape_hatch_is_reported_by_the_workflow():
-    # arrange: an exception nobody ever hears about is not a loud one
+def test_the_page_says_a_button_started_release_has_no_escape_hatch():
+    # arrange: si#491 decision 3. The hatch was reported by simplon's tag-triggered workflow; that workflow
+    # starts from the button now, so a hand-pushed tag releases nothing and the report went with the trigger.
+    # An exception nobody hears about is not a loud one - and a page still promising the report would be one.
     page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # act / assert
-    assert "no branch filter" in page
-    assert "reports and never blocks" in page
+    assert "there is no such hatch" in page
+    assert "reports and never blocks" not in page
 
 
 def _fenced_lines(text: str):

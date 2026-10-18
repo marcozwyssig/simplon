@@ -135,7 +135,9 @@ def test_the_documentation_job_runs_unconditionally(docs_job):
     builds the site and uploads it into the run, and only the deploy waits for a real release. `needs:`
     is a different thing - it orders the job after the upload, it does not decide whether it happens."""
     # Arrange / Act
-    conditions = [(step.get("uses"), step["if"]) for step in docs_job["steps"] if "if" in step]
+    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit")  # held below
+    conditions = [(step.get("uses"), step["if"]) for step in docs_job["steps"]
+                  if "if" in step and step.get("name") not in opening]
 
     # Assert
     assert conditions == [("actions/deploy-pages@v4", "${{ !inputs.dry_run }}")]
@@ -149,7 +151,9 @@ def test_the_documentation_job_runs_exactly_one_build_command(docs_job):
     """One `run:` besides the local cut every product job opens with (si#491), and it is the command a
     developer types in a checkout."""
     # Arrange / Act
-    commands = [run.strip() for run in _runs(docs_job) if run != workflowgen.RELEASE_CUT]
+    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit")
+    commands = [str(step["run"]).strip() for step in docs_job["steps"]
+                if "run" in step and step.get("name") not in opening]
 
     # Assert
     assert commands == [THE_ONE_COMMAND]
@@ -392,20 +396,60 @@ def test_the_release_job_runs_the_gate_before_the_tag(workflow):
     assert gate == sorted(gate) and max(gate) < tag
 
 
-def test_every_product_job_cuts_the_tag_locally_first(workflow):
-    """Decision 5. A dry run pushes no tag, so without its own cut a job builds a `.devN` wheel and the si#3
-    check goes red - and `docs` and `image` never rehearse at all. The cut is the release job's own script,
-    held equal here, so the two cannot drift; on a real run it is a no-op over the fetched tag."""
+#: The step a real run takes instead of the cut: the tag the release job pushed must be here, at HEAD.
+TAG_REQUIRED = "The tag is on origin at this commit"
+
+
+def _opening(steps):
+    """A product job's steps after the checkout and the interpreter."""
+    return [step for step in steps
+            if not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python"))]
+
+
+def test_every_product_job_rehearses_with_the_cut_and_requires_the_pushed_tag(workflow):
+    """Decision 5, and the final review's Important 2. A dry run pushes no tag, so the job cuts one locally -
+    the release job's own script, held equal here - or it would build a `.devN` wheel and `docs` and `image`
+    would never rehearse. A REAL run must not cut: a tag deleted from origin after a failed publish, then
+    "Re-run failed jobs", would otherwise be re-created here and the wheel, the site and the image would go
+    out for a version origin does not carry. "The tag is already here" and "the tag is missing" are told
+    apart by the switch, not by the cut."""
     for name in PRODUCT_JOBS:
         # Arrange
-        steps = workflow["jobs"][name]["steps"]
-
-        # Act
-        first = next(step for step in steps
-                     if not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python")))
+        cut, required = _opening(workflow["jobs"][name]["steps"])[:2]
 
         # Assert
-        assert first.get("run") == workflowgen.RELEASE_CUT, f"{name}: does not cut the tag first"
+        assert (cut.get("run"), cut.get("if")) == (workflowgen.RELEASE_CUT, "${{ inputs.dry_run }}"), name
+        assert (required.get("name"), required.get("if")) == (TAG_REQUIRED, "${{ !inputs.dry_run }}"), name
+
+
+def _required_script(workflow) -> str:
+    scripts = {step["run"] for name in PRODUCT_JOBS for step in workflow["jobs"][name]["steps"]
+               if step.get("name") == TAG_REQUIRED}
+    assert len(scripts) == 1, "the three jobs must require the tag in one way"
+    return scripts.pop()
+
+
+@pytest.mark.parametrize("case, rc", [("missing", 1), ("here", 0), ("elsewhere", 1)])
+def test_a_real_run_refuses_a_tag_that_is_not_here_at_this_commit(workflow, tmp_path, case, rc):
+    # Arrange: a checkout with two commits, the tag where the case puts it
+    import subprocess
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q")
+    for n in ("1", "2"):
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", n)
+    if case == "here":
+        git("tag", "v9.9.9")
+    if case == "elsewhere":
+        git("tag", "v9.9.9", "HEAD~1")
+
+    # Act
+    done = subprocess.run(["bash", "-c", _required_script(workflow)], cwd=tmp_path, capture_output=True,
+                          text=True, env={"PATH": "/usr/bin:/bin", "RELEASE_VERSION": "v9.9.9"})
+
+    # Assert
+    assert done.returncode == rc, done.stdout + done.stderr
+    if rc:
+        assert "::error::v9.9.9" in done.stdout
 
 
 def test_a_dry_run_publishes_nothing(workflow):
@@ -414,7 +458,8 @@ def test_a_dry_run_publishes_nothing(workflow):
     for name in PRODUCT_JOBS:
         for step in workflow["jobs"][name]["steps"]:
             guarded = step.get("if") == "${{ !inputs.dry_run }}"
-            assert guarded == _publishing(step), f"{name}: {step.get('uses') or step.get('run', '')[:60]!r}"
+            expected = _publishing(step) or step.get("name") == TAG_REQUIRED
+            assert guarded == expected, f"{name}: {step.get('uses') or step.get('run', '')[:60]!r}"
 
 
 def test_no_script_reads_an_input_or_the_ref_name(workflow):
@@ -456,3 +501,25 @@ def test_the_readme_releases_from_the_button():
     assert "workflow_dispatch" in section and "dry_run" in section
     assert "./simplon.sh release tag v" not in section
     assert "git push origin v" not in section
+
+
+def test_every_page_showing_simplons_typed_tag_says_the_button_replaced_it():
+    """Final review of si#491, Important 3. A page that shows `./simplon.sh release tag v...` describes
+    simplon's own loop, and since si#491 a typed tag releases nothing. Over the whole site, not a list of
+    pages: the miss this test exists for was a page nobody listed."""
+    # Arrange
+    pages = sorted((ROOT / "src" / "site" / "content").rglob("*.md"))
+
+    # Act
+    stale = [p.relative_to(ROOT) for p in pages
+             if "./simplon.sh release tag v" in (text := p.read_text(encoding="utf-8")) and "si#491" not in text]
+
+    # Assert
+    assert stale == []
+
+
+def test_release_all_says_that_typed_in_a_checkout_it_pushes_the_tag(product):
+    """Final review of si#491, Important 4. Typed locally, `release all` ends by pushing a public tag that no
+    workflow watches any more - and if `main` then moves, the button refuses that version. Its help says so."""
+    help_text = product.spec_for("release", "all").help
+    assert "pushes the tag" in help_text and "button" in help_text

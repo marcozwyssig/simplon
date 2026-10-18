@@ -17,6 +17,10 @@ product. Here is what a person types, in order:
 ./simplon.sh release tag v0.4.0     tag it; the tag IS the version, and CI publishes to PyPI
 ```
 
+*(Since si#491 the last line is typed by the run, not by you: simplon's release starts from the
+button - Actions, release, Run workflow - and a tag typed by hand releases nothing. The command and
+its guard are unchanged. The rest of this chapter is the record of the run it describes.)*
+
 Four support commands sit beside those steps rather than in a phase of their own.
 `./simplon.sh test typecheck-python` runs alone what `test all` runs as its second step, which is what
 you want while fixing one file. `./simplon.sh support workflows --check` and
