@@ -787,11 +787,14 @@ def _mount_argv(mount: str, root: Path) -> list[str] | None:
     if not path.is_dir():
         log.error(f"mount '{mount}' names {path}, which is not a directory under {root}")
         return None
-    # si#201's rule, and it is why this returns a translated source rather than `path`: on the
-    # container route the daemon resolves a mount source against the HOST, so an untranslated one
-    # mounts an empty directory it creates there -- rc 0, no message, and a smoke test that proves
-    # nothing over a workspace that is not the workspace.
-    return ["-v", f"{hostpath.translate(path)}:{target}"]
+    # The line is `hostpath.mount_argv`'s (si#495), which keeps si#201's rule: on the container route
+    # an untranslated source mounts an empty directory the daemon creates on the HOST -- rc 0, no
+    # message, and a smoke test that proves nothing over a workspace that is not the workspace.
+    try:
+        return hostpath.mount_argv(root, inside, target)
+    except ValueError as refused:
+        log.error(str(refused))
+        return None
 
 
 def _indented(result: Result) -> str:

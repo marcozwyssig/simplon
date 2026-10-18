@@ -54,8 +54,11 @@ def test_the_modules_that_write_a_bind_mount_are_the_ones_that_know_how_to_trans
     # assert: there is at least one, so this is not a sweep over nothing - the failure mode si#200's own
     # pin test names - and every one of them imports the translation
     assert writing, "no module writes a bind mount any more; this sweep has stopped saying anything"
+    # `hostpath` itself is the translation, and since si#495 it also spells one public `-v`
+    # (`mount_argv`) through its own `translate` - exempt by name, not by a docstring that happens to
+    # mention it.
     untranslated = [p.relative_to(ROOT).as_posix() for p in writing
-                    if "hostpath" not in p.read_text(encoding="utf-8")]
+                    if p != Path(hostpath.__file__) and "hostpath" not in p.read_text(encoding="utf-8")]
     assert untranslated == [], (
         f"these build a `docker run -v` without simplon.adapters.hostpath: {untranslated}. On the container "
         f"route the daemon resolves that source against the HOST, creates an empty directory and mounts "
