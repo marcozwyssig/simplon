@@ -276,7 +276,9 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     # repository before every containerised command costs more than it buys. Bringing that state under
     # the home this function now provides is what brings it into the check.
     outputs.ensure_home()
-    fault = docker.ownership_fault([outputs.root()], product.root)
+    # si#511, for the same reason and in the same place: a mount point docker has to create is created
+    # root-owned, so the kernel makes every one first, as the caller - or refuses before making any.
+    fault = _prepare_mounts(cfg, product.root, where) or docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
         return None
@@ -389,6 +391,43 @@ def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
         seen.add(normal)
         out.append(Mount(source=source, target=normal, readonly=readonly))
     return out
+
+
+def _prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
+    """Make every mount's source, and its target's host counterpart when the target lies in the tree
+    mount, exist as directories the caller owns - or return why not, having made nothing (si#511).
+
+    Measured with docker 29.9.1 and `--user 4242:4242`: `-v` creates a missing source `root:root 755`,
+    so the container cannot write into it, and a missing target nested in the tree mount is left on the
+    host root-owned too, where the next host-side `npm install` meets it. So this runs BEFORE the line.
+
+    SHALLOW, unlike `docker.ownership_fault`: the path itself, or its nearest existing ancestor when it
+    is missing, must be the caller's. Walking a mounted `node_modules` would be tens of thousands of
+    stat calls before every run, and that function's message calls the tree a build output, which a
+    mount source need not be. Every check runs before the first `mkdir`, so a refusal leaves no half.
+    """
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    tree = posixpath.normpath(cfg.workdir)
+    wanted: list[tuple[str, Path]] = []
+    for mount in cfg.mounts:
+        entry = f"{mount.source}:{mount.target}" + (":ro" if mount.readonly else "")
+        wanted.append((entry, hostpath.mount_source(root, mount.source, mount.target)))
+        if mount.target.startswith(tree.rstrip("/") + "/"):
+            wanted.append((entry, root / posixpath.relpath(mount.target, tree)))
+    for entry, path in wanted:
+        rel = path.relative_to(root).as_posix() if path != root else "."
+        if path.exists() and not path.is_dir():
+            return f"{where}: mount '{entry}' names {rel}, which is not a directory; remove it or mount another path"
+        held = path
+        while not held.exists() and held != root and held.parent != held:
+            held = held.parent
+        if uid is not None and held.exists() and held.stat().st_uid != uid:
+            shown = held.relative_to(root).as_posix() if held != root else "."
+            return (f"{where}: mount '{entry}' needs {shown} owned by uid {uid}; it is owned by uid "
+                    f"{held.stat().st_uid}. Remove it or chown it (it takes a root shell), then run this again.")
+    for _, path in wanted:
+        path.mkdir(parents=True, exist_ok=True)
+    return ""
 
 
 def _manifest_path() -> Path:

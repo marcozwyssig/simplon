@@ -176,9 +176,16 @@ def mount_source(root: Path, source: str, target: str) -> Path:
         raise ValueError(f"mount target {target!r} is not an absolute path in the container")
     if source.strip() in (".", "./"):
         return root
-    return root / validate_relative_dir(source, "mount source", "give a plain relative path under the "
+    path = root / validate_relative_dir(source, "mount source", "give a plain relative path under the "
                                         "product root, e.g. 'build/cache/node_modules'",
                                         inside="the product root")
+    # A plain relative spelling is not enough: `-v` follows a symlinked source ON THE HOST, so a link in
+    # the tree (`build/nm -> /etc`), as the source or as any parent of it, would mount what it points at.
+    # `resolve` follows every link that exists today and leaves the missing tail as written.
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"mount source {source!r} resolves to {path.resolve()}, outside the product root "
+                         f"{root} - a symlink in the tree leads out of it")
+    return path
 
 
 def mount_argv(root: Path, source: str, target: str, *, readonly: bool = False,

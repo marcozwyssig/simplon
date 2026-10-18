@@ -275,3 +275,20 @@ def test_mount_argv_refuses_a_missing_source_only_when_asked(tmp_path):
     with pytest.raises(ValueError):
         hostpath.mount_argv(tmp_path, "nope", "/x")
     assert hostpath.mount_argv(tmp_path, "nope", "/x", must_exist=False)[1].endswith("nope:/x")
+
+
+def test_mount_source_refuses_a_symlink_that_leaves_the_tree(tmp_path):
+    # arrange: `-v` follows a symlinked source on the HOST, so `build/nm -> /etc` would mount /etc
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "nm").symlink_to("/etc")
+
+    # act / assert: refused whether the link is the source or a parent of it
+    for source in ("build/nm", "build/nm/sub"):
+        with pytest.raises(ValueError, match="outside"):
+            hostpath.mount_source(tmp_path, source, "/x")
+
+
+def test_mount_source_allows_a_symlink_that_stays_in_the_tree(tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    assert hostpath.mount_source(tmp_path, "link", "/x") == tmp_path / "link"

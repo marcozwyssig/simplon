@@ -446,3 +446,74 @@ def test_a_mount_over_the_tree_says_so_in_these_words(monkeypatch):
         _cfg(mounts=["src:/work"])
     assert str(e.value) == ("build.compile: mount 'src:/work' would cover /work, the tree this command runs "
                             "in; mount over a path below it instead")
+
+
+# --- si#511: the mount points exist before the run, owned by the caller --------------------------------
+
+
+def _mounted(*entries):
+    return _cfg(mounts=list(entries))
+
+
+def test_the_source_and_the_inner_target_are_created_before_the_run(tmp_path):
+    # act
+    fault = toolchain._prepare_mounts(_mounted("build/nm:/work/src/frontend/node_modules"), tmp_path, "b.g")
+
+    # assert: both exist, and both are the caller's - docker would have made them root's
+    import os
+    assert fault == ""
+    for made in (tmp_path / "build/nm", tmp_path / "src/frontend/node_modules"):
+        assert made.is_dir() and made.stat().st_uid == os.getuid()
+
+
+def test_a_target_outside_the_workdir_creates_nothing_on_the_host(tmp_path):
+    assert toolchain._prepare_mounts(_mounted("build/nm:/cache/nm"), tmp_path, "b.g") == ""
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["build"]
+
+
+def test_a_source_that_is_a_file_is_refused(tmp_path):
+    # arrange
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build/nm").write_text("x", encoding="utf-8")
+
+    # act
+    fault = toolchain._prepare_mounts(_mounted("build/nm:/work/src/nm"), tmp_path, "b.g")
+
+    # assert: named, and nothing was made for the other half either
+    assert "b.g" in fault and "build/nm" in fault and "not a directory" in fault
+    assert not (tmp_path / "src").exists()
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="handing a directory to another uid takes root")
+def test_a_path_owned_by_someone_else_is_refused_before_any_mkdir(tmp_path):
+    # arrange: the target's nearest existing ancestor belongs to uid 4242
+    import os
+    (tmp_path / "src").mkdir()
+    os.chown(tmp_path / "src", 4242, 4242)
+
+    # act
+    fault = toolchain._prepare_mounts(_mounted("x:/work/src/frontend/node_modules"), tmp_path, "b.g")
+
+    # assert: refused in words, and the source was NOT made first - the check comes before any mkdir
+    assert fault == ("b.g: mount 'x:/work/src/frontend/node_modules' needs src owned by uid 0; it is owned "
+                     "by uid 4242. Remove it or chown it (it takes a root shell), then run this again.")
+    assert not (tmp_path / "x").exists()
+
+
+def test_invocation_returns_none_on_a_mount_fault(monkeypatch, tmp_path):
+    # arrange
+    from simplon.manifest import context
+    (tmp_path / "biz.yaml").write_text("groups: {}\n", encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext("biz", tmp_path, tmp_path / "biz.yaml"))
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build/nm").write_text("x", encoding="utf-8")
+    errors = []
+    monkeypatch.setattr(toolchain.log, "error", errors.append)
+
+    # act
+    got = toolchain.invocation("biz gate", image="gradle:jdk25", argv=["x"], workdir="/work", env=None,
+                               caches=None, network=None, cwd=None, extra=[], mounts=["build/nm:/work/nm"])
+
+    # assert
+    assert got is None and errors and "build/nm" in errors[0]
