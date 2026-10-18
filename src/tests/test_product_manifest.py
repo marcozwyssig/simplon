@@ -207,8 +207,10 @@ def test_the_generated_half_of_the_site_is_not_committed(product):
 
 def test_release_all_hands_the_tag_to_every_member_that_takes_one(product):
     # arrange: each leaf of `release all` runs as its own subprocess (si#433). A member that got no tag
-    # would not stop: `push-image` falls back to `git describe` and, before the tag exists, publishes
-    # under `v0.31.0-N-g<sha>` with rc 0
+    # would not stop: `push-image` fell back to `git describe` and, before the tag existed, published
+    # under `v0.31.0-N-g<sha>` with rc 0. `push-image` left the aggregate in si#491 (it runs in
+    # release.yml's `image` job, handed the version there), and the four test leaves that joined it
+    # take no tag - so the takers are the version check, the notes and the tag
     from simplon import cli
 
     spec = product.spec_for("release", "all")
@@ -218,5 +220,4 @@ def test_release_all_hands_the_tag_to_every_member_that_takes_one(product):
     handed = cli.leaf_arguments(takers, {"tag": "v9.9.9"})
 
     # assert: in each leaf's own form - `release tag`'s tag is required, so it is a positional
-    assert handed == {"notes": ("--tag=v9.9.9",), "push-image": ("--tag=v9.9.9",),
-                      "tag": ("--", "v9.9.9")}
+    assert handed == {"version": ("--tag=v9.9.9",), "notes": ("--tag=v9.9.9",), "tag": ("--", "v9.9.9")}

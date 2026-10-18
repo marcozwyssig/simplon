@@ -184,45 +184,43 @@ verdict is the same on your machine as in the pipeline.
 
 ## Releasing
 
+A release is started from the button: **Actions -> release -> Run workflow**
+(`workflow_dispatch`), with two inputs, `version` (`v0.1.13`, exactly as the
+tag will be) and `dry_run`, which defaults to true. Rehearse first, then run it
+again with `dry_run` off. From a terminal:
+
 ```sh
-./simplon.sh release tag v0.1.13
+gh workflow run release.yml -f version=v0.1.13 -f dry_run=true
 ```
 
-That is the release. The workflow then runs the tests, builds the wheel and
-publishes to PyPI via Trusted Publishing, and rebuilds this project's website.
-Releases are cut from tags only, so every version points at a named commit.
+The run is `release all`, the same aggregate a checkout runs: the pytest suite,
+the type gate, the staleness gate and the release-notes guard, then the notes,
+then `release tag`, which cuts and pushes the tag. A red test therefore leaves
+no tag behind. After the tag, the wheel goes to PyPI via Trusted Publishing, and
+then the website and the kernel image go up. A dry run builds and checks all
+of it, and publishes nothing: no tag, no wheel, no site, no image, no pin.
 
 **The tag IS the version.** There is no number to edit first: `pyproject.toml`
 declares `dynamic = ["version"]` and setuptools-scm derives it from the tag, so
-`release tag v0.1.13` is the whole act of choosing 0.1.13. A tag is unique on
-the remote, which is what makes the number unclaimable twice -- whoever pushes
-it first has it, and the second person is told by `git push` rather than by a
-reviewer. The command does not pre-empt that: it pushes, and lets the remote
-answer.
+choosing `v0.1.13` on the button is the whole act of choosing 0.1.13. A tag is
+unique on the remote, which is what makes the number unclaimable twice --
+whoever pushes it first has it, and the second run is told by `git push`
+rather than by a reviewer.
 
-Two things the command does that the two hand-typed git commands did not. It
-pushes **that one tag** (`git push origin <tag>`, never `git push --tags`,
-which offers every local tag including whatever someone left behind while
-trying something out). And it refuses to tag a commit `main` does not carry --
-loudly, naming the commit, the branch and `main`'s head -- because the workflow
-publishes whatever the tag points at, so a tag on a feature branch would go to
-PyPI without complaint. There is no flag to switch that off; `git tag && git
-push origin <tag>` still works and is the deliberate way round it.
+**The commit has to be one `main` carries.** `release tag` refuses anything
+else, and there is no second route: the workflow starts from the button and
+from nothing else, so a hand-pushed tag releases nothing. A hotfix merges
+first.
 
-If the push is refused, the tag stays cut locally and the message says so.
-Re-running the command pushes it again rather than reading "tag already exists"
-as a release that already happened.
+**A publish that fails after the tag is finished, not repeated.** Rerun the
+failed job. Never cut a second tag for the same release.
 
-**Spell the tag the way the workflow reads it.** `release tag 0.1.14` -- no
-`v` -- cuts the tag, pushes it, verifies origin has it and reports success,
-because all four happened. What does not happen is a release: `tags: ["v*"]`
-never sees it. Nothing fails and nothing warns, which is why the command
-reports only that the tag is on origin and never claims what a workflow will
-do with it. It cannot read your triggers, so it does not pretend to.
+**A push to `main` publishes nothing.** The PyPI release and the website
+are both published by the release run. A merged documentation fix appears when
+the next release is cut, and not before.
 
-**A push to `main` publishes nothing.** Both the PyPI release and the website
-hang off the `v*` tag. A merged documentation fix appears when the next release
-is cut, and not before.
+The release run no longer archives its test report; `ci.yml` still archives
+the report for the same commit (si#509).
 
 The full story, including what the guard deliberately does not check, is on the
 site: <https://marcozwyssig.github.io/simplon/how/releasing/>.

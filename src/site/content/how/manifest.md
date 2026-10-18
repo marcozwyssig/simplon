@@ -244,12 +244,13 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
 
 `release all` **states** the release - its members, its bundle and their one safe order, checked at load -
 and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](#passes-what-an-aggregate-hands-its-leaves)
-it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to all three members.
-`push-image` needs it as much as the other two: without a tag it publishes under `git describe`, which
-before the tag exists is `v0.31.0-N-g<sha>`. simplon itself still releases with `./simplon.sh release tag vX`,
-and that tag push is what triggers release.yml, which builds, tests and publishes the image after the tag exists.
-That is the opposite of the order `all` states, so a failed publish leaves the tag behind. Changing that is open
-(si#344).
+it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to every member that
+takes one. simplon's own `release.yml` is the first workflow derived from such an aggregate (si#491):
+`release: release all` makes it the dispatch release, whose job runs the test leaves, the notes and the
+tag in this order, so a red test leaves no tag behind. Typed in a checkout, `release all` still ends by
+pushing the tag - and for simplon nothing then publishes it, because only the button does; if `main`
+moves before the button is pressed, that version is refused there as taken. PyPI, the site and the image publish in product
+jobs after it, and a publish that fails there is finished by rerunning that job.
 
 ## Refining a platform command, and replacing one
 

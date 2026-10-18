@@ -162,6 +162,27 @@ def region_guard(file: str | None = None) -> int:
           f"Move them inside the protected region (above '{_END}'), then run it again.", file=sys.stderr)
     return 1
 
+#: Every version simplon has released is spelled this way (src/tests/test_own_release_version.py holds the
+#: population), and the button is the first route on which a different spelling would publish.
+_RELEASE_VERSION = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def release_version(tag: str = "") -> int:
+    """Refuse a release version not spelled `vX.Y.Z`, before anything is cut: `release all`'s first member.
+
+    The final review of si#491 measured `0.99.0` on the button passing the cut, the stamping check, the
+    notes guard and the wheel check - a public tag and a PyPI number that could never be re-used. The old
+    tag-push route ignored such a tag (`tags: ["v*"]`); nothing on the dispatch route does. This is
+    simplon's guard until the kernel's `release:check` (si#487) has one, and then it goes.
+    """
+    if _RELEASE_VERSION.fullmatch(tag):
+        return 0
+    print(f"release version: {tag!r} is not a release version - simplon's are spelled vX.Y.Z (e.g. v0.34.0), "
+          f"exactly as the tag will be. Nothing was cut; start the release again with that spelling.",
+          file=sys.stderr)
+    return 1
+
+
 # The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each
 # planned command's dotted identity through it.
 _MANIFEST = paths.CONTEXT.manifest()

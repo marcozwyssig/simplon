@@ -371,6 +371,7 @@ def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
     built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
     published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
     assert built < published
+    assert job["steps"][published]["if"] == "${{ !inputs.dry_run }}"  # si#491: a rehearsal pushes nothing
     assert "release push-image" not in ci_steps and "release push-image" not in ci_text
 
 

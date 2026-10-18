@@ -121,18 +121,12 @@ $ git tag v1.4.0 && git push origin v1.4.0
 That is the escape hatch, and it is a better one than an option would be. A person typing raw git has
 decided something. A `--force` flag gets set once, in a script, and is never looked at again.
 
-**It is not a secret, though.** A hand-pushed tag still triggers the release workflow - the trigger has
-no branch filter - so the workflow asks the same question and *reports* the answer in the run log and
-the run summary:
-
-```text
-::warning::v1.4.0 was cut from 1b3d99e, which origin/main (228f9e7) does not carry. This release is
-going out anyway - 'release tag' refuses this case, so the tag was pushed by hand.
-```
-
-It reports and never blocks, and it runs before the publish step. That ordering is the point: a tag
-cannot be taken back, but a publication can still be stopped by whoever is watching. An exception that
-nobody ever hears about is not a loud exception - it is an unnoticed one.
+**In a repository whose release starts from the button, there is no such hatch.** simplon's own
+`release.yml` is derived from `release: release all` (si#491) and starts from `workflow_dispatch` and
+nothing else, so a hand-pushed tag releases nothing, and the cut is `release tag` itself, inside the
+run. The guard is then a refusal rather than a choice: a hotfix merges first. Until si#491 that same
+workflow triggered on any `v*` tag and only *reported* an off-`main` one in its log; the report went
+with the trigger, because nothing is left for it to report.
 
 ## If the push is refused
 
@@ -215,14 +209,17 @@ command asks the remote - `ls-remote`, which keeps no local cache - before it re
 
 This is the one that costs people an afternoon, so it gets its own heading.
 
-In this repository - and in any product set up the same way - the PyPI release, the documentation
-website **and** the kernel's container image all hang off the `v*` tag:
+In a product whose release workflow triggers on a tag, the PyPI release, the documentation website
+**and** the container image all hang off the `v*` tag:
 
 ```yaml
 on:
   push:
     tags: ["v*"]
 ```
+
+In this repository they hang off the release run instead - the button, which cuts the tag itself - and
+the consequence below is the same.
 
 Merging to `main` runs the CI workflow. It does **not** publish the package, and it does **not**
 republish this website. If you edit a page, merge it, and then refresh the site expecting to see the
@@ -257,8 +254,8 @@ So before you type a version whose **minor** changes, read `simplon.cli.surface`
 * `MOVED_DUE_AFTER` — the release they were promised to survive.
 
 The kernel's own test suite goes red once a version past that pair is built, and `release.yml` runs the
-suite *after* the tag and *before* the upload — so a minor that still carries tombstones costs a tag
-number and publishes nothing. That is the backstop, not the plan: it fires at the last possible moment,
+suite *before* the tag (si#491) — so a minor that still carries tombstones costs a red run, and neither a
+tag number nor a publication. That is the backstop, not the plan: it fires at the last possible moment,
 because the version cannot know what you are about to type. This heading is the first one.
 
 {{< callout type="info" >}}
@@ -342,5 +339,8 @@ A publishing task that forgot the field would run on a rehearsal, which is why t
 release tasks are held to it by a test.
 
 `release:check` (si#487) will refuse a malformed version or a commit `main` does not carry *before*
-anything is built. Until it lands, those runs go red at the notes or at the stamping check instead, and
-nothing has been published yet when they do.
+anything is built. Until it lands, an off-`main` commit goes red at `release tag`, before the tag is
+pushed - but **a malformed version is not caught by anything the kernel derives**. Measured on simplon
+(si#491): `0.99.0`, without the `v`, passed the cut, the stamping check and the notes guard, and would have
+published. A product that cannot accept that puts its own check first in the aggregate, as simplon does
+with `release version`.

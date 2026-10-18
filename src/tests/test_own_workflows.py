@@ -101,32 +101,15 @@ def test_the_gate_is_ruling_on_something():
 # --- the two decisions this repository made, stated as assertions ------------------------------------------
 
 
-def test_the_ci_workflow_is_the_generated_one():
-    """si#40's own house. simplon builds and tests itself with the kernel it ships, and now it generates
-    its pipeline with it too."""
+def test_both_workflows_are_generated():
+    """si#40's own house. simplon builds and tests itself with the kernel it ships, and generates its
+    pipelines with it too - the release since si#491, which retired the hand-written file and its reason
+    (two shell scripts and two-thirds prose) by deriving the release job from `release all`."""
     # Arrange / Act
     generated = [w.path for w in _declared() if w.generated]
 
     # Assert
-    assert generated == [".github/workflows/ci.yml"]
-
-
-def test_the_release_workflow_is_declared_hand_written_with_its_reason():
-    """A DECISION, and si#40 asked for exactly this to be an explained possibility rather than an
-    emergency exit.
-
-    The generator carries comments, so prose is not what keeps release.yml out. What keeps it out is that
-    it is roughly two-thirds reasoning and carries two multi-line shell scripts - the on-main report of
-    si#23 and the wheel-is-the-tag check of si#3 - and declaring those would move that work rather than
-    remove it. It stays hand-written and it stays NAMED, which is the difference between a decision and
-    a gap.
-    """
-    # Arrange / Act
-    declined = [w for w in _declared() if not w.generated]
-
-    # Assert
-    assert [w.path for w in declined] == [".github/workflows/release.yml"]
-    assert declined[0].handwritten.strip(), "a decline with no reason is indistinguishable from neglect"
+    assert generated == [".github/workflows/ci.yml", ".github/workflows/release.yml"]
 
 
 def test_the_generated_workflow_carries_the_prose_it_was_written_with():
