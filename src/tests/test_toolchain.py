@@ -369,3 +369,234 @@ def test_every_container_name_is_fresh_and_one_docker_accepts():
     # assert: unique per invocation, and only the characters docker allows in a name
     assert len(names) == 50
     assert all(re.fullmatch(r"simplon-my-product-x-[0-9a-f]{12}", n) for n in names), names
+
+
+# --- si#511: `mounts:` - a tree path bind-mounted over a container path ---------------------------------
+
+
+def _line(cfg):
+    return toolchain.docker_argv(cfg, root=Path("/repo"), product="biz", instance="dev", extra=[])
+
+
+def test_no_mounts_leaves_the_line_byte_for_byte(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+
+    # act / assert
+    assert _line(_cfg()) == _line(_cfg(mounts=[]))
+    assert _line(_cfg()).count("-v") == 1
+
+
+def test_a_mount_sits_after_the_caches_and_before_the_image(monkeypatch):
+    # arrange
+    from simplon.adapters import hostpath
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+    cfg = _cfg(caches=[{"volume": "npm", "path": "/root/.npm"}],
+               mounts=["build/nm:/work/src/frontend/node_modules"])
+
+    # act
+    line = _line(cfg)
+
+    # assert
+    value = f"{hostpath.translate(Path('/repo') / 'build/nm')}:/work/src/frontend/node_modules"
+    assert line.index("biz-npm-dev:/root/.npm") < line.index(value) < line.index(cfg.image)
+    assert line[line.index(value) - 1] == "-v"
+
+
+def test_a_readonly_mount_keeps_ro(monkeypatch):
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    assert any(arg.endswith(":/data:ro") for arg in _line(_cfg(mounts=["fixtures:/data:ro"])))
+
+
+@pytest.mark.parametrize("entry", ["nocolon", "src:rel", "/abs:/x", "../sib:/x", "src\\nm:/x", "src:/x:rw",
+                                   "src:/work", "src:/work/", "src:/", "src:/work/a/.."])
+def test_a_bad_mount_is_refused_by_name(monkeypatch, entry):
+    # arrange
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=[entry])
+    assert "build.compile" in str(e.value) and entry in str(e.value)
+
+
+def test_two_mounts_on_one_target_are_refused(monkeypatch):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=["a:/x", "b:/x/"])
+    assert "/x" in str(e.value)
+
+
+@pytest.mark.parametrize("raw", ["a:/b", [{"a": 1}], [3]])
+def test_mounts_must_be_a_list_of_strings(monkeypatch, raw):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=raw)
+    assert "mounts" in str(e.value)
+
+
+def test_a_toolchain_built_positionally_still_means_what_it_did():
+    cfg = toolchain.Toolchain("img:1", ["x"], "/work", {}, [], "")
+    assert cfg.mounts == [] and cfg.cwd == ""
+
+
+def test_a_mount_over_the_tree_says_so_in_these_words(monkeypatch):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=["src:/work"])
+    assert str(e.value) == ("build.compile: mount 'src:/work' would cover /work, the tree this command runs "
+                            "in; mount over a path below it instead")
+
+
+# --- si#511: the mount points exist before the run, owned by the caller --------------------------------
+
+
+def _mounted(*entries):
+    return _cfg(mounts=list(entries))
+
+
+def test_the_source_and_the_inner_target_are_created_before_the_run(tmp_path):
+    # act
+    fault = toolchain.prepare_mounts(_mounted("build/nm:/work/src/frontend/node_modules"), tmp_path, "b.g")
+
+    # assert: both exist, and both are the caller's - docker would have made them root's
+    import os
+    assert fault == ""
+    for made in (tmp_path / "build/nm", tmp_path / "src/frontend/node_modules"):
+        assert made.is_dir() and made.stat().st_uid == os.getuid()
+
+
+def test_a_target_outside_the_workdir_creates_nothing_on_the_host(tmp_path):
+    assert toolchain.prepare_mounts(_mounted("build/nm:/cache/nm"), tmp_path, "b.g") == ""
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["build"]
+
+
+def test_a_source_that_is_a_file_is_refused(tmp_path):
+    # arrange
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build/nm").write_text("x", encoding="utf-8")
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted("build/nm:/work/src/nm"), tmp_path, "b.g")
+
+    # assert: named, and nothing was made for the other half either
+    assert "b.g" in fault and "build/nm" in fault and "not a directory" in fault
+    assert not (tmp_path / "src").exists()
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="handing a directory to another uid takes root")
+def test_a_path_owned_by_someone_else_is_refused_before_any_mkdir(tmp_path):
+    # arrange: the target's nearest existing ancestor belongs to uid 4242
+    import os
+    (tmp_path / "src").mkdir()
+    os.chown(tmp_path / "src", 4242, 4242)
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted("x:/work/src/frontend/node_modules"), tmp_path, "b.g")
+
+    # assert: refused in words, and the source was NOT made first - the check comes before any mkdir
+    assert fault == ("b.g: mount 'x:/work/src/frontend/node_modules' needs src owned by uid 0; it is owned "
+                     "by uid 4242. Remove it or chown it (it takes a root shell), then run this again.")
+    assert not (tmp_path / "x").exists()
+
+
+def test_invocation_returns_none_on_a_mount_fault(monkeypatch, tmp_path):
+    # arrange
+    from simplon.manifest import context
+    (tmp_path / "biz.yaml").write_text("groups: {}\n", encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext("biz", tmp_path, tmp_path / "biz.yaml"))
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build/nm").write_text("x", encoding="utf-8")
+    errors = []
+    monkeypatch.setattr(toolchain.log, "error", errors.append)
+
+    # act
+    got = toolchain.invocation("biz gate", image="gradle:jdk25", argv=["x"], workdir="/work", env=None,
+                               caches=None, network=None, cwd=None, extra=[], mounts=["build/nm:/work/nm"])
+
+    # assert
+    assert got is None and errors and "build/nm" in errors[0]
+
+
+# --- si#511 final review: every refusal is a diagnosis, and nothing is made outside the tree ----------
+
+
+def _tree_and_outside(tmp_path):
+    tree, outside = tmp_path / "tree", tmp_path / "outside"
+    tree.mkdir()
+    outside.mkdir()
+    return tree, outside
+
+
+def test_a_symlinked_source_out_of_the_tree_is_a_diagnosis_through_invocation(monkeypatch, tmp_path):
+    # arrange
+    from simplon.manifest import context
+    tree, outside = _tree_and_outside(tmp_path)
+    (tree / "biz.yaml").write_text("groups: {}\n", encoding="utf-8")
+    (tree / "lnk").symlink_to(outside)
+    monkeypatch.setattr(context, "_current", context.ProductContext("biz", tree, tree / "biz.yaml"))
+    errors = []
+    monkeypatch.setattr(toolchain.log, "error", errors.append)
+
+    # act
+    got = toolchain.invocation("biz gate", image="gradle:jdk25", argv=["x"], workdir="/work", env=None,
+                               caches=None, network=None, cwd=None, extra=[], mounts=["lnk/x:/work/nm"])
+
+    # assert: refused in words, and nothing made through the link
+    assert got is None and "biz gate: mount 'lnk/x:/work/nm'" in errors[0] and "outside" in errors[0]
+    assert not (outside / "x").exists()
+
+
+def test_a_target_whose_place_in_the_tree_is_a_symlink_out_is_refused(tmp_path):
+    # arrange
+    tree, outside = _tree_and_outside(tmp_path)
+    (tree / "lnk").symlink_to(outside)
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted("nm:/work/lnk/newdir"), tree, "b.g")
+
+    # assert
+    assert "b.g: mount 'nm:/work/lnk/newdir'" in fault and "outside" in fault
+    assert not (outside / "newdir").exists() and not (tree / "nm").exists()
+
+
+@pytest.mark.parametrize("entry", ["f/sub:/cache/x", "nm:/work/f/sub"])
+def test_a_file_on_the_way_is_a_diagnosis_not_a_traceback(tmp_path, entry):
+    # arrange
+    (tmp_path / "f").write_text("x", encoding="utf-8")
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted(entry), tmp_path, "b.g")
+
+    # assert
+    assert f"b.g: mount '{entry}'" in fault and "not a directory" in fault
+
+
+def test_a_mkdir_the_os_refuses_is_a_diagnosis_not_a_traceback(tmp_path):
+    # arrange: an ancestor the caller owns but cannot write (root ignores the mode, so stand in for it)
+    import os
+    (tmp_path / "ro").mkdir()
+    os.chmod(tmp_path / "ro", 0o555)
+    if os.geteuid() == 0:
+        pytest.skip("root writes into a 0555 directory")
+
+    # act / assert
+    assert "b.g: mount 'ro/x:/cache/x'" in toolchain.prepare_mounts(_mounted("ro/x:/cache/x"), tmp_path, "b.g")
+
+
+@pytest.mark.parametrize("mounts, says", [
+    ([toolchain.Mount("a", "/work/../tmp/x")], ""),
+    ([toolchain.Mount("a", "/work")], "would cover /work"),
+    ([toolchain.Mount("a", "/x"), toolchain.Mount("b", "/x/")], "a second time"),
+])
+def test_the_python_route_keeps_the_manifest_rules(tmp_path, mounts, says):
+    # arrange: a Toolchain built in Python never passed through `_mounts`
+    cfg = toolchain.Toolchain("img:1", ["x"], mounts=mounts)
+
+    # act
+    fault = toolchain.prepare_mounts(cfg, tmp_path, "b.g")
+
+    # assert: a refusal where the manifest would refuse, and never a directory outside the tree
+    assert (says in fault) if says else fault == ""
+    assert not (tmp_path.parent / "tmp").exists() and not (tmp_path / "tmp").exists()

@@ -73,6 +73,7 @@ import os
 from pathlib import Path
 
 from simplon.kernel import log
+from simplon.manifest.layout import validate_relative_dir
 
 #: The ONE bind mount, stated as the pair it is: where the host directory is, and where this process sees
 #: it. Both are written by the launcher's container route and by nothing else; both absent on the venv
@@ -166,3 +167,46 @@ def translate(path: str | Path) -> str:
                 f"only directory bind-mounted from the host ({host}), so the daemon has no path for it. "
                 f"A directory a container hands to another container has to live in the mount")
     return str(Path(host).joinpath(*inside.parts))
+
+
+def mount_source(root: Path, source: str, target: str) -> Path:
+    """The host path a mount of `source` over `target` names, or `ValueError` - `mount_argv`'s rules
+    without the line, so a manifest can be checked before anything is translated or created."""
+    if not target.startswith("/"):
+        raise ValueError(f"mount target {target!r} is not an absolute path in the container")
+    if source.strip() in (".", "./"):
+        return root
+    path = root / validate_relative_dir(source, "mount source", "give a plain relative path under the "
+                                        "product root, e.g. 'build/cache/node_modules'",
+                                        inside="the product root")
+    # A plain relative spelling is not enough: `-v` follows a symlinked source ON THE HOST, so a link in
+    # the tree (`build/nm -> /etc`), as the source or as any parent of it, would mount what it points at.
+    # `resolve` follows every link that exists today and leaves the missing tail as written.
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"mount source {source!r} resolves to {path.resolve()}, outside the product root "
+                         f"{root} - a symlink in the tree leads out of it")
+    return path
+
+
+def mount_argv(root: Path, source: str, target: str, *, readonly: bool = False,
+               must_exist: bool = True) -> list[str]:
+    """`["-v", "<translated source>:<target>[:ro]"]` for one bind mount of a path under `root` (si#495,
+    si#511). The one public way to spell a bind mount this kernel's rules hold.
+
+    `source` is a plain relative path under `root`, `.` meaning `root` itself; `target` is an absolute
+    path in the container. A source that is absolute, climbs or carries a `\\`, a relative target, and -
+    with `must_exist` - a source that is not a directory under `root`, raise `ValueError`. Nothing is
+    logged and nothing exits: a caller says the refusal in its own voice (`test:image` as an error and
+    rc 1, `toolchain:run` as a diagnosis in the command's name).
+
+    IT CREATES NOTHING, so a caller assembling a line stays pure. With `-v` the daemon creates a missing
+    source itself, owned by root (measured, docker 29.9.1), so a caller that passes `must_exist=False`
+    has made the path exist first, as the calling user - `toolchain.invocation` does.
+
+    The source goes through `translate` for si#201's reason: on the container route an untranslated one
+    mounts an empty directory the daemon makes on the host, rc 0 and no message.
+    """
+    path = mount_source(root, source, target)
+    if must_exist and not path.is_dir():
+        raise ValueError(f"mount source {source!r} names {path}, which is not a directory under {root}")
+    return ["-v", f"{translate(path)}:{target}" + (":ro" if readonly else "")]

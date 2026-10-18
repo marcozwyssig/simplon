@@ -1282,6 +1282,10 @@ and where `docs acceptance` reads scenarios. **The spelling the kernel writes is
 because both were in live use and nothing had chosen. A product whose root directory is `test/` says so
 here in one line, instead of working around it in every command that touches a path.
 
+**One more path question belongs to the command, not to `layout:`.** To lay a tree directory over a path
+in the container, a `toolchain:run` command declares `mounts:`, and the kernel creates both ends as you
+first. See [the toolchain section](../../with-what/phases/) (si#511).
+
 **Nothing here is prescribed, and that is a measurement rather than a preference.** Across this family,
 six products have six layouts - one is an Eclipse plugin tree, one has no `src/` at all. A kernel that
 stated one layout and held products to it would refuse five of the six. So this section lets a product

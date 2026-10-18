@@ -240,3 +240,55 @@ def test_the_container_is_recognised_by_the_file_its_runtime_writes(monkeypatch,
 
     # act / assert
     assert hostpath.in_a_container() is expected
+
+
+# --- si#495/si#511: one public bind-mount helper -------------------------------------------------------
+
+
+def test_mount_argv_spells_one_translated_bind(tmp_path):
+    (tmp_path / "a").mkdir()
+    assert hostpath.mount_argv(tmp_path, "a", "/x") == ["-v", f"{hostpath.translate(tmp_path / 'a')}:/x"]
+
+
+def test_mount_argv_keeps_readonly(tmp_path):
+    (tmp_path / "a").mkdir()
+    assert hostpath.mount_argv(tmp_path, "a", "/x", readonly=True)[1].endswith(":/x:ro")
+
+
+def test_mount_argv_allows_the_root_as_dot(tmp_path):
+    assert hostpath.mount_argv(tmp_path, ".", "/x") == ["-v", f"{hostpath.translate(tmp_path)}:/x"]
+
+
+@pytest.mark.parametrize("source", ["/etc", "../sib", "a/../../x", "a\\b"])
+def test_mount_argv_refuses_what_leaves_the_tree(tmp_path, source):
+    with pytest.raises(ValueError):
+        hostpath.mount_argv(tmp_path, source, "/x", must_exist=False)
+
+
+def test_mount_argv_refuses_a_relative_target(tmp_path):
+    (tmp_path / "a").mkdir()
+    with pytest.raises(ValueError):
+        hostpath.mount_argv(tmp_path, "a", "x")
+
+
+def test_mount_argv_refuses_a_missing_source_only_when_asked(tmp_path):
+    with pytest.raises(ValueError):
+        hostpath.mount_argv(tmp_path, "nope", "/x")
+    assert hostpath.mount_argv(tmp_path, "nope", "/x", must_exist=False)[1].endswith("nope:/x")
+
+
+def test_mount_source_refuses_a_symlink_that_leaves_the_tree(tmp_path):
+    # arrange: `-v` follows a symlinked source on the HOST, so `build/nm -> /etc` would mount /etc
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "nm").symlink_to("/etc")
+
+    # act / assert: refused whether the link is the source or a parent of it
+    for source in ("build/nm", "build/nm/sub"):
+        with pytest.raises(ValueError, match="outside"):
+            hostpath.mount_source(tmp_path, source, "/x")
+
+
+def test_mount_source_allows_a_symlink_that_stays_in_the_tree(tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    assert hostpath.mount_source(tmp_path, "link", "/x") == tmp_path / "link"

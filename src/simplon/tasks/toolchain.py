@@ -62,6 +62,15 @@ class Cache:
 
 
 @dataclass(frozen=True)
+class Mount:
+    """A path under the product tree bind-mounted over a path in the container (si#511)."""
+
+    source: str
+    target: str
+    readonly: bool = False
+
+
+@dataclass(frozen=True)
 class Toolchain:
     """One command's containerised toolchain, as the manifest declares it."""
 
@@ -71,6 +80,8 @@ class Toolchain:
     env: dict[str, str] = field(default_factory=dict)
     caches: list[Cache] = field(default_factory=list)
     cwd: str = ""
+    # LAST, so a product that builds a Toolchain positionally (biz-cockpit does) keeps its meaning.
+    mounts: list[Mount] = field(default_factory=list)
 
 
 def declared(body: Mapping[str, object], where: str) -> Toolchain:
@@ -90,13 +101,15 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
     if not isinstance(argv, Sequence) or isinstance(argv, str) or not argv:
         log.die(f"{where}: no `argv:` - a toolchain command names what to run inside the image")
         raise SystemExit(1)
+    workdir = str(body.get("workdir", "/work"))
     return Toolchain(
         image=_pinned(image, where),
         cwd=_cwd(body.get("cwd"), where),
         argv=[str(a) for a in argv],
-        workdir=str(body.get("workdir", "/work")),
+        workdir=workdir,
         env=_env(body.get("env"), where),
         caches=_caches(body.get("caches"), where),
+        mounts=_mounts(body.get("mounts"), where, workdir),
     )
 
 
@@ -135,6 +148,11 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     volumes: list[str] = []
     for cache in cfg.caches:
         volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
+    # si#511: AFTER the caches and, like every flag, before the image - after it docker would hand the
+    # flag to the tool as an argument. The points already exist: `invocation` made them, as the caller.
+    for mount in cfg.mounts:
+        volumes += hostpath.mount_argv(root, mount.source, posixpath.normpath(mount.target), readonly=mount.readonly,
+                                       must_exist=False)
     env: list[str] = []
     for key, value in cfg.env.items():
         env += ["-e", f"{key}={value}"]
@@ -163,7 +181,8 @@ def _start_in(cfg: Toolchain, build_root: str) -> str:
 def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = None,
                   workdir: str = "/work", env: dict[str, str] | None = None,
                   caches: list[dict[str, str]] | None = None, network: str | None = None,
-                  cwd: str | None = None, extra: list[str] | None = None) -> int:
+                  cwd: str | None = None, mounts: list[str] | None = None,
+                  extra: list[str] | None = None) -> int:
     """Run one toolchain invocation. Thin: `declared` decides what is legal, `docker_argv` decides the line.
 
     THE PARAMETERS ARE THE MANIFEST'S KEYS, one for one, and that is a correction rather than a style
@@ -216,14 +235,15 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     """
     where = ctx.command_path or "toolchain:run"
     got = invocation(where, image=image, argv=argv, workdir=workdir, env=env, caches=caches,
-                     network=network, cwd=cwd, extra=list(extra or []))
+                     network=network, cwd=cwd, mounts=mounts, extra=list(extra or []))
     if got is None:
         return 1
     return docker.run_container(*got).rc
 
 
 def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, env: object, caches: object,
-               network: str | None, cwd: str | None, extra: list[str]) -> tuple[list[str], str] | None:
+               network: str | None, cwd: str | None, extra: list[str],
+               mounts: object = None) -> tuple[list[str], str] | None:
     """The `docker run` line for one toolchain invocation and its container's name, or None when the
     output tree is not the caller's (the fault is logged). Shared by `run_toolchain` and `firngen.generate`
     (si#400 4b), which needs the same line and firn's stdout back."""
@@ -233,7 +253,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     # length 1` - a traceback where the module head promises a diagnosis. `_env` and `_caches` take
     # `object` for exactly this reason, None included.
     cfg = declared({"image": image, "argv": argv, "workdir": workdir,
-                    "env": env, "caches": caches, "cwd": cwd}, where)
+                    "env": env, "caches": caches, "cwd": cwd, "mounts": mounts}, where)
     product = context.current()
     # The instance is resolved WHERE it is needed and not one line earlier (si#105): it is read from the
     # product's `instance:` section, `simplon init` writes no such section, and resolving it up front
@@ -256,7 +276,9 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     # repository before every containerised command costs more than it buys. Bringing that state under
     # the home this function now provides is what brings it into the check.
     outputs.ensure_home()
-    fault = docker.ownership_fault([outputs.root()], product.root)
+    # si#511, for the same reason and in the same place: a mount point docker has to create is created
+    # root-owned, so the kernel makes every one first, as the caller - or refuses before making any.
+    fault = prepare_mounts(cfg, product.root, where) or docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
         return None
@@ -323,6 +345,113 @@ def _caches(raw: object, where: str) -> list[Cache]:
             raise SystemExit(1)
         out.append(Cache(volume=str(entry["volume"]), path=str(entry["path"])))
     return out
+
+
+_MOUNT_FORM = "`<path under the tree>:<absolute path in the container>`, optionally followed by `:ro`"
+
+
+def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
+    """`mounts:` as Mount values, or a refusal naming the entry (si#511). Run time, like `_caches`.
+
+    A target that IS the workdir or one of its ancestors is refused: it would mount over the tree the
+    command runs in. Two entries on one target are refused here rather than by docker, which says
+    `Duplicate mount point` only after `invocation` has made the directories.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, Sequence) or isinstance(raw, str):
+        log.die(f"{where}: `mounts:` must be a list of {_MOUNT_FORM} strings, got {raw!r}")
+        raise SystemExit(1)
+    out: list[Mount] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            log.die(f"{where}: a `mounts:` entry must be a string {_MOUNT_FORM}, got {entry!r}")
+            raise SystemExit(1)
+        parts = entry.split(":")
+        readonly = len(parts) == 3 and parts[2] == "ro"
+        if len(parts) not in (2, 3) or (len(parts) == 3 and not readonly):
+            log.die(f"{where}: mount '{entry}' is not {_MOUNT_FORM}")
+            raise SystemExit(1)
+        source, target = parts[0], parts[1]
+        try:
+            hostpath.mount_source(Path("/"), source, target)
+        except ValueError as refused:
+            log.die(f"{where}: mount '{entry}': {refused}")
+            raise SystemExit(1)
+        out.append(Mount(source=source, target=target, readonly=readonly))
+    fault = _placement_fault(out, where, workdir)
+    if fault:
+        log.die(fault)
+        raise SystemExit(1)
+    return out
+
+
+def _entry(mount: Mount) -> str:
+    return f"{mount.source}:{mount.target}" + (":ro" if mount.readonly else "")
+
+
+def _placement_fault(mounts: Sequence[Mount], where: str, workdir: str) -> str:
+    """Where the mounts land, ruled on: none may cover the tree, and no two may share a target. Shared by
+    `_mounts` and `prepare_mounts`, so a Toolchain built in Python is held to what a manifest is."""
+    tree = posixpath.normpath(workdir)
+    seen: set[str] = set()
+    for mount in mounts:
+        normal = posixpath.normpath(mount.target)
+        if normal == tree or tree.startswith(normal.rstrip("/") + "/"):
+            return (f"{where}: mount '{_entry(mount)}' would cover {workdir}, the tree this command runs in; "
+                    f"mount over a path below it instead")
+        if normal in seen:
+            return f"{where}: mount '{_entry(mount)}' names {normal} a second time; one path, one mount"
+        seen.add(normal)
+    return ""
+
+
+def prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
+    """Make every mount's source, and its target's host counterpart when the target lies in the tree
+    mount, exist as directories the caller owns - or return why not, having made nothing (si#511).
+
+    Measured with docker 29.9.1 and `--user 4242:4242`: `-v` creates a missing source `root:root 755`,
+    so the container cannot write into it, and a missing target nested in the tree mount is left on the
+    host root-owned too, where the next host-side `npm install` meets it. So this runs BEFORE the line.
+
+    SHALLOW, unlike `docker.ownership_fault`: the path itself, or its nearest existing ancestor when it
+    is missing, must be the caller's. Walking a mounted `node_modules` would be tens of thousands of
+    stat calls before every run, and that function's message calls the tree a build output, which a
+    mount source need not be. Every check runs before the first `mkdir`, so a refusal leaves no half.
+    """
+    fault = _placement_fault(cfg.mounts, where, cfg.workdir)
+    if fault:
+        return fault
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    tree = posixpath.normpath(cfg.workdir)
+    wanted: list[tuple[str, Path]] = []
+    for mount in cfg.mounts:
+        entry, target = _entry(mount), posixpath.normpath(mount.target)
+        # Both halves through `mount_source`, so a symlink in the tree that leads out of it - as the
+        # source, or where the target lands in the tree - is refused before `mkdir` could follow it.
+        try:
+            wanted.append((entry, hostpath.mount_source(root, mount.source, target)))
+            if target.startswith(tree.rstrip("/") + "/"):
+                wanted.append((entry, hostpath.mount_source(root, posixpath.relpath(target, tree), "/")))
+        except ValueError as refused:
+            return f"{where}: mount '{entry}': {refused}"
+    for entry, path in wanted:
+        held = path
+        while not held.exists() and held != root and held.parent != held:
+            held = held.parent
+        shown = held.relative_to(root).as_posix() if held != root else "."
+        if held.exists() and not held.is_dir():
+            return (f"{where}: mount '{entry}' runs through {shown}, which is not a directory; remove it or "
+                    f"mount another path")
+        if uid is not None and held.exists() and held.stat().st_uid != uid:
+            return (f"{where}: mount '{entry}' needs {shown} owned by uid {uid}; it is owned by uid "
+                    f"{held.stat().st_uid}. Remove it or chown it (it takes a root shell), then run this again.")
+    for entry, path in wanted:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as failed:
+            return f"{where}: mount '{entry}' could not be made: {failed}"
+    return ""
 
 
 def _manifest_path() -> Path:
