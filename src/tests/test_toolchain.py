@@ -517,3 +517,86 @@ def test_invocation_returns_none_on_a_mount_fault(monkeypatch, tmp_path):
 
     # assert
     assert got is None and errors and "build/nm" in errors[0]
+
+
+# --- si#511 final review: every refusal is a diagnosis, and nothing is made outside the tree ----------
+
+
+def _tree_and_outside(tmp_path):
+    tree, outside = tmp_path / "tree", tmp_path / "outside"
+    tree.mkdir()
+    outside.mkdir()
+    return tree, outside
+
+
+def test_a_symlinked_source_out_of_the_tree_is_a_diagnosis_through_invocation(monkeypatch, tmp_path):
+    # arrange
+    from simplon.manifest import context
+    tree, outside = _tree_and_outside(tmp_path)
+    (tree / "biz.yaml").write_text("groups: {}\n", encoding="utf-8")
+    (tree / "lnk").symlink_to(outside)
+    monkeypatch.setattr(context, "_current", context.ProductContext("biz", tree, tree / "biz.yaml"))
+    errors = []
+    monkeypatch.setattr(toolchain.log, "error", errors.append)
+
+    # act
+    got = toolchain.invocation("biz gate", image="gradle:jdk25", argv=["x"], workdir="/work", env=None,
+                               caches=None, network=None, cwd=None, extra=[], mounts=["lnk/x:/work/nm"])
+
+    # assert: refused in words, and nothing made through the link
+    assert got is None and "biz gate: mount 'lnk/x:/work/nm'" in errors[0] and "outside" in errors[0]
+    assert not (outside / "x").exists()
+
+
+def test_a_target_whose_place_in_the_tree_is_a_symlink_out_is_refused(tmp_path):
+    # arrange
+    tree, outside = _tree_and_outside(tmp_path)
+    (tree / "lnk").symlink_to(outside)
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted("nm:/work/lnk/newdir"), tree, "b.g")
+
+    # assert
+    assert "b.g: mount 'nm:/work/lnk/newdir'" in fault and "outside" in fault
+    assert not (outside / "newdir").exists() and not (tree / "nm").exists()
+
+
+@pytest.mark.parametrize("entry", ["f/sub:/cache/x", "nm:/work/f/sub"])
+def test_a_file_on_the_way_is_a_diagnosis_not_a_traceback(tmp_path, entry):
+    # arrange
+    (tmp_path / "f").write_text("x", encoding="utf-8")
+
+    # act
+    fault = toolchain.prepare_mounts(_mounted(entry), tmp_path, "b.g")
+
+    # assert
+    assert f"b.g: mount '{entry}'" in fault and "not a directory" in fault
+
+
+def test_a_mkdir_the_os_refuses_is_a_diagnosis_not_a_traceback(tmp_path):
+    # arrange: an ancestor the caller owns but cannot write (root ignores the mode, so stand in for it)
+    import os
+    (tmp_path / "ro").mkdir()
+    os.chmod(tmp_path / "ro", 0o555)
+    if os.geteuid() == 0:
+        pytest.skip("root writes into a 0555 directory")
+
+    # act / assert
+    assert "b.g: mount 'ro/x:/cache/x'" in toolchain.prepare_mounts(_mounted("ro/x:/cache/x"), tmp_path, "b.g")
+
+
+@pytest.mark.parametrize("mounts, says", [
+    ([toolchain.Mount("a", "/work/../tmp/x")], ""),
+    ([toolchain.Mount("a", "/work")], "would cover /work"),
+    ([toolchain.Mount("a", "/x"), toolchain.Mount("b", "/x/")], "a second time"),
+])
+def test_the_python_route_keeps_the_manifest_rules(tmp_path, mounts, says):
+    # arrange: a Toolchain built in Python never passed through `_mounts`
+    cfg = toolchain.Toolchain("img:1", ["x"], mounts=mounts)
+
+    # act
+    fault = toolchain.prepare_mounts(cfg, tmp_path, "b.g")
+
+    # assert: a refusal where the manifest would refuse, and never a directory outside the tree
+    assert (says in fault) if says else fault == ""
+    assert not (tmp_path.parent / "tmp").exists() and not (tmp_path / "tmp").exists()

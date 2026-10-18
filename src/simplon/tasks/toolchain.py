@@ -151,7 +151,7 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     # si#511: AFTER the caches and, like every flag, before the image - after it docker would hand the
     # flag to the tool as an argument. The points already exist: `invocation` made them, as the caller.
     for mount in cfg.mounts:
-        volumes += hostpath.mount_argv(root, mount.source, mount.target, readonly=mount.readonly,
+        volumes += hostpath.mount_argv(root, mount.source, posixpath.normpath(mount.target), readonly=mount.readonly,
                                        must_exist=False)
     env: list[str] = []
     for key, value in cfg.env.items():
@@ -362,9 +362,7 @@ def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
     if not isinstance(raw, Sequence) or isinstance(raw, str):
         log.die(f"{where}: `mounts:` must be a list of {_MOUNT_FORM} strings, got {raw!r}")
         raise SystemExit(1)
-    tree = posixpath.normpath(workdir)
     out: list[Mount] = []
-    seen: set[str] = set()
     for entry in raw:
         if not isinstance(entry, str):
             log.die(f"{where}: a `mounts:` entry must be a string {_MOUNT_FORM}, got {entry!r}")
@@ -380,17 +378,32 @@ def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
         except ValueError as refused:
             log.die(f"{where}: mount '{entry}': {refused}")
             raise SystemExit(1)
-        normal = posixpath.normpath(target)
-        if normal == tree or tree.startswith(normal.rstrip("/") + "/"):
-            log.die(f"{where}: mount '{entry}' would cover {workdir}, the tree this command runs in; mount "
-                    f"over a path below it instead")
-            raise SystemExit(1)
-        if normal in seen:
-            log.die(f"{where}: mount '{entry}' names {normal} a second time; one path, one mount")
-            raise SystemExit(1)
-        seen.add(normal)
-        out.append(Mount(source=source, target=normal, readonly=readonly))
+        out.append(Mount(source=source, target=target, readonly=readonly))
+    fault = _placement_fault(out, where, workdir)
+    if fault:
+        log.die(fault)
+        raise SystemExit(1)
     return out
+
+
+def _entry(mount: Mount) -> str:
+    return f"{mount.source}:{mount.target}" + (":ro" if mount.readonly else "")
+
+
+def _placement_fault(mounts: Sequence[Mount], where: str, workdir: str) -> str:
+    """Where the mounts land, ruled on: none may cover the tree, and no two may share a target. Shared by
+    `_mounts` and `prepare_mounts`, so a Toolchain built in Python is held to what a manifest is."""
+    tree = posixpath.normpath(workdir)
+    seen: set[str] = set()
+    for mount in mounts:
+        normal = posixpath.normpath(mount.target)
+        if normal == tree or tree.startswith(normal.rstrip("/") + "/"):
+            return (f"{where}: mount '{_entry(mount)}' would cover {workdir}, the tree this command runs in; "
+                    f"mount over a path below it instead")
+        if normal in seen:
+            return f"{where}: mount '{_entry(mount)}' names {normal} a second time; one path, one mount"
+        seen.add(normal)
+    return ""
 
 
 def prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
@@ -406,27 +419,38 @@ def prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
     stat calls before every run, and that function's message calls the tree a build output, which a
     mount source need not be. Every check runs before the first `mkdir`, so a refusal leaves no half.
     """
+    fault = _placement_fault(cfg.mounts, where, cfg.workdir)
+    if fault:
+        return fault
     uid = os.getuid() if hasattr(os, "getuid") else None
     tree = posixpath.normpath(cfg.workdir)
     wanted: list[tuple[str, Path]] = []
     for mount in cfg.mounts:
-        entry = f"{mount.source}:{mount.target}" + (":ro" if mount.readonly else "")
-        wanted.append((entry, hostpath.mount_source(root, mount.source, mount.target)))
-        if mount.target.startswith(tree.rstrip("/") + "/"):
-            wanted.append((entry, root / posixpath.relpath(mount.target, tree)))
+        entry, target = _entry(mount), posixpath.normpath(mount.target)
+        # Both halves through `mount_source`, so a symlink in the tree that leads out of it - as the
+        # source, or where the target lands in the tree - is refused before `mkdir` could follow it.
+        try:
+            wanted.append((entry, hostpath.mount_source(root, mount.source, target)))
+            if target.startswith(tree.rstrip("/") + "/"):
+                wanted.append((entry, hostpath.mount_source(root, posixpath.relpath(target, tree), "/")))
+        except ValueError as refused:
+            return f"{where}: mount '{entry}': {refused}"
     for entry, path in wanted:
-        rel = path.relative_to(root).as_posix() if path != root else "."
-        if path.exists() and not path.is_dir():
-            return f"{where}: mount '{entry}' names {rel}, which is not a directory; remove it or mount another path"
         held = path
         while not held.exists() and held != root and held.parent != held:
             held = held.parent
+        shown = held.relative_to(root).as_posix() if held != root else "."
+        if held.exists() and not held.is_dir():
+            return (f"{where}: mount '{entry}' runs through {shown}, which is not a directory; remove it or "
+                    f"mount another path")
         if uid is not None and held.exists() and held.stat().st_uid != uid:
-            shown = held.relative_to(root).as_posix() if held != root else "."
             return (f"{where}: mount '{entry}' needs {shown} owned by uid {uid}; it is owned by uid "
                     f"{held.stat().st_uid}. Remove it or chown it (it takes a root shell), then run this again.")
-    for _, path in wanted:
-        path.mkdir(parents=True, exist_ok=True)
+    for entry, path in wanted:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as failed:
+            return f"{where}: mount '{entry}' could not be made: {failed}"
     return ""
 
 
