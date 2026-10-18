@@ -51,9 +51,12 @@ of it that adds `:ro` (`imagelsp.py:302`). One public helper ends both.
   biz-cockpit's own unit test checks, and the kernel's test must check it too.
 - **One public helper, `adapters.hostpath.mount_argv`** *(my call on the home: `hostpath` is LIBRARY,
   and it already owns the one rule every bind mount must keep, the si#201 translation)*. It takes the
-  product root, the source, the target, `readonly` and `create`, and returns `["-v", "<translated
-  source>:<target>[:ro]"]`. Called with `create=False`, it refuses a missing source (`test:image`'s
-  current behaviour). Called with `create=True`, it creates it (si#511's behaviour). The difference is
+  product root, the source, the target, `readonly` and `must_exist`, and returns `["-v", "<translated
+  source>:<target>[:ro]"]`. It creates nothing, so `docker_argv` stays pure. Called with
+  `must_exist=True`, it refuses a missing source (`test:image`'s current behaviour). `toolchain:run`
+  calls it with `must_exist=False`, because `invocation` has already created the mount points (si#511's
+  behaviour; *revised while planning: an earlier draft had the helper create them, which would have
+  made the pure `docker_argv` write to disk*). The difference is
   explicit at the call site, as decided. *(My calls, from the builder check:)*
   - **It raises `ValueError`**, never logs and never exits. It is a public library function. Each caller
     turns the refusal into its own voice: `test:image` into `log.error` plus `None` as today, and
@@ -65,7 +68,7 @@ of it that adds `:ro` (`imagelsp.py:302`). One public helper ends both.
     directly, cannot mount outside the tree.
   - **The surface census needs no change.** `adapters.hostpath` is already LIBRARY, which promises the
     whole module. The docstring states the contract: arguments, the `ValueError`, the si#201
-    translation and `create`.
+    translation and `must_exist`.
 - **Refused at run time, like `caches:`** (decision 3). A malformed entry, a source outside the tree, a
   non-absolute target or an unknown suffix is a `log.die` when `with:` is bound, naming the command, the
   entry and the way out. These refusals are diagnoses, and they are not in the census population, which
@@ -96,7 +99,7 @@ of it that adds `:ro` (`imagelsp.py:302`). One public helper ends both.
   outside the workdir creates nothing on the host. Real directories in a tmp_path, no mocks of `mkdir`.
 - A real docker run as a non-root uid writes into the mounted target, and afterwards the tree holds no
   root-owned directory. This is the anti-goal measured, in the e2e tier the toolchain tests already use.
-- `mount_argv(create=False)` refuses a missing source with `test:image`'s current message, and
+- `mount_argv(must_exist=True)` refuses a missing source with `test:image`'s current message, and
   `test:image`'s existing mount tests pass unchanged.
 - A root-owned source, target or missing-path ancestor is refused before any `mkdir`, with the mount
   message and no traceback (a real chown in a tmp_path, or skip with a stated reason when not root).
