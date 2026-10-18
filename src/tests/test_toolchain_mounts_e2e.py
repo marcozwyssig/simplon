@@ -64,7 +64,7 @@ def test_a_non_root_container_writes_through_a_mount_and_leaves_no_root_owned_di
                               "mounts": ["build/nm:/work/src/frontend/node_modules"]}, where="e2e")
 
     def make() -> None:
-        assert toolchain._prepare_mounts(cfg, tree, "e2e") == ""
+        assert toolchain.prepare_mounts(cfg, tree, "e2e") == ""
 
     _as(caller, make)
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", f"{caller}:{caller}"])

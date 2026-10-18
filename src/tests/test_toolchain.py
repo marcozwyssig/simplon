@@ -457,7 +457,7 @@ def _mounted(*entries):
 
 def test_the_source_and_the_inner_target_are_created_before_the_run(tmp_path):
     # act
-    fault = toolchain._prepare_mounts(_mounted("build/nm:/work/src/frontend/node_modules"), tmp_path, "b.g")
+    fault = toolchain.prepare_mounts(_mounted("build/nm:/work/src/frontend/node_modules"), tmp_path, "b.g")
 
     # assert: both exist, and both are the caller's - docker would have made them root's
     import os
@@ -467,7 +467,7 @@ def test_the_source_and_the_inner_target_are_created_before_the_run(tmp_path):
 
 
 def test_a_target_outside_the_workdir_creates_nothing_on_the_host(tmp_path):
-    assert toolchain._prepare_mounts(_mounted("build/nm:/cache/nm"), tmp_path, "b.g") == ""
+    assert toolchain.prepare_mounts(_mounted("build/nm:/cache/nm"), tmp_path, "b.g") == ""
     assert sorted(p.name for p in tmp_path.iterdir()) == ["build"]
 
 
@@ -477,7 +477,7 @@ def test_a_source_that_is_a_file_is_refused(tmp_path):
     (tmp_path / "build/nm").write_text("x", encoding="utf-8")
 
     # act
-    fault = toolchain._prepare_mounts(_mounted("build/nm:/work/src/nm"), tmp_path, "b.g")
+    fault = toolchain.prepare_mounts(_mounted("build/nm:/work/src/nm"), tmp_path, "b.g")
 
     # assert: named, and nothing was made for the other half either
     assert "b.g" in fault and "build/nm" in fault and "not a directory" in fault
@@ -493,7 +493,7 @@ def test_a_path_owned_by_someone_else_is_refused_before_any_mkdir(tmp_path):
     os.chown(tmp_path / "src", 4242, 4242)
 
     # act
-    fault = toolchain._prepare_mounts(_mounted("x:/work/src/frontend/node_modules"), tmp_path, "b.g")
+    fault = toolchain.prepare_mounts(_mounted("x:/work/src/frontend/node_modules"), tmp_path, "b.g")
 
     # assert: refused in words, and the source was NOT made first - the check comes before any mkdir
     assert fault == ("b.g: mount 'x:/work/src/frontend/node_modules' needs src owned by uid 0; it is owned "

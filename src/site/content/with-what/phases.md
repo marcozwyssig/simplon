@@ -626,6 +626,34 @@ those is refused by the same gate that reads the manifest, naming the command, r
 inside the body. What the caller types after the command name is APPENDED to the manifest's argv, and an
 empty tail changes the line by not one byte.
 
+**A path in the tree over a path in the container: `mounts:` (si#511).** npm, and every tool like it,
+fetches platform-specific packages for the machine it runs on. So a `node_modules` installed on a macOS
+host has no musl bindings, and a gate in an Alpine image cannot pass. The fix is a tree-local directory
+over the container's copy:
+
+```yaml
+with:
+  image: node:24-alpine
+  argv: [sh, -c, "npm ci && npm test"]
+  mounts: ["build/cache/node_modules-linux:/work/src/frontend/node_modules"]
+```
+
+- **Form.** Each entry is `<path under the tree>:<absolute path in the container>`, optionally followed by
+  `:ro`. A source that is absolute, climbs, or reaches outside the tree through a symlink is refused. So
+  is a target that is the tree mount itself or above it, and two entries on one target.
+- **The kernel creates both ends first, as you.** docker creates a missing mount point itself, owned by
+  root. Measured with `--user 4242:4242`: the container's write then fails with `Permission denied`, and an
+  empty root-owned directory stays in the tree. So before the run the kernel makes the source, and the
+  target's place in the tree when the target lies inside it. It refuses instead, having made nothing, when
+  a path is a file or belongs to another uid.
+- **The working alternative to `caches:`.** A `caches:` volume is created by docker, owned by root, so a
+  run that is not root cannot write into it (#278, si#319). A directory under the output directory, mounted
+  this way, is the caller's.
+- **From Python.** A product that calls `docker_argv` itself passes `Toolchain(..., mounts=[Mount(source,
+  target)])` and calls `toolchain.prepare_mounts(cfg, root, where)` before the run. That function returns
+  the refusal, or `""` once both ends exist. `simplon.adapters.hostpath.mount_argv` spells one translated
+  `-v` for anything else.
+
 ## Where to go next
 
 The six groups are the top level of every manifest, so [The manifest](../../how/manifest/) is the next chapter

@@ -278,7 +278,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     outputs.ensure_home()
     # si#511, for the same reason and in the same place: a mount point docker has to create is created
     # root-owned, so the kernel makes every one first, as the caller - or refuses before making any.
-    fault = _prepare_mounts(cfg, product.root, where) or docker.ownership_fault([outputs.root()], product.root)
+    fault = prepare_mounts(cfg, product.root, where) or docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
         return None
@@ -393,7 +393,7 @@ def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
     return out
 
 
-def _prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
+def prepare_mounts(cfg: Toolchain, root: Path, where: str) -> str:
     """Make every mount's source, and its target's host counterpart when the target lies in the tree
     mount, exist as directories the caller owns - or return why not, having made nothing (si#511).
 
