@@ -373,7 +373,10 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
 def _placed_product_tasks(mf: manifest_mod.Manifest) -> set[str]:
     """The product tasks a command places, keyed by the `task:` name, not by its impl (si#420)."""
     from simplon.model.artifactschema import BODIES
-    specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
+    # `name`, not `command`: the loop variable must not shadow the `command` module the next line reads. On
+    # the hosted release runner (si#491 dry runs 39111627509, 39112044199) it did, as UnboundLocalError;
+    # it never reproduced on ghr-8 or in a container, so the name is changed rather than the cause chased.
+    specs = [mf.spec_for(group, name) for group, members in mf.groups.items() for name in members]
     return {s.task for s in specs if isinstance(s, command.TaskCommand) and s.task not in BODIES}
 
 
@@ -394,7 +397,7 @@ def test_the_export_drops_nothing(name):
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
     # every count below on purpose, and nothing here counts them.
-    specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
+    specs = [mf.spec_for(group, name) for group, members in mf.groups.items() for name in members]
     placed = _placed_product_tasks(mf)
 
     # act
