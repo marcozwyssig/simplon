@@ -19,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[2]
 #: follows the suite.
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "src"))
+# si#491: this product's own task bodies (`orchestrator.cli:test_suite`, ...) live where the launcher puts
+# them on the path. Since `release all` plans `test suite`, reading its leaves' signatures - which the
+# release job's renderer and `cli.receivers` both do (si#490) - imports them, so the suite needs the same
+# path the launcher gives a command. Appended, not prepended: nothing here may shadow `simplon`.
+sys.path.append(str(ROOT / "deploy" / "orchestrator" / "src" / "python"))
 
 from simplon.adapters import hostpath   # noqa: E402  (needs the sys.path line above)
 

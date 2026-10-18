@@ -27,6 +27,7 @@ import pytest
 import yaml
 
 from simplon.tasks import site as site_task
+from simplon.tasks import workflowgen
 
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
@@ -91,15 +92,16 @@ def _runs(node):
 # --- the trigger, and the acceptance that hangs off it ---------------------------------------------------
 
 
-def test_the_release_is_triggered_by_a_tag_and_by_nothing_else(workflow):
-    """The publication hangs on the tag, which is what makes the published site describe a version that
-    exists on PyPI. A push trigger as well would put `main` on the page between releases."""
+def test_the_release_is_started_from_the_button_and_by_nothing_else(workflow):
+    """si#491: the release is a dispatch with a version and a rehearsal switch, and nothing else starts it.
+    A `push: tags:` trigger beside it would be a second route to a release - the hand-pushed tag that
+    skips the gate in front of the tag, which is the whole point of moving to the button."""
     # Arrange / Act
     trigger = workflow[True]                      # `on:` - YAML 1.1 reads the bare word as a boolean
 
     # Assert
-    assert set(trigger) == {"push"}
-    assert trigger["push"] == {"tags": ["v*"]}
+    assert set(trigger) == {"workflow_dispatch"}
+    assert set(trigger["workflow_dispatch"]["inputs"]) == {"version", "dry_run"}
 
 
 def test_a_release_that_changes_no_documentation_still_rebuilds_the_site(workflow):
@@ -129,13 +131,14 @@ def test_nothing_in_the_workflow_asks_which_files_changed(workflow):
 
 
 def test_the_documentation_job_runs_unconditionally(docs_job):
-    """No `if:` on the job and none on any of its steps. `needs:` is a different thing - it orders the
-    job after the upload, it does not decide whether it happens."""
+    """No `if:` on the job, and on its steps only the rehearsal guard on the deploy (si#491): a dry run
+    builds the site and uploads it into the run, and only the deploy waits for a real release. `needs:`
+    is a different thing - it orders the job after the upload, it does not decide whether it happens."""
     # Arrange / Act
-    conditions = [key for key, _ in _walk(docs_job) if key == "if"]
+    conditions = [(step.get("uses"), step["if"]) for step in docs_job["steps"] if "if" in step]
 
     # Assert
-    assert conditions == []
+    assert conditions == [("actions/deploy-pages@v4", "${{ !inputs.dry_run }}")]
     assert "if" not in docs_job
 
 
@@ -143,9 +146,10 @@ def test_the_documentation_job_runs_unconditionally(docs_job):
 
 
 def test_the_documentation_job_runs_exactly_one_build_command(docs_job):
-    """One `run:`, and it is the command a developer types in a checkout."""
+    """One `run:` besides the local cut every product job opens with (si#491), and it is the command a
+    developer types in a checkout."""
     # Arrange / Act
-    commands = [run.strip() for run in _runs(docs_job)]
+    commands = [run.strip() for run in _runs(docs_job) if run != workflowgen.RELEASE_CUT]
 
     # Assert
     assert commands == [THE_ONE_COMMAND]
@@ -175,7 +179,7 @@ def test_the_command_the_workflow_runs_is_a_real_command_that_plans_the_whole_bu
     the site would carry the previous run's reference.
     """
     # Arrange
-    command = _runs(docs_job)[0].strip()
+    command = next(run.strip() for run in _runs(docs_job) if run.startswith("./simplon.sh"))
 
     # Act
     _, group, name = command.split()
@@ -317,7 +321,7 @@ def test_the_version_that_was_built_is_asserted_against_the_tag(publish_job):
     runs = " ".join(_runs(publish_job))
 
     # Assert
-    assert "GITHUB_REF_NAME" in runs, "nothing in the publish job looks at the tag at all"
+    assert "${RELEASE_VERSION#v}" in runs, "nothing in the publish job looks at the tag at all"
     assert "dist/" in runs, "the check must read the version off the built wheel, not recompute it"
 
 
@@ -356,72 +360,78 @@ def test_the_project_page_links_the_documentation_website():
     assert linked.startswith("https://")
 
 
-# --- the release guard's reporting half (#23, built with #32) --------------------------------------------
+# --- the dispatch release (si#491) ------------------------------------------------------------------------
+#
+# The on-main REPORT of #23 is gone, with the four tests that held it. It existed because a hand-pushed tag
+# skipped the command's refusal and still triggered this workflow. The dispatch has no tag-push route, and
+# `release tag` - which refuses a commit `main` does not carry - is the step that cuts the tag, so the
+# question is now decided rather than reported. A hotfix merges first (si#491 decision 3).
 
-@pytest.fixture(scope="module")
-def on_main_step(publish_job):
-    """The step that says whether the tagged commit is one `main` carries."""
-    named = [step for step in publish_job["steps"]
-             if str(step.get("name", "")).startswith("Is this tag on main")]
-    assert len(named) == 1, "exactly one step reports the tag's relation to main"
-    return named[0]
-
-
-def test_the_workflow_says_whether_the_tag_is_on_main(on_main_step):
-    """#23's question, asked on the path the command's own guard cannot see.
-
-    The command REFUSES an off-main commit, and that refusal is deliberately escapable by typing the two
-    git commands - which is the hotfix route #23 asked to keep. A hand-pushed tag still triggers THIS
-    workflow (no branch filter on `on:`), so this is the one place that sees every release there is.
-    """
-    # Arrange / Act
-    script = on_main_step["run"]
-
-    # Assert
-    assert "merge-base --is-ancestor" in script
-    assert "$GITHUB_SHA" in script
-    assert "refs/remotes/origin/main" in script
+#: The jobs the product writes beside the derived `release` job, each of which cuts the tag locally first.
+PRODUCT_JOBS = ("publish", "docs", "image")
 
 
-def test_the_report_is_a_report_and_never_a_gate(on_main_step):
-    """It must not fail the job, now or by a later edit.
-
-    A reporting step that quietly became a gate would close the escape hatch #23 asked to keep open, and
-    nobody would find out until a hotfix release was refused by a step whose name says "report only".
-    Every branch ends in `exit 0` and there is no `exit 1` anywhere in it; `continue-on-error` is
-    deliberately NOT how this is done, because that would hide a real crash in the step as well.
-    """
-    # Arrange / Act
-    script = on_main_step["run"]
-
-    # Assert
-    assert "exit 1" not in script
-    assert script.rstrip().endswith("exit 0")
-    assert on_main_step.get("continue-on-error") is None
+def _publishing(step) -> bool:
+    """A step that reaches PyPI, Pages, the registry or the remote - what a rehearsal must not do."""
+    uses, run = str(step.get("uses", "")), str(step.get("run", ""))
+    return (uses.startswith(("pypa/gh-action-pypi-publish", "actions/deploy-pages"))
+            or any(word in run for word in ("release push-image", "git push", "gh pr create")))
 
 
-def test_the_report_comes_before_anything_is_published(publish_job, on_main_step):
-    """A tag cannot be taken back; a publication can still be stopped by whoever is watching the run.
-    That ordering is the only thing that makes a report worth more than a log line after the fact."""
+def test_the_release_job_runs_the_gate_before_the_tag(workflow):
+    """Decision 2: a red test no longer leaves a tag behind, because the tests run before it is cut."""
     # Arrange
-    steps = publish_job["steps"]
-    reported = steps.index(on_main_step)
-    published = [i for i, step in enumerate(steps) if "pypi-publish" in str(step.get("uses", ""))]
+    runs = [str(step.get("run", "")) for step in workflow["jobs"]["release"]["steps"]]
 
-    # Act / Assert
-    assert published, "the publish step is what this ordering is about"
-    assert reported < min(published)
-
-
-def test_an_unanswerable_question_is_reported_as_unanswerable(on_main_step):
-    """Never as "off main". A fetch failure that read as a verdict would cry wolf on every flaky
-    network, and a warning that fires when nothing is wrong is a warning people learn to skip."""
-    # Arrange / Act
-    script = on_main_step["run"]
+    # Act
+    tag = next(i for i, run in enumerate(runs) if run.startswith("./simplon.sh release tag"))
+    gate = [next(i for i, run in enumerate(runs) if run == f"./simplon.sh test {leaf}")
+            for leaf in ("suite", "typecheck-python", "generated", "release-notes")]
 
     # Assert
-    assert "NOT CLASSIFIED" in script
-    assert "possibly stale ref" in script
+    assert gate == sorted(gate) and max(gate) < tag
+
+
+def test_every_product_job_cuts_the_tag_locally_first(workflow):
+    """Decision 5. A dry run pushes no tag, so without its own cut a job builds a `.devN` wheel and the si#3
+    check goes red - and `docs` and `image` never rehearse at all. The cut is the release job's own script,
+    held equal here, so the two cannot drift; on a real run it is a no-op over the fetched tag."""
+    for name in PRODUCT_JOBS:
+        # Arrange
+        steps = workflow["jobs"][name]["steps"]
+
+        # Act
+        first = next(step for step in steps
+                     if not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python")))
+
+        # Assert
+        assert first.get("run") == workflowgen.RELEASE_CUT, f"{name}: does not cut the tag first"
+
+
+def test_a_dry_run_publishes_nothing(workflow):
+    """Over every step of every product job, not a named list: a publishing step added later without the
+    guard turns this red. And the guard is on exactly those steps - a rehearsal still builds and checks."""
+    for name in PRODUCT_JOBS:
+        for step in workflow["jobs"][name]["steps"]:
+            guarded = step.get("if") == "${{ !inputs.dry_run }}"
+            assert guarded == _publishing(step), f"{name}: {step.get('uses') or step.get('run', '')[:60]!r}"
+
+
+def test_no_script_reads_an_input_or_the_ref_name(workflow):
+    """No `${{ inputs. }}` in a script (si#490's injection rule, in the product's own steps too), and no
+    GITHUB_REF_NAME: on a dispatch from `main` it is `main`, and the pin branch would be named after it."""
+    for run in _runs(workflow):
+        assert "${{ inputs." not in run
+        assert "GITHUB_REF_NAME" not in run
+
+
+def test_the_release_path_carries_no_test_archive_yet(workflow):
+    """A stated loss, not an oversight (si#491 decision 6). si#248 archived the Allure report on the release
+    path. The suite now runs inside the derived `release` job, which carries no `uses:` step, so there is
+    nowhere to upload it from; ci.yml keeps its archive. si#509 is the kernel question - when it lands,
+    this test is the one to turn around."""
+    uses = [str(value) for key, value in _walk(workflow) if key == "uses"]
+    assert not [u for u in uses if u.startswith("actions/upload-artifact")]
 
 
 def test_the_release_tests_the_image_between_building_and_publishing_it():

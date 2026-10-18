@@ -114,8 +114,11 @@ simplon typeOf simplon.manifest.Product {
     }
     command all typeOf simplon.pipeline.ReleaseCommand {
       key = "all"
+      member = product.simplon.simplon.test.suite
+      member = product.simplon.simplon.test.typecheck_python
+      member = product.simplon.simplon.test.generated
+      member = product.simplon.simplon.test.release_notes
       member = product.simplon.simplon.release.notes
-      member = product.simplon.simplon.release.push_image
       member = product.simplon.simplon.release.tag
       release a_kernel_release typeOf simplon.pipeline.Release {
         key = "kernel-release"

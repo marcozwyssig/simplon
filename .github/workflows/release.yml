@@ -1,342 +1,254 @@
+# GENERATED from simplon.yaml by `simplon support workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against simplon.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+# The release, started from the button with the version and a rehearsal switch (si#491). The
+# derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
+# notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
+# publishes: the wheel to PyPI, then the site and the image, each of which describes the version
+# PyPI now serves.
+#
+# A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
+# second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
+# route - a hotfix merges first. The test report is no longer archived on this path (si#509).
 name: release
 on:
-  push:
-    tags: ["v*"]
-
-# THE RELEASE GUARD (#23, built with #32) BLOCKS IN THE COMMAND AND REPORTS HERE. Two different jobs,
-# and the split is the whole design - so read what is NOT true before the part that is.
-#
-# NOT TRUE, and it was written here in an earlier draft: "a guard in this workflow would be bypassed by
-# `git tag && git push`, because that runs no workflow step". Measured, it is the reverse. The trigger
-# above has no branch filter, so a tag pushed by hand from anywhere starts this workflow - every one of
-# the 14 tags in this repository was pushed by hand and every run of this file came from one of them.
-# The bypassable guard is the one in the COMMAND: type the two git commands and it never runs. This one
-# sees every release there is.
-#
-# WHAT IS TRUE. `./simplon.sh release tag` REFUSES a commit `main` does not carry, and that refusal is
-# deliberately escapable - #23 wants a hotfix off `main` to remain possible, and two typed git commands
-# are a better escape hatch than a flag, because a person typing them has decided something. That
-# decision must stay available, so this file must not turn it back into a hard stop.
-#
-# But an exception nobody ever hears about is not a loud exception, it is an unnoticed one - and until
-# this step existed, that is exactly what it was: open AND invisible. So the step below REPORTS. It
-# names the case in the log and in the run summary, fails nothing, and runs before the publish, because
-# the ordering is the point: a tag cannot be taken back, a publication can still be stopped by whoever
-# is watching.
-#
-# One rule, two behaviours, and no second copy of the decision: the command decides what to refuse, this
-# step decides nothing at all.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to release, exactly as its tag will be: vX.Y.Z'
+        required: true
+        type: string
+      dry_run:
+        description: 'Rehearse: build and check everything, publish nothing'
+        required: true
+        type: boolean
+        default: true
+permissions:
+  contents: write
+  packages: write
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Cut the tag in this checkout
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      - name: The build will be stamped with the version
+        run: |
+          described="$(git describe --tags --always --dirty)"
+          [ "$described" = "$RELEASE_VERSION" ] || {
+            echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
+            exit 1
+          }
+      - run: ./simplon.sh test suite
+      - run: ./simplon.sh test typecheck-python
+      - run: ./simplon.sh test generated
+      - run: ./simplon.sh test release-notes
+      - run: ./simplon.sh release notes --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        run: ./simplon.sh release tag -- "$RELEASE_VERSION"
+      - name: What a release would have published (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"
+          cat build/release/notes.md
+
+  # The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
+  # token, no API token in the repository. PyPI's publisher is bound to this file's name and the
+  # `pypi` environment, which is why neither moves.
   publish:
     runs-on: ubuntu-latest
+    needs: release
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     environment: pypi
     permissions:
-      id-token: write        # Trusted Publishing: no API token in the repo
+      id-token: write
     steps:
-      # fetch-depth: 0, and it is load-bearing (#3). The version is DERIVED from the tag by
-      # setuptools-scm, and checkout's default depth of 1 gives it the tag without the history behind
-      # it: it then produces a version that is merely wrong rather than failing, and PyPI accepts the
-      # wheel. The old hand-written gate below was loud; a shallow clone is not, which is why the depth
-      # is stated here instead of inherited. tests/test_release_workflow.py holds it.
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # Is this tag on main? REPORTS, never blocks - see the head of this file. It runs before the
-      # tests and the publish so that a human watching the run learns it while there is still something
-      # to stop; after `pypa/gh-action-pypi-publish` there would be nothing left to decide.
-      #
-      # It fetches `main` itself rather than trusting the checkout to have left a remote-tracking ref
-      # behind: this workflow is checked out AT A TAG, and what `actions/checkout` leaves under
-      # `refs/remotes/` is its business, not something this step should assume. An unanswerable question
-      # is reported as unanswerable - never as "off main", which would cry wolf on every fetch failure.
-      #
-      # `exit 0` on every path, and there is deliberately no `exit 1` anywhere in it.
-      # tests/test_release_workflow.py holds that, because a reporting step that quietly became a gate
-      # would close the hotfix route #23 asked to keep open, and nobody would notice until a release
-      # they needed was refused.
-      - name: Is this tag on main? (report only)
+          python-version: '3.12'
+      # si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+      # a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+      # tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+      # go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
         run: |
-          stale=""
-          if ! git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main; then
-            stale=" (origin could not be reached, so this reads a possibly stale ref)"
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
           fi
-          if ! git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
-            echo "::warning::origin/main could not be read, so ${GITHUB_REF_NAME} is NOT CLASSIFIED - nothing here says whether it is on main."
-            echo "- **${GITHUB_REF_NAME}**: not classified (\`origin/main\` unreadable)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          main_head="$(git rev-parse --short refs/remotes/origin/main)"
-          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-            echo "${GITHUB_REF_NAME} is cut from a commit main carries${stale}."
-            echo "- **${GITHUB_REF_NAME}**: on \`main\` (${GITHUB_SHA}, main at ${main_head})${stale}." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "::warning::${GITHUB_REF_NAME} was cut from ${GITHUB_SHA}, which origin/main (${main_head}) does not carry${stale}. This release is going out anyway - 'release tag' refuses this case, so the tag was pushed by hand. If that was not deliberate, stop the run before the publish step."
-          {
-            echo "- **${GITHUB_REF_NAME}**: OFF \`main\`${stale}."
-            echo "  - tagged commit: \`${GITHUB_SHA}\`"
-            echo "  - \`origin/main\`: \`${main_head}\`"
-            echo "  - \`./simplon.sh release tag\` refuses this, so the tag was pushed by hand. Reported, not blocked - a hotfix off \`main\` is allowed to exist, but not to be invisible."
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-      # The release gate: tests, then the type gate, then the wheel, then PyPI. The launcher
-      # provisions its own venv and installs this checkout with `-e .[typecheck]`, so no
-      # separate install step is needed here (the same redundant step was
-      # dropped from ci.yml for the same reason). The wheel check in tests/
-      # installs the built package and loads its catalogue from
-      # site-packages -- it is the only one that catches a path escape
-      # before it ships.
-      #
-      # THE TYPE GATE IS ON THIS PATH, and not only in ci.yml, because this is the path that reaches
-      # consumers (#8). `ci.yml` triggers on `push`, which includes tags, so in practice a tagged commit
-      # is checked by it today - but that is a PARALLEL workflow with no dependency on this one, not a
-      # gate on this one. Narrow the `ci` trigger some day and the release path would lose the check
-      # without anybody's diff showing it, and the expensive half of that is publishing a wheel nothing
-      # typechecked. That would be si#8 committed a second time, one level up: a pipeline that is green
-      # because a question is not asked.
-      #
-      # IT IS REACHED RATHER THAN NAMED since si#163. `test all` is an aggregate over the pytest suite,
-      # the type gate and the release-notes guard, so the one step below carries all three verdicts and
-      # a type error stops this publish exactly as it did before. What changed is where it is written:
-      # once, in simplon.yaml, for the CI and for a developer's checkout alike.
-      #
-      # THE SEPARATE `test typecheck-python` STEP THAT USED TO FOLLOW IS GONE, and si#163 measured why
-      # rather than tidying. A GitHub job stops at its first failed step, so once `test all` carries the
-      # gate that step could only ever run when `test all` had already been green - which means the gate
-      # inside it had already passed. It could not fail. This repository's oldest hunt is for exactly
-      # that shape, so a step that had become a decoration on the publish path was removed rather than
-      # left to look like a guard.
-      #
-      # What holds the check now is tests/test_type_gate.py, as a RULE over the whole workflows
-      # directory - any job that verifies this tree REACHES the gate, by naming it or by running a
-      # command whose manifest plan contains it - plus one assertion that `test all` really does plan it.
-      # Drop the dependency in simplon.yaml and that second assertion goes red naming this consequence.
-      #
-      # AND `test all` RULES ON PROSE HERE since si#156: it also asks whether the release being cut has a
-      # section naming every ticket it carries. That is the guard si#89 built acting one step earlier
-      # than it used to, and it is deliberate - the notes are written BEFORE the tag (si#3), so a tag
-      # whose section nobody wrote stops the publish rather than following it. The consequence to know:
-      # this step can now go red on prose while every line of code is fine, and the message names the
-      # missing numbers.
-      #
-      # ONE RC FOR THREE VERDICTS, stated because it is what a person watching a red release sees: the
-      # aggregate reports `steps.overall_rc`, 0 or 1, and prints every step's own verdict above it. The
-      # line to read is `all: N/3 step(s) failed` and the `why <step> failed` block under it.
-      - run: ./simplon.sh test all
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
       - run: ./simplon.sh build wheel
-      # WHAT REPLACED "the tag must name the version being published" (#3).
-      #
-      # That step compared the tag a human typed with the number a human had typed into pyproject.toml.
-      # There is no number in pyproject.toml any more, and comparing the tag with a version derived FROM
-      # the tag would be a tautology - so the old step is gone rather than rewritten.
-      #
-      # What is NOT tautological is whether the derivation ran on the inputs it needed. Three things
-      # make it quietly produce the wrong string: a shallow clone (guarded above, but a default can be
-      # restored by someone who does not know why it is there), a dirty working tree, which appends a
-      # local `+g….dYYYYMMDD` segment, and a tag that is not where the build is standing. All three are
-      # visible in ONE place - the filename of the wheel that was actually built - so that is what is
-      # read. Recomputing the version here would only repeat whatever mistake produced it.
-      #
-      # It runs AFTER the build for that reason, and before the upload: PyPI rejects a local version
-      # outright, but by then the tests have run and the failure arrives as a red publish rather than
-      # as an answer.
-      #
-      # WHAT THE OLD CHECK CAUGHT AND THIS ONE CANNOT, stated because it is a real loss and not a wash.
-      # A MISTYPED tag - `v0.1.31` for `v0.1.13`. The old step held two independently produced numbers
-      # against each other, so a typo in one was caught by the other; two typos would have had to agree.
-      # There is only one number now, and a single statement cannot be falsified by itself: 0.1.31 is
-      # derived from the tag, matches it, and publishes.
-      #
-      # What still catches a typo is PyPI, and only in one direction. RE-USING a number is refused as a
-      # duplicate. SKIPPING ahead is refused by nobody: 0.1.31 goes up, and the versions between it and
-      # 0.1.13 are burnt.
-      #
-      # That is a DIFFERENT CUT, chosen deliberately, not an equal trade. What it buys is that a number
-      # cannot be claimed twice by two people at once - which happened three times in one day (0.1.4,
-      # 0.1.8, 0.1.9), cost two renumberings, and could not be prevented by looking first, because the
-      # number a stranger had reserved was in a branch nobody else could see. A typo is one person's
-      # slip, visible in the command they are typing; a collision is two people's correct behaviour
-      # producing a wrong result. Trading the second for the first is the trade this ticket is.
+      # si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
+      # be a tautology. What is not tautological is whether the derivation saw the inputs it needs:
+      # a shallow clone, an unclean tree (a `+local` segment) or a tag that is not where the build
+      # stands all show in ONE place - the filename of the wheel actually built - so that is what
+      # is read. It cannot catch a mistyped version: one number cannot falsify itself.
       - name: The wheel that was built must be the tag
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_VERSION#v}"
           built="$(ls dist/simplon-*.whl | sed -E 's|.*/simplon-([^-]+)-.*|\1|')"
           test "$built" = "$version" || {
-            echo "tag ${GITHUB_REF_NAME} was built as ${built}, not ${version}."
+            echo "tag ${RELEASE_VERSION} was built as ${built}, not ${version}."
             echo "The version is derived from git by setuptools-scm, so a mismatch means the derivation"
             echo "saw something other than a clean checkout standing exactly on the tag: a shallow"
             echo "clone (fetch-depth), an unclean working tree (a '+local' segment), or a tag that does"
             echo "not point at this commit."
             exit 1
           }
-      # THE REPORT (si#248), on the release path as well as on CI, and it is the same two steps there.
-      # What differs is what they are for: CI's archive explains a red run to whoever has to fix it,
-      # this one is the record of what was green when a version went out - the answer to "which tests
-      # passed for 0.15.0", asked months later.
-      #
-      # AFTER the publish, not before. `test all` above already decided whether this release happens;
-      # putting an archiving step in front of the upload would let a render failure hold back a wheel
-      # whose tests all passed, which is a step carrying a verdict it was explicitly given none of.
-      # `if: always()` so the archive still exists when something above went red.
       - uses: pypa/gh-action-pypi-publish@release/v1
-      - if: always()
-        run: ./simplon.sh test report
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: allure-report
-          path: tests/reports/*.html
-          if-no-files-found: error
-          retention-days: 90
+        if: ${{ !inputs.dry_run }}
 
-  # The documentation website, published to GitHub Pages by the SAME tag that published the wheel.
-  #
-  # THE LINE THIS JOB IS DRAWN ON. Building the site is simplon's - one command, the same one a human
-  # types - and deploying it is the workflow's. Deploying really is CI/CD and nothing else: the two
-  # actions below hand an artefact to the Actions artifact service and ask GitHub to serve it, and
-  # neither of those exists outside an Actions run. Building, on the other hand, must work in both
-  # places, and by the SAME route: `./simplon.sh build docs` here is the command a human types in a
-  # checkout, so there is one truth about how the site comes to be. A workflow that called hugo itself,
-  # or that reproduced the reference-then-site order in two `run:` lines, would be a second way to the
-  # same end - and two ways to one end drift, quietly, until the one nobody runs by hand is the one that
-  # is wrong. tests/test_release_workflow.py holds the shape.
-  #
-  # NO `paths:` FILTER, and none anywhere in this file: a release that touches no documentation still
-  # rebuilds and republishes the site. A filter would look like an optimisation, would pass every release
-  # that happens to touch docs/, and would be found out by the first one that does not - months later, by
-  # somebody who was not here. The test asserts the absence, because an absence is what a reviewer cannot
-  # see.
-  #
-  # `needs: publish` is the point of tagging rather than pushing: the site describes the version it was
-  # cut from, so it goes up only once that version is on PyPI. Between two releases it ages; it never
-  # documents something nobody can install.
+  # The website, built by the one command a person types (`build docs`) and deployed by the two
+  # actions that exist only inside a runner. No `paths:` filter: every release republishes the
+  # site. After `publish`, so it never documents a version nobody can install.
   docs:
-    needs: publish
     runs-on: ubuntu-latest
+    needs: publish
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     permissions:
-      pages: write           # deploy the site (and enable Pages the first time)
-      id-token: write        # the same Trusted-Publishing shape as PyPI above: an OIDC token, no secret
-    # Two tags in flight must not race each other onto one site; `cancel-in-progress: false` lets the
-    # older one finish rather than leaving the page half-replaced.
+      pages: write
+      id-token: write
     concurrency:
       group: pages
       cancel-in-progress: false
     steps:
-      # fetch-depth: 0 here for UNIFORMITY, and that is the whole reason - no page carries the kernel's
-      # version, and this job would go green on a shallow clone. What it would not do is stay quiet: the
-      # site build installs the kernel with `-e .`, so setuptools-scm runs, and on a shallow clone it
-      # prints "is shallow and may cause errors" and derives its 0.0 no-tag sentinel. A warning in a green
-      # job is noise nobody chases.
-      #
-      # The larger reason is the rule itself. Every checkout in this repository takes the same setting, so
-      # there is one rule to state and tests/test_version_source.py can assert it over the whole workflows
-      # directory. An exception here would need a reader to know why, and the day the site DOES report a
-      # version, nobody would remember to come back.
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # One-time repository setup, idempotent afterwards: `enablement: true` turns Pages on with the
-      # Actions build type. It is the workflow's business because it is about rights - the same kind of
-      # setup as Trusted Publishing above - not about how the site is made.
+          python-version: '3.12'
+      # si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+      # a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+      # tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+      # go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      # THE one build command, and the same one locally. It plans build.reference -> build.site out of
-      # simplon.yaml, so the order the site needs (the reference is WRITTEN into the content tree the
-      # site READS) is stated once, in the manifest, and not restated here. `build site` alone would
-      # publish the previous run's reference; that is why the aggregate is what runs.
-      #
-      # Hugo runs in the pinned image via docker, which ubuntu-latest has. The container is given the
-      # RUNNER's own uid (simplon.adapters.docker.user_args), so build/site/ comes out owned by `runner` and
-      # the upload below can read it - measured, see the task report; the image accepts a uid that does
-      # not exist inside it, which is what makes the runner's 1001 no different from a developer's.
-      #
-      # It also runs `hugo mod get` against the pinned theme, which WRITES src/site/go.mod and go.sum.
-      # Both are committed and already agree with the pin, so the write is a no-op here - and there is
-      # deliberately no "working tree clean" gate in this workflow to go red on it the day the pin moves
-      # ahead of the file. Pinning the dependency is what makes the build reproducible; asserting that
-      # the build changed nothing would only assert that somebody had run it locally first.
       - run: ./simplon.sh build docs
-      # The deployment, and the whole of what the workflow adds. `upload-pages-artifact` tars the built
-      # directory into the artifact `deploy-pages` unpacks; both talk to services that only exist inside
-      # a runner, which is exactly why neither is a simplon task.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/site
       - id: deployment
         uses: actions/deploy-pages@v4
+        if: ${{ !inputs.dry_run }}
 
-  # THE KERNEL IMAGE GOES OUT WITH EVERY RELEASE (Marco, 2026-10-10), beside the wheel and the site. Until
-  # then it was published on demand, and the reasons for that ended one by one: ghcr.io takes the run's own
-  # GITHUB_TOKEN, so no registry secret is stored (si#313); and a consumer exists, firn#198, which a stale
-  # image blocked the same day - its manifest needs a kernel newer than the one on demand had left behind.
-  #
-  # PUBLISH FIRST, PIN AFTERWARDS, and that is why the pin is a PULL REQUEST and not part of the tag. The
-  # tagged commit cannot name an image that only exists once this job has pushed it and read it back, so
-  # `deploy/image/repin.sh` moves `deploy/image/image.pin` on a branch and the job opens a pull request a
-  # person merges. A pin that names an image which does not exist would send a machine with no python3
-  # down the container route to a failure the venv route never offered.
-  #
-  # `needs: publish`: the image carries the version PyPI now serves, never one it refused.
-  #
-  # TWO THINGS A PERSON SETS ONCE, and the job names each when it is the cause. The package has to grant
-  # this repository Actions access with role Write (si#361's advice says where), and opening the pull
-  # request needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions
-  # settings. Without the second the image is published, the branch is pushed, and the job is RED with the
-  # branch named - a pin that did not move is not a green outcome, it is work a person still has to do.
-  #
-  # CI ON THE PIN IS DISPATCHED, not triggered (si#365): v0.26.2's pin pull request #364 carried no
-  # `self-build` at all, because nothing a GITHUB_TOKEN pushes starts a workflow.
+  # The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
+  # run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
+  # merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
+  # (si#365). After `publish`, so the image carries the version PyPI serves.
   image:
-    needs: publish
     runs-on: ubuntu-latest
+    needs: publish
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     permissions:
-      contents: write        # push the branch that moves the pin
-      packages: write        # push ghcr.io/marcozwyssig/simplon with this run's own token
-      pull-requests: write   # open the pull request for that branch
-      actions: write         # dispatch ci.yml on that branch (si#365)
+      contents: write
+      packages: write
+      pull-requests: write
+      actions: write
     steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # The image declares linux/arm64 too (si#368), and this runner is amd64. Its runtime stage RUNs
-      # apt-get and pip, which needs an emulator; on an ephemeral GitHub-hosted runner registering one
-      # changes nobody's machine, which is why here - and only here - the job does it itself.
-      # The same pinned binfmt image the kernel names everywhere else (labhost.BINFMT_IMAGE), never the
-      # action's floating default.
+          python-version: '3.12'
+      # si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+      # a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+      # tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+      # go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      # The image declares linux/arm64 too (si#368); this runner is amd64.
       - uses: docker/setup-qemu-action@v3
         with:
           image: tonistiigi/binfmt:qemu-v10.2.3
           platforms: arm64
-      - run: ./simplon.sh build image --tag "$GITHUB_REF_NAME"
-      - run: ./simplon.sh test image --tag "$GITHUB_REF_NAME"
-      - run: ./simplon.sh release push-image --tag "$GITHUB_REF_NAME"
+      - run: ./simplon.sh build image --tag "$RELEASE_VERSION"
+      - run: ./simplon.sh test image --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./simplon.sh release push-image --tag "$RELEASE_VERSION"
       - name: Open the pull request that pins the published image
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ref="ghcr.io/marcozwyssig/simplon:${GITHUB_REF_NAME}"
+          ref="ghcr.io/marcozwyssig/simplon:${RELEASE_VERSION}"
           # The digest of the INDEX the tag names (si#368: one manifest list for two platforms), read from
           # the registry rather than from a local image, which holds one platform at most.
           digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' \
                     | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
           test -n "$digest" || { echo "::error::$ref was published but its digest could not be read"; exit 1; }
-          branch="pin/kernel-image-${GITHUB_REF_NAME}"
+          branch="pin/kernel-image-${RELEASE_VERSION}"
           git fetch --quiet origin main
           git switch --quiet -c "$branch" origin/main
           rc=0; deploy/image/repin.sh "$ref" "$digest" || rc=$?
@@ -346,7 +258,7 @@ jobs:
           fi
           test "$rc" = 0
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit --quiet -am "chore: pin the kernel image to ${GITHUB_REF_NAME}" \
+              commit --quiet -am "chore: pin the kernel image to ${RELEASE_VERSION}" \
               -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
           git push --quiet --force origin "$branch"
           # A push or pull request made with this run's GITHUB_TOKEN starts no workflow (GitHub's rule
@@ -357,7 +269,7 @@ jobs:
             echo "::error::branch $branch is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
             exit 1
           }
-          if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${GITHUB_REF_NAME}" \
+          if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${RELEASE_VERSION}" \
                  --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${ref}@${digest}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
             echo "::error::$ref is published and branch $branch is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}"
             echo "- **image**: \`$ref\` published; pin branch \`$branch\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"

@@ -308,21 +308,23 @@ ci:
           - validate
   release:
     commands:
-      # The release's members (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
-      # because each fails differently. `all` STATES the release - its members, its bundle, and the one
+      # The release's members (si#344 C.3, spec C.4; si#491): the gate, the notes and the tag are separate
+      # leaves because each fails differently. `all` STATES the release - its members, its bundle, and the one
       # order that keeps a failed push from leaving a public tag behind - and the load checks that order
       # (rule 8). `stop_on_failure: true` is what makes the order hold at run time: without it a failed
       # push would not stop the plan, and the tag would still be cut. Rule 8 refuses the aggregate
       # without it.
       #
       # `passes: [tag]` (si#433) makes the tag an option of `all` and hands it to every leaf that takes
-      # it: `./simplon.sh release all --tag v0.32.0`. All three do, and `push-image` has to have it -
-      # without one it publishes under `git describe`, which before the tag exists is `v0.31.0-N-g<sha>`.
-      # Each leaf runs as its own subprocess, so before si#433 `all` stopped at `notes` with "which release?".
+      # it: `./simplon.sh release all --tag v0.32.0`. Each leaf runs as its own subprocess, so before si#433
+      # `all` stopped at `notes` with "which release?".
       #
-      # simplon's real release still starts with `./simplon.sh release tag vX`, and that tag push is what
-      # triggers release.yml, which builds, tests and publishes the image AFTER the tag exists: the opposite
-      # of the order `all` states, so a failed publish leaves the tag behind. Changing that is open (si#344).
+      # THE BUTTON RUNS THIS AGGREGATE (si#491): release.yml's derived `release` job is its plan as steps.
+      # The four test leaves come first, so a red test leaves no tag behind - and so `release all` typed in
+      # a checkout runs the whole suite too, which is the price of one order in both places. `push-image`
+      # LEFT the aggregate (decision 1): its evidence comes from `build image` and `test image`, which share
+      # the name `image` and so cannot be members, and PyPI publishes after the tag in any case. It runs in
+      # release.yml's `image` job after `publish`; a failed push is finished by rerunning that job.
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -340,7 +342,7 @@ ci:
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
       tag: { task: "release:tag", consumes: { release-notes: kernel-notes }, produces: { tag: kernel-tag } }
       # Publishing that image (si#200, moved to ghcr by si#313). Since 2026-10-10 EVERY RELEASE does it:
-      # release.yml's `image` job runs this command after the wheel is on PyPI, with the run's own
+      # release.yml's `image` job runs this command after the wheel is on PyPI (and not on a dry run), with the run's own
       # GITHUB_TOKEN, and then opens the pull request that moves deploy/image/image.pin. It used to be on
       # demand, for three reasons that all ended: Docker Hub needed a stored token (ghcr.io does not); no
       # consumer existed (firn is one); and the pin was hand-committed, so a publish nothing pointed at
@@ -355,11 +357,11 @@ ci:
           image: kernel
           evidence: [kernel-checked]
       all:
-        depends_on: [notes, push-image, tag]
+        depends_on: [suite, typecheck-python, generated, release-notes, notes, tag]
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release's members in their one safe order: notes, image, tag."
+        help: "The release: the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag."
 
 support:
   commands:
@@ -776,17 +778,200 @@ workflows:
               if-no-files-found: error
               retention-days: 90
 
-  # DECLARED HAND-WRITTEN, which is a decision and not a gap - si#40 asked for exactly this to be an
-  # explained possibility rather than an emergency exit. The generator carries comments, so prose is not
-  # what keeps this file out; what keeps it out is that release.yml is roughly two-thirds reasoning and
-  # carries two multi-line shell scripts (the report on whether a tag sits on `main`, and the check that
-  # the wheel which was built is the tag), and moving those into this manifest would move the work
-  # without reducing it. It stays hand-written, and it stays NAMED - so it is accounted for rather than
-  # merely unmanaged, which is the state si#40 exists to make impossible.
+  # GENERATED SINCE si#491, which retired the hand-written file. The release is the BUTTON: Actions ->
+  # release -> Run workflow, with the version and `dry_run` (default true). The kernel derives the
+  # trigger, the permissions, the concurrency and the `release` job from `release all` (si#490); the three
+  # jobs below are this product's, and each one runs after the tag exists.
   release:
-    handwritten: >-
-      two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the
-      wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it
+    name: release
+    note: |
+      The release, started from the button with the version and a rehearsal switch (si#491). The
+      derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
+      notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
+      publishes: the wheel to PyPI, then the site and the image, each of which describes the version
+      PyPI now serves.
+
+      A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
+      second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
+      route - a hotfix merges first. The test report is no longer archived on this path (si#509).
+    release: release all
+    runs-on: ubuntu-latest
+    jobs:
+      publish:
+        note: |
+          The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
+          token, no API token in the repository. PyPI's publisher is bound to this file's name and the
+          `pypi` environment, which is why neither moves.
+        needs: release
+        runs-on: ubuntu-latest
+        python: "3.12"
+        env: { RELEASE_VERSION: "${{ inputs.version }}" }
+        environment: pypi
+        permissions:
+          id-token: write
+        steps:
+          - name: Cut the tag in this checkout
+            note: |
+              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+              go red, and the jobs after this one would never rehearse.
+            run: |
+              there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+                exit 1
+              fi
+              git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+              git tag "$RELEASE_VERSION"
+          - command: build wheel
+          - name: The wheel that was built must be the tag
+            note: |
+              si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
+              be a tautology. What is not tautological is whether the derivation saw the inputs it needs:
+              a shallow clone, an unclean tree (a `+local` segment) or a tag that is not where the build
+              stands all show in ONE place - the filename of the wheel actually built - so that is what
+              is read. It cannot catch a mistyped version: one number cannot falsify itself.
+            run: |
+              version="${RELEASE_VERSION#v}"
+              built="$(ls dist/simplon-*.whl | sed -E 's|.*/simplon-([^-]+)-.*|\1|')"
+              test "$built" = "$version" || {
+                echo "tag ${RELEASE_VERSION} was built as ${built}, not ${version}."
+                echo "The version is derived from git by setuptools-scm, so a mismatch means the derivation"
+                echo "saw something other than a clean checkout standing exactly on the tag: a shallow"
+                echo "clone (fetch-depth), an unclean working tree (a '+local' segment), or a tag that does"
+                echo "not point at this commit."
+                exit 1
+              }
+          - uses: pypa/gh-action-pypi-publish@release/v1
+            if: ${{ !inputs.dry_run }}
+      docs:
+        note: |
+          The website, built by the one command a person types (`build docs`) and deployed by the two
+          actions that exist only inside a runner. No `paths:` filter: every release republishes the
+          site. After `publish`, so it never documents a version nobody can install.
+        needs: publish
+        runs-on: ubuntu-latest
+        python: "3.12"
+        env: { RELEASE_VERSION: "${{ inputs.version }}" }
+        environment:
+          name: github-pages
+          url: ${{ steps.deployment.outputs.page_url }}
+        permissions:
+          pages: write
+          id-token: write
+        concurrency:
+          group: pages
+          cancel-in-progress: false
+        steps:
+          - name: Cut the tag in this checkout
+            note: |
+              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+              go red, and the jobs after this one would never rehearse.
+            run: |
+              there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+                exit 1
+              fi
+              git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+              git tag "$RELEASE_VERSION"
+          - uses: actions/configure-pages@v5
+            with:
+              enablement: true
+          - command: build docs
+          - uses: actions/upload-pages-artifact@v3
+            with:
+              path: build/site
+          - id: deployment
+            uses: actions/deploy-pages@v4
+            if: ${{ !inputs.dry_run }}
+      image:
+        note: |
+          The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
+          run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
+          merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
+          (si#365). After `publish`, so the image carries the version PyPI serves.
+        needs: publish
+        runs-on: ubuntu-latest
+        python: "3.12"
+        env: { RELEASE_VERSION: "${{ inputs.version }}" }
+        permissions:
+          contents: write
+          packages: write
+          pull-requests: write
+          actions: write
+        steps:
+          - name: Cut the tag in this checkout
+            note: |
+              si#491 decision 5: the release job's own cut, copied verbatim (a test holds it equal). On
+              a real run the fetched tag already sits at HEAD and this changes nothing; on a dry run no
+              tag was pushed, and without it the wheel would be built as `.devN`, the check below would
+              go red, and the jobs after this one would never rehearse.
+            run: |
+              there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+              if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+                echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+                exit 1
+              fi
+              git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+              git tag "$RELEASE_VERSION"
+          - note: The image declares linux/arm64 too (si#368); this runner is amd64.
+            uses: docker/setup-qemu-action@v3
+            with:
+              image: tonistiigi/binfmt:qemu-v10.2.3
+              platforms: arm64
+          - command: build image
+            params: { tag: { env: RELEASE_VERSION } }
+          - command: test image
+            params: { tag: { env: RELEASE_VERSION } }
+          - command: release push-image
+            params: { tag: { env: RELEASE_VERSION } }
+            if: ${{ !inputs.dry_run }}
+            env:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          - name: Open the pull request that pins the published image
+            if: ${{ !inputs.dry_run }}
+            env:
+              GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            run: |
+              ref="ghcr.io/marcozwyssig/simplon:${RELEASE_VERSION}"
+              # The digest of the INDEX the tag names (si#368: one manifest list for two platforms), read from
+              # the registry rather than from a local image, which holds one platform at most.
+              digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' \
+                        | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+              test -n "$digest" || { echo "::error::$ref was published but its digest could not be read"; exit 1; }
+              branch="pin/kernel-image-${RELEASE_VERSION}"
+              git fetch --quiet origin main
+              git switch --quiet -c "$branch" origin/main
+              rc=0; deploy/image/repin.sh "$ref" "$digest" || rc=$?
+              if [ "$rc" = 3 ]; then
+                echo "- **image**: \`$ref\` published; \`main\` already pins it, so no pull request." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              test "$rc" = 0
+              git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                  commit --quiet -am "chore: pin the kernel image to ${RELEASE_VERSION}" \
+                  -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
+              git push --quiet --force origin "$branch"
+              # A push or pull request made with this run's GITHUB_TOKEN starts no workflow (GitHub's rule
+              # against one run triggering another without end), so the pin would reach its pull request
+              # with no test result at all - green-looking and unexamined (si#365). `workflow_dispatch` is
+              # the documented exception, and a check belongs to the COMMIT, so the run shows on the PR.
+              gh workflow run ci.yml --ref "$branch" || {
+                echo "::error::branch $branch is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
+                exit 1
+              }
+              if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${RELEASE_VERSION}" \
+                     --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${ref}@${digest}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
+                echo "::error::$ref is published and branch $branch is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}"
+                echo "- **image**: \`$ref\` published; pin branch \`$branch\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+              echo "- **image**: \`$ref@${digest}\` published; pin pull request opened from \`$branch\`, ci.yml dispatched on it." >> "$GITHUB_STEP_SUMMARY"
+
 
 # NO `.claude/settings.json` IN THIS REPOSITORY, and that is a statement rather than an omission
 # (si#292). `claudeplugins.py` describes two halves - the native one Claude Code reads when somebody
