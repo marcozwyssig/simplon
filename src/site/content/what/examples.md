@@ -166,6 +166,10 @@ $ ./simplon.sh build wheel
 $ ./simplon.sh release tag v0.1.13
 ```
 
+*(Since si#491 simplon cuts its own releases from the button: the release workflow runs `release all`,
+whose gate is this list and whose last step is that `release tag`. The command and its guard are
+unchanged; the run types it instead of you.)*
+
 Tests first, and not as ceremony: the release workflow runs them again, and a tag whose tests fail is a
 tag you now have to delete from a public remote. Finding out locally costs thirty seconds.
 

@@ -443,3 +443,16 @@ def test_the_release_tests_the_image_between_building_and_publishing_it():
     test = text.index("./simplon.sh test image --tag")
     release = text.index("./simplon.sh release push-image --tag")
     assert build < test < release
+
+
+def test_the_readme_releases_from_the_button():
+    """si#491 acceptance 3: the docs describe the button, not `git tag && git push`. Read off the README's
+    own section, so a second, older recipe left beside the new one is caught too."""
+    # Arrange
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("\n## Releasing\n", 1)[1].split("\n## ", 1)[0]
+
+    # Assert
+    assert "workflow_dispatch" in section and "dry_run" in section
+    assert "./simplon.sh release tag v" not in section
+    assert "git push origin v" not in section
