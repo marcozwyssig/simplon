@@ -62,6 +62,15 @@ class Cache:
 
 
 @dataclass(frozen=True)
+class Mount:
+    """A path under the product tree bind-mounted over a path in the container (si#511)."""
+
+    source: str
+    target: str
+    readonly: bool = False
+
+
+@dataclass(frozen=True)
 class Toolchain:
     """One command's containerised toolchain, as the manifest declares it."""
 
@@ -71,6 +80,8 @@ class Toolchain:
     env: dict[str, str] = field(default_factory=dict)
     caches: list[Cache] = field(default_factory=list)
     cwd: str = ""
+    # LAST, so a product that builds a Toolchain positionally (biz-cockpit does) keeps its meaning.
+    mounts: list[Mount] = field(default_factory=list)
 
 
 def declared(body: Mapping[str, object], where: str) -> Toolchain:
@@ -90,13 +101,15 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
     if not isinstance(argv, Sequence) or isinstance(argv, str) or not argv:
         log.die(f"{where}: no `argv:` - a toolchain command names what to run inside the image")
         raise SystemExit(1)
+    workdir = str(body.get("workdir", "/work"))
     return Toolchain(
         image=_pinned(image, where),
         cwd=_cwd(body.get("cwd"), where),
         argv=[str(a) for a in argv],
-        workdir=str(body.get("workdir", "/work")),
+        workdir=workdir,
         env=_env(body.get("env"), where),
         caches=_caches(body.get("caches"), where),
+        mounts=_mounts(body.get("mounts"), where, workdir),
     )
 
 
@@ -135,6 +148,11 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     volumes: list[str] = []
     for cache in cfg.caches:
         volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
+    # si#511: AFTER the caches and, like every flag, before the image - after it docker would hand the
+    # flag to the tool as an argument. The points already exist: `invocation` made them, as the caller.
+    for mount in cfg.mounts:
+        volumes += hostpath.mount_argv(root, mount.source, mount.target, readonly=mount.readonly,
+                                       must_exist=False)
     env: list[str] = []
     for key, value in cfg.env.items():
         env += ["-e", f"{key}={value}"]
@@ -163,7 +181,8 @@ def _start_in(cfg: Toolchain, build_root: str) -> str:
 def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = None,
                   workdir: str = "/work", env: dict[str, str] | None = None,
                   caches: list[dict[str, str]] | None = None, network: str | None = None,
-                  cwd: str | None = None, extra: list[str] | None = None) -> int:
+                  cwd: str | None = None, mounts: list[str] | None = None,
+                  extra: list[str] | None = None) -> int:
     """Run one toolchain invocation. Thin: `declared` decides what is legal, `docker_argv` decides the line.
 
     THE PARAMETERS ARE THE MANIFEST'S KEYS, one for one, and that is a correction rather than a style
@@ -216,14 +235,15 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     """
     where = ctx.command_path or "toolchain:run"
     got = invocation(where, image=image, argv=argv, workdir=workdir, env=env, caches=caches,
-                     network=network, cwd=cwd, extra=list(extra or []))
+                     network=network, cwd=cwd, mounts=mounts, extra=list(extra or []))
     if got is None:
         return 1
     return docker.run_container(*got).rc
 
 
 def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, env: object, caches: object,
-               network: str | None, cwd: str | None, extra: list[str]) -> tuple[list[str], str] | None:
+               network: str | None, cwd: str | None, extra: list[str],
+               mounts: object = None) -> tuple[list[str], str] | None:
     """The `docker run` line for one toolchain invocation and its container's name, or None when the
     output tree is not the caller's (the fault is logged). Shared by `run_toolchain` and `firngen.generate`
     (si#400 4b), which needs the same line and firn's stdout back."""
@@ -233,7 +253,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     # length 1` - a traceback where the module head promises a diagnosis. `_env` and `_caches` take
     # `object` for exactly this reason, None included.
     cfg = declared({"image": image, "argv": argv, "workdir": workdir,
-                    "env": env, "caches": caches, "cwd": cwd}, where)
+                    "env": env, "caches": caches, "cwd": cwd, "mounts": mounts}, where)
     product = context.current()
     # The instance is resolved WHERE it is needed and not one line earlier (si#105): it is read from the
     # product's `instance:` section, `simplon init` writes no such section, and resolving it up front
@@ -322,6 +342,52 @@ def _caches(raw: object, where: str) -> list[Cache]:
             log.die(f"{where}: a `caches:` entry needs both `volume:` and `path:`, got {entry!r}")
             raise SystemExit(1)
         out.append(Cache(volume=str(entry["volume"]), path=str(entry["path"])))
+    return out
+
+
+_MOUNT_FORM = "`<path under the tree>:<absolute path in the container>`, optionally followed by `:ro`"
+
+
+def _mounts(raw: object, where: str, workdir: str) -> list[Mount]:
+    """`mounts:` as Mount values, or a refusal naming the entry (si#511). Run time, like `_caches`.
+
+    A target that IS the workdir or one of its ancestors is refused: it would mount over the tree the
+    command runs in. Two entries on one target are refused here rather than by docker, which says
+    `Duplicate mount point` only after `invocation` has made the directories.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, Sequence) or isinstance(raw, str):
+        log.die(f"{where}: `mounts:` must be a list of {_MOUNT_FORM} strings, got {raw!r}")
+        raise SystemExit(1)
+    tree = posixpath.normpath(workdir)
+    out: list[Mount] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            log.die(f"{where}: a `mounts:` entry must be a string {_MOUNT_FORM}, got {entry!r}")
+            raise SystemExit(1)
+        parts = entry.split(":")
+        readonly = len(parts) == 3 and parts[2] == "ro"
+        if len(parts) not in (2, 3) or (len(parts) == 3 and not readonly):
+            log.die(f"{where}: mount '{entry}' is not {_MOUNT_FORM}")
+            raise SystemExit(1)
+        source, target = parts[0], parts[1]
+        try:
+            hostpath.mount_source(Path("/"), source, target)
+        except ValueError as refused:
+            log.die(f"{where}: mount '{entry}': {refused}")
+            raise SystemExit(1)
+        normal = posixpath.normpath(target)
+        if normal == tree or tree.startswith(normal.rstrip("/") + "/"):
+            log.die(f"{where}: mount '{entry}' would cover {workdir}, the tree this command runs in; mount "
+                    f"over a path below it instead")
+            raise SystemExit(1)
+        if normal in seen:
+            log.die(f"{where}: mount '{entry}' names {normal} a second time; one path, one mount")
+            raise SystemExit(1)
+        seen.add(normal)
+        out.append(Mount(source=source, target=normal, readonly=readonly))
     return out
 
 

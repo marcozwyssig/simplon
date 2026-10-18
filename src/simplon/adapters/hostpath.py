@@ -169,6 +169,18 @@ def translate(path: str | Path) -> str:
     return str(Path(host).joinpath(*inside.parts))
 
 
+def mount_source(root: Path, source: str, target: str) -> Path:
+    """The host path a mount of `source` over `target` names, or `ValueError` - `mount_argv`'s rules
+    without the line, so a manifest can be checked before anything is translated or created."""
+    if not target.startswith("/"):
+        raise ValueError(f"mount target {target!r} is not an absolute path in the container")
+    if source.strip() in (".", "./"):
+        return root
+    return root / validate_relative_dir(source, "mount source", "give a plain relative path under the "
+                                        "product root, e.g. 'build/cache/node_modules'",
+                                        inside="the product root")
+
+
 def mount_argv(root: Path, source: str, target: str, *, readonly: bool = False,
                must_exist: bool = True) -> list[str]:
     """`["-v", "<translated source>:<target>[:ro]"]` for one bind mount of a path under `root` (si#495,
@@ -187,14 +199,7 @@ def mount_argv(root: Path, source: str, target: str, *, readonly: bool = False,
     The source goes through `translate` for si#201's reason: on the container route an untranslated one
     mounts an empty directory the daemon makes on the host, rc 0 and no message.
     """
-    if not target.startswith("/"):
-        raise ValueError(f"mount target {target!r} is not an absolute path in the container")
-    if source.strip() in (".", "./"):
-        path = root
-    else:
-        path = root / validate_relative_dir(source, "mount source", "give a plain relative path under the "
-                                            "product root, e.g. 'build/cache/node_modules'",
-                                            inside="the product root")
+    path = mount_source(root, source, target)
     if must_exist and not path.is_dir():
         raise ValueError(f"mount source {source!r} names {path}, which is not a directory under {root}")
     return ["-v", f"{translate(path)}:{target}" + (":ro" if readonly else "")]

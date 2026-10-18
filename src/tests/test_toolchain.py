@@ -369,3 +369,80 @@ def test_every_container_name_is_fresh_and_one_docker_accepts():
     # assert: unique per invocation, and only the characters docker allows in a name
     assert len(names) == 50
     assert all(re.fullmatch(r"simplon-my-product-x-[0-9a-f]{12}", n) for n in names), names
+
+
+# --- si#511: `mounts:` - a tree path bind-mounted over a container path ---------------------------------
+
+
+def _line(cfg):
+    return toolchain.docker_argv(cfg, root=Path("/repo"), product="biz", instance="dev", extra=[])
+
+
+def test_no_mounts_leaves_the_line_byte_for_byte(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+
+    # act / assert
+    assert _line(_cfg()) == _line(_cfg(mounts=[]))
+    assert _line(_cfg()).count("-v") == 1
+
+
+def test_a_mount_sits_after_the_caches_and_before_the_image(monkeypatch):
+    # arrange
+    from simplon.adapters import hostpath
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+    cfg = _cfg(caches=[{"volume": "npm", "path": "/root/.npm"}],
+               mounts=["build/nm:/work/src/frontend/node_modules"])
+
+    # act
+    line = _line(cfg)
+
+    # assert
+    value = f"{hostpath.translate(Path('/repo') / 'build/nm')}:/work/src/frontend/node_modules"
+    assert line.index("biz-npm-dev:/root/.npm") < line.index(value) < line.index(cfg.image)
+    assert line[line.index(value) - 1] == "-v"
+
+
+def test_a_readonly_mount_keeps_ro(monkeypatch):
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    assert any(arg.endswith(":/data:ro") for arg in _line(_cfg(mounts=["fixtures:/data:ro"])))
+
+
+@pytest.mark.parametrize("entry", ["nocolon", "src:rel", "/abs:/x", "../sib:/x", "src\\nm:/x", "src:/x:rw",
+                                   "src:/work", "src:/work/", "src:/", "src:/work/a/.."])
+def test_a_bad_mount_is_refused_by_name(monkeypatch, entry):
+    # arrange
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=[entry])
+    assert "build.compile" in str(e.value) and entry in str(e.value)
+
+
+def test_two_mounts_on_one_target_are_refused(monkeypatch):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=["a:/x", "b:/x/"])
+    assert "/x" in str(e.value)
+
+
+@pytest.mark.parametrize("raw", ["a:/b", [{"a": 1}], [3]])
+def test_mounts_must_be_a_list_of_strings(monkeypatch, raw):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=raw)
+    assert "mounts" in str(e.value)
+
+
+def test_a_toolchain_built_positionally_still_means_what_it_did():
+    cfg = toolchain.Toolchain("img:1", ["x"], "/work", {}, [], "")
+    assert cfg.mounts == [] and cfg.cwd == ""
+
+
+def test_a_mount_over_the_tree_says_so_in_these_words(monkeypatch):
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+    with pytest.raises(RuntimeError) as e:
+        _cfg(mounts=["src:/work"])
+    assert str(e.value) == ("build.compile: mount 'src:/work' would cover /work, the tree this command runs "
+                            "in; mount over a path below it instead")
