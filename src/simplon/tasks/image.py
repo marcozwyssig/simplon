@@ -104,6 +104,7 @@ import os
 import re
 import shlex
 import shutil
+import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1165,6 +1166,96 @@ def ensure_builder() -> bool:
             return False
         if not created.ok:
             log.info(f"builder '{BUILDER}' was created meanwhile by another run; using it")
+    return _resolver_passed_through()
+
+
+# A LOOPBACK RESOLVER IS DROPPED FROM EVERY RUN STEP, AND GOOGLE'S PUT IN ITS PLACE (si#518). The builder
+# runs with `network=host`, so it reads the host's `/etc/resolv.conf` - under systemd-resolved that names
+# the stub, `127.0.0.53`. When BuildKit writes a RUN step's `resolv.conf` it strips loopback nameservers
+# and, left with none, writes 8.8.8.8, 8.8.4.4 and their IPv6 pair - although the step runs in the host's
+# network namespace and could reach the stub. Measured 2026-10-20 on BuildKit v0.33.1: a network that only
+# answers through its own resolvers then fails `apk add` with "temporary error", while `docker run` and
+# the builder container itself resolve. `--oci-worker-net=host` changes nothing (the steps already run in
+# the host netns); a `[dns] nameservers` entry in buildkitd's config is passed through as written.
+# The STUB is what is passed, not the upstreams behind it: resolved forwards to whatever network the
+# host is on now, so a laptop that moves keeps a working builder.
+
+#: Where buildx puts the file `--buildkitd-config` names, inside the builder's container.
+_BUILDKITD_CONFIG = "/etc/buildkit/buildkitd.toml"
+
+
+def loopback_nameservers(resolv_conf: str) -> list[str]:
+    """The nameservers in `resolv_conf` that BuildKit would drop from a RUN step: 127/8 and ::1."""
+    found = []
+    for line in resolv_conf.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == "nameserver" and (fields[1].startswith("127.")
+                                                               or fields[1] == "::1"):
+            found.append(fields[1])
+    return found
+
+
+def buildkitd_dns(nameservers: Sequence[str]) -> str:
+    """The buildkitd config that hands `nameservers` to every RUN step unchanged."""
+    return "[dns]\n  nameservers = [" + ", ".join(json.dumps(n) for n in nameservers) + "]\n"
+
+
+def configured_nameservers(buildkitd_toml: str) -> list[str]:
+    """The `[dns] nameservers` a builder was created with; [] when it has no config or none in it.
+
+    Parsed rather than compared: buildx re-serialises the file it copies in (measured: `["127.0.0.53"]`
+    arrives as `['127.0.0.53']`, unindented), so the bytes simplon wrote are never the bytes it reads.
+    """
+    try:
+        dns = tomllib.loads(buildkitd_toml).get("dns", {})
+    except tomllib.TOMLDecodeError:
+        return []
+    found = dns.get("nameservers", []) if isinstance(dns, dict) else []
+    return [str(n) for n in found] if isinstance(found, list) else []
+
+
+def _resolver_passed_through() -> bool:
+    """The builder's RUN steps reach the resolver its container uses; recreating it when they would not.
+
+    Read from the builder's own container, not from this process: on the container route simplon runs in
+    a container whose `resolv.conf` docker wrote, which says nothing about the daemon host's. A container
+    that cannot be read is warned about and the build goes on - the build may well resolve, and that is
+    a different outcome from "nothing to pass through", so it is said rather than taken for one.
+    """
+    node = f"buildx_buildkit_{BUILDER}0"
+    resolv = run(["docker", "exec", node, "cat", "/etc/resolv.conf"])
+    if not resolv.ok:
+        log.warn(f"could not read the resolver of builder '{BUILDER}' (`docker exec {node}` failed), so a "
+                 f"loopback resolver such as systemd-resolved's 127.0.0.53 is not passed to its RUN steps; "
+                 f"if one fails with 'temporary error' while `docker run` resolves, that is si#518")
+        return True
+    nameservers = loopback_nameservers(resolv.out)
+    if not nameservers:
+        return True
+    if configured_nameservers(run(["docker", "exec", node, "cat", _BUILDKITD_CONFIG]).out) == nameservers:
+        return True
+    wanted = buildkitd_dns(nameservers)
+    try:
+        directory = outputs.for_kind("docker")
+        directory.mkdir(parents=True, exist_ok=True)
+        config = directory / "buildkitd.toml"
+        config.write_text(wanted, encoding="utf-8")
+    except (OSError, RuntimeError, ValueError) as broken:
+        log.error(f"builder '{BUILDER}' resolves through {', '.join(nameservers)}, which BuildKit replaces "
+                  f"with Google's DNS in every RUN step (si#518), and the config that passes it through "
+                  f"could not be written, so nothing was built: {broken}")
+        return False
+    log.info(f"builder '{BUILDER}' resolves through {', '.join(nameservers)}, a loopback address BuildKit "
+             f"would replace with Google's DNS in every RUN step (si#518); recreating it with that resolver "
+             f"passed through, its layer cache kept")
+    run(["docker", "buildx", "rm", "--keep-state", BUILDER])
+    create = ["docker", "buildx", "create", "--name", BUILDER, "--driver", "docker-container",
+              "--driver-opt", "network=host", "--buildkitd-config", str(config), "--bootstrap"]
+    created = run(create)
+    if not created.ok:
+        log.error(f"`{' '.join(create)}` failed, so nothing was built: "
+                  f"{(created.err or created.out).strip() or '(it said nothing)'}")
+        return False
     return True
 
 
