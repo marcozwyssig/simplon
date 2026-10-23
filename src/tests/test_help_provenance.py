@@ -18,6 +18,7 @@ import types
 
 import pytest
 import typer
+import click
 from typer.testing import CliRunner
 
 import simplon
@@ -111,8 +112,10 @@ def _assemble(**kwargs):
 
 def _unwrapped(text: str) -> str:
     """Rich pads and wraps every rendered line, so a help screen is not a place to match a phrase in one
-    piece. Collapsing the whitespace makes the assertion be about the LINE rather than about the layout."""
-    return " ".join(text.split())
+    piece. Collapsing the whitespace makes the assertion be about the LINE rather than about the layout.
+    The colour codes go too: with FORCE_COLOR set, as on CI, rich styles `--no-tui` as an option and splits
+    it with escapes (si#517's first CI run)."""
+    return " ".join(click.unstyle(text).split())
 
 
 # --- the line itself --------------------------------------------------------------------------------
@@ -297,4 +300,35 @@ def test_a_product_that_wrote_its_own_epilog_keeps_it(monkeypatch):
 
     # assert
     assert app.info.epilog == (f"Docs: https://example.invalid/demo\n\n"
+                               f"{cli.NO_TUI_LINE}\n\n"
                                f"assembled by simplon 0.9.0 ({_WHEEL_DIR})")
+
+
+# --- the console mode (si#517) ----------------------------------------------------------------------
+def test_the_top_level_help_names_the_console_mode(monkeypatch):
+    """si#517: `--no-tui` is stripped before Click sees the line, so Click never lists it - and a person
+    who wanted the console mode asked for it as a new feature. The help screen is where they looked."""
+    # arrange
+    _install(monkeypatch, file=_SHORT_FILE)
+    app = _assemble()
+
+    # act
+    out = _unwrapped(CliRunner().invoke(app, ["--help"]).output)
+
+    # assert
+    assert "--no-tui" in out
+    assert "SIMPLON_NO_TUI=1" in out
+
+
+def test_a_group_help_does_not_repeat_the_console_mode(monkeypatch):
+    """The flag is read only BEFORE the first command word, so the top level is the one place where
+    naming it is also true."""
+    # arrange
+    _install(monkeypatch, file=_SHORT_FILE)
+    app = _assemble()
+
+    # act
+    out = CliRunner().invoke(app, ["code", "--help"]).output
+
+    # assert
+    assert "--no-tui" not in _unwrapped(out)
