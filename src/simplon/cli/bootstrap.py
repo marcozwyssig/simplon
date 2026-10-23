@@ -395,6 +395,17 @@ _MANIFEST = """\
 #   layout        where YOUR tree sits, for the two things the kernel would otherwise guess.
 product: @@PRODUCT@@
 
+# --- the toolchains this product uses (si#525) ---
+#   claude  Claude Code: `support install` installs simplon's plugin set (and the launcher does, after it
+#           refreshes its deps); `support claude-md` writes CLAUDE.md with your own region kept. Add to the
+#           set in a `claude:` section (`plugins:`, `exclude:`), or remove `claude` here to turn it off.
+#   gh      the GitHub CLI, which the release and git commands use.
+# `support toolchain <name>` adds one: python, java, cpp, dotnet, firn (and their commands), claude, gh.
+# A block list, so adding one inserts a line and rewrites none (si#110).
+toolchains:
+  - claude
+  - gh
+
 # --- where your tree sits (si#250) ---
 # Both keys below are OPTIONAL and the values shown are the defaults, so a product whose shape is the
 # ordinary one deletes this block and loses nothing. It is scaffolded commented-out because the kernel
