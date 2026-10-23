@@ -881,6 +881,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("claudeplugins", "effective", "must be a list of 'name@marketplace' ids"): DIAGNOSIS,
     ("claudeplugins", "effective", "which is not in the default - nothing to exclude"): DIAGNOSIS,
     ("claudeplugins", "effective", "so the effective plugin set is empty"): DIAGNOSIS,
+    # A `claude:` section with no `claude` toolchain is a declaration nothing reads (final review, si#525).
+    ("claudeplugins", "effective", "but 'claude' is not in"): DIAGNOSIS,
     # --- tasks/profiles.py: the `toolchains:` list (si#525) -------------------------------------------
     # An unknown name is refused rather than read as "off": a misspelt `Claude` would turn Claude support
     # off without a word. A duplicate has no second meaning, and a scalar would iterate as letters.

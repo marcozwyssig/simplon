@@ -86,3 +86,18 @@ def test_an_unexpected_error_in_the_step_is_a_warning_not_a_failed_command(monke
 
     # assert
     assert warned and "disk full" in warned[0]
+
+
+def test_the_launchers_step_writes_to_stderr_so_a_captured_stdout_stays_clean(monkeypatch, capfd):
+    # arrange: `V=$(./demo.sh release version)` right after a deps refresh must capture the version only
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    monkeypatch.setattr(claudeplugins, "step",
+                        lambda: claudeplugins.Outcome(claudeplugins.State.SKIPPED, "CI=true"))
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert "skipped" in err

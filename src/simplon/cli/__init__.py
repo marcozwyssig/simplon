@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import contextlib
 import os
 import sys
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, TypedDict, cast
@@ -619,13 +620,16 @@ def plugin_step_after_refresh() -> None:
 
     if os.environ.pop(PLUGIN_STEP_ENV, "") != "1":
         return
-    try:
-        outcome = claudeplugins.step()
-    except Exception as exc:     # noqa: BLE001 - the launcher's promise is that this never stops a command
-        log.warn(f"Claude Code plugins were not checked: {exc}")
-        return
-    if outcome.state is not claudeplugins.State.OFF:
-        claudeplugins.report(outcome)
+    # ON STDERR, all of it: this runs before the command a person typed, and `V=$(./<product>.sh
+    # release version)` right after a deps refresh must capture the version and nothing else.
+    with contextlib.redirect_stdout(sys.stderr):
+        try:
+            outcome = claudeplugins.step()
+        except Exception as exc:     # noqa: BLE001 - the launcher's promise is that this never stops a command
+            log.warn(f"Claude Code plugins were not checked: {exc}")
+            return
+        if outcome.state is not claudeplugins.State.OFF:
+            claudeplugins.report(outcome)
 
 
 #: What a person types to ask for the headless runner; `simplon.kernel.steps.NO_TUI_ENV` is what

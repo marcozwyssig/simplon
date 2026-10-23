@@ -205,3 +205,31 @@ def test_support_install_fails_on_failed_and_still_runs_every_gate(machine, monk
     # assert
     assert rc == 1
     assert seen == ["oras"]
+
+
+# --- final review (si#525) ----------------------------------------------------------------------------
+
+def test_a_hung_plugin_install_is_failed_not_hung(machine, monkeypatch):
+    # arrange: the launcher runs this step before every command after a refresh, `--help` included
+    machine.install_all(claudeplugins.BASE_PLUGINS[:-1])
+    fake = machine.bin / "claude"
+    fake.write_text(fake.read_text().replace('elif args[:2] == ["plugin", "install"]:',
+                                             'elif args[:2] == ["plugin", "install"]:\n    time.sleep(30)'))
+
+    # act
+    started = time.monotonic()
+    outcome = claudeplugins.step(env=machine.env(), timeout_s=1)
+
+    # assert
+    assert outcome.state is claudeplugins.State.FAILED
+    assert time.monotonic() - started < 5
+    assert "did not finish within 1s" in outcome.detail
+
+
+def test_a_claude_section_without_the_claude_toolchain_is_a_diagnosis_not_off():
+    # arrange: every product with a `claude:` section before si#525 is in this state after the bump
+    data = {"toolchains": ["python"], "claude": {"plugins": ["superpowers@claude-plugins-official"]}}
+
+    # act / assert: additions nothing reads, reported as "off", would be the recurring defect
+    with pytest.raises(ValueError, match="'claude:' section, but 'claude' is not in 'toolchains:'"):
+        claudeplugins.effective(data)

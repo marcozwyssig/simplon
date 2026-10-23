@@ -207,6 +207,12 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
 
     toolchains = profiles.declared_toolchains(data, source=source)
     if "claude" not in toolchains:
+        if data.get(SECTION) is not None:
+            # A declaration nothing reads, reported as "off", is the recurring defect - and every product
+            # that had a `claude:` section before si#525 lands here on the bump (final review).
+            raise ValueError(f"{source}: the manifest has a '{SECTION}:' section, but 'claude' is not in "
+                             f"'toolchains:', so nothing installs it - add `claude` to 'toolchains:' "
+                             f"(`support toolchain claude`), or remove the section")
         return None
     own_markets, own_plugins = declared(data, source=source)
     section, _, _ = context.section(data, SECTION)   # a mapping: `declared` above has refused anything else
@@ -343,6 +349,10 @@ class Outcome:
 #: How long one `claude ... --json` query may take before the step gives up. Measured at about 0.5 s.
 QUERY_TIMEOUT_S = 60.0
 
+#: How long one `claude plugin install` or `marketplace add` may take: a git clone, so far longer than a
+#: query - but bounded, because the launcher runs this before the command a person typed (final review).
+INSTALL_TIMEOUT_S = 300.0
+
 
 class _Failed(Exception):
     """A query that failed or hung: the step's FAILED, never an empty machine."""
@@ -384,8 +394,18 @@ def _effective_here() -> Effective | None:
     return effective(ctx.manifest_data(), source=str(ctx.manifest_path))
 
 
+def _act(argv: list[str], timeout_s: float) -> str:
+    """Run one install command; "" on success, else why. Captured, never streamed: the launcher runs this
+    before the command a person typed, and nothing of it may reach that command's stdout."""
+    try:
+        res = run(argv, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return f"`{' '.join(argv)}` did not finish within {timeout_s:g}s"
+    return "" if res.ok else (res.err.strip() or res.out.strip() or f"rc {res.rc}")
+
+
 def step(*, env: Mapping[str, str] | None = None, container: bool = False,
-         timeout_s: float = QUERY_TIMEOUT_S) -> Outcome:
+         timeout_s: float = QUERY_TIMEOUT_S, install_timeout_s: float | None = None) -> Outcome:
     """Bring this machine to the product's effective plugin set, and say which of five things happened.
 
     NEVER RAISES AND NEVER DIES, because two of its callers must not stop: `support install` runs every
@@ -396,6 +416,9 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     import os
 
     env = os.environ if env is None else env
+    install_timeout = INSTALL_TIMEOUT_S if install_timeout_s is None else install_timeout_s
+    if timeout_s < QUERY_TIMEOUT_S and install_timeout_s is None:
+        install_timeout = timeout_s     # a caller that asked for a short bound means the whole step
     try:
         eff = _effective_here()
     except (ValueError, RuntimeError) as exc:     # RuntimeError: the manifest could not be read at all
@@ -419,11 +442,12 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     unusable: set[str] = set()
     for market in todo.add_marketplaces:
         log.info(f"registering marketplace {market.name} ({market.repo})")
-        if run(["claude", "plugin", "marketplace", "add", _source_of(market)], capture=False).ok:
+        why = _act(["claude", "plugin", "marketplace", "add", _source_of(market)], install_timeout)
+        if not why:
             log.ok(f"marketplace {market.name} registered")
         else:
             unusable.add(market.name)
-            failed.append(f"marketplace {market.name} ({market.repo}) could not be registered")
+            failed.append(f"marketplace {market.name} ({market.repo}) could not be registered: {why}")
     installed = 0
     for plugin_id in todo.install_plugins:
         market_name = plugin_id.partition("@")[2]
@@ -431,11 +455,12 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
             failed.append(f"{plugin_id} skipped: its marketplace {market_name} could not be registered")
             continue
         log.info(f"installing {plugin_id}")
-        if run(["claude", "plugin", "install", plugin_id, "--scope", "user"], capture=False).ok:
+        why = _act(["claude", "plugin", "install", plugin_id, "--scope", "user"], install_timeout)
+        if not why:
             log.ok(f"{plugin_id} installed")
             installed += 1
         else:
-            failed.append(f"{plugin_id} could not be installed")
+            failed.append(f"{plugin_id} could not be installed: {why}")
     if failed:
         return Outcome(State.FAILED, "; ".join(failed), count=installed, ready=ready)
     return Outcome(State.INSTALLED, count=installed, ready=ready)

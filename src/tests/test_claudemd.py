@@ -183,3 +183,36 @@ def test_an_unreadable_settings_file_is_refused_not_overwritten(product, monkeyp
     assert rc == 1
     assert product.settings.read_text() == "{ not json"
     assert any("settings.json" in msg for _, msg in lines)
+
+
+# --- final review (si#525): text outside the markers is never dropped --------------------------------
+
+def test_markers_in_a_file_the_kernel_did_not_write_are_refused_not_trusted(product, monkeypatch):
+    # arrange: a pre-si#525 CLAUDE.md that documents the mechanism with the markers in a code block
+    body = f"# Notes\nkeep me\n```\n{claudemd.BEGIN}\nexample\n{claudemd.END}\n```\nmore notes\n"
+    product.md.write_text(body, encoding="utf-8")
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudemd.generate()
+
+    # assert: refused by name, and every byte of the product's file is still there
+    assert rc == 1
+    assert product.md.read_text(encoding="utf-8") == body
+    assert any("did not write" in msg for _, msg in lines)
+
+
+def test_text_after_the_end_marker_is_refused_not_dropped(product, monkeypatch):
+    # arrange
+    claudemd.generate()
+    product.md.write_text(product.md.read_text() + "a line somebody appended\n")
+    before = product.md.read_text()
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudemd.generate()
+
+    # assert
+    assert rc == 1
+    assert product.md.read_text() == before
+    assert any("after the end marker" in msg for _, msg in lines)
