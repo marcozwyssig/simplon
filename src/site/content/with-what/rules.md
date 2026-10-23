@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 250 | nothing - the declaration had no working meaning |
+| diagnosis | 248 | nothing - the declaration had no working meaning |
 | expression rule | 42 | something it could otherwise have said |
-| **all load-time refusals** | **292** | |
+| **all load-time refusals** | **290** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So

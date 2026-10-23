@@ -859,11 +859,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("nexusproxy", "_text", "is missing or empty"): DIAGNOSIS,
 
     # --- tasks/claudeplugins.py: the `claude:` section (netctl declares one) ---------------------------
-    ("claudeplugins", "declared", "section is missing or is not a mapping"): DIAGNOSIS,
+    ("claudeplugins", "declared", "section is not a mapping"): DIAGNOSIS,
     ("claudeplugins", "declared", "marketplaces' must be a mapping"): DIAGNOSIS,
-    ("claudeplugins", "declared", "marketplaces' declares none"): DIAGNOSIS,
     ("claudeplugins", "declared", "plugins' must be a list"): DIAGNOSIS,
-    ("claudeplugins", "declared", "plugins' declares none"): DIAGNOSIS,
     ("claudeplugins", "declared", "must be a mapping with 'source' and 'repo'"): DIAGNOSIS,
     # Not a rule about what a product may say - nothing but github is implemented, so the refused
     # manifest names a mechanism that does not exist.

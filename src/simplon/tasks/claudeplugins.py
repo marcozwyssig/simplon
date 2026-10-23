@@ -102,9 +102,11 @@ def declared(data: Mapping[str, object],
 
     `source` only labels the errors (the caller passes its manifest path, so the message points at a file).
     """
+    if data.get(SECTION) is None:
+        return (), ()
     section, blame, _ = context.section(data, SECTION)
     if blame:
-        raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
+        raise ValueError(f"{source}: the '{SECTION}' section is not a mapping")
 
     raw_markets = section.get("marketplaces") or {}
     if not isinstance(raw_markets, Mapping):
@@ -129,13 +131,11 @@ def declared(data: Mapping[str, object],
                 f"{source}: '{where}': `ref:` is the branch or tag alone, not '{ref}' - the `#` belongs "
                 f"to the command line spelling, and this section names the two halves separately")
         markets.append(Marketplace(name=str(name), repo=repo, ref=ref))
-    if not markets:
-        raise ValueError(f"{source}: '{SECTION}.marketplaces' declares none")
 
     raw_plugins = section.get("plugins") or []
     if not isinstance(raw_plugins, (list, tuple)):
         raise ValueError(f"{source}: '{SECTION}.plugins' must be a list of 'name@marketplace' ids")
-    known = {market.name for market in markets}
+    known = {market.name for market in (*markets, *DEFAULT_MARKETPLACES)}
     plugins: list[str] = []
     for entry in raw_plugins:
         plugin_id = str(entry).strip()
@@ -146,9 +146,100 @@ def declared(data: Mapping[str, object],
             raise ValueError(
                 f"{source}: '{SECTION}.plugins': '{plugin_id}' names undeclared marketplace '{market}'")
         plugins.append(plugin_id)
-    if not plugins:
-        raise ValueError(f"{source}: '{SECTION}.plugins' declares none")
     return tuple(markets), tuple(plugins)
+
+
+# --- the default simplon ships, and the set a product ends up with (si#525) ---------------------------
+
+_OFFICIAL = BUILTIN_MARKETPLACE
+
+#: The marketplaces the default installs from. A product declares only the ones its own additions need.
+DEFAULT_MARKETPLACES: tuple[Marketplace, ...] = (
+    Marketplace(name=_OFFICIAL, repo="anthropics/claude-plugins-official"),
+    Marketplace(name="alexgreensh-token-optimizer", repo="alexgreensh/token-optimizer"),
+)
+
+#: Every product with the `claude` toolchain gets these (Marco, 2026-10-23), in this order.
+BASE_PLUGINS: tuple[str, ...] = (
+    f"superpowers@{_OFFICIAL}", f"feature-dev@{_OFFICIAL}", f"code-review@{_OFFICIAL}",
+    f"code-simplifier@{_OFFICIAL}", f"security-guidance@{_OFFICIAL}", f"github@{_OFFICIAL}",
+    f"frontend-design@{_OFFICIAL}", "token-optimizer@alexgreensh-token-optimizer",
+)
+
+#: What a base plugin needs on PATH to work (si#396): token-optimizer's status line is `node …`.
+BASE_REQUIRES: dict[str, tuple[str, ...]] = {"token-optimizer@alexgreensh-token-optimizer": ("node",)}
+
+#: One LSP plugin per `toolchains:` language, so a Java product does not inherit simplon's Python one.
+LANGUAGE_PLUGINS: dict[str, tuple[str, ...]] = {
+    "python": (f"pyright-lsp@{_OFFICIAL}",), "java": (f"jdtls-lsp@{_OFFICIAL}",),
+    "cpp": (f"clangd-lsp@{_OFFICIAL}",), "dotnet": (f"csharp-lsp@{_OFFICIAL}",),
+}
+
+#: The binary each LSP plugin launches - measured 2026-10-23 as `lspServers.<name>.command` in the
+#: marketplace's own `.claude-plugin/marketplace.json`.
+LANGUAGE_REQUIRES: dict[str, tuple[str, ...]] = {
+    "python": ("pyright-langserver",), "java": ("jdtls",), "cpp": ("clangd",), "dotnet": ("csharp-ls",),
+}
+
+
+@dataclass(frozen=True)
+class Effective:
+    """The plugin set a product ends up with, and for each id where it came from - `default`,
+    `toolchain <language>` or `product` - so a dry run can say which entries a product added."""
+
+    markets: tuple[Marketplace, ...]
+    plugins: tuple[str, ...]
+    requires: tuple[str, ...]
+    origin: Mapping[str, str]
+
+
+def effective(data: Mapping[str, object], source: str = "manifest") -> Effective | None:
+    """Default + the product's additions - its `exclude:`; None when the `claude` toolchain is off.
+
+    A product never restates simplon's list (Marco, 2026-10-23): it was copied by hand before, and a copy
+    drifts the day the default changes. An exclusion that names nothing in the default is refused, because
+    excluding nothing is a typo, and so is a set left empty - installing nothing is not what a product that
+    turned Claude support on asked for.
+    """
+    from simplon.tasks import profiles
+
+    toolchains = profiles.declared_toolchains(data, source=source)
+    if "claude" not in toolchains:
+        return None
+    own_markets, own_plugins = declared(data, source=source)
+    section = data.get(SECTION) or {}
+    raw_exclude = section.get("exclude") or []
+    if not isinstance(raw_exclude, (list, tuple)):
+        raise ValueError(f"{source}: '{SECTION}.exclude' must be a list of 'name@marketplace' ids")
+
+    origin: dict[str, str] = {}
+    needs: dict[str, tuple[str, ...]] = {}
+    for plugin in BASE_PLUGINS:
+        origin.setdefault(plugin, "default")
+        needs[plugin] = BASE_REQUIRES.get(plugin, ())
+    for language in toolchains:
+        for plugin in LANGUAGE_PLUGINS.get(language, ()):
+            origin.setdefault(plugin, f"toolchain {language}")
+            needs[plugin] = LANGUAGE_REQUIRES.get(language, ())
+    for plugin in own_plugins:
+        origin.setdefault(plugin, "product")
+    for entry in raw_exclude:
+        plugin_id = str(entry).strip()
+        if plugin_id not in origin or origin[plugin_id] == "product":
+            raise ValueError(f"{source}: '{SECTION}.exclude' excludes '{plugin_id}', which is not in the "
+                             f"default - nothing to exclude")
+        del origin[plugin_id]
+    if not origin:
+        raise ValueError(f"{source}: '{SECTION}.exclude' excludes every plugin, so the effective plugin set is empty - remove "
+                         f"'claude' from 'toolchains:' to turn Claude support off instead")
+    plugins = tuple(origin)
+    used = {plugin.partition("@")[2] for plugin in plugins}
+    markets = tuple(m for m in (*DEFAULT_MARKETPLACES, *own_markets) if m.name in used)
+    requires: list[str] = []
+    for name in (*(n for plugin in plugins for n in needs.get(plugin, ())), *required(data, source)):
+        if name not in requires:
+            requires.append(name)
+    return Effective(markets=markets, plugins=plugins, requires=tuple(requires), origin=origin)
 
 
 def required(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:

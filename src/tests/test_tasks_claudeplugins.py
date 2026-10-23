@@ -54,8 +54,8 @@ def test_declared_reads_the_marketplaces_and_plugin_ids_from_the_manifest_sectio
 def test_declared_labels_its_errors_with_the_source_the_caller_names():
     # arrange: `install` passes its manifest path, so the message points at a file on a multi-product host
     # act / assert
-    with pytest.raises(ValueError, match="/tmp/other.yaml: the 'claude' section is missing"):
-        claudeplugins.declared({}, source="/tmp/other.yaml")
+    with pytest.raises(ValueError, match="/tmp/other.yaml: the 'claude' section is not a mapping"):
+        claudeplugins.declared({"claude": 5}, source="/tmp/other.yaml")
 
 
 def test_declared_rejects_a_marketplace_whose_repo_is_not_owner_slash_name():
@@ -98,20 +98,143 @@ def test_declared_rejects_a_plugin_id_without_a_marketplace():
         claudeplugins.declared(data)
 
 
-def test_declared_rejects_a_missing_section_rather_than_installing_nothing():
-    # arrange: a command that cheerfully installs nothing looks like success on a machine that has nothing
+def test_declared_reads_a_missing_section_as_no_additions():
+    # arrange: si#525 - simplon owns the default, so a product with nothing to add writes nothing
     # act / assert
-    with pytest.raises(ValueError, match="the 'claude' section is missing"):
-        claudeplugins.declared({"product": "demo"})
+    assert claudeplugins.declared({"product": "demo"}) == ((), ())
 
 
-def test_declared_rejects_a_section_that_declares_no_plugins():
+def test_declared_reads_an_empty_section_as_no_additions():
+    # act / assert: the smcctl case - before si#525 the only way in was copying simplon's whole list
+    assert claudeplugins.declared({"claude": {}}) == ((), ())
+
+
+def test_declared_rejects_a_section_that_is_not_a_mapping():
+    # act / assert
+    with pytest.raises(ValueError, match="the 'claude' section is not a mapping"):
+        claudeplugins.declared({"claude": ["superpowers@claude-plugins-official"]})
+
+
+def test_a_product_plugin_may_name_a_default_marketplace_without_declaring_it():
+    # act
+    markets, plugins = claudeplugins.declared({"claude": {"plugins": ["kotlin-lsp@claude-plugins-official"]}})
+
+    # assert: the default's marketplaces are known to every product, and only its own are declared
+    assert markets == ()
+    assert plugins == ("kotlin-lsp@claude-plugins-official",)
+
+
+# --- the effective set: simplon's default, the product's additions, its exclusions (si#525) ---------
+
+_OFFICIAL = "claude-plugins-official"
+
+
+def test_no_claude_toolchain_is_off():
+    assert claudeplugins.effective({"toolchains": ["python"]}) is None
+
+
+def test_claude_alone_is_the_base_set():
+    # act
+    eff = claudeplugins.effective({"toolchains": ["claude"]})
+
+    # assert
+    assert eff.plugins == claudeplugins.BASE_PLUGINS
+    assert eff.plugins == (f"superpowers@{_OFFICIAL}", f"feature-dev@{_OFFICIAL}", f"code-review@{_OFFICIAL}",
+                           f"code-simplifier@{_OFFICIAL}", f"security-guidance@{_OFFICIAL}",
+                           f"github@{_OFFICIAL}", f"frontend-design@{_OFFICIAL}",
+                           "token-optimizer@alexgreensh-token-optimizer")
+    assert set(eff.origin.values()) == {"default"}
+    assert {m.name for m in eff.markets} == {_OFFICIAL, "alexgreensh-token-optimizer"}
+    assert eff.requires == ("node",)
+
+
+def test_empty_section_is_the_default():
+    assert claudeplugins.effective({"toolchains": ["claude"], "claude": {}}).plugins == claudeplugins.BASE_PLUGINS
+
+
+@pytest.mark.parametrize("language, plugin, binary", [
+    ("python", "pyright-lsp", "pyright-langserver"), ("java", "jdtls-lsp", "jdtls"),
+    ("cpp", "clangd-lsp", "clangd"), ("dotnet", "csharp-lsp", "csharp-ls")])
+def test_language_adds_its_set_and_requires(language, plugin, binary):
+    # act
+    eff = claudeplugins.effective({"toolchains": ["claude", language]})
+
+    # assert
+    assert eff.plugins[-1] == f"{plugin}@{_OFFICIAL}"
+    assert eff.origin[f"{plugin}@{_OFFICIAL}"] == f"toolchain {language}"
+    assert binary in eff.requires
+
+
+def test_a_language_without_claude_brings_nothing():
+    assert claudeplugins.effective({"toolchains": ["python", "gh"]}) is None
+
+
+def test_product_additions_and_their_marketplace():
     # arrange
-    data = {"claude": {"marketplaces": {"official": {"source": "github", "repo": "a/b"}}, "plugins": []}}
+    data = {"toolchains": ["claude"],
+            "claude": {"marketplaces": {"acme": {"source": "github", "repo": "acme/plugins"}},
+                       "plugins": ["x@acme"], "requires": ["acmectl"]}}
 
-    # act / assert
-    with pytest.raises(ValueError, match="'claude.plugins' declares none"):
-        claudeplugins.declared(data)
+    # act
+    eff = claudeplugins.effective(data)
+
+    # assert
+    assert eff.plugins[-1] == "x@acme"
+    assert eff.origin["x@acme"] == "product"
+    assert "acme" in {m.name for m in eff.markets}
+    assert eff.requires == ("node", "acmectl")
+
+
+def test_a_product_plugin_naming_an_undeclared_marketplace_is_still_refused():
+    with pytest.raises(ValueError, match="names undeclared marketplace 'acme'"):
+        claudeplugins.effective({"toolchains": ["claude"], "claude": {"plugins": ["x@acme"]}})
+
+
+def test_a_product_restating_a_default_plugin_keeps_its_default_origin():
+    # act
+    eff = claudeplugins.effective({"toolchains": ["claude"], "claude": {"plugins": [f"github@{_OFFICIAL}"]}})
+
+    # assert: one entry, not two, and the dry run still says where it really comes from
+    assert eff.plugins == claudeplugins.BASE_PLUGINS
+    assert eff.origin[f"github@{_OFFICIAL}"] == "default"
+
+
+def test_exclude_removes_and_takes_requires_with_it():
+    # arrange: Review Focus 2 - the exclusion wins over the product's own toolchain
+    data = {"toolchains": ["claude", "python"], "claude": {"exclude": [f"pyright-lsp@{_OFFICIAL}"]}}
+
+    # act
+    eff = claudeplugins.effective(data)
+
+    # assert
+    assert f"pyright-lsp@{_OFFICIAL}" not in eff.plugins
+    assert "pyright-langserver" not in eff.requires
+
+
+def test_excluding_token_optimizer_drops_node_and_its_marketplace():
+    # act
+    eff = claudeplugins.effective({"toolchains": ["claude"],
+                                   "claude": {"exclude": ["token-optimizer@alexgreensh-token-optimizer"]}})
+
+    # assert: a marketplace nothing installs from is not registered
+    assert "node" not in eff.requires
+    assert {m.name for m in eff.markets} == {_OFFICIAL}
+
+
+def test_exclude_of_nothing_is_refused():
+    with pytest.raises(ValueError, match=f"excludes 'nope@{_OFFICIAL}', which is not in the default"):
+        claudeplugins.effective({"toolchains": ["claude"], "claude": {"exclude": [f"nope@{_OFFICIAL}"]}})
+
+
+def test_exclude_not_a_list_is_refused():
+    with pytest.raises(ValueError, match="'claude.exclude' must be a list"):
+        claudeplugins.effective({"toolchains": ["claude"], "claude": {"exclude": f"github@{_OFFICIAL}"}})
+
+
+def test_excluding_everything_is_refused():
+    with pytest.raises(ValueError, match="the effective plugin set is empty"):
+        claudeplugins.effective({"toolchains": ["claude"],
+                                 "claude": {"exclude": list(claudeplugins.BASE_PLUGINS)}})
 
 
 # --- reading what the machine already has --------------------------------------------------------------
