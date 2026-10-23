@@ -81,6 +81,7 @@ si#518, not red.
 
 ### Also in this release
 
+- **#514** pins `deploy/image/image.pin` to the published v0.34.0 kernel image.
 - **#523** is these notes.
 
 ## 0.34.0
