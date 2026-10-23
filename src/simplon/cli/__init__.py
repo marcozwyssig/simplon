@@ -557,8 +557,10 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     # silently delete a line somebody wrote on purpose.
     declared = app.info.epilog
     declared = declared.strip() if isinstance(declared, str) else ""
-    line = provenance_line()
-    app.info.epilog = f"{declared}\n\n{line}" if declared else line
+    # The console-mode line (si#517) goes between them: `--no-tui` is stripped before Click sees the
+    # argv, so Click lists it nowhere, and a person who wanted it asked for it as a new feature.
+    lines = [declared] if declared else []
+    app.info.epilog = "\n\n".join([*lines, NO_TUI_LINE, provenance_line()])
 
 
 def _group_paths(mf: manifest.Manifest, tax, skipped: frozenset[str]) -> list[str]:
@@ -603,6 +605,11 @@ def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> 
 #: What a person types to ask for the headless runner; `simplon.kernel.steps.NO_TUI_ENV` is what
 #: actually travels (si#223 point 3).
 NO_TUI_FLAG = "--no-tui"
+
+#: The help screen's sentence for it, on the root app only: the flag is read before the first command
+#: word and nowhere else, so a group screen naming it would be saying something false.
+NO_TUI_LINE = (f"{NO_TUI_FLAG} before the command (or {NO_TUI_ENV}=1 in the environment) runs it on "
+               "the console, without the Textual UI.")
 
 
 def consume_no_tui(argv: list[str]) -> bool:

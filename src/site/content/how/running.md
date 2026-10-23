@@ -68,6 +68,9 @@ The variable is the one that travels. A plan's steps are separate `./myctl.sh <s
 flag on the parent reaches none of them while the variable reaches all of them. A value that is neither
 `0` nor `1` leaves the runner where it was and says so.
 
+`./myctl.sh --help` names both forms in the lines below the command panels (si#517). The flag is read
+only before the first command word, so a group's `--help` does not repeat it.
+
 {{< callout type="info" >}}
 Redirection still works exactly as it did. `--no-tui` is a second way to say it, not a replacement.
 {{< /callout >}}
