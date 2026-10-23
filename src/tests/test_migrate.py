@@ -849,6 +849,11 @@ def test_an_artifacts_section_the_loader_would_refuse_is_cannot_migrate_not_curr
 #: not refreshed (fixtures/manifests/README.md), so each kernel command is named here instead.
 NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
 
+#: A command si#525 placed in an EXISTING group, `support claude-plugins`, so it is not a new group to pop.
+#: The catalogue places it first after `install`; a product that declared its own (netctl) keeps its own
+#: help and impl, and only its position in the group moved - that is what is taken back out here.
+NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"))
+
 
 @pytest.mark.parametrize("product", PRODUCTS)
 def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
@@ -867,6 +872,17 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     for group, members in NEW_IN_EVERY_PRODUCT.items():
         assert surface["groups"].pop(group) == members
         surface["commands"].pop(group)
+    for group, member in NEW_MEMBERS_IN_EVERY_PRODUCT:
+        surface["groups"][group].remove(member)
+    for group, member in NEW_MEMBERS_IN_EVERY_PRODUCT:
+        if member in golden["groups"][group]:
+            surface["groups"][group].insert(golden["groups"][group].index(member), member)
+            # a product that took the coordinate's own help (simplon, swi) sees its new wording, only that
+            ours = surface["commands"][group][member]
+            if ours["help"].startswith("Install the Claude Code plugins of the `claude` toolchain"):
+                ours["help"] = golden["commands"][group][member]["help"]
+        else:
+            surface["commands"][group].pop(member)
     assert surface == golden
 
 

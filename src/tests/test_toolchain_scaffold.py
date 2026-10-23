@@ -277,3 +277,84 @@ def test_a_missing_phase_group_is_refused_and_nothing_is_written(manifest, monke
     assert manifest.read_text() == before
     out = capsys.readouterr().out
     assert "ci: test: commands:" in out and "argv:" in out
+
+
+# --- si#525: every toolchain is named in `toolchains:`, the host ones too --------------------------
+
+def test_host_toolchain_adds_only_the_list_entry(manifest, capsys):
+    # arrange
+    before = manifest.read_text()
+
+    # act
+    rc = toolchain.scaffold("claude")
+
+    # assert: one line, below `product:`, and every other byte as it was
+    after = manifest.read_text()
+    assert rc == 0
+    assert after == before.replace("product: demo\n", "product: demo\ntoolchains: [claude]\n")
+    assert "claude: added to toolchains" in capsys.readouterr().out
+
+
+def test_language_adds_commands_and_the_list_entry(manifest):
+    # act
+    toolchain.scaffold("python", version="3.12")
+
+    # assert
+    data = yaml.safe_load(manifest.read_text())
+    assert data["toolchains"] == ["python"]
+    assert data["ci"]["build"]["commands"], "the language's commands are still written"
+
+
+def test_second_run_changes_nothing(manifest, capsys):
+    # arrange
+    toolchain.scaffold("claude")
+    once = manifest.read_text()
+
+    # act
+    toolchain.scaffold("claude")
+
+    # assert
+    assert manifest.read_text() == once
+    assert "already in toolchains" in capsys.readouterr().out
+
+
+def test_appends_to_an_existing_flow_list(manifest):
+    # arrange
+    manifest.write_text("product: demo\ntoolchains: [python]  # what we build with\nci:\n  build:\n"
+                        "    commands: {}\n", encoding="utf-8")
+
+    # act
+    toolchain.scaffold("gh")
+
+    # assert: the comment survives, because the splice touches the brackets only
+    assert "toolchains: [python, gh]  # what we build with\n" in manifest.read_text()
+
+
+def test_a_block_list_is_appended_in_block_style(manifest):
+    # arrange
+    manifest.write_text("product: demo\ntoolchains:\n  - python\nci:\n  build:\n    commands: {}\n",
+                        encoding="utf-8")
+
+    # act
+    toolchain.scaffold("gh")
+
+    # assert
+    assert "toolchains:\n  - python\n  - gh\nci:\n" in manifest.read_text()
+
+
+def test_a_shape_the_splice_cannot_read_is_refused_and_nothing_is_written(manifest):
+    # arrange
+    text = "product: demo\ntoolchains: !!python/tuple [python]\nci:\n  build:\n    commands: {}\n"
+    manifest.write_text(text, encoding="utf-8")
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        toolchain.scaffold("gh")
+    assert manifest.read_text() == text
+
+
+def test_image_toolchain_without_version_is_refused(manifest, capsys):
+    # act / assert
+    with pytest.raises(SystemExit):
+        toolchain.scaffold("python")
+    assert "python needs a version" in capsys.readouterr().err

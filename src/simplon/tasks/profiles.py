@@ -19,6 +19,7 @@ data, and swapping 19 for 20 is a one-line diff.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from simplon.kernel import log
@@ -503,3 +504,48 @@ def profile(language: str, **params: str) -> Profile:
     prof = PROFILES[language]
     return Profile(image=prof.image.format(**params), commands=prof.commands,
                    placements=prof.placements)
+
+
+# --- the toolchains a product uses (si#525) ---------------------------------------------------------
+
+#: The toolchains that are host tools rather than images (Marco, 2026-10-23: "claude or gh is simply a
+#: toolchain that is supported, just like firn"). A table of their own beside `PROFILES`, because a
+#: `Profile` is an image and its commands, and these bring neither: each brings a step in `support
+#: install` instead.
+HOST_TOOLCHAINS: dict[str, str] = {
+    "claude": "Claude Code: the plugin set and CLAUDE.md",
+    "gh": "the GitHub CLI",
+}
+
+#: The top-level manifest key `support toolchain <name>` writes into, and every reader of "is this
+#: toolchain on" asks.
+TOOLCHAINS_KEY = "toolchains"
+
+
+def known_toolchains() -> tuple[str, ...]:
+    """Every name `toolchains:` may carry, sorted."""
+    return tuple(sorted({*PROFILES, *HOST_TOOLCHAINS}))
+
+
+def declared_toolchains(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
+    """The toolchains the manifest names, in its order; `()` when it names none.
+
+    An unknown name is REFUSED, not read as absent: a misspelt `Claude` would otherwise turn Claude support
+    off without a word, which is this project's recurring defect at one more seam. Nothing is stripped or
+    case-folded for the same reason - a value edited before use is one the manifest no longer describes.
+    """
+    raw = data.get(TOOLCHAINS_KEY)
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(f"{source}: '{TOOLCHAINS_KEY}' must be a list of toolchain names, got {raw!r}")
+    known = known_toolchains()
+    seen: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str) or entry not in known:
+            raise ValueError(f"{source}: '{TOOLCHAINS_KEY}': {entry!r} is not a toolchain the kernel "
+                             f"supports - it supports: {', '.join(known)}")
+        if entry in seen:
+            raise ValueError(f"{source}: '{TOOLCHAINS_KEY}' names '{entry}' twice")
+        seen.append(entry)
+    return tuple(seen)

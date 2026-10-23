@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from simplon.kernel import log
 from simplon.adapters import oras
+from simplon.tasks import claudeplugins
 
 # Every gate this command drives, in the order a fresh machine wants them. One entry today; the point
 # of the list is that the next tool is a row rather than a rewrite. The gate is wrapped in a lambda
@@ -22,8 +23,19 @@ from simplon.adapters import oras
 _GATES = (("oras", lambda: oras.ensure_oras(), oras.OrasError),)
 
 
+def _claude_plugins() -> bool:
+    """The `claude` toolchain's gate (si#525): the product's effective plugin set, reported in its own
+    words. OFF says nothing - a product that does not use Claude Code pays nothing, not even a line.
+    False only for FAILED (or a set this machine cannot run, si#396); SKIPPED is not a failure."""
+    outcome = claudeplugins.step()
+    if outcome.state is not claudeplugins.State.OFF:
+        claudeplugins.report(outcome)
+    return claudeplugins._rc(outcome) == 0
+
+
 def install() -> int:
-    """Provision the host tooling the delivery kernel needs (today: oras); idempotent.
+    """Provision the host tooling the delivery kernel needs (oras, and the plugins of the `claude`
+    toolchain); idempotent.
 
     Every gate is attempted even when an earlier one failed - a setup command that stops at the first
     problem hides the second one until the next run, and someone provisioning a machine wants the whole
@@ -37,4 +49,6 @@ def install() -> int:
         except failure_type as failure:
             log.warn(f"{name}: {failure}")
             failed.append(name)
+    if not _claude_plugins():
+        failed.append("claude")
     return 1 if failed else 0

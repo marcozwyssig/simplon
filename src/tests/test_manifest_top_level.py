@@ -157,7 +157,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.asset": ("assets",),
     "tasks.githubrelease": ("artifacts",),
     "tasks.buildfiles": ("build",),
-    "tasks.claudeplugins": ("claude",),
+    "tasks.claudeplugins": ("claude", "toolchains"),   # si#525: toolchains through profiles.declared_toolchains
+    "tasks.claudemd": ("claude", "toolchains"),   # si#525: through claudeplugins.effective
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.fetchfile": ("artifacts",),   # a `kind: file` entry (si#343)
@@ -181,6 +182,16 @@ MODULES: dict[str, tuple[str, ...]] = {
 #: below, asserting the silence rather than asserting the comment: a declared exception nobody measured is
 #: a claim, and si#48/si#83 are what that costs when the claim is about a set nobody looked at.
 SILENT_ON_ABSENCE = {
+    "claude": "an absent `claude:` section is the NORMAL case since si#525: simplon ships the plugin default, "
+              "and the section only ADDS to it or excludes from it, so a product with nothing to add writes "
+              "nothing. WHAT THAT COSTS, said rather than left to be found: `claued:` is silent too, and the "
+              "product gets the default without its additions. `support claude-plugins -n` lists every "
+              "plugin with its origin, which is where a missing `(product)` line shows.",
+    "toolchains": "an absent `toolchains:` list is the NORMAL case for a product scaffolded before si#525: it "
+                  "uses no host toolchain, and `support install` says nothing about Claude. WHAT THAT COSTS: "
+                  "`toolchain: [claude]` (singular) is silent too, and Claude support stays off - which "
+                  "`support claude-plugins` then says in so many words ('claude' is not in toolchains:). An "
+                  "unknown NAME inside a correctly spelled list is refused (si#525).",
     "layout": "an absent `layout:` section is the NORMAL case and is what every product in this family "
               "has - the section arrived with si#250 and its defaults are exactly what the kernel "
               "assumed before it existed, so a manifest that says nothing runs the line it ran "
@@ -224,8 +235,10 @@ DRIVERS: dict[str, tuple[dict, object]] = {
                 lambda: site.declared(context.current().manifest_data())),
     "suites": ({"suites": {"gates": []}},
                lambda: testrun.declared(context.current().manifest_data())),
-    "claude": ({"claude": {"marketplaces": {}}},
-               lambda: claudeplugins.declared(context.current().manifest_data())),
+    "claude": ({"toolchains": ["claude"], "claude": {"plugins": ["kotlin-lsp@claude-plugins-official"]}},
+               lambda: claudeplugins.effective(context.current().manifest_data())),
+    "toolchains": ({"toolchains": ["claude"]},
+                   lambda: claudeplugins.effective(context.current().manifest_data())),
     "nexus": ({"nexus": {"proxy_repositories": []}},
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     "workflows": ({"workflows": {"ci": {}}},

@@ -405,6 +405,10 @@ fi
 if [ ! -f "$STAMP" ] || [ "$REQ" -nt "$STAMP" ]; then
     "$PIP" install -q --disable-pip-version-check -r "$REQ"
     touch "$STAMP"
+    # The environment was just set up, so the kernel installs the Claude Code plugins of the
+    # `claude` toolchain before it runs the command (si#525). Only here, not on every launch
+    # (+1.4 s, measured), and never on the container route, where `claude` is on the host.
+    export SIMPLON_PLUGIN_STEP=1
 fi
 
 export PYTHONPATH="$LAUNCH_ORCH_DIR/src/python${PYTHONPATH:+:$PYTHONPATH}"

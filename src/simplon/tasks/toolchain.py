@@ -460,7 +460,7 @@ def _manifest_path() -> Path:
     return context.current().manifest_path
 
 
-def scaffold(language: str, version: str) -> int:
+def scaffold(language: str, version: str = "") -> int:
     """Write a language's ready-made toolchain commands into THIS product's manifest (si#95).
 
     SCAFFOLDED, NOT RESOLVED AT RUN TIME, and that is the safety property rather than a convenience. A
@@ -482,9 +482,22 @@ def scaffold(language: str, version: str) -> int:
     command supplied was accepted by the loader, never reached this body, and every language raised
     `KeyError: 'version'` on the first line. A parameter the CLI can carry has to be a parameter.
     """
-    prof = profiles.profile(language, version=version)
     path = _manifest_path()
     text = path.read_text(encoding="utf-8")
+    # EVERY TOOLCHAIN IS NAMED IN `toolchains:` (si#525), the host ones too: it is the list the kernel
+    # reads to know what is on, so a language scaffolded here also turns its Claude LSP set on. Named
+    # FIRST, so an unknown name is refused before anything is written.
+    listed = _toolchains_spliced(text, language, path.name)
+    if language in profiles.HOST_TOOLCHAINS:
+        _report_listed(language, listed != text)
+        if listed != text:
+            path.write_text(listed, encoding="utf-8")
+        return 0
+    if not version:
+        log.die(f"{language} needs a version: its image is pinned to one "
+                f"(`support toolchain {language} <version>`)")
+        raise SystemExit(1)
+    prof = profiles.profile(language, version=version)
     written, kept = [], []
     by_phase: dict[str, dict[str, object]] = {}
     for key, body in prof.commands.items():
@@ -501,16 +514,90 @@ def scaffold(language: str, version: str) -> int:
     # ALL OR NOTHING (si#371). Every phase is spliced into the text before anything is written, so a
     # phase the splice cannot place refuses the whole profile: a `build model` without the `test model`
     # that checks it would be half a toolchain, written silently.
-    spliced = text
+    spliced = listed
     for phase, additions in by_phase.items():
         spliced = _spliced(spliced, additions, path.name, phase)
     if spliced != text:
         path.write_text(spliced, encoding="utf-8")
+    _report_listed(language, listed != text)
     log.ok(f"{language}: wrote {len(written)} command(s)"
            + (f" - {', '.join(written)}" if written else ", nothing was missing"))
     for name in kept:
         log.info(f"kept your own '{name}' - scaffolding never overwrites an edited command")
     return 0
+
+
+def _report_listed(name: str, added: bool) -> None:
+    if added:
+        log.ok(f"{name}: added to toolchains")
+    else:
+        log.info(f"{name}: already in toolchains")
+
+
+#: The top-level `toolchains:` line, and a block-list item under it.
+_TOOLCHAINS = re.compile(r"^toolchains:(?P<rest>.*)$")
+_ITEM = re.compile(r"^(?P<indent> +)- ")
+
+
+def _toolchains_spliced(text: str, name: str, where: str) -> str:
+    """`text` with `name` in its top-level `toolchains:` list, or `text` itself when it is there already.
+
+    The si#110 splice again: the list is edited as text, so a comment on the line survives. Three shapes
+    are read - absent (a line goes in below `product:`), a flow list (`[a, b]`, the brackets are
+    rewritten) and a block list (an item goes below the last one) - and anything else is refused by name
+    with nothing written. The result is parsed back, and what it names must be exactly what it named
+    before plus `name`, so a shape that fooled the scanner ends as a diagnosis.
+    """
+    import yaml
+
+    def names(document: str) -> tuple[str, ...]:
+        try:
+            return profiles.declared_toolchains(yaml.safe_load(document) or {}, source=where)
+        except (ValueError, yaml.YAMLError) as exc:
+            log.die(f"{where}: cannot add '{name}' to toolchains: {exc}")
+            raise SystemExit(1) from exc
+
+    if name not in profiles.known_toolchains():
+        log.die(f"no toolchain '{name}' - the kernel supports: {', '.join(profiles.known_toolchains())}")
+        raise SystemExit(1)
+    before = names(text)
+    if name in before:
+        return text
+    lines = text.splitlines(keepends=True)
+    at = next((i for i, line in enumerate(lines) if _TOOLCHAINS.match(line.rstrip("\r\n"))), None)
+    if at is None:
+        product = next((i for i, line in enumerate(lines) if line.startswith("product:")), -1)
+        lines.insert(product + 1, f"toolchains: [{name}]\n")
+    else:
+        head = _TOOLCHAINS.match(lines[at].rstrip("\r\n"))
+        assert head is not None   # `at` was found by this very pattern
+        rest = head.group("rest")
+        flow = re.match(r"^(?P<pre> *\[)(?P<items>[^\]]*)(?P<post>\].*)$", rest)
+        if flow:
+            items = flow.group("items").strip()
+            joined = f"{items}, {name}" if items else name
+            ending = lines[at][len(lines[at].rstrip("\r\n")):]
+            lines[at] = f"toolchains:{flow.group('pre')}{joined}{flow.group('post')}{ending}"
+        elif not rest.split("#")[0].strip():
+            last = at
+            while last + 1 < len(lines) and _ITEM.match(lines[last + 1]):
+                last += 1
+            if last == at:
+                log.die(f"{where}: 'toolchains:' has no list under it; write `toolchains: [{name}]`")
+                raise SystemExit(1)
+            item = _ITEM.match(lines[last])
+            assert item is not None   # `last` only ever advanced over lines this pattern matched
+            indent = item.group("indent")
+            lines.insert(last + 1, f"{indent}- {name}\n")
+        else:
+            log.die(f"{where}: 'toolchains:{rest}' is a shape this command does not edit; "
+                    f"add '{name}' by hand")
+            raise SystemExit(1)
+    spliced = "".join(lines)
+    if names(spliced) != (*before, name):
+        log.die(f"{where}: adding '{name}' to toolchains would not have produced the list it should")
+        raise SystemExit(1)
+    return spliced
 
 
 # --- the splice (si#110): text in, text out, and nothing re-serialised that was not written here ---

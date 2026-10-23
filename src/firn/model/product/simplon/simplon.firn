@@ -138,6 +138,14 @@ simplon typeOf simplon.manifest.Product {
       key = "install"
       task = simplon.catalogue.support_install
     }
+    command claude_plugins typeOf simplon.pipeline.TaskCommand {
+      key = "claude-plugins"
+      task = simplon.catalogue.support_claude_plugins
+    }
+    command claude_md typeOf simplon.pipeline.TaskCommand {
+      key = "claude-md"
+      task = simplon.catalogue.support_claude_md
+    }
     command completion typeOf simplon.pipeline.TaskCommand {
       key = "completion"
       task = simplon.catalogue.support_completion
@@ -149,10 +157,6 @@ simplon typeOf simplon.manifest.Product {
     command workflows typeOf simplon.pipeline.TaskCommand {
       key = "workflows"
       task = simplon.catalogue.support_workflows
-    }
-    command claude_plugins typeOf simplon.pipeline.TaskCommand {
-      key = "claude-plugins"
-      task = simplon.catalogue.support_claude_plugins
     }
     command ci_privileges typeOf simplon.pipeline.TaskCommand {
       key = "ci-privileges"
@@ -261,6 +265,9 @@ simplon typeOf simplon.manifest.Product {
     key = "kernel-tag"
     kind = simplon.vocabulary.tag
   }
+  toolchains s_toolchains typeOf simplon.manifest.KernelSection {
+    key = "toolchains"
+  }
   website s_website typeOf simplon.manifest.KernelSection {
     key = "website"
   }
@@ -278,8 +285,5 @@ simplon typeOf simplon.manifest.Product {
   }
   workflows s_workflows typeOf simplon.manifest.KernelSection {
     key = "workflows"
-  }
-  claude s_claude typeOf simplon.manifest.KernelSection {
-    key = "claude"
   }
 }

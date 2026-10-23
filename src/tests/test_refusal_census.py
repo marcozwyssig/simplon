@@ -240,6 +240,9 @@ BORROWS_A_READER = {
     "tasks.firngen": "`generate` asks `toolchain.invocation` for the docker line `toolchain:run` would build "
                      "(si#400 4b), which reads the product's `layout` itself; this module rules on firn's JSON "
                      "report and on files, never on the manifest",
+    "tasks.hosttools": "`install` runs `claudeplugins.step` as the `claude` toolchain's gate (si#525); "
+                       "claudeplugins reads the `toolchains:` and `claude:` sections itself and is the module "
+                       "the census accounts for, and this module raises nothing on the manifest",
     "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
                    "itself and is the module the census accounts for; this module raises nothing",
     "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "
@@ -859,11 +862,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("nexusproxy", "_text", "is missing or empty"): DIAGNOSIS,
 
     # --- tasks/claudeplugins.py: the `claude:` section (netctl declares one) ---------------------------
-    ("claudeplugins", "declared", "section is missing or is not a mapping"): DIAGNOSIS,
+    ("claudeplugins", "declared", "section is not a mapping"): DIAGNOSIS,
     ("claudeplugins", "declared", "marketplaces' must be a mapping"): DIAGNOSIS,
-    ("claudeplugins", "declared", "marketplaces' declares none"): DIAGNOSIS,
     ("claudeplugins", "declared", "plugins' must be a list"): DIAGNOSIS,
-    ("claudeplugins", "declared", "plugins' declares none"): DIAGNOSIS,
     ("claudeplugins", "declared", "must be a mapping with 'source' and 'repo'"): DIAGNOSIS,
     # Not a rule about what a product may say - nothing but github is implemented, so the refused
     # manifest names a mechanism that does not exist.
@@ -875,6 +876,19 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # checks nothing a product meant - `requires: node` would iterate as four letters - so refusing it
     # takes nothing away. Whether the named executable IS on PATH consults the machine: run time, not here.
     ("claudeplugins", "required", "must be a list of executable names"): DIAGNOSIS,
+    # si#525: the effective set. An exclusion of nothing is a typo, and an empty set is not what a product
+    # that turned the `claude` toolchain on asked for - the way out is to turn it off, and the message says so.
+    ("claudeplugins", "effective", "must be a list of 'name@marketplace' ids"): DIAGNOSIS,
+    ("claudeplugins", "effective", "which is not in the default - nothing to exclude"): DIAGNOSIS,
+    ("claudeplugins", "effective", "so the effective plugin set is empty"): DIAGNOSIS,
+    # A `claude:` section with no `claude` toolchain is a declaration nothing reads (final review, si#525).
+    ("claudeplugins", "effective", "but 'claude' is not in"): DIAGNOSIS,
+    # --- tasks/profiles.py: the `toolchains:` list (si#525) -------------------------------------------
+    # An unknown name is refused rather than read as "off": a misspelt `Claude` would turn Claude support
+    # off without a word. A duplicate has no second meaning, and a scalar would iterate as letters.
+    ("profiles", "declared_toolchains", "must be a list of toolchain names"): DIAGNOSIS,
+    ("profiles", "declared_toolchains", "names '{entry}' twice"): DIAGNOSIS,
+    ("profiles", "declared_toolchains", "is not a toolchain the kernel supports"): DIAGNOSIS,
     ("claudeplugins", "required", "is not an executable name"): DIAGNOSIS,
 
     # --- tasks/docs.py: the docToolchain image tag ----------------------------------------------------

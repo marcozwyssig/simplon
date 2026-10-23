@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import contextlib
 import os
 import sys
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, TypedDict, cast
@@ -602,6 +603,35 @@ def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> 
     return frozenset(named)
 
 
+#: Set by the launcher right after it refreshed the venv's dependencies (si#525): run the `claude`
+#: toolchain's plugin step once, before the command. Taken off the environment when read, so the
+#: `./<product>.sh <leaf>` processes a plan is made of do not each repeat it.
+PLUGIN_STEP_ENV = "SIMPLON_PLUGIN_STEP"
+
+
+def plugin_step_after_refresh() -> None:
+    """The launcher's plugin step: once per deps refresh, reported, and NEVER a failed command.
+
+    OFF says nothing, as in `support install`. Any other outcome is one line, FAILED included, and the
+    command then runs as asked - a plugin that would not install must not cost somebody their build. An
+    error the step did not foresee is a warning for the same reason.
+    """
+    from simplon.tasks import claudeplugins
+
+    if os.environ.pop(PLUGIN_STEP_ENV, "") != "1":
+        return
+    # ON STDERR, all of it: this runs before the command a person typed, and `V=$(./<product>.sh
+    # release version)` right after a deps refresh must capture the version and nothing else.
+    with contextlib.redirect_stdout(sys.stderr):
+        try:
+            outcome = claudeplugins.step()
+        except Exception as exc:     # noqa: BLE001 - the launcher's promise is that this never stops a command
+            log.warn(f"Claude Code plugins were not checked: {exc}")
+            return
+        if outcome.state is not claudeplugins.State.OFF:
+            claudeplugins.report(outcome)
+
+
 #: What a person types to ask for the headless runner; `simplon.kernel.steps.NO_TUI_ENV` is what
 #: actually travels (si#223 point 3).
 NO_TUI_FLAG = "--no-tui"
@@ -684,6 +714,7 @@ def main(*, app: typer.Typer, context: ProductContext,
     # Every run starts here, a product's and simplon's own, so this is where the layers above the kernel
     # tell it what they know (si#391). Before the env token is read, because nothing below asks yet.
     runhost.register(run_host())
+    plugin_step_after_refresh()
 
     taxonomy = context.manifest().taxonomy()
     # si#467: ON THE CONTAINER ROUTE ONLY, the launcher that started this container has to forward what the

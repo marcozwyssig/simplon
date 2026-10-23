@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 11 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 14 |
+| `support` | not a phase | 15 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Fifty-eight coordinates: forty-six carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty-nine coordinates: forty-seven carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -397,11 +397,12 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 14 tasks.**
+**In the catalogue today: 15 tasks.**
 
 - `support:install`
 - `support:nexus`
 - `support:claude-plugins`
+- `support:claude-md`
 - `support:environments`
 - `support:workflows`
 - `support:completion`
@@ -561,6 +562,26 @@ where half its callers live.
 `support toolchain <language> <version>` writes a ready-made configuration into the manifest, and the
 product owns it from then on. Scaffolded rather than resolved at run time, so a kernel release can never
 change how a product builds.
+
+**Every toolchain is named in `toolchains:`** (si#525), and two of them bring no commands. `support
+toolchain <name>` adds the name to that top-level list. For `python`, `java`, `cpp`, `dotnet` and `firn`
+it also writes the commands. `claude` and `gh` are host tools: they bring a step in `support install`
+instead.
+
+- **`claude`:** `support install` installs simplon's plugin default (eight base plugins, plus one LSP
+  plugin for each language in the list), and so does the launcher right after it refreshed its deps. A
+  product adds to the set or excludes from it in a `claude:` section and never restates it.
+  `support claude-md` writes `CLAUDE.md` (simplon's central working agreements, then the product's own
+  region between two markers, kept byte for byte) and the `enabledPlugins` of `.claude/settings.json`.
+  List both under `generated:` and `test generated` holds them.
+- **The step's five outcomes, which never read alike:**
+  - **off:** `claude` is not in the list, and nothing is said.
+  - **skipped, and why:** no `claude` on PATH, CI, or the container route.
+  - **nothing missing.**
+  - **installed N:** the line says to restart Claude Code.
+  - **failed:** the plugin is named.
+- **Exit codes:** the launcher never fails a command over a plugin; `support install` is rc 1 on a
+  failure.
 
 **And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the
 si#95 design's own command table had put at `test unit` and `test analyse`. The split the kernel keeps is

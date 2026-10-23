@@ -44,7 +44,7 @@ kinds:
 # This block also PLACES the general commands, which is what makes "the same groups holding the same
 # general tasks" true rather than a convention every product has to keep by hand. It places only what
 # needs no product data: the four git verbs and the two task verbs. `support:nexus` reads a `nexus:`
-# section, `support:claude-plugins` a `claude:` one, `support:environments` an `environments:` one, and
+# section, `support:environments` an `environments:` one, and
 # `test:gate`/`test:accept` need a running lab - placed here, each would be a command that dies on its
 # first line in a product that has none of that. They stay tasks, and a product declares a command for
 # one the day it has the data.
@@ -90,6 +90,12 @@ groups:
       # in a subgroup because it is about the machine as a whole, and a fresh checkout should reach it
       # without knowing which tool is missing.
       install: { task: "support:install" }
+      # PLACED since si#525, which made it useful in every product: without the `claude` toolchain it
+      # says Claude support is off and exits 0, so a product with no Claude Code pays one help line.
+      # Before si#525 it read a `claude:` section every product had to write, and was a task only.
+      claude-plugins: { task: "support:claude-plugins" }
+      # Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
+      claude-md: { task: "support:claude-md" }
       # PLACED rather than offered (si#58), and it is the same argument `install` above is placed on.
       # The placement bar is "useful in EVERY product": this one reads no manifest section - the command
       # tree it writes out is the tree every manifest already has - it publishes nothing, it touches
@@ -382,8 +388,15 @@ tasks:
     help: "Provision the host tooling the kernel needs - today oras; idempotent."
     unattended: true
   support:claude-plugins:
-    help: "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent."
+    help: "Install the Claude Code plugins of the `claude` toolchain: simplon's default plus the manifest's `claude:` additions; idempotent."
     unattended: true
+    params:
+      dry_run: { help: "List what is missing, and where each plugin comes from, and install nothing.", short: "-n" }
+  support:claude-md:
+    help: "Write CLAUDE.md (simplon's central working agreements, then the product's own region) and .claude/settings.json's enabledPlugins for the `claude` toolchain; --check reports drift and writes nothing."
+    unattended: true
+    params:
+      check: { help: "report drift and write nothing" }
   support:environments:
     help: "List the named environments and the backend each targets, marking the active one."
     unattended: true
@@ -843,13 +856,13 @@ tasks:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
-      language: { help: "java | cpp | dotnet | python", argument: true }
+      language: { help: "java | cpp | dotnet | python | firn | claude | gh", argument: true }
       # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
       # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
       # parameter, so the value was accepted at load and silently discarded. A product either types it
       # (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
       # because the parameter exists.
-      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12)", argument: true }
+      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude and gh take none", argument: true }
 
   toolchain:run:
     help: "Run a pinned toolchain image over the product tree, as the calling user."

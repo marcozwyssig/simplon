@@ -352,3 +352,15 @@ def test_a_tree_the_caller_does_not_own_is_refused_before_the_container_starts(p
     assert docker_lines == []
     assert "build/home" in result.output or "build" in result.output
     assert "own" in result.output
+
+
+def test_a_host_toolchain_takes_no_version_on_the_command_line(product):
+    # arrange: si#525 - claude and gh are toolchains with no image, so nothing to pin
+    _write(product, _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["support", "toolchain", "claude"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(product.read_text())["toolchains"] == ["claude"]

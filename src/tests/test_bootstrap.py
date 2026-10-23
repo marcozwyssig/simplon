@@ -621,3 +621,25 @@ def test_simplon_manifest_without_a_known_subcommand_is_usage_and_scaffolds_noth
     assert rc == 2
     assert capsys.readouterr().err == "usage: simplon manifest migrate [MANIFEST]\n"
     assert list(tmp_path.iterdir()) == []
+
+
+# --- si#525: a new product starts with Claude support and gh on ----------------------------------
+
+def test_starter_manifest_turns_claude_and_gh_on():
+    # arrange
+    import yaml
+    from simplon.tasks import profiles
+
+    # act
+    data = yaml.safe_load(bootstrap.manifest_yaml("demo"))
+
+    # assert
+    assert profiles.declared_toolchains(data) == ("claude", "gh")
+
+
+def test_starter_manifest_with_toolchains_still_loads():
+    # arrange
+    from simplon.manifest import catalogue, load
+
+    # act / assert: the loader accepts the new top-level list
+    load.load(bootstrap.manifest_yaml("demo"), catalogue=catalogue.load(), manifest_path="demo.yaml")

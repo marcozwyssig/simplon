@@ -14,6 +14,8 @@ from simplon.tasks import hosttools
 def _registered_context(monkeypatch, tmp_path):
     monkeypatch.setattr(context, "_current",
                         ProductContext("sample", tmp_path / "repo", tmp_path / "sample.yaml"))
+    # si#525: `support install` now reads the manifest for the `claude` toolchain, so it has to exist
+    (tmp_path / "sample.yaml").write_text("product: sample\n", encoding="utf-8")
 
 
 def test_it_provisions_oras(monkeypatch):
