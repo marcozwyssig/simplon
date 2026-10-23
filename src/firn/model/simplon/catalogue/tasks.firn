@@ -330,6 +330,10 @@ support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
   key = "support:claude-plugins"
   body = "simplon.tasks.claudeplugins:install_cmd"
 }
+support_claude_md typeOf simplon.pipeline.CatalogueTask {
+  key = "support:claude-md"
+  body = "simplon.tasks.claudemd:claude_md_cmd"
+}
 support_environments typeOf simplon.pipeline.CatalogueTask {
   key = "support:environments"
   body = "simplon.tasks.env:environments"

@@ -142,6 +142,10 @@ simplon typeOf simplon.manifest.Product {
       key = "claude-plugins"
       task = simplon.catalogue.support_claude_plugins
     }
+    command claude_md typeOf simplon.pipeline.TaskCommand {
+      key = "claude-md"
+      task = simplon.catalogue.support_claude_md
+    }
     command completion typeOf simplon.pipeline.TaskCommand {
       key = "completion"
       task = simplon.catalogue.support_completion

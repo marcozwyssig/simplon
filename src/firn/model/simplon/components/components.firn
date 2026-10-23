@@ -259,6 +259,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_ciprivileges typeOf simplon.architecture.Module {
     path = "tasks.ciprivileges"
   }
+  module m_tasks_claudemd typeOf simplon.architecture.Module {
+    path = "tasks.claudemd"
+  }
   module m_tasks_claudeplugins typeOf simplon.architecture.Module {
     path = "tasks.claudeplugins"
   }

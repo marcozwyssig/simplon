@@ -94,6 +94,8 @@ groups:
       # says Claude support is off and exits 0, so a product with no Claude Code pays one help line.
       # Before si#525 it read a `claude:` section every product had to write, and was a task only.
       claude-plugins: { task: "support:claude-plugins" }
+      # Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
+      claude-md: { task: "support:claude-md" }
       # PLACED rather than offered (si#58), and it is the same argument `install` above is placed on.
       # The placement bar is "useful in EVERY product": this one reads no manifest section - the command
       # tree it writes out is the tree every manifest already has - it publishes nothing, it touches
@@ -390,6 +392,11 @@ tasks:
     unattended: true
     params:
       dry_run: { help: "List what is missing, and where each plugin comes from, and install nothing.", short: "-n" }
+  support:claude-md:
+    help: "Write CLAUDE.md (simplon's central working agreements, then the product's own region) and .claude/settings.json's enabledPlugins for the `claude` toolchain; --check reports drift and writes nothing."
+    unattended: true
+    params:
+      check: { help: "report drift and write nothing" }
   support:environments:
     help: "List the named environments and the backend each targets, marking the active one."
     unattended: true
