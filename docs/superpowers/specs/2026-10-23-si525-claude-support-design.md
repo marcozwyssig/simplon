@@ -45,16 +45,19 @@ its own.
 
    | language | plugins | `requires` |
    |---|---|---|
-   | `python` | `pyright-lsp` | `pyright` |
-   | `java` | `jdtls-lsp` | a JDK (`java`) |
+   | `python` | `pyright-lsp` | `pyright-langserver` |
+   | `java` | `jdtls-lsp` | `jdtls` |
    | `cpp` | `clangd-lsp` | `clangd` |
-   | `dotnet` | `csharp-lsp` | `dotnet` |
+   | `dotnet` | `csharp-lsp` | `csharp-ls` |
+
+   *Measured on 2026-10-23:* each `requires` value is the `lspServers.<name>.command` of that plugin in
+   `anthropics/claude-plugins-official`'s `.claude-plugin/marketplace.json`. `kotlin-lsp` would need
+   `kotlin-lsp`.
 
    `kotlin-lsp` is not in the `java` set. A product adds it through `plugins:`. *(My call: "if Kotlin
    modules exist" is something the kernel cannot see.)* The `requires` column becomes part of the default
    `claude.requires`, so si#396's wording "installed, and this machine cannot run all of them" names the
-   toolchain's runtime. *The exact executable names are to be measured against each plugin's manifest
-   before they are written into the table.*
+   toolchain's runtime. 
 5. **The languages come from `toolchains:`.** Every language in that list adds its set (table above),
    and so the mapping lives only in the kernel. A product that did not use `support toolchain` writes the
    names by hand. An unknown name is a DIAGNOSIS that names the known ones. The known names are
