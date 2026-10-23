@@ -377,6 +377,9 @@ ui typeOf simplon.architecture.Component {
   key = "ui"
   layer = "5"
   summary = "Running a plan in front of a person."
+  module m_ui_clipboard typeOf simplon.architecture.Module {
+    path = "ui.clipboard"
+  }
   module m_ui_tui typeOf simplon.architecture.Module {
     path = "ui.tui"
   }

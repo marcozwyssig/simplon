@@ -197,7 +197,7 @@ Short enough to state, and the half you most need, because everything else is yo
 `adapters.diskguard` · `adapters.github` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
 `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
 `manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
-`kernel.runhost` · `kernel.steplog` · `test_impls`
+`kernel.runhost` · `kernel.steplog` · `test_impls` · `ui.clipboard`
 
 `model.task` and `model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn
 generates — the kernel's, and a product's own from the same template — imports `simplon.model.task.Task`,
