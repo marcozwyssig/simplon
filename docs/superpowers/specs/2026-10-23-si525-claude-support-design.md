@@ -10,15 +10,26 @@ each product copies them by hand. smcctl copied simplon's whole `claude:` sectio
 refuses an empty one. netctl, biz-cockpit and agile-cockpit each keep their own `CLAUDE.md` (27.8, 20.5 and
 5.3 KB), and the other products have none. A copy drifts the day simplon's list or agreements change.
 
-So: **one setting turns Claude support on, and simplon owns what it brings**. That is the plugin default
+So: **one setting turns Claude support on, and simplon owns what it brings**. Marco, 2026-10-23: "claude
+or gh is simply a toolchain that is supported, just like firn." So the setting is a toolchain entry. That is the plugin default
 and the central part of `CLAUDE.md`, both versioned with the simplon pin. A product states only what is
 its own.
 
 ## Decisions (Marco)
 
-1. **The switch is the `claude:` section.** If it is present, even empty, Claude support is on. If it is
-   absent, Claude support is off: no plugin step and no `CLAUDE.md`, and no warning either, because a
-   product that does not use Claude Code pays nothing.
+1. **The switch is a toolchain entry.** A new top-level manifest list, `toolchains:`, names every
+   toolchain the product uses: `python`, `java`, `cpp`, `dotnet`, `firn`, `claude` and `gh`.
+   `support toolchain <name>` adds its name there.
+   - For firn and the four languages it also writes the commands, as today.
+   - `claude` and `gh` are host tools, so they bring no `toolchain:run` commands. Each brings a gate in
+     `support install` instead.
+
+   `claude` in the list turns Claude support on: the plugin step and `CLAUDE.md`. Without it, Claude
+   support is off, with no plugin step, no `CLAUDE.md` and no warning, because a product that does not
+   use Claude Code pays nothing. `gh` in the list makes `support install` provision gh (si#526).
+   *(This replaces the earlier ruling of the same day, under which the `claude:` section itself was the
+   switch.)* The `claude:` section is optional and carries only `plugins:`, `marketplaces:`,
+   `exclude:` and `requires:` additions.
 2. **Simplon ships the default, and a product only extends it.** The effective set is computed as follows:
    - start from the default, which is the base set plus the set of each declared language;
    - add the product's `plugins:`;
@@ -44,10 +55,12 @@ its own.
    `claude.requires`, so si#396's wording "installed, and this machine cannot run all of them" names the
    toolchain's runtime. *The exact executable names are to be measured against each plugin's manifest
    before they are written into the table.*
-5. **The languages come from `claude: languages:`.** `support toolchain <language>` adds its language
-   there, beside the toolchain configuration it already writes, and creates the section if it is absent.
-   A product that did not use `support toolchain` writes the line by hand. An unknown language is a
-   DIAGNOSIS that names the known ones, from `profiles.PROFILES`.
+5. **The languages come from `toolchains:`.** Every language in that list adds its set (table above),
+   and so the mapping lives only in the kernel. A product that did not use `support toolchain` writes the
+   names by hand. An unknown name is a DIAGNOSIS that names the known ones. The known names are
+   `profiles.PROFILES` plus the host toolchains `claude` and `gh`. *(My call: the host toolchains get a
+   table of their own beside `PROFILES`, because `Profile` requires an image, and that table is where
+   each one's `support install` gate is named.)*
 6. **Where the install runs: in `support install` and in the launcher.**
    - The plugin step becomes one entry in `hosttools._GATES`, beside `oras` and si#526's `gh`.
    - The launcher (`templates/launch.sh.j2`, and with it `simplon.sh`) runs the same step after a deps
@@ -55,8 +68,8 @@ its own.
    - It does not run on every launch. Measured: `claude plugin list --json` takes 528-549 ms,
      `support claude-plugins -n` 1421 ms, and a bare `./simplon.sh --help` 382 ms.
    - `support claude-plugins` stays as the explicit command.
-7. **`simplon init` turns it on by default.** A new product gets an empty `claude:` section, plus
-   `languages:` once `support toolchain` has run. Deleting the section turns it off.
+7. **`simplon init` turns it on by default.** A new product gets `toolchains: [claude, gh]`. Removing
+   `claude` turns Claude support off, and removing `gh` turns the gh gate off.
 8. **The kernel generates `CLAUDE.md`, with a protected region for the product's own part.**
    - The central part comes from a kernel template.
    - The product's part sits between markers and survives every regeneration.
@@ -67,7 +80,7 @@ its own.
 
 "Not run" and "failed" must not look alike, at any of the three entry points:
 
-- **off:** no `claude:` section. Silent in the launcher; `support install` says nothing for it either.
+- **off:** `claude` is not in `toolchains:`. Silent in the launcher; `support install` says nothing for it either.
 - **skipped, with the reason:** no `claude` on PATH; CI (`CI=true` or `GITHUB_ACTIONS=true`); the
   container route, where `claude` lives on the host. One line, never red.
 - **nothing missing:** the effective set is installed.
@@ -117,12 +130,18 @@ writes again.)*
 ## Census and surface
 
 - **`claudeplugins.declared`:** the refusal "section is missing or is not a mapping" splits:
-  - missing becomes "off" and is no longer a refusal;
+  - missing means "the default only" and is no longer a refusal;
   - present but not a mapping stays a DIAGNOSIS.
-- **New load-time refusals:** `languages:` that is not a list, an unknown language, `exclude:` that is
+- **`toolchains:`** is a new top-level key, read raw through `manifest_data()`, which is a walked seam. Its
+  reader is the module that owns the host-toolchain table (*my call:* `tasks/profiles.py`).
+- **New load-time refusals:** `toolchains:` that is not a list, an unknown or duplicate name, `exclude:` that is
   not a list, and an exclusion that names nothing in the default. The last one is a DIAGNOSIS, because an
   exclusion of nothing is a typo. Each needs its census entry in `test_refusal_census.py`.
-- **`support:claude-md`:** a new coordinate, with its catalogue entry and placement.
+- **`support:claude-md`:** a new coordinate, with its catalogue entry. It is placed for every product,
+  and with no `claude` toolchain it says "off" and exits 0.
+- **si#526 joins here:** the `gh` gate in `hosttools._GATES` runs only when `gh` is in `toolchains:`,
+  which leaves the open question of si#526's per-platform install route as the only part of it this spec
+  does not settle.
 
 ## Non-goals
 
@@ -144,8 +163,8 @@ writes again.)*
   - its `support install` installs the eight base plugins plus `pyright-lsp`;
   - it says a restart is needed;
   - a second run says nothing is missing.
-- The same product with `claude:` deleted: no plugin line anywhere, and no `CLAUDE.md`.
+- The same product with `claude` removed from `toolchains:`: no plugin line anywhere, and no `CLAUDE.md`.
 - With no `claude` on PATH: "skipped: no `claude` on PATH", and rc 0 in the launcher.
 - `support claude-md` over an existing `CLAUDE.md` moves it into the product region. Running it twice
   is byte-identical, and `--check` is red after an edit outside the region.
-- smcctl can delete its copied `claude:` lists and keep an empty section.
+- smcctl can delete its copied `claude:` section entirely and write `toolchains: [python, claude, gh]`.
