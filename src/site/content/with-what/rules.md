@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 248 | nothing - the declaration had no working meaning |
+| diagnosis | 254 | nothing - the declaration had no working meaning |
 | expression rule | 42 | something it could otherwise have said |
-| **all load-time refusals** | **290** | |
+| **all load-time refusals** | **296** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
@@ -186,8 +186,8 @@ being talked about? The second one is the one that keeps going missing.
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
 rule is asked what it was actually handed. The catalogue holds **58** coordinates and its own tree places
-**11** of them; those 11 are the platform's half - in the merged tree because the catalogue put them there,
-not because this product asked - and all 11 reach every rule the table calls *held to it too*. Exactly two
+**12** of them; those 12 are the platform's half - in the merged tree because the catalogue put them there,
+not because this product asked - and all 12 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown
 the catalogue until si#85, for the rewrite it no longer prints) and the one that enforces which groups
 exist, and every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's

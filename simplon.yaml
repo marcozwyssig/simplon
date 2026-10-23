@@ -386,10 +386,6 @@ support:
     # placement rather than a preference.
     workflows: { task: "support:workflows" }
 
-    claude-plugins:
-      task: "support:claude-plugins"
-      params:
-        dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
 
     # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
     # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants

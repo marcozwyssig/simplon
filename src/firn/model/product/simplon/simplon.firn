@@ -138,6 +138,10 @@ simplon typeOf simplon.manifest.Product {
       key = "install"
       task = simplon.catalogue.support_install
     }
+    command claude_plugins typeOf simplon.pipeline.TaskCommand {
+      key = "claude-plugins"
+      task = simplon.catalogue.support_claude_plugins
+    }
     command completion typeOf simplon.pipeline.TaskCommand {
       key = "completion"
       task = simplon.catalogue.support_completion
@@ -149,10 +153,6 @@ simplon typeOf simplon.manifest.Product {
     command workflows typeOf simplon.pipeline.TaskCommand {
       key = "workflows"
       task = simplon.catalogue.support_workflows
-    }
-    command claude_plugins typeOf simplon.pipeline.TaskCommand {
-      key = "claude-plugins"
-      task = simplon.catalogue.support_claude_plugins
     }
     command ci_privileges typeOf simplon.pipeline.TaskCommand {
       key = "ci-privileges"

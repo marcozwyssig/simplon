@@ -76,7 +76,8 @@ from simplon.model.task import mangle
 KERNEL_SECTIONS: tuple[str, ...] = (
     "artifacts", "assets", "build", "carriers", "cd", "ci", "claude", "deploy", "doctoolchain_version",
     "env_var", "generate", "generated", "instance", "lab_egress", "launcher", "layout", "nexus", "output",
-    "releases", "suites", "support", "tasks", "taxonomy", "tracker", "website", "workflows",
+    "releases", "suites", "support", "tasks", "taxonomy", "toolchains", "tracker", "website",
+    "workflows",
 )
 
 #: Sections the bridge models as structure rather than as an opaque KernelSection.

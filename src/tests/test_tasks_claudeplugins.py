@@ -417,15 +417,17 @@ def _machine(monkeypatch, tmp_path, *, requires, on_path):
 
     from simplon.kernel.run import Result as RunResult
 
-    data = _with_requires(requires)
+    data = {"toolchains": ["claude"], **_with_requires(requires)}
+    for variable in ("CI", "GITHUB_ACTIONS"):
+        monkeypatch.delenv(variable, raising=False)
     ctx = types.SimpleNamespace(manifest_data=lambda: data, manifest_path=tmp_path / "m.yaml")
     monkeypatch.setattr(claudeplugins.context, "current", lambda: ctx)
     monkeypatch.setattr(claudeplugins.shutil, "which",
-                        lambda name: f"/bin/{name}" if name in ("claude", *on_path) else None)
+                        lambda name, path=None: f"/bin/{name}" if name in ("claude", *on_path) else None)
     answers = {
         ("claude", "plugin", "marketplace", "list", "--json"): _MARKETPLACES_JSON,
         ("claude", "plugin", "list", "--json"): json.dumps(
-            [{"id": p, "scope": "user"} for p in _SECTION["claude"]["plugins"]]),
+            [{"id": p, "scope": "user"} for p in claudeplugins.effective(data).plugins]),
     }
     monkeypatch.setattr(claudeplugins, "run",
                         lambda argv, **_: RunResult(rc=0, out=answers[tuple(argv)], err=""))

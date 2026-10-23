@@ -22,8 +22,10 @@ CLI module renders.
 """
 from __future__ import annotations
 
+import enum
 import json
 import shutil
+import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -319,102 +321,194 @@ def plan(markets: Iterable[Marketplace], plugins: Iterable[str],
     )
 
 
-def _installed() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Ask the `claude` CLI what is registered and installed. Dies on a failed query rather than treating it
-    as an empty machine (see `_json_list` for the same reasoning)."""
-    res = run(["claude", "plugin", "marketplace", "list", "--json"])
-    if not res.ok:
-        log.die(f"`claude plugin marketplace list --json` failed (rc {res.rc}): "
-                f"{res.err.strip() or res.out.strip()}")
-    markets = installed_marketplace_names(res.out)
-    res = run(["claude", "plugin", "list", "--json"])
-    if not res.ok:
-        log.die(f"`claude plugin list --json` failed (rc {res.rc}): {res.err.strip() or res.out.strip()}")
-    return markets, installed_plugin_ids(res.out)
+class State(enum.Enum):
+    """What the plugin step did (si#525), five values because there are five things to tell a person."""
+
+    OFF = "off"                         # the product does not have the `claude` toolchain
+    SKIPPED = "skipped"                 # it does, and this machine or route cannot install (detail: why)
+    NOTHING_MISSING = "nothing missing"
+    INSTALLED = "installed"             # count: how many; Claude Code must restart to load them
+    FAILED = "failed"                   # detail: which step and why
 
 
-def install(dry_run: bool = False) -> int:
-    """Bring this machine to the declared plugin set; 0 when every step succeeded.
+@dataclass(frozen=True)
+class Outcome:
+    state: State
+    detail: str = ""
+    count: int = 0
+    #: False when a `requires` executable is missing (si#396): a complete set this machine cannot run.
+    ready: bool = True
 
-    Installs at USER scope, because the point is an agent that behaves the same in every checkout of the
-    product's repo, including linked worktrees. A plugin whose marketplace could not be registered is
-    SKIPPED rather than attempted: it would fail anyway, and one clear cause reads better than a cascade of
-    consequences. An executable `claude.requires` names and PATH lacks is reported and makes the result 1,
-    dry run or not: the plugin set can be complete on a machine that cannot run it (si#396).
-    """
-    if shutil.which("claude") is None:
-        log.die("the `claude` CLI is not on PATH; install Claude Code first")
 
+#: How long one `claude ... --json` query may take before the step gives up. Measured at about 0.5 s.
+QUERY_TIMEOUT_S = 60.0
+
+
+class _Failed(Exception):
+    """A query that failed or hung: the step's FAILED, never an empty machine."""
+
+
+def _installed(timeout_s: float) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Ask the `claude` CLI what is registered and installed. A failed or hung query is `_Failed`, never
+    an empty machine (see `_json_list` for the same reasoning)."""
+    answers = []
+    for what in (["plugin", "marketplace", "list"], ["plugin", "list"]):
+        shown = f"`claude {' '.join(what)} --json`"
+        try:
+            res = run(["claude", *what, "--json"], timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            raise _Failed(f"{shown} did not answer within {timeout_s:g}s") from exc
+        if not res.ok:
+            raise _Failed(f"{shown} failed (rc {res.rc}): {res.err.strip() or res.out.strip()}")
+        answers.append(res.out)
+    try:
+        return installed_marketplace_names(answers[0]), installed_plugin_ids(answers[1])
+    except ValueError as exc:
+        raise _Failed(str(exc)) from exc
+
+
+def _skip_reason(env: Mapping[str, str], container: bool) -> str:
+    """Why this machine or route installs nothing, or "" when it can."""
+    if container:
+        return "the container route: `claude` runs on the host"
+    for variable in ("CI", "GITHUB_ACTIONS"):
+        if env.get(variable, "").lower() == "true":
+            return f"{variable}=true: plugins are for a machine somebody develops on"
+    if shutil.which("claude", path=env.get("PATH")) is None:
+        return "no `claude` on PATH"
+    return ""
+
+
+def _effective_here() -> Effective | None:
     ctx = context.current()
-    markets, plugins = declared(ctx.manifest_data(), source=str(ctx.manifest_path))
-    needs = required(ctx.manifest_data(), source=str(ctx.manifest_path))
-    todo = plan(markets, plugins, *_installed())
-    return _plugins(todo, plugins, dry_run, ready=_report_missing(missing(needs, shutil.which)))
+    return effective(ctx.manifest_data(), source=str(ctx.manifest_path))
 
 
-def _report_missing(absent: tuple[str, ...]) -> bool:
-    """Name every required executable that is not on PATH; True when none is missing (si#396)."""
-    for name in absent:
-        log.warn(f"`{name}` is not on PATH, and '{SECTION}.requires' says a plugin runs it; "
-                 f"that plugin will not work on this machine")
-    return not absent
+def step(*, env: Mapping[str, str] | None = None, container: bool = False,
+         timeout_s: float = QUERY_TIMEOUT_S) -> Outcome:
+    """Bring this machine to the product's effective plugin set, and say which of five things happened.
 
-
-def _plugins(todo: Plan, plugins: tuple[str, ...], dry_run: bool, *, ready: bool) -> int:
-    """Carry out (or, dry, describe) `todo`; 1 when a step failed or the machine is not `ready`.
-
-    `ready` is folded into every exit, because a complete plugin set on a machine missing a required
-    executable is exactly the "nothing to do" that is not (si#396).
+    NEVER RAISES AND NEVER DIES, because two of its callers must not stop: `support install` runs every
+    gate, and the launcher must never fail a build over a plugin. A manifest the section cannot be read
+    from is FAILED with the diagnosis as its detail. Installs at USER scope, so the agent behaves the same
+    in every checkout of the product, linked worktrees included.
     """
+    import os
+
+    env = os.environ if env is None else env
+    try:
+        eff = _effective_here()
+    except (ValueError, RuntimeError) as exc:     # RuntimeError: the manifest could not be read at all
+        return Outcome(State.FAILED, str(exc))
+    if eff is None:
+        return Outcome(State.OFF)
+    reason = _skip_reason(env, container)
+    if reason:
+        return Outcome(State.SKIPPED, reason)
+    try:
+        todo = plan(eff.markets, eff.plugins, *_installed(timeout_s))
+    except _Failed as exc:
+        return Outcome(State.FAILED, str(exc))
+    ready = _report_missing(missing(eff.requires, lambda name: shutil.which(name, path=env.get("PATH"))))
     for plugin_id in todo.present_plugins:
         log.info(f"{plugin_id} already installed")
     if todo.is_complete:
-        if not ready:
-            log.warn(f"all {len(plugins)} declared Claude Code plugins are installed, and this machine "
-                     f"cannot run all of them")
-            return 1
-        log.ok(f"all {len(plugins)} declared Claude Code plugins are installed; nothing to do")
-        return 0
-    if dry_run:
-        for market in todo.add_marketplaces:
-            log.info(f"would register marketplace {market.name} ({market.repo})")
-        for plugin_id in todo.install_plugins:
-            log.info(f"would install {plugin_id}")
-        log.ok(f"dry run: {len(todo.add_marketplaces)} marketplace(s) and "
-               f"{len(todo.install_plugins)} plugin(s) missing")
-        return 0 if ready else 1
+        return Outcome(State.NOTHING_MISSING, count=len(eff.plugins), ready=ready)
 
-    failures = 0
+    failed: list[str] = []
     unusable: set[str] = set()
     for market in todo.add_marketplaces:
         log.info(f"registering marketplace {market.name} ({market.repo})")
         if run(["claude", "plugin", "marketplace", "add", _source_of(market)], capture=False).ok:
             log.ok(f"marketplace {market.name} registered")
         else:
-            failures += 1
             unusable.add(market.name)
-            log.warn(f"marketplace {market.name} ({market.repo}) could not be registered")
+            failed.append(f"marketplace {market.name} ({market.repo}) could not be registered")
+    installed = 0
     for plugin_id in todo.install_plugins:
         market_name = plugin_id.partition("@")[2]
         if market_name in unusable:
-            failures += 1
-            log.warn(f"{plugin_id} skipped: its marketplace {market_name} could not be registered")
+            failed.append(f"{plugin_id} skipped: its marketplace {market_name} could not be registered")
             continue
         log.info(f"installing {plugin_id}")
         if run(["claude", "plugin", "install", plugin_id, "--scope", "user"], capture=False).ok:
             log.ok(f"{plugin_id} installed")
+            installed += 1
         else:
-            failures += 1
-            log.warn(f"{plugin_id} could not be installed")
+            failed.append(f"{plugin_id} could not be installed")
+    if failed:
+        return Outcome(State.FAILED, "; ".join(failed), count=installed, ready=ready)
+    return Outcome(State.INSTALLED, count=installed, ready=ready)
 
-    if failures:
-        log.warn(f"{failures} step(s) failed; the plugin set is INCOMPLETE")
+
+def report(outcome: Outcome) -> None:
+    """One line per state, worded so no two read alike."""
+    if outcome.state is State.OFF:
+        log.info("Claude support is off: 'claude' is not in toolchains:")
+    elif outcome.state is State.SKIPPED:
+        log.info(f"Claude Code plugins skipped: {outcome.detail}")
+    elif outcome.state is State.NOTHING_MISSING:
+        if outcome.ready:
+            log.ok(f"all {outcome.count} Claude Code plugins are installed; nothing to do")
+        else:
+            log.warn(f"all {outcome.count} Claude Code plugins are installed, and this machine cannot run "
+                     f"all of them")
+    elif outcome.state is State.INSTALLED:
+        log.ok(f"installed {outcome.count} Claude Code plugin(s); restart Claude Code to load them"
+               + ("" if outcome.ready else ", and this machine cannot run all of them"))
+    else:
+        log.warn(f"Claude Code plugins: the set is INCOMPLETE - {outcome.detail}")
+
+
+def _rc(outcome: Outcome) -> int:
+    return 1 if outcome.state is State.FAILED or not outcome.ready else 0
+
+
+def install(dry_run: bool = False) -> int:
+    """`support claude-plugins`: the step, reported; 1 when it FAILED or the machine cannot run the set.
+
+    The dry run lists each plugin with WHERE IT COMES FROM - the default, a toolchain, or the product - so
+    the person running it can see what the product added on top of simplon's default.
+    """
+    if not dry_run:
+        outcome = step()
+        report(outcome)
+        return _rc(outcome)
+    try:
+        eff = _effective_here()
+    except ValueError as exc:
+        log.warn(str(exc))
         return 1
-    if not ready:
-        log.warn("the declared Claude Code plugin set is installed, and this machine cannot run all of it")
+    if eff is None:
+        report(Outcome(State.OFF))
+        return 0
+    for plugin_id in eff.plugins:
+        log.info(f"{plugin_id} ({eff.origin[plugin_id]})")
+    reason = _skip_reason(__import__("os").environ, container=False)
+    if reason:
+        report(Outcome(State.SKIPPED, reason))
+        return 0
+    try:
+        todo = plan(eff.markets, eff.plugins, *_installed(QUERY_TIMEOUT_S))
+    except _Failed as exc:
+        report(Outcome(State.FAILED, str(exc)))
         return 1
-    log.ok("the declared Claude Code plugin set is installed; restart Claude Code to load it")
-    return 0
+    ready = _report_missing(missing(eff.requires, shutil.which))
+    for market in todo.add_marketplaces:
+        log.info(f"would register marketplace {market.name} ({market.repo})")
+    for plugin_id in todo.install_plugins:
+        log.info(f"would install {plugin_id}")
+    log.ok(f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {len(todo.install_plugins)} "
+           f"plugin(s) missing")
+    return 0 if ready else 1
+
+
+def _report_missing(absent: tuple[str, ...]) -> bool:
+    """Name every required executable that is not on PATH; True when none is missing (si#396)."""
+    for name in absent:
+        log.warn(f"`{name}` is not on PATH, and a Claude Code plugin this product uses runs it; "
+                 f"that plugin will not work on this machine")
+    return not absent
 
 
 def install_cmd(dry_run: bool = False) -> int:

@@ -480,7 +480,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
 | `ci:` | the loader | the `build:`, `test:` and `release:` commands |
-| `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs, and optionally `requires:`, the executables those plugins run; one missing from PATH makes the task fail (rc 1) |
+| `claude:` | `support:claude-plugins`, `support:install` | optional, and only what a product ADDS to simplon's plugin default (si#525): `plugins:` and the `marketplaces:` they need, `exclude:` for a default plugin it does not want, and `requires:`, executables its own plugins run. One missing from PATH makes the task fail (rc 1). An absent section means the default |
 | `deploy:` | the deploy commands | `source:`, naming the `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
@@ -495,6 +495,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
 | `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
+| `toolchains:` | `support:claude-plugins`, `support:install`, `support:toolchain` | the toolchains this product uses: `python`, `java`, `cpp`, `dotnet`, `firn`, `claude`, `gh` (si#525). `support toolchain <name>` adds one. `claude` turns on the Claude Code plugins (eight base plugins, plus one LSP plugin per language listed here); an unknown name is refused, and an absent list turns everything here off |
 | `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
