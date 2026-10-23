@@ -23,6 +23,67 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.35.0
+
+**What a product has to do:** nothing is removed, and a product on 0.34.0 moves both simplon pins
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. Three changes may still
+show on the first run after the bump:
+
+1. **The root `--help` has one more line (si#517).** Between a product's own epilog and the
+   `assembled by simplon …` line, it now says `--no-tui before the command (or SIMPLON_NO_TUI=1 in the
+   environment) runs it on the console, without the Textual UI.` A product test that compares the whole
+   epilog, or the whole help screen, byte for byte needs that line. A group's `--help` is unchanged.
+2. **The buildx builder may be recreated once (si#518).** Where the builder's `/etc/resolv.conf` names
+   a loopback resolver, such as systemd-resolved's `127.0.0.53`, `build image` writes
+   `build/docker/buildkitd.toml` and recreates the builder with it. `buildx rm --keep-state` runs first,
+   so the layer cache survives. Other hosts pay one `docker exec` per build and nothing else.
+3. **`c` in the TUI may say something new (si#516).** It no longer claims "copied" for a copy nobody
+   saw land. Install `wl-clipboard` (Wayland) or `xclip` (X11) for a copy that is confirmed.
+
+### Bind mounts in `toolchain:run`, and one public mount helper (si#511, si#495)
+
+- **`mounts:` on `toolchain:run` (si#511).** Each entry is `<source>:<target>` or
+  `<source>:<target>:ro`. The source is a plain relative path under the product root, and the target an
+  absolute path in the container that does not cover the tree mount's `workdir`. Before the run, the
+  calling process creates the source and, when the target lies under `workdir`, its host counterpart, as
+  the calling user. Docker would otherwise create both `root:root`, measured with docker 29.9.1. A path
+  owned by another uid, a file in the way, or a source that escapes the tree through a symlink is
+  refused by name before anything is made. From Python, `Toolchain(mounts=[Mount(...)])` and the public
+  `toolchain.prepare_mounts(cfg, root, where)` give the same route.
+- **`adapters.hostpath.mount_argv` (si#495)** is the one public bind-mount helper, with `readonly` and
+  `must_exist`. It translates the source for the container route (si#201) and creates nothing.
+  `test:image` now uses it too. The one behaviour that changes: `test:image` also refuses a source that
+  escapes the tree through a symlink.
+- **For biz-cockpit:** the `-v` splice into `docker_argv`'s argv, and the two directories made by hand,
+  can become one `mounts:` entry, or `Toolchain(mounts=...)` with `prepare_mounts` (biz-cockpit#283).
+- **For firn:** the private copy of `test:image`'s `_mount_argv` (`imagelsp.py`) can become
+  `hostpath.mount_argv(..., readonly=True)`.
+
+### The builder keeps a loopback resolver (si#518)
+
+BuildKit drops loopback nameservers from every RUN step's `resolv.conf` and puts Google's DNS in their
+place. So on a network that blocks outside DNS, `apk add` failed inside `build image` while
+`docker run` resolved. `ensure_builder` reads the resolver from the builder's own container and passes a
+loopback one through, with `network=host` kept. A resolver that cannot be read is a warning naming
+si#518, not red.
+
+### The TUI: copying that says whether it worked, and the console mode in `--help` (si#516, si#517)
+
+- **The clipboard (si#516).** Textual copies only by writing OSC 52, which VTE terminals (Tilix, GNOME
+  Terminal) drop without a word, so `c` said "copied to the clipboard" over an empty paste. The text now
+  goes to `wl-copy` on Wayland, or `xclip`/`xsel` on X11, and the notice names the tool. If the tool
+  fails, the notice says why and points to `s`. With no desktop session, as over SSH, OSC 52 is still
+  sent, and the notice says that its delivery cannot be confirmed.
+- **A selection (si#516).** A mouse drag over the output pane selects text, and `ctrl+c` copies it
+  through the same route. Long lines still wrap.
+- **`--no-tui` is on the help screen (si#517).** The flag and `SIMPLON_NO_TUI=1` existed since si#223 but
+  showed nowhere a person types, so the console mode was asked for as a new feature.
+
+### Also in this release
+
+- **#514** pins `deploy/image/image.pin` to the published v0.34.0 kernel image.
+- **#523** is these notes.
+
 ## 0.34.0
 
 **What a product has to do:** 0.34.0 closes the two windows 0.33.0 opened, so a product on 0.33.0 that
