@@ -569,7 +569,9 @@ def _toolchains_spliced(text: str, name: str, where: str) -> str:
         product = next((i for i, line in enumerate(lines) if line.startswith("product:")), -1)
         lines.insert(product + 1, f"toolchains: [{name}]\n")
     else:
-        rest = _TOOLCHAINS.match(lines[at].rstrip("\r\n")).group("rest")
+        head = _TOOLCHAINS.match(lines[at].rstrip("\r\n"))
+        assert head is not None   # `at` was found by this very pattern
+        rest = head.group("rest")
         flow = re.match(r"^(?P<pre> *\[)(?P<items>[^\]]*)(?P<post>\].*)$", rest)
         if flow:
             items = flow.group("items").strip()
@@ -583,7 +585,9 @@ def _toolchains_spliced(text: str, name: str, where: str) -> str:
             if last == at:
                 log.die(f"{where}: 'toolchains:' has no list under it; write `toolchains: [{name}]`")
                 raise SystemExit(1)
-            indent = _ITEM.match(lines[last]).group("indent")
+            item = _ITEM.match(lines[last])
+            assert item is not None   # `last` only ever advanced over lines this pattern matched
+            indent = item.group("indent")
             lines.insert(last + 1, f"{indent}- {name}\n")
         else:
             log.die(f"{where}: 'toolchains:{rest}' is a shape this command does not edit; "

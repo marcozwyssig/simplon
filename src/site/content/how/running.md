@@ -98,6 +98,14 @@ plain-looking run with a normal exit code, indistinguishable from a deliberate r
 has been giving you plain output for a reason nobody checked, it will now tell you instead.
 {{< /callout >}}
 
+## The first run after setup installs the Claude Code plugins
+
+When the launcher has just installed its dependencies, and the product has the `claude` toolchain, the
+kernel installs the missing Claude Code plugins before the command runs (si#525). It prints one line:
+skipped and why, nothing missing, installed N and a reminder to restart Claude Code, or failed and
+which plugin. It never fails the command. The container route skips it, because `claude` runs on the
+host.
+
 ## Two neighbouring questions
 
 **How many steps run at once** is the machine's answer rather than the manifest's - `SIMPLON_MAX_PARALLEL`,

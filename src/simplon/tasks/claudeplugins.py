@@ -209,7 +209,7 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
     if "claude" not in toolchains:
         return None
     own_markets, own_plugins = declared(data, source=source)
-    section = data.get(SECTION) or {}
+    section, _, _ = context.section(data, SECTION)   # a mapping: `declared` above has refused anything else
     raw_exclude = section.get("exclude") or []
     if not isinstance(raw_exclude, (list, tuple)):
         raise ValueError(f"{source}: '{SECTION}.exclude' must be a list of 'name@marketplace' ids")

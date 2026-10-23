@@ -265,6 +265,9 @@ simplon typeOf simplon.manifest.Product {
     key = "kernel-tag"
     kind = simplon.vocabulary.tag
   }
+  toolchains s_toolchains typeOf simplon.manifest.KernelSection {
+    key = "toolchains"
+  }
   website s_website typeOf simplon.manifest.KernelSection {
     key = "website"
   }
@@ -282,8 +285,5 @@ simplon typeOf simplon.manifest.Product {
   }
   workflows s_workflows typeOf simplon.manifest.KernelSection {
     key = "workflows"
-  }
-  claude s_claude typeOf simplon.manifest.KernelSection {
-    key = "claude"
   }
 }
