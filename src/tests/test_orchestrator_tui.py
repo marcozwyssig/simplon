@@ -1975,3 +1975,96 @@ def test_a_run_that_finishes_while_the_screen_is_up_still_focuses_the_first_fail
     assert StepState.FAILED in states, "the fixture stopped producing a failure to focus"
     assert focused is not None and focused.state == StepState.FAILED, (
         f"the cursor should sit on the first failed step; it is on {focused}")
+
+
+# --- si#516: a copy says whether it worked, and a selection can be copied ---------------------------
+
+def _copy_with(monkeypatch, result):
+    """Run `c` on a finished pipeline with the clipboard adapter answering `result`; return what the app
+    said and what it wrote to the terminal. The adapter itself is measured against real processes in
+    test_clipboard.py; here only the UI's reading of its three answers is in question."""
+    from simplon.ui import clipboard, tui
+    handed: list[str] = []
+    monkeypatch.setattr(tui.clipboard, "copy", lambda text: (handed.append(text), result)[1])
+
+    async def scenario():
+        app = _StepApp(_pipeline())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while any(s.state in (StepState.PENDING, StepState.RUNNING) for s in app.pipeline.steps):
+                await pilot.pause(0.05)
+            notes: list[tuple[str, dict]] = []
+            osc: list[str] = []
+            app.notify = lambda message, **kw: notes.append((message, kw))
+            app._write_osc52 = osc.append
+            await pilot.press("down", "down")
+            await pilot.press("c")
+            await pilot.pause()
+            return notes, osc, app._details_text(app._cursor_row())
+
+    notes, osc, shown = asyncio.run(scenario())
+    assert handed == [shown]
+    return notes, osc, clipboard
+
+
+def test_a_confirmed_copy_says_copied_and_names_the_tool(monkeypatch):
+    from simplon.ui import clipboard
+    notes, osc, _ = _copy_with(monkeypatch, clipboard.Result(clipboard.State.CONFIRMED, "wl-copy"))
+    assert [m for m, _ in notes] == ["copied to the clipboard (wl-copy)"]
+    assert osc == [], "a copy the desktop confirmed needs no terminal escape on top"
+
+
+def test_a_failed_copy_never_says_copied_and_points_to_s(monkeypatch):
+    """The defect si#516 reported: "copied to the clipboard" over a copy that did not happen."""
+    from simplon.ui import clipboard
+    notes, osc, _ = _copy_with(monkeypatch, clipboard.Result(clipboard.State.FAILED, "xclip",
+                                                             "xclip exited 1: Can't open display"))
+    (message, kw), = notes
+    assert not message.startswith("copied")
+    assert "xclip exited 1: Can't open display" in message
+    assert "`s`" in message
+    assert kw.get("severity") == "error"
+
+
+def test_an_unconfirmed_copy_goes_out_as_osc52_and_says_it_cannot_be_confirmed(monkeypatch):
+    from simplon.ui import clipboard
+    notes, osc, _ = _copy_with(monkeypatch, clipboard.Result(clipboard.State.UNCONFIRMED, "osc52"))
+    (message, kw), = notes
+    assert len(osc) == 1, "with no clipboard tool, the terminal escape is the only route left"
+    assert not message.startswith("copied")
+    assert "cannot" in message and "`s`" in message
+    assert kw.get("severity") == "warning"
+
+
+def test_a_mouse_drag_over_the_output_pane_selects_exactly_that_text(monkeypatch):
+    """si#516's second half: copy PART of the output. Textual's RichLog has no selection; the pane must
+    report the dragged span as text, and that text must go out through the same clipboard route as `c`."""
+    from simplon.ui import clipboard, tui
+    handed: list[str] = []
+    monkeypatch.setattr(tui.clipboard, "copy",
+                        lambda text: (handed.append(text), clipboard.Result(clipboard.State.CONFIRMED, "x"))[1])
+
+    async def scenario():
+        app = _StepApp(_pipeline())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            while any(s.state in (StepState.PENDING, StepState.RUNNING) for s in app.pipeline.steps):
+                await pilot.pause(0.05)
+            app.notify = lambda message, **kw: None
+            await pilot.press("down", "down")
+            await pilot.pause()
+            pane = app.query_one("#details")
+            first = app._details_text(app._cursor_row()).splitlines()[0]
+            await pilot.mouse_down(pane, offset=(0, 0))
+            await pilot.hover(pane, offset=(4, 0))
+            await pilot.mouse_up(pane, offset=(4, 0))
+            await pilot.pause()
+            selected = app.screen.get_selected_text()
+            app.screen.action_copy_text()
+            await pilot.pause()
+            return first, selected
+
+    first, selected = asyncio.run(scenario())
+    assert selected is not None, "a drag over the output pane selected nothing"
+    assert first.startswith(selected) and 3 <= len(selected) <= 5
+    assert handed == [selected]

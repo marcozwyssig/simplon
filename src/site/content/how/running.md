@@ -34,13 +34,20 @@ comes from the steps, never from what the screen shows.
 | `/` | filter the rows by a substring; `/` again closes it |
 | `c` | copy the highlighted step's output |
 | `s` | save the highlighted step's output to a file |
+| drag, then `ctrl+c` | copy just the part of the output pane you marked with the mouse |
+
+Copying goes to the desktop clipboard through `wl-copy` on Wayland, or `xclip` or `xsel` on X11, and
+the notice says which tool took it. If the tool fails, the notice says why and does not claim a copy.
+With no desktop session, as over SSH, the text goes to the terminal as OSC 52. Whether it arrived
+cannot be seen from inside the app, so the notice says that. VTE terminals such as Tilix and GNOME
+Terminal drop it, and then `s` is the way out (si#516).
 
 ## The output outlives the screen
 
 The UI is gone the moment the run ends, so nothing you need is kept only there.
 
 - **Each step writes its own log** to `build/logs/<step>.log` - which is the only way to read a long
-  step's output back, because the UI holds the mouse and nothing in it can be selected.
+  step's output back after the UI is gone.
 - **The whole run writes a transcript** to `build/logs/run-transcript.log`, on *both* the terminal and
   the plain path, because the run most worth attaching to a ticket is a red one from CI.
 - **A failure report is printed after the UI exits**, onto the terminal you are left looking at. A run

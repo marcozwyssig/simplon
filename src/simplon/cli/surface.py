@@ -214,6 +214,7 @@ INTERNAL = frozenset({
     "adapters.diskguard", "adapters.github", "adapters.oras", "adapters.tools", "cli.bootstrap",
     "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
     "manifest.signatures", "manifest.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "ui.clipboard",
 })
 
 #: Where each old path of a move lives now, the alias that keeps it importable, the wording it announces

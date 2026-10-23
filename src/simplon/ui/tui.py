@@ -88,7 +88,44 @@ from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
 from simplon.kernel import steplog  # noqa: E402
+from simplon.ui import clipboard  # noqa: E402
+from textual.selection import Selection  # noqa: E402
+from textual.strip import Strip  # noqa: E402
 from textual.widgets.tree import TreeNode  # noqa: E402
+
+
+class _SelectableLog(RichLog):
+    """A RichLog a mouse drag can select from (si#516).
+
+    Textual 8's RichLog has no selection: it keeps no plain text a `Selection` can be cut from, and its
+    rendered lines carry no `offset` meta, so the screen cannot tell where in the widget a drag started.
+    Both are supplied here, as `Log` supplies them for itself, over the lines RichLog already holds - the
+    WRAPPED lines, which are exactly the rows on screen, so a drag's coordinates and the text agree.
+    """
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        return selection.extract("\n".join(strip.text for strip in self.lines)), "\n"
+
+    def selection_updated(self, selection: Selection | None) -> None:
+        self._line_cache.clear()
+        self.refresh()
+
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        line = scroll_y + y
+        strip = super().render_line(y)
+        selection = self.text_selection
+        span = selection.get_span(line) if selection is not None and line < len(self.lines) else None
+        if span is not None:
+            start, end = span
+            start -= scroll_x
+            end = strip.cell_length if end == -1 else end - scroll_x
+            start, end = max(start, 0), min(end, strip.cell_length)
+            if start < end:
+                head, mid, tail = strip.divide([start, end, strip.cell_length])
+                style = self.screen.get_component_rich_style("screen--selection")
+                strip = Strip.join([head, mid.apply_style(style), tail])
+        return strip.apply_offsets(scroll_x, line)
 
 #: The bar's colour, by the RUN's derived state. Three classes for five states, and the two that are
 #: missing are deliberate: the bar is one line and its job is the run, so PENDING (nothing has happened)
@@ -140,10 +177,10 @@ class _StepApp(App):
     #status.-failed { color: $error; }
     """
     # `c` and `s` are not conveniences. A Textual app puts the terminal in raw mode and turns on mouse
-    # reporting so it can handle clicks itself, which switches OFF the terminal's own selection - the
-    # output is on screen and cannot be marked, copied or quoted anywhere. The way out has to come from
-    # inside the app: `c` to the clipboard, `s` to a file for when the clipboard cannot be reached (an
-    # SSH session whose terminal does not speak OSC 52, or a log someone wants to attach to a ticket).
+    # reporting so it can handle clicks itself, which switches OFF the terminal's own selection. The way
+    # out has to come from inside the app: `c` to the clipboard, a mouse drag plus ctrl+c for part of the
+    # output pane (`_SelectableLog`, si#516), and `s` to a file for when the clipboard cannot be reached
+    # (an SSH session whose terminal does not speak OSC 52, or a log someone wants to attach to a ticket).
     #
     # `f`, `n` and `/` are si#148's three, and the footer is where they are discoverable at all. It is
     # also close to full at eight entries, which is why the command palette (ctrl+p) carries the same
@@ -243,7 +280,7 @@ class _StepApp(App):
             # Measured out of `RichLog.write`: the `auto_scroll` branch calls `scroll_end` on EVERY write
             # without ever asking where the reader is, so one emitted line threw a reader who had
             # scrolled to line 10 down to line 182. Following a running step by reading it was impossible.
-            yield RichLog(id="details", wrap=True, highlight=False, markup=False, auto_scroll=False)
+            yield _SelectableLog(id="details", wrap=True, highlight=False, markup=False, auto_scroll=False)
         yield Input(placeholder="filter the plan (/ again to clear)", id="filter")
         yield Static(id="status")
         yield Footer()
@@ -601,7 +638,30 @@ class _StepApp(App):
         if row is None:
             return
         self.copy_to_clipboard(self._details_text(row))
-        self.notify("copied to the clipboard", timeout=3)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Every copy out of the app - `c`, and a mouse selection's ctrl+c - and what became of it (si#516).
+
+        Textual's own version only writes OSC 52, which a VTE terminal drops without a word, so "copied"
+        was said over copies that never happened. The desktop's clipboard tool is tried first because its
+        exit status can be read; OSC 52 is the fallback, and then the notice says nobody can tell.
+        """
+        self._clipboard = text
+        result = clipboard.copy(text)
+        if result.state is clipboard.State.CONFIRMED:
+            self.notify(f"copied to the clipboard ({result.route})", timeout=3)
+        elif result.state is clipboard.State.FAILED:
+            self.notify(f"not copied: {result.detail}. `s` saves the output to a file instead.",
+                        severity="error", timeout=8)
+        else:
+            self._write_osc52(text)
+            self.notify("sent to the terminal as OSC 52; whether it reached the clipboard cannot be "
+                        "confirmed (VTE terminals such as Tilix drop it). `s` saves the output to a file.",
+                        severity="warning", timeout=8)
+
+    def _write_osc52(self, text: str) -> None:
+        """Textual's own route; separated so a test can see that it was taken."""
+        App.copy_to_clipboard(self, text)
 
     def action_save_details(self) -> None:
         row = self._cursor_row()
