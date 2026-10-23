@@ -843,13 +843,13 @@ tasks:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
-      language: { help: "java | cpp | dotnet | python", argument: true }
+      language: { help: "java | cpp | dotnet | python | firn | claude | gh", argument: true }
       # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
       # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
       # parameter, so the value was accepted at load and silently discarded. A product either types it
       # (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
       # because the parameter exists.
-      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12)", argument: true }
+      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude and gh take none", argument: true }
 
   toolchain:run:
     help: "Run a pinned toolchain image over the product tree, as the calling user."
