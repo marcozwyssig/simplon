@@ -18,6 +18,7 @@ import types
 
 import pytest
 import typer
+import click
 from typer.testing import CliRunner
 
 import simplon
@@ -111,8 +112,10 @@ def _assemble(**kwargs):
 
 def _unwrapped(text: str) -> str:
     """Rich pads and wraps every rendered line, so a help screen is not a place to match a phrase in one
-    piece. Collapsing the whitespace makes the assertion be about the LINE rather than about the layout."""
-    return " ".join(text.split())
+    piece. Collapsing the whitespace makes the assertion be about the LINE rather than about the layout.
+    The colour codes go too: with FORCE_COLOR set, as on CI, rich styles `--no-tui` as an option and splits
+    it with escapes (si#517's first CI run)."""
+    return " ".join(click.unstyle(text).split())
 
 
 # --- the line itself --------------------------------------------------------------------------------
