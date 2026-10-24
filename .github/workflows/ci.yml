@@ -137,3 +137,32 @@ jobs:
       - if: always()
         continue-on-error: true
         run: ./simplon.sh support ci-disk-cleanup
+
+  # The pytest suite on Python 3.14 (si#537), the interpreter the Homebrew formula runs simplon on:
+  # Homebrew's `cryptography` and `pydantic` exist only for 3.14 and 3.15, so the formula depends on
+  # `python@3.14`. Measured once, in the si#449 round of 2026-10-18 (the si#449 spec, section E):
+  # 0.34.0 runs on 3.14.8. `self-build` above cannot say which Python it tests on, so this job is
+  # the one that does.
+  #
+  # A hosted runner, because the self-hosted kind refuses a `python:` (see `self-build`); the
+  # `publish` job of the release workflow makes the same choice. The suite and the type gate run
+  # here, nothing else: the other gates are facts about the tree or the build, and `self-build` has
+  # already ruled on them. The type gate is here because a job that verifies the tree owes that
+  # verdict (si#8); mypy.ini pins `python_version`, so on 3.14 it checks the same thing under the
+  # new interpreter.
+  suite-python-3-14:
+    runs-on: ubuntu-latest
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: ./simplon.sh test suite
+      - run: ./simplon.sh test typecheck-python

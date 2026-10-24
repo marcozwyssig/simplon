@@ -135,13 +135,24 @@ def declared(document: Mapping[str, object]) -> dict[str, Declared]:
             for name, body in section.items() if isinstance(body, Mapping) and "kind" in body}
 
 
-def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source: str, coordinate: str) -> Entry:
+def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source: str, coordinate: str,
+          *, param: str = "name") -> Entry:
     """The entry `name`, validated as the generated model of its kind - `wanted`'s kind or one that refines
     it - and holding every key `coordinate` needs (`NEEDS`, in the model). A ValueError says which kind it is
-    and which the task reads, or which key is missing and every key the coordinate reads."""
-    if READERS.get(coordinate) != wanted.KIND:
+    and which the task reads, or which key is missing and every key the coordinate reads.
+
+    `param` is the body parameter the port binds. `READERS` and `NEEDS` hold only the ports that bind `name`;
+    a coordinate with two artifact ports (`build:homebrew-formula`'s `wheel` and `formula`) names its port
+    by its parameter, and that port's kind and needs are read off `PORTS` (si#536)."""
+    if param == "name":
+        reads, needs = READERS.get(coordinate), NEEDS.get(coordinate, ())
+    else:
+        port = next((p for p in artifactschema.PORTS.get(coordinate, ()) if p.param == param), None)
+        reads, needs = (port.accepts, port.needs) if port is not None else (None, ())
+    if reads != wanted.KIND:
         # Not a refusal of the manifest: a body named a coordinate the model does not route to its kind.
-        raise KeyError(f"{coordinate} is not a reader of '{wanted.KIND}' in the model (READERS)")
+        raise KeyError(f"{coordinate} is not a reader of '{wanted.KIND}' through `{param}` in the model "
+                       f"(READERS, PORTS)")
     body = section[name]
     where = f"{source}: '{SECTION}.{name}'"
     if not isinstance(body, Mapping):
@@ -161,7 +172,6 @@ def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source:
         # test_a_kind_that_refines_another_is_its_subclass holds at zero.
         raise TypeError(f"artifactschema.{type(validated).__name__} does not subclass {wanted.__name__} although "
                         f"REFINES says '{kind}' refines '{wanted.KIND}' - run `./simplon.sh build model`")
-    needs = NEEDS[coordinate]
     for key in needs:
         if getattr(validated, key) is None:
             raise ValueError(f"{where} declares no `{key}:`, which {coordinate} needs - it reads "

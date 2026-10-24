@@ -218,6 +218,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_ports typeOf simplon.architecture.Module {
     path = "adapters.ports"
   }
+  module m_adapters_pypi typeOf simplon.architecture.Module {
+    path = "adapters.pypi"
+  }
   module m_adapters_pyvenv typeOf simplon.architecture.Module {
     path = "adapters.pyvenv"
   }
@@ -345,6 +348,15 @@ tasks typeOf simplon.architecture.Component {
   }
   module m_tasks_githubrelease typeOf simplon.architecture.Module {
     path = "tasks.githubrelease"
+  }
+  module m_tasks_homebrewformula typeOf simplon.architecture.Module {
+    path = "tasks.homebrewformula"
+  }
+  module m_tasks_homebrewclosure typeOf simplon.architecture.Module {
+    path = "tasks.homebrewclosure"
+  }
+  module m_tasks_homebrewtap typeOf simplon.architecture.Module {
+    path = "tasks.homebrewtap"
   }
   module m_tasks_releasenotes typeOf simplon.architecture.Module {
     path = "tasks.releasenotes"

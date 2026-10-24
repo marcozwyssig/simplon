@@ -230,6 +230,50 @@ it ages rather than describing something nobody can install yet.
 So: documentation changes go out with the next release, and if a documentation fix is urgent, the way
 to ship it is to cut a release.
 
+**The Homebrew formula follows PyPI, and only after it.** `brew install marcozwyssig/tap/simplon` installs
+the kernel on macOS and Linux from the tap `marcozwyssig/homebrew-tap`. The `publish` job runs, in this
+order: build the wheel, upload it to PyPI (`skip-existing: true`), `./simplon.sh build homebrew-formula`,
+`./simplon.sh test homebrew-formula`, and `./simplon.sh release homebrew-tap`. The formula is generated, and
+its URL and sha256 are PyPI's, so the tap has to come after the upload: a formula must never name a URL
+that is not live. The flags differ by kind of run. A real run builds with `--source pypi` and tests with
+`--online true`. A dry run builds with `--source local` and tests with `--online false`, and it stops
+before `release homebrew-tap`.
+
+A dry run therefore carries the placeholder URL `https://pypi.invalid/dry-run/<wheel>` in the formula, and
+the test is `brew audit --strict` and `brew style` only. Nothing goes to PyPI or the tap. The build (for the
+install closure) and the test both run in a pinned brew image; on a fresh runner the build is the step that
+pulls it, and that pull dominates the cost: measured once in the si#449 round of 2026-10-18 at about 4.5
+minutes per release.
+
+The tap is a different repository, so the workflow's own token cannot write to it. `release homebrew-tap`
+declares `token: app`, and the workflow derives a step before it that mints a GitHub App token for
+`marcozwyssig/homebrew-tap` and nothing else. The App is created once by the maintainer: contents
+read/write on `marcozwyssig/homebrew-tap` only, installed on that repository. Its Client ID and private key
+are stored as the repository secrets `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY` in `simplon`; the
+`HOMEBREW_TAP` prefix comes from the repository name. A dry run skips the step and needs neither secret.
+
+**Rerun the failed job, never a second tag, also when the formula step failed.** That holds as long as the
+rerun builds with the same toolchain: `build wheel` sets `SOURCE_DATE_EPOCH` from HEAD's commit time, so
+the same toolchain rebuilds identical bytes. `skip-existing` lets the upload pass what the first attempt
+already made, and `build homebrew-formula --source pypi` refuses if PyPI serves different bytes than the
+local wheel. The tap is only ever written from a formula whose digest matches what PyPI serves.
+
+The toolchain is not pinned: `pyproject.toml`'s build requirements are lower bounds at most, and the
+wheel's `WHEEL` file names the setuptools version that built it. A setuptools release between the attempt and the
+rerun gives other bytes, and the rerun's refusal is then permanent (and safe: nothing reaches the tap).
+The way out is by hand, from a checkout at the tag, rendering from PyPI's own wheel instead of a rebuild.
+`dist/` must hold that one wheel and no other, and the token is a GitHub App token for the tap,
+exported as `GH_APP_TOKEN`:
+
+```text
+$ rm -rf dist
+$ pip download simplon==X.Y.Z --no-deps --only-binary :all: -d dist
+$ ./simplon.sh build homebrew-formula --source pypi
+$ ./simplon.sh test homebrew-formula --online true
+$ export GH_APP_TOKEN=...                     # an App token for marcozwyssig/homebrew-tap
+$ ./simplon.sh release homebrew-tap
+```
+
 **The container image follows the tag too, and its pin follows in a pull request.** After the wheel is
 on PyPI, the release workflow builds `ghcr.io/marcozwyssig/simplon:vX.Y.Z`, pushes it with the run's own
 token and reads it back. Then it opens a pull request that moves `deploy/image/image.pin` to that image.
@@ -311,6 +355,12 @@ $ ./myctl.sh test release-notes        # the section for v1.4.0, against what v1
 $ ./myctl.sh build wheel               # optional, but it fails faster than the workflow does
 $ ./myctl.sh release tag v1.4.0        # the release
 ```
+
+In a product that ships a Homebrew formula, the tasks `build:homebrew-formula`, `test:homebrew-formula`
+and `release:homebrew-tap` follow the tag, in that order and after the PyPI upload. Nothing derives these
+steps: the product's own publish job places them, under whatever command words its manifest gives them
+(simplon's are above). They run in the release workflow, not from a checkout: the last one needs the App
+token.
 
 Notice what is not on that list: editing a version number. There is nowhere to edit one.
 
