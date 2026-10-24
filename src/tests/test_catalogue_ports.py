@@ -43,6 +43,7 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "test:homebrew-formula": (P("formula", "input", "homebrew-formula", "formula", ("path",)),
                                   P("wheel", "input", "directory", "wheel", ("path",)),
                                   P("test-result", "output", "test-result", "results", ("path",))),
+        "release:homebrew-tap": (P("formula", "input", "homebrew-formula", "formula", ("path",)), EVIDENCE),
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
                           EVIDENCE),
         "docs:site": (P("site", "output", "site", "", ()),),

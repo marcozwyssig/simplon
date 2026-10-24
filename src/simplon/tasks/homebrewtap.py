@@ -17,11 +17,19 @@ formula changed after the test is not the one the record vouches for. A run that
 earlier run left, so yesterday's green does not outlive today's refusal. A FAILED PYPI LOOKUP IS ONE OF THOSE:
 a 5xx, a timeout or a 404 ("not listed yet") says nothing about the formula, so it is a ValueError naming the
 file and the cause, never a red verdict. Red is what PyPI answered: no such file, or another sha256.
+
+`tap` is the body of `release:homebrew-tap`. It commits the formula as `Formula/<name>.rb` to the tap
+repository with the GitHub App token the workflow mints (`GH_APP_TOKEN`, si#534), through `adapters.repofile`
+(si#535), and says which of its three outcomes it reached: `written <sha>`, `already current` or `refused:
+<reason>`. Only `refused` returns 1. IT COMMITS ONLY THE TESTED BYTES: the formula's digest must be the `id`
+of a run the bound evidence names (`results.tested()`), so a formula changed after its test, or one with no
+evidence bound at all, is refused before GitHub is asked.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -29,15 +37,18 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import unquote, urlparse
 
-from simplon.adapters import docker, pypi
+from simplon.adapters import docker, pypi, repofile
 from simplon.kernel import log
 from simplon.kernel.run import run
-from simplon.manifest import artifactsection, context
+from simplon.manifest import artifactsection, context, results as results_mod
 from simplon.model import artifactschema
 from simplon.tasks import homebrewformula
 from simplon.tasks.homebrewformula import Resource
 
 COORDINATE = "test:homebrew-formula"
+TAP_COORDINATE = "release:homebrew-tap"
+#: The variable the workflow hands the minted app token in (`workflowgen.APP_TOKEN_ENV`, si#534).
+APP_TOKEN_ENV = "GH_APP_TOKEN"
 ARTIFACTS = "artifacts"
 ONLINE = ("true", "false")
 
@@ -276,12 +287,68 @@ def parse(stdout: str, stderr: str) -> tuple[int, int]:
     return rcs["audit"], rcs["style"]
 
 
+def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
+    """Commit the tested formula to the tap repository as Formula/<name>.rb."""
+    if not repository:
+        raise ValueError("which tap? bind `repository` as <owner>/<repo> with `with:` on the command, or pass "
+                         "--repository")
+    ctx = context.current()
+    formula_rel = Path(str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry,
+                                  coordinate=TAP_COORDINATE).path))
+    path = ctx.root / formula_rel
+    if not path.is_file():
+        raise ValueError(f"{formula_rel} does not exist; render it with build:homebrew-formula and check it "
+                         f"with test:homebrew-formula first")
+    raw = path.read_bytes()
+    message = f"{path.stem} {_version(raw.decode('utf-8'), formula_rel)}"
+    target = f"Formula/{path.stem}.rb"
+    token = os.environ.get(APP_TOKEN_ENV, "").strip()
+    if not token:
+        log.error(f"refused: {APP_TOKEN_ENV} is empty or not set, so {repository} was not asked. The workflow "
+                  f"mints it for a `token: app` step (si#534): check the app's secrets; by hand, export a token "
+                  f"that may write to {repository}")
+        return 1
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    subjects = results_mod.tested()
+    if subjects is None:
+        log.error(f"refused: {formula_rel} has no evidence bound, so nothing says it was tested. Bind the "
+                  f"test:homebrew-formula result to `evidence` with `consumes:`")
+        return 1
+    if all(s.id != digest for s in subjects):
+        ran = ", ".join(f"{s.reference} as {s.id}" for s in subjects)
+        log.error(f"refused: {formula_rel} is {digest}, and the evidence tested {ran}: the formula changed "
+                  f"after its test. Run test:homebrew-formula on it again, then release")
+        return 1
+    outcome = repofile.write(repository, branch, target, raw, message, token)
+    if outcome.state is repofile.State.WRITTEN:
+        log.ok(f"written {outcome.commit}: {target} on {branch} of {repository} ({message})")
+        return 0
+    if outcome.state is repofile.State.CURRENT:
+        log.ok(f"already current: {target} on {branch} of {repository} holds these bytes, nothing was committed")
+        return 0
+    log.error(f"refused: {outcome.reason}")
+    return 1
+
+
+def _version(text: str, formula_rel: Path) -> str:
+    """The version in the formula's `url`, a wheel's file name (`<name>-<version>-<tags>.whl`, where the name
+    carries no `-`): what `build:homebrew-formula` wrote, on PyPI and on the dry-run placeholder alike."""
+    url = _digests(text).url
+    filename = unquote(urlparse(url).path.rsplit("/", 1)[-1])
+    parts = filename.split("-")
+    if not filename.endswith(".whl") or len(parts) < 5:
+        raise ValueError(f"{formula_rel}'s url {url} names no wheel (<name>-<version>-<tags>.whl), so the "
+                         f"commit cannot name the version; render it again with build:homebrew-formula")
+    return parts[1]
+
+
 def _results_path(name: str) -> Path:
     """The absolute path of the `test-result` artifact `name`."""
     return context.current().root / str(_entry(name, "results", artifactschema.Test_resultEntry).path)
 
 
-def _entry(name: str, param: str, wanted: type[artifactsection.Entry]) -> artifactsection.Entry:
+def _entry(name: str, param: str, wanted: type[artifactsection.Entry],
+           coordinate: str = COORDINATE) -> artifactsection.Entry:
     """The `artifacts:` entry the port binding `param` names, validated as `wanted`'s kind."""
     if not name:
         raise ValueError(f"which artifact? bind `{param}` with `consumes:` or `produces:` from the "
@@ -291,4 +358,4 @@ def _entry(name: str, param: str, wanted: type[artifactsection.Entry]) -> artifa
     if name not in section:
         raise ValueError(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` section; "
                          f"declared are: {', '.join(sorted(section)) or '(none)'}")
-    return artifactsection.entry(section, name, wanted, ctx.manifest_path.name, COORDINATE, param=param)
+    return artifactsection.entry(section, name, wanted, ctx.manifest_path.name, coordinate, param=param)

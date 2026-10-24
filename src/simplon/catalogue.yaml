@@ -792,6 +792,19 @@ tasks:
       wheel:   { help: "the directory artifact holding the wheel the formula was rendered from (normally bound with `consumes:`)" }
       results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
       online:  { help: "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run" }
+  # si#536 (part D of si#449): the checked formula committed to a tap repository as `Formula/<name>.rb`, with
+  # a GitHub App token (`token: app`, si#534) because the tap is ANOTHER repository, which the workflow's
+  # own token cannot write. Only the bytes the bound evidence tested are committed. Three outcomes, from
+  # `adapters.repofile` (si#535): written, already current, refused - and only refused is red.
+  release:homebrew-tap:
+    help: "Commit the tested Homebrew formula to the tap repository as Formula/<name>.rb."
+    unattended: true
+    publishes: true
+    token: app
+    params:
+      formula:    { help: "the homebrew-formula artifact to commit (normally bound with `consumes:`)" }
+      repository: { help: "the tap repository, as <owner>/<repo> (normally pinned per command with `with:`)" }
+      branch:     { help: "the tap's branch to commit to (default main)" }
   release:image:
     help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
     unattended: true

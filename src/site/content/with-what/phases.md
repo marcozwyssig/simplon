@@ -146,7 +146,7 @@ the number that says whether a rib is filled:
 |---|---|---|
 | `build` | phase, agnostic | 11 |
 | `test` | phase, agnostic | 10 |
-| `release` | phase, agnostic | 11 |
+| `release` | phase, agnostic | 12 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 15 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Sixty-two coordinates: fifty carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Sixty-three coordinates: fifty-one carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -272,7 +272,7 @@ A step the person REFUSES becomes a bug ticket, worded by the product through a
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
 pushed image is somebody else's dependency by the time you notice.
 
-**In the catalogue today: 11 tasks.**
+**In the catalogue today: 12 tasks.**
 
 - `release:artifact`
 - `release:asset`
@@ -280,6 +280,7 @@ pushed image is somebody else's dependency by the time you notice.
 - `release:github-draft`
 - `release:github-publish`
 - `release:github-unpublished`
+- `release:homebrew-tap`
 - `release:image`
 - `release:maven`
 - `release:notes`
@@ -287,7 +288,7 @@ pushed image is somebody else's dependency by the time you notice.
 - `release:tag`
 
 **What a product brings itself.** An `artifacts:` entry of the kind the task reads, or an `assets:` section, and - for
-`release:tag` - a workflow that a tag actually triggers. All eleven are **offered** rather than placed, and `release:tag`
+`release:tag` - a workflow that a tag actually triggers. All twelve are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.

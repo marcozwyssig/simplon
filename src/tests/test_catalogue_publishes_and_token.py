@@ -19,6 +19,7 @@ import pytest
 
 from simplon.manifest import catalogue
 from simplon.manifest import load as manifest
+from simplon.tasks import workflowgen
 from conftest import ROOT
 
 #: The `release:` tasks that publish nothing: they read (the merges, the API) and write only the checkout.
@@ -29,6 +30,11 @@ PUBLISH_READS = frozenset({"release:notes", "release:github-unpublished"})
 #: adapter (directly or through `githubrelease`), or the `gh` CLI, which reads GITHUB_TOKEN too.
 _AUTHENTICATES = re.compile(r"githubpackages|from simplon\.adapters import[^\n]*\bgithub\b|githubrelease"
                             r"|\[\"gh\",")
+
+#: How a body authenticates with the GitHub App token a `token: app` step is handed (si#534): it reads the
+#: variable by its name. Such a body may import the `github` adapter too (`adapters.repofile` does, one hop
+#: away), and the app token is what it is handed, so the app check is asked first.
+_READS_APP_TOKEN = re.compile(re.escape(f'"{workflowgen.APP_TOKEN_ENV}"'))
 
 
 def _loaded(text: str):
@@ -118,7 +124,9 @@ def test_token_is_declared_exactly_where_a_release_body_authenticates_to_github(
     for a pull or a scope grant, and a release job's build step is exactly where the token must NOT go."""
     tasks = catalogue.load().tasks
     for key, spec in sorted(tasks.items()):
-        reads = key.startswith("release:") and bool(_AUTHENTICATES.search(_body_source(spec["impl"])))
-        assert (spec.get("token") == "github") is reads, (
-            f"{key}: its body {'authenticates' if reads else 'does not authenticate'} to GitHub, and its "
-            f"`token:` is {spec.get('token')!r}")
+        source = _body_source(spec["impl"]) if key.startswith("release:") else ""
+        wanted = ("app" if _READS_APP_TOKEN.search(source)
+                  else "github" if _AUTHENTICATES.search(source) else None)
+        assert spec.get("token") == wanted, (
+            f"{key}: its body {'authenticates' if wanted else 'does not authenticate'} to GitHub"
+            f"{f' with the {wanted} token' if wanted else ''}, and its `token:` is {spec.get('token')!r}")
