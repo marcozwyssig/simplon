@@ -17,6 +17,12 @@ sha256 before it runs; a mismatch runs nothing. Bump both together, deliberately
 
 THE SHELL PROFILE IS THE PERSON'S. After an install, `brew` is not on PATH until the shell evaluates
 `brew shellenv`. This gate prints the line to add and never edits a dotfile.
+
+MEASURED (2026-10-24, the local `python:3.12-slim` image, Debian 13 trixie, amd64, as root, which the
+installer allows inside a container, with curl, git, procps, file and build-essential installed first):
+INSTALLED with `interactive=False` in 32.9 s at /home/linuxbrew/.linuxbrew, then the gh gate took the brew
+route in the same process. A second process found brew at the prefix but off PATH: PRESENT, the prefix put
+on PATH, and the shellenv line printed. Not measured: macOS, and an install as a user that needs sudo.
 """
 from __future__ import annotations
 

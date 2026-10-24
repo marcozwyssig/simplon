@@ -16,6 +16,17 @@ sha256 cli/cli publishes in docs/install_linux.md; a mismatch writes nothing und
 the official ones, run as root directly or behind sudo, uncaptured, so a password prompt reaches the person.
 
 PROVISIONING ONLY. The token and its scopes are `vcs auth-scopes`'s.
+
+MEASURED (2026-10-24, the local `python:3.12-slim` image, Debian 13 trixie, amd64; Docker Hub itself was
+unreachable from the measuring host, so `debian:trixie` was not pulled):
+- root: INSTALLED "through apt" in 14.3 s (gh 2.103.2), the list line and a 0644 keyring as above; a second
+  run PRESENT in 0.0 s.
+- a user with passwordless sudo: INSTALLED in 11.8 s, then PRESENT.
+- a user and no sudo on PATH: NO_ROUTE, nothing downloaded or written.
+- a user not in sudoers, no terminal: FAILED "sudo exited 1", with sudo's own "a terminal is required to read
+  the password" on the line above, because the command runs uncaptured.
+- after the `brew` gate in the same process: INSTALLED "through brew" in 4.3 s.
+Not measured: winget on a real Windows host, and macOS.
 """
 from __future__ import annotations
 
