@@ -1,14 +1,26 @@
 """A local stand-in for the part of the GitHub REST API the release coordinates speak (si#486).
 
 Real HTTP on 127.0.0.1, so PyGithub really runs: a mock of PyGithub would test our assumption about it,
-not its behaviour. One repository, `o/n`, and only the five routes the adapter calls:
+not its behaviour. One repository, `o/n`, and only the routes the adapters call:
 
     GET   /repos/o/n                         the repository (404 when `state["repo"]` is None)
     GET   /repos/o/n/releases/tags/<tag>     PUBLISHED releases only, as GitHub answers it
     GET   /repos/o/n/releases?per_page&page  every release, drafts included, paged
     POST  /repos/o/n/releases                create
     PATCH /repos/o/n/releases/<id>           update
+    GET   /repos/o/n/contents/<path>?ref=<r> a file (base64 `content`, blob `sha`), or a JSON list when
+                                             `path` is a directory of stored paths; `r` is a branch
+                                             (default `main`) or a commit sha a PUT answered; 404 for a
+                                             missing file, branch or commit (si#535)
+    PUT   /repos/o/n/contents/<path>         create or update on `branch`: 404 for an unknown branch,
+                                             409 when `sha` is not the stored blob's, 422 when the file
+                                             exists and no `sha` was sent; answers the new commit's sha
 
+`state["files"]` holds `{(branch, path): bytes}` and `state["branches"]` the branches that exist;
+`state["commits"]` maps each commit sha a PUT answered to that branch's files at that commit.
+`state["race"]`, when set to bytes, is written to the file by "another writer" just before the next PUT
+is handled, so the PUT's sha is stale; `state["corrupt_readback"]` makes a GET by commit sha answer
+different bytes than were stored.
 `state["fail"]` forces a status for a `(method, path prefix)`; `state["keep_draft"]` makes a PATCH answer
 200 while leaving `draft` as it was (a proxy, a race); `state["force_public"]` makes a PATCH answer with the release public whatever was asked;
 `state["requests"]` records every call as (method, path, body) and `state["auth"]` the Authorization header of
@@ -16,6 +28,8 @@ each, at the same index.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import threading
 from collections.abc import Callable
@@ -29,13 +43,20 @@ REPO = "o/n"
 def state(**overrides: Any) -> dict:
     """A fresh state: a visible repository with no releases."""
     fresh: dict[str, Any] = {"repo": {"full_name": REPO}, "releases": [], "fail": {}, "requests": [],
-                             "auth": [], "keep_draft": False}
+                             "auth": [], "keep_draft": False,
+                             "files": {}, "branches": {"main"}, "commits": {}, "race": None,
+                             "corrupt_readback": False}
     fresh.update(overrides)
     return fresh
 
 
 def release(rid: int, tag: str, *, draft: bool, body: str = "", name: str = "") -> dict:
     return {"id": rid, "tag_name": tag, "draft": draft, "body": body, "name": name or tag}
+
+
+def blob_sha(content: bytes) -> str:
+    """Git's blob sha, as GitHub names a file's content."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
 
 
 def serve(shared: dict) -> tuple[str, Callable[[], None]]:
@@ -107,6 +128,11 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
                 made["target_commitish"] = body.get("target_commitish", "")
                 releases.append(made)
                 self._send(201, self._dressed(made))
+            elif method == "GET" and rest.startswith("/contents/"):
+                self._contents_get(unquote(rest[len("/contents/"):]), parse_qs(split.query))
+            elif method == "PUT" and rest.startswith("/contents/"):
+                assert isinstance(body, dict)
+                self._contents_put(unquote(rest[len("/contents/"):]), body)
             elif method == "PATCH" and rest.startswith("/releases/"):
                 rid = int(rest[len("/releases/"):])
                 target = next((r for r in releases if r["id"] == rid), None)
@@ -125,6 +151,54 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
             else:
                 self._send(404, {"message": "Not Found"})
 
+        def _files_at(self, ref: str) -> dict[str, bytes] | None:
+            if ref in shared["branches"]:
+                return {p: c for (b, p), c in shared["files"].items() if b == ref}
+            if ref in shared["commits"]:
+                at = dict(shared["commits"][ref])
+                if shared["corrupt_readback"]:
+                    at = {p: c + b"corrupted" for p, c in at.items()}
+                return at
+            return None
+
+        def _file(self, path: str, content: bytes) -> dict:
+            return {"type": "file", "encoding": "base64", "size": len(content), "name": path.rsplit("/", 1)[-1],
+                    "path": path, "sha": blob_sha(content), "content": base64.b64encode(content).decode("ascii"),
+                    "url": f"{self._base()}/repos/{REPO}/contents/{path}"}
+
+        def _contents_get(self, path: str, query: dict) -> None:
+            files = self._files_at(query.get("ref", ["main"])[0])
+            if files is None:
+                self._send(404, {"message": "No commit found for the ref"})
+            elif path in files:
+                self._send(200, self._file(path, files[path]))
+            elif below := sorted(p for p in files if not path or p.startswith(path.rstrip("/") + "/")):
+                self._send(200, [{**self._file(p, files[p]), "content": None} for p in below])
+            else:
+                self._send(404, {"message": "Not Found"})
+
+        def _contents_put(self, path: str, body: dict) -> None:
+            branch = body.get("branch", "main")
+            if branch not in shared["branches"]:
+                self._send(404, {"message": f"Branch {branch} not found"})
+                return
+            if shared["race"] is not None:                # one other writer, once
+                shared["files"][(branch, path)], shared["race"] = shared["race"], None
+            stored = shared["files"].get((branch, path))
+            if stored is not None and "sha" not in body:
+                self._send(422, {"message": "Invalid request.\n\n\"sha\" wasn't supplied."})
+                return
+            if body.get("sha") is not None and (stored is None or body["sha"] != blob_sha(stored)):
+                self._send(409, {"message": f"{path} does not match {body['sha']}"})
+                return
+            content = base64.b64decode(body["content"])
+            shared["files"][(branch, path)] = content
+            commit = hashlib.sha1(b"commit %d" % len(shared["commits"]) + content).hexdigest()
+            shared["commits"][commit] = {p: c for (b, p), c in shared["files"].items() if b == branch}
+            self._send(201 if stored is None else 200,
+                       {"commit": {"sha": commit, "message": body.get("message", "")},
+                        "content": self._file(path, content)})
+
         def do_GET(self) -> None:                         # noqa: N802 - BaseHTTPRequestHandler's name
             self._handle("GET")
 
@@ -133,6 +207,9 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
 
         def do_PATCH(self) -> None:                       # noqa: N802
             self._handle("PATCH")
+
+        def do_PUT(self) -> None:                         # noqa: N802
+            self._handle("PUT")
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()

@@ -190,6 +190,16 @@ def test_other_with_an_empty_token_sends_nothing(standin):
     assert standin["requests"] == []
 
 
+def test_other_with_a_whitespace_token_sends_nothing(standin):
+    # act: a secret that expanded to a newline is no token either
+    with pytest.raises(github.Unanswered) as why:
+        github.other(githubstandin.REPO, " \n")
+
+    # assert
+    assert "no token" in str(why.value)
+    assert standin["requests"] == []
+
+
 def test_other_maps_404_to_unanswered(standin):
     # act: the stand-in knows one repository only
     with pytest.raises(github.Unanswered) as why:

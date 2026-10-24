@@ -103,7 +103,8 @@ def repository(origin: str = "") -> Repository:
 
 def other(name: str, token: str) -> Repository:
     """Another repository, `owner/name`, ASKED for with the token given (si#535): the same client, the same
-    three answers. The API is `GITHUB_API_URL`, else github.com's."""
+    three answers. The API is `GITHUB_API_URL`, else github.com's. A token of whitespace is no token."""
+    token = token.strip()
     if not token:
         raise Unanswered(f"no token for {name}: none was given, so GitHub was not asked. Export the token "
                          f"that can see {name}")

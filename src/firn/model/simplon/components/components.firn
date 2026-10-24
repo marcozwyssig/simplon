@@ -221,6 +221,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_pyvenv typeOf simplon.architecture.Module {
     path = "adapters.pyvenv"
   }
+  module m_adapters_repofile typeOf simplon.architecture.Module {
+    path = "adapters.repofile"
+  }
   module m_adapters_tools typeOf simplon.architecture.Module {
     path = "adapters.tools"
   }
