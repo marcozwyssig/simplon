@@ -163,3 +163,16 @@ def test_github_plugin_requires_gh():
 
     # assert
     assert eff is not None and "gh" in eff.requires
+
+
+def test_an_unreadable_manifest_is_reported_and_the_other_gates_still_run(gates, tmp_path):
+    # arrange: final review - manifest_data() raises RuntimeError, not ValueError, on broken YAML
+    order, _ = gates
+    (tmp_path / "sample.yaml").write_text("product: sample\ntoolchains: [gh\n", encoding="utf-8")
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 1
+    assert order == ["oras"]

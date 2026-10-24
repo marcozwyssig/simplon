@@ -38,10 +38,10 @@ def _claude_plugins() -> bool:
 
 def _declared() -> tuple[str, ...] | None:
     """The product's `toolchains:`, or None (already reported) when the list is broken."""
-    ctx = context.current()
     try:
+        ctx = context.current()
         return profiles.declared_toolchains(ctx.manifest_data(), source=str(ctx.manifest_path))
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:  # RuntimeError: an unreadable manifest (context.py)
         log.error(str(exc))
         return None
 

@@ -102,6 +102,17 @@ def _apt_install(euid: int | None) -> Outcome | None:
     return None
 
 
+def _reachable(outcome: Outcome) -> Outcome:
+    """`outcome`, saying so when gh runs here only because a gate put its directory on this process' PATH
+    (a brew prefix off the person's PATH): the next command starts from their shell and would not find it."""
+    if hostinstall.reachable_later("gh"):
+        return outcome
+    where = os.path.dirname(shutil.which("gh") or "")
+    hint = (f"gh is in {where}, which your shell's PATH does not reach; add brew's shellenv line (printed "
+            f"above) to your shell profile, or later commands will not find gh")
+    return Outcome(outcome.state, f"{outcome.detail}; {hint}" if outcome.detail else hint)
+
+
 def ensure(*, env: Mapping[str, str] | None = None, container: bool = False, system: str | None = None,
            euid: int | None = None) -> Outcome:
     """gh PRESENT, INSTALLED, or why not. Every parameter defaults to this host; tests pass them."""
@@ -111,7 +122,7 @@ def ensure(*, env: Mapping[str, str] | None = None, container: bool = False, sys
     if skip:
         return Outcome(State.SKIPPED, skip)
     if runs("gh"):
-        return Outcome(State.PRESENT)
+        return _reachable(Outcome(State.PRESENT))
     chosen = route(system, lambda tool: shutil.which(tool) is not None)
     if not chosen:
         return Outcome(State.NO_ROUTE, f"no brew, winget or apt on this machine; install gh by hand: {MANUAL}")
@@ -134,4 +145,4 @@ def ensure(*, env: Mapping[str, str] | None = None, container: bool = False, sys
             return stopped
     if not runs("gh"):
         return Outcome(State.FAILED, f"the {chosen} install finished but gh does not run")
-    return Outcome(State.INSTALLED, f"through {chosen}")
+    return _reachable(Outcome(State.INSTALLED, f"through {chosen}"))

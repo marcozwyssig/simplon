@@ -31,6 +31,11 @@ INSTALL_TIMEOUT_S = 600
 #: The time limit of `<tool> --version`.
 VERSION_TIMEOUT_S = 30
 
+#: PATH as this process inherited it, before any gate prepended a directory. A later command (`release
+#: asset`, `vcs auth-scopes`) starts with the person's shell PATH, not this process', so a tool only this
+#: process can reach is not provisioned for them (final review of si#526).
+INHERITED_PATH = os.environ.get("PATH", "")
+
 
 class State(Enum):
     OFF = "off"
@@ -87,6 +92,11 @@ def runs(tool: str, env: Mapping[str, str] | None = None) -> bool:
         return run([found, "--version"], timeout=VERSION_TIMEOUT_S).rc == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def reachable_later(tool: str) -> bool:
+    """True when a new shell with the inherited PATH finds `tool`."""
+    return shutil.which(tool, path=INHERITED_PATH) is not None
 
 
 def privileged(argv: list[str], *, euid: int | None = None,

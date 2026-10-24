@@ -273,3 +273,46 @@ def test_the_keyring_is_pinned():
     # act / assert: the value cli/cli publishes in docs/install_linux.md, measured 2026-10-24
     assert gh.KEYRING_URL == "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
     assert gh.KEYRING_SHA256 == "6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b"
+
+
+def test_a_gh_only_this_process_can_reach_says_so(host, monkeypatch):
+    # arrange: final review - brew's bin was put on PATH by the brew gate, not by the person's shell, so
+    # the next `release asset` would not find the gh it installs
+    path_dir, calls = host
+    _tool(path_dir, "brew", f'echo "brew $@" >> {calls}; {_make_gh(path_dir)}')
+    monkeypatch.setattr(hostinstall, "INHERITED_PATH", str(path_dir.parent / "shell-path"))
+
+    # act
+    outcome = _ensure()
+
+    # assert
+    assert outcome.state is State.INSTALLED
+    assert "shellenv" in outcome.detail and str(path_dir) in outcome.detail
+
+
+def test_a_present_gh_only_this_process_can_reach_says_so(host, monkeypatch):
+    # arrange
+    path_dir, _ = host
+    (path_dir / "gh").write_text(_WORKING_GH)
+    (path_dir / "gh").chmod(0o755)
+    monkeypatch.setattr(hostinstall, "INHERITED_PATH", str(path_dir.parent / "shell-path"))
+
+    # act
+    outcome = _ensure()
+
+    # assert
+    assert outcome.state is State.PRESENT and "shellenv" in outcome.detail
+
+
+def test_a_gh_the_shell_reaches_needs_no_hint(host, monkeypatch):
+    # arrange
+    path_dir, _ = host
+    (path_dir / "gh").write_text(_WORKING_GH)
+    (path_dir / "gh").chmod(0o755)
+    monkeypatch.setattr(hostinstall, "INHERITED_PATH", str(path_dir))
+
+    # act
+    outcome = _ensure()
+
+    # assert
+    assert outcome.state is State.PRESENT and outcome.detail == ""
