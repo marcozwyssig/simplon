@@ -167,3 +167,44 @@ def test_the_refusal_names_the_launcher_pass_for_the_container_route(monkeypatch
     with pytest.raises(github.Unanswered) as refused:
         github.where("git@ghe.example:o/n.git")
     assert "launcher: env: pass: [GITHUB_REPOSITORY, GITHUB_API_URL]" in str(refused.value)
+
+
+def test_other_asks_for_the_named_repository(standin):
+    # act: a token of its own, not the environment's
+    repo = github.other(githubstandin.REPO, "given-token")
+
+    # assert
+    assert repo.full_name == githubstandin.REPO
+    assert standin["requests"] == [("GET", f"/repos/{githubstandin.REPO}", None)]
+    assert standin["auth"] == ["token given-token"]
+
+
+def test_other_with_an_empty_token_sends_nothing(standin):
+    # act
+    with pytest.raises(github.Unanswered) as why:
+        github.other(githubstandin.REPO, "")
+
+    # assert
+    assert githubstandin.REPO in str(why.value)
+    assert "token" in str(why.value)
+    assert standin["requests"] == []
+
+
+def test_other_with_a_whitespace_token_sends_nothing(standin):
+    # act: a secret that expanded to a newline is no token either
+    with pytest.raises(github.Unanswered) as why:
+        github.other(githubstandin.REPO, " \n")
+
+    # assert
+    assert "no token" in str(why.value)
+    assert standin["requests"] == []
+
+
+def test_other_maps_404_to_unanswered(standin):
+    # act: the stand-in knows one repository only
+    with pytest.raises(github.Unanswered) as why:
+        github.other("o/missing", "t")
+
+    # assert
+    assert "404" in str(why.value)
+    assert "o/missing" in str(why.value)
