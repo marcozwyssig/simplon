@@ -171,3 +171,18 @@ def test_a_clean_verdict_says_what_was_checked(product, firn, capsys):
     # assert
     out = capsys.readouterr().out
     assert "demo" in out and "M2" in out and task.__version__ in out
+
+
+def test_a_stage_that_cannot_be_rebuilt_is_a_reason_not_a_traceback(tmp_path, monkeypatch):
+    # arrange: final review - files an earlier run as another uid left behind cannot be deleted
+    (tmp_path / "s" / "model").mkdir(parents=True)
+
+    def refuse(path, *a, **kw):
+        raise PermissionError(13, "Permission denied", str(path))
+    monkeypatch.setattr(task.shutil, "rmtree", refuse)
+
+    # act
+    reason = task.stage(tmp_path / "s", "demo", "x\n", task.m2_source(), "0.36.0")
+
+    # assert
+    assert str(tmp_path / "s") in reason and "Permission denied" in reason

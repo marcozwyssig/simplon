@@ -52,18 +52,22 @@ def stage(directory: Path, name: str, text: str, m2: Traversable, version: str) 
     if missing:
         return (f"the installed simplon carries no M2 package {', '.join(missing)} at {m2}; "
                 f"reinstall simplon")
-    shutil.rmtree(directory, ignore_errors=True)
-    (directory / "model").mkdir(parents=True)
-    (directory / "firn.toml").write_text(
-        f'name = "{name}-manifest-check"\nmodel = ["model"]\n\n[dependencies]\nsimplon = {{ path = "m2" }}\n',
-        encoding="utf-8")
-    (directory / "model" / f"{name}.firn").write_text(text, encoding="utf-8")
-    (directory / "m2").mkdir()
-    (directory / "m2" / "firn.toml").write_text(
-        f'name = "simplon-m2"\nversion = "{version}"\nmodel = ["model"]\n', encoding="utf-8")
-    for package in M2_PACKAGES:
-        with as_file(m2 / package) as source:
-            shutil.copytree(source, directory / "m2" / "model" / "simplon" / package)
+    try:
+        if directory.exists():
+            shutil.rmtree(directory)
+        (directory / "model").mkdir(parents=True)
+        (directory / "firn.toml").write_text(
+            f'name = "{name}-manifest-check"\nmodel = ["model"]\n\n[dependencies]\nsimplon = {{ path = "m2" }}\n',
+            encoding="utf-8")
+        (directory / "model" / f"{name}.firn").write_text(text, encoding="utf-8")
+        (directory / "m2").mkdir()
+        (directory / "m2" / "firn.toml").write_text(
+            f'name = "simplon-m2"\nversion = "{version}"\nmodel = ["model"]\n', encoding="utf-8")
+        for package in M2_PACKAGES:
+            with as_file(m2 / package) as source:
+                shutil.copytree(source, directory / "m2" / "model" / "simplon" / package)
+    except OSError as exc:  # an earlier run's files another uid owns, a full disk: say where
+        return f"cannot stage the check project in {directory}: {exc}"
     return ""
 
 

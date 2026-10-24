@@ -192,6 +192,25 @@ def test_the_wheel_carries_its_catalogue(installed):
     assert int(out.stdout.strip()) > 0
 
 
+def test_the_installed_kernel_finds_and_stages_its_own_m2(installed, tmp_path):
+    """si#522 final review: the editable checkout reads the M2's source, so only an installed wheel
+    proves that `m2_source()` looks where `setup.py` copies. Two spellings of one path, held here."""
+    # arrange
+    py = installed / ("python.exe" if sys.platform == "win32" else "python")
+    probe = ("import sys, pathlib; from simplon.tasks import manifestcheck as m;"
+             "src = m.m2_source(); print(src);"
+             "print(m.stage(pathlib.Path(sys.argv[1]), 'p', 'package product.p\\n', src, '0') or 'staged')")
+
+    # act
+    out = subprocess.run([str(py), "-c", probe, str(tmp_path / "s")], capture_output=True, text=True)
+
+    # assert
+    assert out.returncode == 0, out.stderr
+    source, verdict = out.stdout.strip().splitlines()
+    assert "site-packages" in source and source.endswith(str(Path("simplon", "m2", "simplon"))), source
+    assert verdict == "staged"
+
+
 def test_the_installed_console_script_scaffolds_a_product(installed, tmp_path):
     # arrange: the console script, not `python -m simplon.cli.bootstrap` - the entry point is its own piece
     # of packaging metadata and can be missing while the module imports perfectly well
