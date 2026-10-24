@@ -218,6 +218,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_ports typeOf simplon.architecture.Module {
     path = "adapters.ports"
   }
+  module m_adapters_pypi typeOf simplon.architecture.Module {
+    path = "adapters.pypi"
+  }
   module m_adapters_pyvenv typeOf simplon.architecture.Module {
     path = "adapters.pyvenv"
   }
