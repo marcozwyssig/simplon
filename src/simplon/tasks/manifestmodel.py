@@ -13,6 +13,14 @@ def _load():
     return ctx.name, ctx.manifest(), ctx.manifest_data()
 
 
+def current() -> tuple[str, str]:
+    """This product's name and its manifest as model text; a load or export refusal raises as `_load` and
+    `export` do (ValueError, or the RuntimeError of an unreadable manifest). `test:manifest-model` (si#522)
+    checks exactly the text `model` writes."""
+    name, mf, document = _load()
+    return name, manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
+
+
 def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
@@ -27,8 +35,7 @@ def model(output: str = "") -> int:
     from an EARLIER run is not removed by a refused run: it survives, stale, and the rc is what says so.
     """
     try:
-        name, mf, document = _load()
-        text = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
+        name, text = current()
     except (ValueError, RuntimeError) as exc:  # ModelExportError and every load refusal are ValueErrors;
         # an unreadable or corrupt manifest is the RuntimeError `manifest_data()` raises
         log.error(f"no model written: {exc}")
