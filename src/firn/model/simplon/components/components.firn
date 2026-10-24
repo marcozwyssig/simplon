@@ -131,6 +131,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_backend typeOf simplon.architecture.Module {
     path = "adapters.backend"
   }
+  module m_adapters_brew typeOf simplon.architecture.Module {
+    path = "adapters.brew"
+  }
   module m_adapters_checksum typeOf simplon.architecture.Module {
     path = "adapters.checksum"
   }
