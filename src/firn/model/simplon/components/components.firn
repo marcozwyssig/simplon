@@ -173,6 +173,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_host typeOf simplon.architecture.Module {
     path = "adapters.host"
   }
+  module m_adapters_hostinstall typeOf simplon.architecture.Module {
+    path = "adapters.hostinstall"
+  }
   module m_adapters_hostpath typeOf simplon.architecture.Module {
     path = "adapters.hostpath"
   }
