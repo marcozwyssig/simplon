@@ -4,12 +4,13 @@ The first part is pure: it reads a wheel, checks the shape of the `with:` values
 touches no docker and no network, so it imports anywhere. Every refusal is a `ValueError` that names the
 field or value and the way out.
 
-`build` is the body of `build:homebrew-formula`. It reads the product's URL and sha256 from PyPI (`source:
-pypi`, after the upload) or from the local wheel with a placeholder URL (`source: local`, a dry run), measures
-the install closure in the pinned brew image (`homebrewclosure`) and gives each added distribution its PyPI
-sdist. ANYTHING PyPI DOES NOT LIST IS A REFUSAL, NEVER A FALLBACK: the adapter answers `()` for a 200 with an
-empty `urls`, so a wheel file or an sdist that is not there is refused here by name. Nothing is written unless
-every part was answered.
+`build` is the body of `build:homebrew-formula`. It measures the install closure in the pinned brew image
+(`homebrewclosure`), then reads the product's URL and sha256 from PyPI (`source: pypi`, after the upload; read
+after the closure, which absorbs the minute PyPI can lag behind an upload) or from the local wheel with a
+placeholder URL (`source: local`, a dry run), and gives each added distribution its PyPI sdist. ANYTHING PyPI
+DOES NOT LIST IS A REFUSAL, NEVER A FALLBACK: the adapter answers `()` for a 200 with an empty `urls`, so a
+wheel file or an sdist that is not there is refused here by name. Nothing is written unless every part was
+answered.
 """
 from __future__ import annotations
 
@@ -204,15 +205,17 @@ def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "",
                          f"formula is {wanted!r} (class {class_name(meta.name)}); name the artifact's path "
                          f"{wanted}.rb")
     try:
+        # lazy: the closure validates its pinned image at import, and the part above imports anywhere
+        from simplon.tasks import homebrewclosure
+        dists = homebrewclosure.measure(path, form.depends_on, form.python)
         if source == "local":
             url, sha256 = PLACEHOLDER + meta.filename, meta.sha256
             log.info(f"source local: {meta.filename} is rendered with its local sha256 and the placeholder URL "
                      f"{url}; the PyPI comparison and the online audit run only on a real run (source pypi)")
         else:
+            # after the closure: PyPI can answer 404 for a minute after the upload, and the image pull and
+            # the install above take longer than that
             url, sha256 = _from_pypi(meta)
-        # lazy: the closure validates its pinned image at import, and the part above imports anywhere
-        from simplon.tasks import homebrewclosure
-        dists = homebrewclosure.measure(path, form.depends_on, form.python)
         refused = homebrewclosure.refusals(dists, meta.name)
         for line in refused:
             log.error(line)
