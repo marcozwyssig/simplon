@@ -168,8 +168,10 @@ BASE_PLUGINS: tuple[str, ...] = (
     f"frontend-design@{_OFFICIAL}", "token-optimizer@alexgreensh-token-optimizer",
 )
 
-#: What a base plugin needs on PATH to work (si#396): token-optimizer's status line is `node …`.
-BASE_REQUIRES: dict[str, tuple[str, ...]] = {"token-optimizer@alexgreensh-token-optimizer": ("node",)}
+#: What a base plugin needs on PATH to work (si#396): token-optimizer's status line is `node …`, and the
+#: github plugin drives `gh` (si#526).
+BASE_REQUIRES: dict[str, tuple[str, ...]] = {"token-optimizer@alexgreensh-token-optimizer": ("node",),
+                                             f"github@{_OFFICIAL}": ("gh",)}
 
 #: One LSP plugin per `toolchains:` language, so a Java product does not inherit simplon's Python one.
 LANGUAGE_PLUGINS: dict[str, tuple[str, ...]] = {

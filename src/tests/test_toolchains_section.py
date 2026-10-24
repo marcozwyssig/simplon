@@ -38,4 +38,4 @@ def test_duplicate_is_refused():
 
 
 def test_known_toolchains_are_the_profiles_and_the_host_tools():
-    assert profiles.known_toolchains() == ("claude", "cpp", "dotnet", "firn", "gh", "java", "python")
+    assert profiles.known_toolchains() == ("brew", "claude", "cpp", "dotnet", "firn", "gh", "java", "python")

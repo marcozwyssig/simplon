@@ -240,9 +240,6 @@ BORROWS_A_READER = {
     "tasks.firngen": "`generate` asks `toolchain.invocation` for the docker line `toolchain:run` would build "
                      "(si#400 4b), which reads the product's `layout` itself; this module rules on firn's JSON "
                      "report and on files, never on the manifest",
-    "tasks.hosttools": "`install` runs `claudeplugins.step` as the `claude` toolchain's gate (si#525); "
-                       "claudeplugins reads the `toolchains:` and `claude:` sections itself and is the module "
-                       "the census accounts for, and this module raises nothing on the manifest",
     "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
                    "itself and is the module the census accounts for; this module raises nothing",
     "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "

@@ -159,6 +159,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.buildfiles": ("build",),
     "tasks.claudeplugins": ("claude", "toolchains"),   # si#525: toolchains through profiles.declared_toolchains
     "tasks.claudemd": ("claude", "toolchains"),   # si#525: through claudeplugins.effective
+    "tasks.hosttools": ("toolchains",),   # si#526: which host gates (brew, gh) support install asks
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.fetchfile": ("artifacts",),   # a `kind: file` entry (si#343)

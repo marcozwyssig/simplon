@@ -12,9 +12,12 @@ them touches a machine and the other opens a browser and asks a human to authori
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from simplon.kernel import log
-from simplon.adapters import oras
-from simplon.tasks import claudeplugins
+from simplon.adapters import brew, gh, hostinstall, oras
+from simplon.manifest import context
+from simplon.tasks import claudeplugins, profiles
 
 # Every gate this command drives, in the order a fresh machine wants them. One entry today; the point
 # of the list is that the next tool is a row rather than a rewrite. The gate is wrapped in a lambda
@@ -33,15 +36,39 @@ def _claude_plugins() -> bool:
     return claudeplugins._rc(outcome) == 0
 
 
-def install() -> int:
-    """Provision the host tooling the delivery kernel needs (oras, and the plugins of the `claude`
-    toolchain); idempotent.
+def _declared() -> tuple[str, ...] | None:
+    """The product's `toolchains:`, or None (already reported) when the list is broken."""
+    ctx = context.current()
+    try:
+        return profiles.declared_toolchains(ctx.manifest_data(), source=str(ctx.manifest_path))
+    except ValueError as exc:
+        log.error(str(exc))
+        return None
 
-    Every gate is attempted even when an earlier one failed - a setup command that stops at the first
-    problem hides the second one until the next run, and someone provisioning a machine wants the whole
-    list now.
+
+def _host_gate(name: str, declared: tuple[str, ...], ensure: Callable[[], hostinstall.Outcome]) -> bool:
+    """One host toolchain's gate (si#526): asked only when `name` is declared, reported in its own words.
+    False only for NO_ROUTE and FAILED; SKIPPED is not a failure."""
+    outcome = ensure() if name in declared else hostinstall.Outcome(hostinstall.State.OFF)
+    hostinstall.report(name, outcome)
+    return hostinstall.rc(outcome) == 0
+
+
+def install() -> int:
+    """Provision the host tooling the delivery kernel needs: Homebrew and gh when `toolchains:` names them,
+    oras always, and the plugins of the `claude` toolchain; idempotent.
+
+    Homebrew goes first, so that oras and gh can install through it. Every gate is attempted even when an
+    earlier one failed - a setup command that stops at the first problem hides the second one until the
+    next run, and someone provisioning a machine wants the whole list now.
     """
     failed = []
+    declared = _declared()
+    if declared is None:
+        failed.append("toolchains")
+        declared = ()
+    if not _host_gate("brew", declared, lambda: brew.ensure()):
+        failed.append("brew")
     for name, gate, failure_type in _GATES:
         try:
             gate()
@@ -49,6 +76,8 @@ def install() -> int:
         except failure_type as failure:
             log.warn(f"{name}: {failure}")
             failed.append(name)
+    if not _host_gate("gh", declared, lambda: gh.ensure()):
+        failed.append("gh")
     if not _claude_plugins():
         failed.append("claude")
     return 1 if failed else 0
