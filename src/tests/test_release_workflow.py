@@ -483,6 +483,24 @@ def _tap_step(steps) -> int:
     return next(i for i, step in enumerate(steps) if "./simplon.sh release homebrew-tap" in str(step.get("run", "")))
 
 
+def test_a_rerun_of_publish_passes_the_upload_it_already_made(workflow):
+    """si#537: "rerun the failed job, never a second tag" must reach the formula steps, so the upload skips a
+    file PyPI already has. Safe because the `source pypi` build after it refuses unless PyPI's sha256 equals
+    the local wheel's: different bytes under an existing name stop before the tap."""
+    # Arrange
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+
+    # Act
+    pypi = next(i for i, step in enumerate(steps)
+                if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish"))
+    compared = next(i for i, step in enumerate(steps)
+                    if "./simplon.sh build homebrew-formula --source pypi" in str(step.get("run", "")))
+
+    # Assert
+    assert steps[pypi].get("with", {}).get("skip-existing") is True
+    assert pypi < compared
+
+
 def test_the_tap_follows_pypi(workflow):
     """si#537: the formula names PyPI's URL, so the tap commit comes after the upload, never before it."""
     # Arrange
