@@ -11,7 +11,8 @@ not its behaviour. One repository, `o/n`, and only the five routes the adapter c
 
 `state["fail"]` forces a status for a `(method, path prefix)`; `state["keep_draft"]` makes a PATCH answer
 200 while leaving `draft` as it was (a proxy, a race); `state["force_public"]` makes a PATCH answer with the release public whatever was asked;
-`state["requests"]` records every call.
+`state["requests"]` records every call as (method, path, body) and `state["auth"]` the Authorization header of
+each, at the same index.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ REPO = "o/n"
 def state(**overrides: Any) -> dict:
     """A fresh state: a visible repository with no releases."""
     fresh: dict[str, Any] = {"repo": {"full_name": REPO}, "releases": [], "fail": {}, "requests": [],
-                             "keep_draft": False}
+                             "auth": [], "keep_draft": False}
     fresh.update(overrides)
     return fresh
 
@@ -72,6 +73,7 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"null") if length else None
             shared["requests"].append((method, path, body))
+            shared["auth"].append(self.headers.get("Authorization"))   # parallel to "requests", same index
             for (m, prefix), status in shared["fail"].items():
                 if m == method and path.startswith(prefix):
                     self._send(status, {"message": f"forced {status}"})

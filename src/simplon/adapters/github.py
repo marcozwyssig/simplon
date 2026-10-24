@@ -98,6 +98,21 @@ def repository(origin: str = "") -> Repository:
         # a PackageError - found by si#486's final review as a traceback where a sentence belongs.
         raise Unanswered(f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). "
                          f"Export GITHUB_TOKEN; in GitHub Actions, pass `secrets.GITHUB_TOKEN` in the step's `env:`") from None
+    return _asked(name, api, token, "(GITHUB_TOKEN, else `gh auth token`)")
+
+
+def other(name: str, token: str) -> Repository:
+    """Another repository, `owner/name`, ASKED for with the token given (si#535): the same client, the same
+    three answers. The API is `GITHUB_API_URL`, else github.com's."""
+    if not token:
+        raise Unanswered(f"no token for {name}: none was given, so GitHub was not asked. Export the token "
+                         f"that can see {name}")
+    api = os.environ.get("GITHUB_API_URL", "").strip().rstrip("/") or "https://api.github.com"
+    return _asked(name, api, token, "(the one given)")
+
+
+def _asked(name: str, api: str, token: str, seen_by: str) -> Repository:
+    """The one place a client is built and the repository asked for; `seen_by` names the token in a 404."""
     client = Github(auth=Auth.Token(token), base_url=api, timeout=TIMEOUT_S, retry=None, per_page=PER_PAGE,
                     lazy=False)
     try:
@@ -107,7 +122,7 @@ def repository(origin: str = "") -> Repository:
     except UnknownObjectException:
         raise Unanswered(
             f"{api} answers 404 for the repository {name}: it does not exist there, or the token "
-            f"(GITHUB_TOKEN, else `gh auth token`) cannot see it - so no release question can be "
+            f"{seen_by} cannot see it - so no release question can be "
             f"answered") from None
     except GithubException as refused:
         raise Unanswered(f"{api} refused the repository {name}: {said(refused)}") from None
