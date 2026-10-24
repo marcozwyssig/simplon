@@ -352,6 +352,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_homebrewformula typeOf simplon.architecture.Module {
     path = "tasks.homebrewformula"
   }
+  module m_tasks_homebrewclosure typeOf simplon.architecture.Module {
+    path = "tasks.homebrewclosure"
+  }
   module m_tasks_releasenotes typeOf simplon.architecture.Module {
     path = "tasks.releasenotes"
   }
