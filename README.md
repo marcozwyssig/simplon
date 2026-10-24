@@ -202,8 +202,8 @@ the type gate, the staleness gate and the release-notes guard, then the notes,
 then `release tag`, which cuts and pushes the tag. A red test therefore leaves
 no tag behind. After the tag, the wheel goes to PyPI via Trusted Publishing, and
 then the Homebrew formula in `marcozwyssig/homebrew-tap`, the website and the
-kernel image go up. A dry run builds and checks all
-of it, and publishes nothing: no tag, no wheel, no formula, no site, no image, no pin.
+kernel image go up. A dry run builds and checks all of it, and publishes
+nothing: no tag, no wheel, no formula, no site, no image, no pin.
 
 **The tag IS the version.** There is no number to edit first: `pyproject.toml`
 declares `dynamic = ["version"]` and setuptools-scm derives it from the tag, so

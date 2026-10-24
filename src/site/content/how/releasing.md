@@ -241,8 +241,8 @@ before `release homebrew-tap`.
 
 A dry run therefore carries the placeholder URL `https://pypi.invalid/dry-run/<wheel>` in the formula, and
 the test is `brew audit --strict` and `brew style` only. Nothing goes to PyPI or the tap. The test runs in
-a pinned brew image, and pulling that image dominates the cost: measured on 2026-10-25 at about 4.5 minutes
-per release.
+a pinned brew image, and pulling that image dominates the cost: measured once in the si#449 round of
+2026-10-18 at about 4.5 minutes per release.
 
 The tap is a different repository, so the workflow's own token cannot write to it. `release homebrew-tap`
 declares `token: app`, and the workflow derives a step before it that mints a GitHub App token for
