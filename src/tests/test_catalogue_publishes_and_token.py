@@ -76,7 +76,7 @@ def test_publishes_is_true_or_false():
 
 
 def test_token_names_a_known_issuer():
-    with pytest.raises(ValueError, match="'token' is github or absent"):
+    with pytest.raises(ValueError, match="'token' is github, app or absent"):
         _loaded("""
             tasks:
               ship: { impl: "simplon.test_impls:nullary", help: "Ship.", token: gitlab }
@@ -85,6 +85,19 @@ def test_token_names_a_known_issuer():
                 commands:
                   ship: { task: ship }
             """)
+
+
+def test_token_app_is_a_known_issuer():
+    loaded = _loaded("""
+        tasks:
+          ship: { impl: "simplon.test_impls:nullary", help: "Ship.", token: app }
+        ci:
+          release:
+            commands:
+              ship: { task: ship }
+        """)
+
+    assert loaded.commands["release"]["ship"].token == "app"
 
 
 def test_every_release_task_says_whether_it_publishes():
