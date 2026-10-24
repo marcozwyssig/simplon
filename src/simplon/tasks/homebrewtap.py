@@ -23,7 +23,10 @@ repository with the GitHub App token the workflow mints (`GH_APP_TOKEN`, si#534)
 (si#535), and says which of its three outcomes it reached: `written <sha>`, `already current` or `refused:
 <reason>`. Only `refused` returns 1. IT COMMITS ONLY THE TESTED BYTES: the formula's digest must be the `id`
 of a run the bound evidence names (`results.tested()`), so a formula changed after its test, or one with no
-evidence bound at all, is refused before GitHub is asked.
+evidence bound at all, is refused before GitHub is asked. AND ONLY WHAT PYPI SERVES: a formula with the
+dry-run placeholder url is refused, and right before the commit its url and sha256 are compared with PyPI's
+file for the wheel, because evidence from an `online: false` run never asked PyPI. A lookup that fails is a
+refusal too, never a commit.
 """
 from __future__ import annotations
 
@@ -300,7 +303,6 @@ def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
         raise ValueError(f"{formula_rel} does not exist; render it with build:homebrew-formula and check it "
                          f"with test:homebrew-formula first")
     raw = path.read_bytes()
-    message = f"{path.stem} {_version(raw.decode('utf-8'), formula_rel)}"
     target = f"Formula/{path.stem}.rb"
     token = os.environ.get(APP_TOKEN_ENV, "").strip()
     if not token:
@@ -319,6 +321,16 @@ def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
         log.error(f"refused: {formula_rel} is {digest}, and the evidence tested {ran}: the formula changed "
                   f"after its test. Run test:homebrew-formula on it again, then release")
         return 1
+    found = _digests(raw.decode("utf-8"))
+    if found.url.startswith(homebrewformula.PLACEHOLDER):
+        log.error(f"refused: {formula_rel} carries the dry-run placeholder url; render it with source: pypi "
+                  f"after the PyPI upload and test it with online: true")
+        return 1
+    name, version, wheel = _wheel_of(found.url, formula_rel)
+    if unserved := _not_served(found, name, version, wheel):
+        log.error(f"refused: {formula_rel}: {unserved}. Nothing was committed")
+        return 1
+    message = f"{path.stem} {version}"
     outcome = repofile.write(repository, branch, target, raw, message, token)
     if outcome.state is repofile.State.WRITTEN:
         log.ok(f"written {outcome.commit}: {target} on {branch} of {repository} ({message})")
@@ -330,16 +342,33 @@ def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
     return 1
 
 
-def _version(text: str, formula_rel: Path) -> str:
-    """The version in the formula's `url`, a wheel's file name (`<name>-<version>-<tags>.whl`, where the name
-    carries no `-`): what `build:homebrew-formula` wrote, on PyPI and on the dry-run placeholder alike."""
-    url = _digests(text).url
+def _wheel_of(url: str, formula_rel: Path) -> tuple[str, str, str]:
+    """`(name, version, file name)` of the wheel the formula's `url` names (`<name>-<version>-<tags>.whl`,
+    where the name carries no `-`): what `build:homebrew-formula` wrote."""
     filename = unquote(urlparse(url).path.rsplit("/", 1)[-1])
     parts = filename.split("-")
     if not filename.endswith(".whl") or len(parts) < 5:
         raise ValueError(f"{formula_rel}'s url {url} names no wheel (<name>-<version>-<tags>.whl), so the "
                          f"commit cannot name the version; render it again with build:homebrew-formula")
-    return parts[1]
+    return parts[0], parts[1], filename
+
+
+def _not_served(found: Digests, name: str, version: str, wheel: str) -> str:
+    """Why the formula's url and sha256 are not what PyPI serves for `wheel`, or "" when they are. Asked right
+    before the commit, because the evidence may have run with `online: false`, which never asked PyPI. A
+    failed lookup is a reason too: no answer is not a match, and rerunning is safe."""
+    try:
+        listed = pypi.files(name, version, index=homebrewformula.PYPI_INDEX)
+    except pypi.PyPIError as e:
+        return f"PyPI's file for {wheel} could not be read, so the formula's sha256 is unchecked: {e}"
+    served = [f for f in listed if f.filename == wheel]
+    if not served:
+        return (f"PyPI lists {name} {version} but not the file {wheel} (it lists: "
+                f"{', '.join(f.filename for f in listed) or 'no files'})")
+    if served[0].url != found.url or served[0].sha256 != found.sha256:
+        return (f"the formula names {found.url} with sha256 {found.sha256}, and PyPI serves {served[0].url} "
+                f"with sha256 {served[0].sha256}; render it again with source: pypi")
+    return ""
 
 
 def _results_path(name: str) -> Path:

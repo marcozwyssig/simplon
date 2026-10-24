@@ -794,7 +794,8 @@ tasks:
       online:  { help: "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run" }
   # si#536 (part D of si#449): the checked formula committed to a tap repository as `Formula/<name>.rb`, with
   # a GitHub App token (`token: app`, si#534) because the tap is ANOTHER repository, which the workflow's
-  # own token cannot write. Only the bytes the bound evidence tested are committed. Three outcomes, from
+  # own token cannot write. Only the bytes the bound evidence tested are committed, and only when their url and
+  # sha256 are what PyPI serves (asked right before the commit; never the dry-run placeholder). Three outcomes, from
   # `adapters.repofile` (si#535): written, already current, refused - and only refused is red.
   release:homebrew-tap:
     help: "Commit the tested Homebrew formula to the tap repository as Formula/<name>.rb."
