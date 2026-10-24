@@ -129,6 +129,8 @@ exclude = ["tests*", "firn*", "site*"]
 
 [tool.setuptools.package-data]
 simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]
+# And `simplon/m2/`, the firn M2 a product's exported manifest model needs (si#522): copied at build time by
+# `setup.py`, because its source is simplon's own firn project and firn refuses it inside the package.
 
 # --- the version, and the only place it comes from (#3) ---------------------------------------------------
 #
