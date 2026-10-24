@@ -9,6 +9,7 @@ from __future__ import annotations
 import email
 import hashlib
 import re
+import shlex
 import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -43,6 +44,9 @@ class PythonShape(NamedTuple):
 
 
 def the_wheel(directory: Path) -> Path:
+    if not Path(directory).is_dir():
+        raise ValueError(f"{directory} does not exist or is not a directory; the wheel input must be a directory "
+                         f"holding the built .whl")
     found = sorted(Path(directory).glob("*.whl"))
     if len(found) != 1:
         listed = [p.name for p in found]
@@ -53,7 +57,11 @@ def the_wheel(directory: Path) -> Path:
 
 def wheel_meta(path: Path) -> WheelMeta:
     path = Path(path)
-    with zipfile.ZipFile(path) as z:
+    try:
+        z = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"{path.name} is not a zip file, so not a wheel; rebuild it") from e
+    with z:
         names = z.namelist()
         meta_name = next((n for n in names if n.endswith(".dist-info/METADATA")), None)
         if meta_name is None:
@@ -126,8 +134,11 @@ def _ruby(text: str) -> str:
 
 def render(meta: WheelMeta, url: str, sha256: str, resources: Sequence[Resource], shape: PythonShape) -> str:
     venv_python = "python" + shape.python.split("@", 1)[1]
+    if meta.version not in meta.filename:
+        raise ValueError(f"the wheel file name {meta.filename} does not contain its METADATA version "
+                         f"{meta.version}, so the formula cannot name it as #{{version}}; rebuild the wheel")
     wheel_in_build = "#{version}".join(_ruby(part) for part in meta.filename.split(meta.version))
-    command = " ".join([f"#{{bin}}/{meta.command}", *(_ruby(a) for a in shape.test_args)])
+    command = " ".join([f"#{{bin}}/{_ruby(meta.command)}", *(_ruby(shlex.quote(a)) for a in shape.test_args)])
     lines = [f"class {class_name(meta.name)} < Formula",
              "  include Language::Python::Virtualenv", "",
              f'  desc "{_ruby(meta.summary)}"',
@@ -135,7 +146,7 @@ def render(meta: WheelMeta, url: str, sha256: str, resources: Sequence[Resource]
              f'  url "{_ruby(url)}", using: :nounzip',
              f'  sha256 "{sha256}"',
              f'  license "{_ruby(meta.license)}"', ""]
-    lines += [f'  depends_on "{_ruby(d)}"' for d in sorted(shape.depends_on)] + [""]
+    lines += [f'  depends_on "{_ruby(d)}"' for d in sorted(set(shape.depends_on) | {shape.python})] + [""]
     for res in sorted(resources, key=lambda r: r.name.lower()):
         lines += [f'  resource "{_ruby(res.name.lower())}" do', f'    url "{_ruby(res.url)}"',
                   f'    sha256 "{res.sha256}"', "  end", ""]

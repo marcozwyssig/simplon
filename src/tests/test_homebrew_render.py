@@ -133,7 +133,7 @@ def test_other_strings_are_escaped_too():
     out = hf.render(META._replace(homepage='h"', license='l"'), "u", "e" * 64, [], shape)
     assert 'homepage "h\\""' in out and 'license "l\\""' in out
     assert 'ENV["K"] = "v\\"\\#{x}"' in out
-    assert 'assert_match "x \\#{y}", shell_output("#{bin}/simplon a\\"b")' in out
+    assert """assert_match "x \\#{y}", shell_output("#{bin}/simplon 'a\\"b'")""" in out
 
 
 def shape_args(**over):
@@ -173,3 +173,38 @@ def test_python_must_be_a_python_formula(value):
 def test_malformed_with_values_are_refused(over):
     with pytest.raises(ValueError):
         hf.shape_of(**shape_args(**over))
+
+
+def test_python_is_depends_on_even_when_not_listed_and_once():
+    out = hf.render(META, "u", "e" * 64, [], SHAPE._replace(depends_on=()))
+    assert out.count('depends_on "python@3.14"') == 1
+    assert "\n\n\n" not in out
+    out = hf.render(META, "u", "e" * 64, [], SHAPE._replace(depends_on=("libyaml", "libyaml", "python@3.14")))
+    assert out.count('depends_on "libyaml"') == 1 and out.count('depends_on "python@3.14"') == 1
+
+
+def test_test_args_are_shell_quoted():
+    out = hf.render(META, "u", "e" * 64, [], SHAPE._replace(test_args=("a b", "$(id)")))
+    assert """shell_output("#{bin}/simplon 'a b' '$(id)'")""" in out
+
+
+def test_the_command_is_escaped():
+    out = hf.render(META._replace(command='x"y'), "u", "e" * 64, [], SHAPE)
+    assert 'shell_output("#{bin}/x\\"y --help")' in out
+
+
+def test_a_version_missing_from_the_filename_is_refused():
+    with pytest.raises(ValueError, match=r"simplon-0.36.0-py3-none-any.whl.*0.37.0"):
+        hf.render(META._replace(version="0.37.0"), "u", "e" * 64, [], SHAPE)
+
+
+def test_a_missing_directory_is_not_an_empty_one(tmp_path):
+    with pytest.raises(ValueError, match="does not exist"):
+        hf.the_wheel(tmp_path / "nope")
+
+
+def test_a_file_that_is_not_a_zip_is_named(tmp_path):
+    bad = tmp_path / "x-1-py3-none-any.whl"
+    bad.write_text("nope")
+    with pytest.raises(ValueError, match="x-1-py3-none-any.whl.*not a zip"):
+        hf.wheel_meta(bad)
