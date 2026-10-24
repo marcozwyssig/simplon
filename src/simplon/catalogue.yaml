@@ -780,6 +780,18 @@ tasks:
       python:     { help: "the python formula the venv is created with (e.g. python@3.14)" }
       env:        { help: "extra install environment, a mapping written as ENV lines" }
       test:       { help: "the formula's test: {args: [...], expect: <text the output contains>}" }
+  # si#536 (part D of si#449): the formula `build:homebrew-formula` rendered, checked before a tap gets it.
+  # `brew audit` and `brew style` run in the pinned brew image; audit does not catch a wrong sha256 (measured),
+  # so the body compares the formula's digests with the local wheel and PyPI. `online` has no default, for the
+  # reason `source:` has none: a dry run's placeholder URL is red under `--online --new` (measured).
+  test:homebrew-formula:
+    help: "Audit the Homebrew formula in the pinned brew image, check its sha256s, and record the verdict."
+    unattended: true
+    params:
+      formula: { help: "the homebrew-formula artifact to check (normally bound with `consumes:`)" }
+      wheel:   { help: "the directory artifact holding the wheel the formula was rendered from (normally bound with `consumes:`)" }
+      results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
+      online:  { help: "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run" }
   release:image:
     help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
     unattended: true

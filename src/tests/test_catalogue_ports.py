@@ -40,6 +40,9 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         # si#536: two artifact ports on one body, so each binds a parameter of its own name, not `name`
         "build:homebrew-formula": (P("wheel", "input", "directory", "wheel", ("path",)),
                                    P("formula", "output", "homebrew-formula", "formula", ("path",))),
+        "test:homebrew-formula": (P("formula", "input", "homebrew-formula", "formula", ("path",)),
+                                  P("wheel", "input", "directory", "wheel", ("path",)),
+                                  P("test-result", "output", "test-result", "results", ("path",))),
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
                           EVIDENCE),
         "docs:site": (P("site", "output", "site", "", ()),),
