@@ -166,6 +166,51 @@ build_maven_pack typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
+  key = "build:homebrew-formula"
+  body = "simplon.tasks.homebrewformula:build"
+  input wheel typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.directory
+    param = "wheel"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  output formula typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.homebrew_formula
+    param = "formula"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
+  key = "test:homebrew-formula"
+  body = "simplon.tasks.homebrewtap:check"
+  input formula typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.homebrew_formula
+    param = "formula"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  input wheel typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.directory
+    param = "wheel"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  output test_result typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+    param = "results"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+release_homebrew_tap typeOf simplon.pipeline.CatalogueTask {
+  key = "release:homebrew-tap"
+  body = "simplon.tasks.homebrewtap:tap"
+  input formula typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.homebrew_formula
+    param = "formula"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
+}
 release_maven typeOf simplon.pipeline.CatalogueTask {
   key = "release:maven"
   body = "simplon.tasks.maven:push"

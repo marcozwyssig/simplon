@@ -158,6 +158,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.artifact": ("artifacts",),
     "tasks.asset": ("assets",),
     "tasks.githubrelease": ("artifacts",),
+    "tasks.homebrewformula": ("artifacts",),
+    "tasks.homebrewtap": ("artifacts",),
     "tasks.buildfiles": ("build",),
     "tasks.claudeplugins": ("claude", "toolchains"),   # si#525: toolchains through profiles.declared_toolchains
     "tasks.claudemd": ("claude", "toolchains"),   # si#525: through claudeplugins.effective
