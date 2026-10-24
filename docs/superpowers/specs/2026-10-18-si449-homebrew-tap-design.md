@@ -15,6 +15,20 @@ prototype and merged by hand as marcozwyssig/homebrew-tap#1. The changes:
   before it is published. simplon therefore needs no GitHub Release and no part A; A stays for F;
 - every build and check step is independent of the agent's operating system (Global requirement).
 
+**Amended again 2026-10-24** (Marco, choice list before the plans), after measuring the code the plans build on:
+
+- **A body is told whether the run is real.** No dry-run signal reaches a task body today; only workflowgen's
+  `if:` knows. `build:homebrew-formula` takes `source: pypi|local` and `test:homebrew-formula` takes
+  `online: true|false`, both with NO default, bound by two manifest steps under `if:` (D, E).
+- **No wheel handoff.** The wheel is already built once, in the product job `publish`, where the PyPI upload
+  and the formula steps also run. No `release:` command consumes the wheel, so rule 6 asks no result about
+  it, and the si#3 check stays a verbatim step (E).
+- **`client-id`, not `app-id`.** Measured on `actions/create-github-app-token` v3.2.0: `app-id` is
+  deprecated in favour of `client-id`. The secrets are `<PREFIX>_CLIENT_ID` and `<PREFIX>_APP_KEY` (B).
+- **The token step is derived wherever the leaf runs.** The tap commit follows the PyPI upload, which is a
+  step of the product job `publish`, so the derivation covers a `command:` step in a product job as well as
+  a leaf of the derived release job (B).
+
 ## Intent
 
 simplon publishes to PyPI, to ghcr and to Pages, but to no OS package manager. A product that ships a CLI
@@ -60,8 +74,8 @@ longer needs A.)*
   - The files port has `param: ""`, because a port with a param refuses a list and `name` is already the
     notes port's. The body reads the bound names from the context.
 - `release:asset` is unchanged. *Its draft behaviour stays unmeasured, and it is not on this path.*
-- Rule 6 (`OWN_KINDS`): the uploaded `file` needs a test result about it. For simplon's wheel that is the
-  si#3 wheel-is-the-tag check, promoted to a result-producing leaf (see E).
+- Rule 6 (`OWN_KINDS`): the uploaded `file` needs a test result about it. For firn's binary, F names
+  which. *(Amended 2026-10-24: simplon uploads nothing through A, so no wheel result is needed.)*
 
 ### B. `token: app`
 
@@ -69,13 +83,16 @@ longer needs A.)*
   (`manifest/load.py:335-345`), and anything else stays a DIAGNOSIS.
 - workflowgen derives a step before such a leaf:
   `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1` (v3.2.0; v3.3.0 is under two
-  weeks old). It reads two fixed secrets, `${{ secrets.<PREFIX>_APP_ID }}` and
-  `${{ secrets.<PREFIX>_APP_KEY }}`, and is scoped by `owner` plus `repositories` to the one repository the
-  leaf writes to. The leaf gets the token as `GH_APP_TOKEN` in its step env, never in a `run:` line.
+  weeks old). It reads two fixed secrets, `${{ secrets.<PREFIX>_CLIENT_ID }}` (input `client-id`; `app-id`
+  is deprecated, measured) and `${{ secrets.<PREFIX>_APP_KEY }}` (input `private-key`), is scoped by `owner`
+  plus `repositories` to the one repository the leaf writes to, and asks `permission-contents: write`
+  only. The leaf gets the token as `GH_APP_TOKEN` in its step env, never in a `run:` line.
+- The step is derived wherever such a leaf runs: as a leaf of the derived release job, and as a `command:`
+  step of a product job (amended 2026-10-24; the tap commit runs in `publish`).
 - *(My call, from the builder check:)* the target is a generic parameter, `repository: <owner>/<repo>`,
   bound with `with:` on the leaf. B defines it, so D and a later Scoop bucket reuse it. The secret prefix
   is DERIVED from the repository's name, upper-cased with `-` as `_`: `homebrew-tap` gives
-  `HOMEBREW_TAP_APP_ID`/`HOMEBREW_TAP_APP_KEY`. One App secret pair per target repository, and nothing
+  `HOMEBREW_TAP_CLIENT_ID`/`HOMEBREW_TAP_APP_KEY`. One App secret pair per target repository, and nothing
   else to declare.
 - Diagnosis at render: a `token: app` leaf whose target repository is not declared. A missing secret
   cannot be seen at render, so the leaf's body refuses an empty `GH_APP_TOKEN` by name.
@@ -101,9 +118,12 @@ longer needs A.)*
   output directory. **There is no product template** (amended 2026-10-24): the kernel renders the whole
   formula from what the artefact says about itself plus a small amount of manifest data, in one of two
   shapes, chosen by `with: shape:`.
-- **Shape `python`** (simplon). Its one input is the wheel: the `file` artifact the release job built
-  (E's one wheel). It is not a file name in `with:`, so no `<version>` placeholder has to expand
-  *(my call, builder check)*.
+- **Shape `python`** (simplon). Its one input is the wheel. It is not a file name in `with:`, so no
+  `<version>` placeholder has to expand *(my call, builder check)*. Because an artifact's `path:` is fixed
+  and the wheel's file name carries the version, the input is a `directory` artifact (simplon's `dist`),
+  and the step refuses unless it holds exactly one `*.whl`, naming what it found *(my call, plan)*.
+- **`source:` (amended 2026-10-24)** says where the URL and sha256 come from: `pypi` on a real run, `local`
+  on a dry run. It has no default; the manifest binds it in two steps under `if:`.
   - **The URL and sha256 come from PyPI** (Marco, 2026-10-24). On a real run the step reads
     `https://pypi.org/pypi/<name>/<version>/json` after the upload, takes the wheel's `url` and
     `digests.sha256`, and refuses unless that sha256 equals the local wheel's. A version that PyPI does
@@ -140,7 +160,8 @@ longer needs A.)*
 - **What a product never writes:** a version, a URL, a sha256 or a resource block. Every Homebrew decision
   the kernel cannot derive is a `with:` value, and the kernel refuses an unknown key.
 - **`test:homebrew-formula`** consumes it and produces a `test-result` about it, which is rule 6's evidence
-  for the tap commit.
+  for the tap commit. It takes `online: true|false` with no default (amended 2026-10-24), bound the way
+  `source:` is.
   - It runs `brew audit` and `brew style` on the formula in a throwaway local tap, inside
     `ghcr.io/homebrew/brew:7.0.9@sha256:00b643d72ab0ee27c64e3e552d08c66e1bb5272bdf4ed28964e27aa5764f2503`,
     with the network.
@@ -170,13 +191,14 @@ longer needs A.)*
   `cryptography` and `pydantic` exist only for 3.14/3.15. Measured: 0.34.0 runs on 3.14.8. So a second
   `ci.yml` job on `ubuntu-latest` with `python: "3.14"` runs the suite. The existing job on ghr-8 keeps the
   machine's python3, whose version is not pinned today.
-- **One wheel** (Marco, 2026-10-18): the release job builds it once. The `publish` job takes it through
-  `upload-artifact`/`download-artifact` instead of rebuilding, so PyPI and the tap carry the same bytes. A derived release job handing a file to a product job is new for workflowgen, and part of E.
-  The si#3 wheel-is-the-tag check becomes a `ci: test:` leaf that produces the `test-result` rule 6 asks
-  for about the wheel.
+- **One wheel** (Marco, 2026-10-18): built once. *(Amended 2026-10-24: measured, it already is, in the
+  product job `publish`, which is also where PyPI and the formula steps run, so PyPI and the tap carry the
+  same bytes with no handoff. No `release:` command consumes the wheel, so rule 6 asks no result about it,
+  and the si#3 check stays a verbatim step.)* `wheel` declares `produces:` a `directory` artifact `dist`
+  for `build:homebrew-formula` to consume.
 - **The publish job gains, after the PyPI upload** (amended 2026-10-24): `build:homebrew-formula`,
   `test:homebrew-formula` and `release:homebrew-tap`. On a dry run, the first two run on the local wheel
-  (D). simplon creates no GitHub Release for this, and `release:github-draft` and `release:github-publish`
+  (D), as their own steps under `if: ${{ inputs.dry_run }}` with `source: local` and `online: false`. simplon creates no GitHub Release for this, and `release:github-draft` and `release:github-publish`
   stay out of simplon's release. The order is stated in `release all`'s help.
 - **simplon's `with:`** for `build:homebrew-formula` (amended 2026-10-24: no template file):
   - `shape: python`, `asset: simplon-<version>-py3-none-any.whl`;
@@ -227,8 +249,8 @@ longer needs A.)*
 - Create the GitHub App:
   - contents read/write on that repository only;
   - install it there;
-  - store its id and private key as the repository secrets `HOMEBREW_TAP_APP_ID` and `HOMEBREW_TAP_APP_KEY` in
-    simplon *(my call on the names; the prefix is `HOMEBREW_TAP`)*.
+  - store its Client ID and private key as the repository secrets `HOMEBREW_TAP_CLIENT_ID` and
+    `HOMEBREW_TAP_APP_KEY` in simplon *(the prefix is `HOMEBREW_TAP`; `client-id` per the amendment)*.
 
 ## Open measurements (before or during A)
 
