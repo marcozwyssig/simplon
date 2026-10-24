@@ -513,6 +513,7 @@ def profile(language: str, **params: str) -> Profile:
 #: `Profile` is an image and its commands, and these bring neither: each brings a step in `support
 #: install` instead.
 HOST_TOOLCHAINS: dict[str, str] = {
+    "brew": "Homebrew",
     "claude": "Claude Code: the plugin set and CLAUDE.md",
     "gh": "the GitHub CLI",
 }

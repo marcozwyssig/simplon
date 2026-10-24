@@ -131,6 +131,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_backend typeOf simplon.architecture.Module {
     path = "adapters.backend"
   }
+  module m_adapters_brew typeOf simplon.architecture.Module {
+    path = "adapters.brew"
+  }
   module m_adapters_checksum typeOf simplon.architecture.Module {
     path = "adapters.checksum"
   }
@@ -161,6 +164,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_fetch typeOf simplon.architecture.Module {
     path = "adapters.fetch"
   }
+  module m_adapters_gh typeOf simplon.architecture.Module {
+    path = "adapters.gh"
+  }
   module m_adapters_github typeOf simplon.architecture.Module {
     path = "adapters.github"
   }
@@ -172,6 +178,9 @@ adapters typeOf simplon.architecture.Component {
   }
   module m_adapters_host typeOf simplon.architecture.Module {
     path = "adapters.host"
+  }
+  module m_adapters_hostinstall typeOf simplon.architecture.Module {
+    path = "adapters.hostinstall"
   }
   module m_adapters_hostpath typeOf simplon.architecture.Module {
     path = "adapters.hostpath"

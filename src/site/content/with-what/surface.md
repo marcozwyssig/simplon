@@ -194,7 +194,7 @@ no product manifest, command or import is affected either way.
 
 Short enough to state, and the half you most need, because everything else is yours:
 
-`adapters.diskguard` · `adapters.github` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
+`adapters.brew` · `adapters.diskguard` · `adapters.gh` · `adapters.github` · `adapters.hostinstall` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
 `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
 `manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls` · `ui.clipboard`

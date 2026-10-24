@@ -145,7 +145,7 @@ def test_claude_alone_is_the_base_set():
                            "token-optimizer@alexgreensh-token-optimizer")
     assert set(eff.origin.values()) == {"default"}
     assert {m.name for m in eff.markets} == {_OFFICIAL, "alexgreensh-token-optimizer"}
-    assert eff.requires == ("node",)
+    assert eff.requires == ("gh", "node")
 
 
 def test_empty_section_is_the_default():
@@ -182,7 +182,7 @@ def test_product_additions_and_their_marketplace():
     assert eff.plugins[-1] == "x@acme"
     assert eff.origin["x@acme"] == "product"
     assert "acme" in {m.name for m in eff.markets}
-    assert eff.requires == ("node", "acmectl")
+    assert eff.requires == ("gh", "node", "acmectl")
 
 
 def test_a_product_plugin_naming_an_undeclared_marketplace_is_still_refused():
@@ -455,7 +455,7 @@ def test_a_complete_plugin_set_on_a_machine_missing_a_required_tool_is_not_nothi
 
 def test_a_complete_plugin_set_with_every_required_tool_present_is_still_nothing_to_do(
         monkeypatch, tmp_path):
-    lines = _machine(monkeypatch, tmp_path, requires=["node"], on_path=["node"])
+    lines = _machine(monkeypatch, tmp_path, requires=["node"], on_path=["gh", "node"])
 
     assert claudeplugins.install() == 0
     assert any(level == "ok" and "nothing to do" in msg for level, msg in lines)
