@@ -23,6 +23,66 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.36.0
+
+**What a product has to do:** a product on 0.35.0 moves both simplon pins together, the one in
+`requirements.txt` and the one in `deploy/image/image.pin`. One change can go red on the bump, and two
+add commands:
+
+1. **A `claude:` section needs the `claude` toolchain (si#525).** A product that kept a `claude:`
+   section, as netctl and smcctl do, now hears "the manifest has a 'claude:' section, but 'claude' is
+   not in 'toolchains:'". `support install` fails on it, and the launcher prints it after a deps
+   refresh. The way out: run `support toolchain claude`, then delete every plugin the default already
+   carries. `support claude-plugins -n` marks what is still the product's own with `(product)`.
+2. **`support` has two more commands for every product (si#525):** `claude-plugins` and `claude-md`.
+3. **`test manifest-model` is new (si#522).** A product with the `firn` toolchain can place it by hand
+   as `{ task: "test:manifest-model", with: { image: ... } }`. `support toolchain firn` writes it for a
+   product that adds firn from now on.
+
+### Claude support is a toolchain, and `CLAUDE.md` has a central part (si#525)
+
+- **`toolchains:`** is a new top-level list. Its known names are `python`, `java`, `cpp`, `dotnet`,
+  `firn`, `claude`, `gh` and `brew`. `support toolchain <name>` adds one. An unknown name, a duplicate
+  or a scalar is refused, and the refusal lists the known names. `simplon init` writes `claude` and `gh`.
+- **The plugin default is simplon's.** `claude` in `toolchains:` turns on a base set of plugins, plus
+  one LSP plugin for each language the list names. A `claude:` section only adds plugins or excludes
+  default ones, and an exclusion that names nothing in the default is refused.
+- **The plugin step reports one of five outcomes.** It runs in `support install` and after the
+  launcher's deps refresh. It says off, skipped with the reason (no `claude` on PATH, CI, the container
+  route), nothing missing, installed (with "restart Claude Code"), or failed with the plugin's name.
+  Only failed makes `support install` red. The launcher never fails a command over it.
+- **`support claude-md`** writes `CLAUDE.md` from the kernel's template, followed by the product's own
+  region, which it keeps byte for byte. On the first run, the whole old file becomes that region. It
+  also writes `enabledPlugins` and `extraKnownMarketplaces` into `.claude/settings.json` and leaves
+  every other key alone. `--check` reports drift.
+
+### `support install` provisions gh and Homebrew (si#526)
+
+- **`brew` in `toolchains:`** installs Homebrew from a pinned `install.sh`, checked against its sha256
+  before it runs. The line to put the prefix on PATH is printed; no dotfile is edited. Windows and
+  Intel macOS are skipped, not failed.
+- **`gh` in `toolchains:`** installs the GitHub CLI through brew, winget on Windows, or GitHub's signed
+  apt repository on the Debian family, with sudo where needed. Anything else says there is no way to
+  install it here and links the manual.
+- **Every gate says present, installed, skipped, no route, or failed.** Only the last two fail the
+  command, and every gate runs even after one fails. Each install command is bounded at 600 s.
+
+### The wheel ships the firn M2, and `test manifest-model` validates against it (si#522)
+
+- **The four M2 packages** (`manifest`, `pipeline`, `catalogue`, `vocabulary`) are in the wheel, and so
+  in the kernel image. They are versioned with the kernel: a rename or removal shows up here as a
+  breaking change, with no deprecation period.
+- **`test:manifest-model`** exports the manifest fresh and stages a throwaway firn project below the
+  output root. It then runs `firn validate` there. The product's own `firn.toml` is neither read nor
+  written. firn's rc passes through. A manifest that does not export, a missing M2, a stage that cannot
+  be rebuilt, and an output root outside `build_root` are each rc 1 with the reason.
+- **For netctl:** `test manifest-model` can stand beside its own firn gate.
+
+### Also in this release
+
+- **#524** pins `deploy/image/image.pin` to the published v0.35.0 kernel image.
+- **#532** is these notes.
+
 ## 0.35.0
 
 **What a product has to do:** nothing is removed, and a product on 0.34.0 moves both simplon pins
