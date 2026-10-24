@@ -183,6 +183,7 @@ ci:
         produces: { formula: simplon-formula }
         with:
           shape: python
+          # The formula's Homebrew dependencies (`depends_on "..."` lines), not an aggregate's members.
           depends_on: [cryptography, libsodium, libyaml, pydantic, python@3.14]
           python: python@3.14
           env: { SODIUM_INSTALL: system }
@@ -958,8 +959,10 @@ workflows:
             note: |
               `skip-existing` (si#537): "rerun the failed job, never a second tag" must reach the formula
               steps below, and without it a rerun stops here on the file the first attempt uploaded. It is
-              safe because `build homebrew-formula --source pypi` refuses unless PyPI's sha256 equals the
-              local wheel's, so different bytes under an existing name stop before the tap.
+              safe because a rerun rebuilds byte-identical bytes (`build wheel` sets SOURCE_DATE_EPOCH to
+              HEAD's commit time), so this step passes the upload it already made, and different bytes
+              under an existing name are still refused: `build homebrew-formula --source pypi` refuses
+              unless PyPI's sha256 equals the local wheel's, before the tap.
             if: ${{ !inputs.dry_run }}
             with:
               skip-existing: true

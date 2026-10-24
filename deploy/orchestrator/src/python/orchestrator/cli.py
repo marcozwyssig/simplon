@@ -20,6 +20,7 @@ is; the body here did not change, only what it is called.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -55,9 +56,36 @@ def _run(*args: str) -> int:
     return subprocess.run([sys.executable, *args], cwd=ROOT).returncode
 
 
+def _head_commit_time() -> str | None:
+    """HEAD's commit time in seconds since the epoch, or None when git cannot answer."""
+    try:
+        done = subprocess.run(["git", "log", "-1", "--format=%ct"], cwd=ROOT, capture_output=True, text=True)
+    except OSError:
+        return None
+    stamp = done.stdout.strip()
+    return stamp if done.returncode == 0 and stamp.isdigit() else None
+
+
 def build_wheel() -> int:
-    """Build the wheel."""
-    return _run("-m", "build", "--wheel")
+    """Build the wheel, byte-reproducibly (si#537).
+
+    The zip entries' mtimes come from the files unless SOURCE_DATE_EPOCH is set, so two checkouts of one
+    commit built different wheels (measured: cf49b3bf... vs 3ace24a3...). A rerun of release.yml's
+    `publish` rebuilds in a fresh checkout, PyPI keeps the first upload (`skip-existing`), and `build
+    homebrew-formula --source pypi` refuses unless the two digests match - so the epoch is HEAD's commit
+    time, for the build subprocess only, and a preset value is kept. Without one, nothing is built: an
+    unreproducible wheel is the failure this exists to prevent, discovered a job later.
+    """
+    env = dict(os.environ)
+    if not env.get("SOURCE_DATE_EPOCH"):
+        stamp = _head_commit_time()
+        if stamp is None:
+            print(f"build wheel: git could not give HEAD's commit time in {ROOT}, so the wheel would not be "
+                  f"reproducible (SOURCE_DATE_EPOCH). Build from a git checkout, or set SOURCE_DATE_EPOCH.",
+                  file=sys.stderr)
+            return 1
+        env["SOURCE_DATE_EPOCH"] = stamp
+    return subprocess.run([sys.executable, "-m", "build", "--wheel"], cwd=ROOT, env=env).returncode
 
 
 #: Where the suite leaves its raw Allure results (si#248), ABSOLUTE because pytest runs with `cwd` inside
