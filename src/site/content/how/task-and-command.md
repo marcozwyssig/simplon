@@ -83,6 +83,14 @@ run skips its step. A `token: github` task authenticates to GitHub, so its step'
 step's, carries the run's `GITHUB_TOKEN`. The checkout's persisted credential still reaches every step
 (si#507). Neither is coerced: `publishes: "yes"` and `token: gitlab` are refused.
 
+A `token: app` task (si#534) writes to one repository the run's own token cannot reach. Its leaf binds that
+repository with `with: { repository: <owner>/<repo> }`, and every generated job, the derived release job
+and a product's own, mints a GitHub App token for it in a step directly before the leaf's, under the leaf
+step's `if:`. Only the leaf's step sees the token, as `GH_APP_TOKEN` in its `env:`. The two secrets that
+mint it are named by the repository: `marcozwyssig/homebrew-tap` reads `HOMEBREW_TAP_CLIENT_ID` and
+`HOMEBREW_TAP_APP_KEY` (the name after the `/`, upper-cased, `-` as `_`). The
+[manifest page](../manifest/) lists what is refused.
+
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would
 be one particular use of itself, and the second product that wanted the same body with different data

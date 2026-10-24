@@ -990,6 +990,17 @@ come from the catalogue rather than from your manifest:
   carries the run's `GITHUB_TOKEN`. That is not yet isolation. The checkout every generated job starts
   with persists the job token in `.git/config`, where any step can read it, and `release:tag`'s push relies
   on it (si#507). A secret of your own goes in the workflow's `env:`, which every step of the job sees.
+- **`token: app`** (si#534): the task writes to one repository the run's own token cannot reach, such as
+  a Homebrew tap. The leaf binds it as `with: { repository: <owner>/<repo> }`, and the generator puts an
+  `actions/create-github-app-token` step (pinned, v3.2.0) directly before the leaf's step, in the derived
+  release job and in any job of your own. That step mints a token for that one repository with
+  `contents: write`, under the leaf step's `if:`, so a dry run mints nothing. The leaf step alone reads it,
+  as `GH_APP_TOKEN` in its `env:`. The app's two secrets are named after the repository: its name,
+  upper-cased, `-` written as `_`, so `marcozwyssig/homebrew-tap` reads `HOMEBREW_TAP_CLIENT_ID` and
+  `HOMEBREW_TAP_APP_KEY`. Refused at render: a leaf with no `repository` or one not shaped
+  `<owner>/<repo>`, a step that sets `GH_APP_TOKEN` itself, and an aggregate step whose plan holds such a
+  leaf among others, because one `run:` line would hand the token to all of them. Run the leaf as its own
+  step.
 
 Refused beside `release:`:
 

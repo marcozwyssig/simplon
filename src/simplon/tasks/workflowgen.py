@@ -97,6 +97,14 @@ SETUP_PYTHON_ACTION = "actions/setup-python@v5"
 UPLOAD_ACTION = "actions/upload-artifact@v4"
 DOWNLOAD_ACTION = "actions/download-artifact@v4"
 
+#: si#534: the action a `token: app` leaf's token is minted with, pinned by SHA because it handles a
+#: private key. Measured on 2026-10-24: that SHA is the v3.2.0 tag, whose `app-id` input is deprecated, so
+#: the step names the app by `client-id`. The leaf reads the token from the env name below, never from a
+#: `run:` line.
+APP_TOKEN_ACTION = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+APP_TOKEN_VERSION = "v3.2.0"
+APP_TOKEN_ENV = "GH_APP_TOKEN"
+
 #: The one file that crosses, in the runner's temp directory, never in the product's tree.
 HANDOFF_ARCHIVE = "${{{{ runner.temp }}}}/simplon-handoff-{artifact}.tar"
 
@@ -975,6 +983,65 @@ _NOT_DRY_RUN = "${{ !inputs.dry_run }}"
 _TOKEN = {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
 
 
+def secret_prefix(repository: str) -> str:
+    """The prefix of the two secrets a `token: app` leaf's token is minted with: the repository's NAME,
+    upper-cased, `-` written as `_`. `marcozwyssig/homebrew-tap` gives `HOMEBREW_TAP`, so the secrets are
+    `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY`."""
+    return repository.rpartition("/")[2].upper().replace("-", "_")
+
+
+APP_TOKEN_NOTE = """{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
+token for {repository} and nothing else, with contents: write. The leaf below reads it as
+${env} from its own `env:`; no `run:` line carries the token or a secret. The step carries the
+leaf's `if:`, so a run that skips the leaf mints nothing and needs neither secret:
+{prefix}_CLIENT_ID and {prefix}_APP_KEY."""
+
+
+def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: int,
+               where: str) -> "tuple[Step, Step] | None":
+    """si#534: the token step a `token: app` leaf needs, and the leaf's step with the token in its `env:`.
+
+    None when no leaf of the step declares `token: app`. The token step stands directly before the leaf's
+    and carries its `if:`; its `id` is `app-token-<index>`, the step's position in the job, so two such
+    steps in one job never share one.
+    """
+    apps = [(words, leaf) for words, leaf in leaves if leaf.token == "app"]
+    if not apps:
+        return None
+    words, leaf = apps[0]
+    if len(leaves) > 1:
+        # One `run:` line would carry the token to every leaf of the aggregate, not to the one that asked.
+        raise ValueError(
+            f"{where}: '{step.command}' runs {len(leaves)} leaves and '{words}' declares `token: app`, so one "
+            f"`run:` line would hand its token to all of them - run '{words}' as its own step")
+    repository = leaf.with_.get("repository")
+    owner, _, name = str(repository or "").partition("/")
+    if not isinstance(repository, str) or not owner or not name or "/" in name:
+        raise ValueError(
+            f"{where}: '{words}' declares `token: app` and binds `repository` as {repository!r}, so there is no "
+            f"one repository to mint its token for - bind `with: {{ repository: <owner>/<repo> }}`")
+    env = step.modifiers.get("env")
+    if isinstance(env, Mapping) and APP_TOKEN_ENV in env:
+        raise ValueError(
+            f"{where}: '{words}' declares `token: app`, and the step sets {APP_TOKEN_ENV} in its own `env:` too, "
+            f"so which value wins would be hidden - take {APP_TOKEN_ENV} out of the step's `env:`")
+    prefix = secret_prefix(repository)
+    ident = f"app-token-{index}"
+    body: dict[str, object] = {"id": ident}
+    if "if" in step.modifiers:
+        body["if"] = step.modifiers["if"]
+    body["uses"] = APP_TOKEN_ACTION
+    body["with"] = {"client-id": f"${{{{ secrets.{prefix}_CLIENT_ID }}}}",
+                    "private-key": f"${{{{ secrets.{prefix}_APP_KEY }}}}",
+                    "owner": owner, "repositories": name, "permission-contents": "write"}
+    token = Step(verbatim=body, note=APP_TOKEN_NOTE.format(version=APP_TOKEN_VERSION, words=words,
+                                                           repository=repository, env=APP_TOKEN_ENV,
+                                                           prefix=prefix))
+    leaf_env = {**(env if isinstance(env, Mapping) else {}),
+                APP_TOKEN_ENV: f"${{{{ steps.{ident}.outputs.token }}}}"}
+    return token, step._replace(modifiers={**step.modifiers, "env": leaf_env})
+
+
 def _release(workflow: "Workflow", manifest: Manifest,
              artifacts: "Mapping[str, artifactsection.Declared]") -> "tuple[Job, ...]":
     """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
@@ -1406,7 +1473,8 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
     for at, step in enumerate(expanded):
         for artifact in crossing.downloads.get(at, ()):
             steps.extend(_receive(artifact))
-        steps.append(step)
+        minted = _app_token(step, _leaves(manifest, step, f"{where}, step {at + 1}"), at, f"{where}, step {at + 1}")
+        steps.extend(minted or (step,))
         for artifact in crossing.uploads.get(at, ()):
             steps.extend(_send(artifact, artifacts[artifact].path))
     lines = [""]
