@@ -982,14 +982,27 @@ What the kernel writes:
   The order is what rule 8 already checked at load, so the workflow orders nothing itself.
 
 The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`, exactly as
-`release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest, and both
-come from the catalogue rather than from your manifest:
+`release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest. They are
+declared on the task, so a catalogue task brings its own and a task of your own declares them:
 
 - **`publishes: true`:** the task's act cannot be taken back, so a dry run skips its step;
 - **`token: github`:** the task authenticates to GitHub, so its step's `env:`, and no other step's,
   carries the run's `GITHUB_TOKEN`. That is not yet isolation. The checkout every generated job starts
   with persists the job token in `.git/config`, where any step can read it, and `release:tag`'s push relies
   on it (si#507). A secret of your own goes in the workflow's `env:`, which every step of the job sees.
+- **`token: app`** (si#534): the task writes to one repository the run's own token cannot reach, such as
+  a Homebrew tap. The leaf binds it as `with: { repository: <owner>/<repo> }`, and the generator puts an
+  `actions/create-github-app-token` step (pinned, v3.2.0) directly before the leaf's step, in the derived
+  release job and in any job of your own. That step mints a token for that one repository with
+  `contents: write`, under the leaf step's `if:`, so a dry run mints nothing. The leaf step alone reads it,
+  as `GH_APP_TOKEN` in its `env:`. The app's two secrets are named after the repository: its name,
+  every character outside `[A-Za-z0-9]` written as `_`, upper-cased, so `marcozwyssig/homebrew-tap` reads
+  `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY`. Refused at render: a leaf with no `repository` or
+  one not shaped `<owner>/<repo>`, a name whose prefix GitHub would refuse as a secret name (it starts with
+  a digit or with `GITHUB_`), a step whose `env:` is not a mapping or sets `GH_APP_TOKEN` itself, and an
+  aggregate step whose plan holds such a
+  leaf among others, because one `run:` line would hand the token to all of them. Run the leaf as its own
+  step.
 
 Refused beside `release:`:
 
