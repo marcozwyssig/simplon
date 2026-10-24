@@ -105,6 +105,19 @@ def test_pypi_source_uses_pypis_url_and_sha(product, pypi):
     assert "pypi.invalid" not in text
 
 
+def test_pypi_source_reads_the_wheel_from_pypi_after_the_closure(product, pypi, monkeypatch):
+    # PyPI can answer 404 for a minute after an upload: the closure (an image pull and an install) runs first
+    root, sha = product
+    pypi["/pypi/simplon/0.36.0/json"] = _release((WHEEL, sha), ("simplon-0.36.0.tar.gz", "ee" * 32))
+    calls: list[str] = []
+    files = homebrewformula.pypi.files
+    monkeypatch.setattr(homebrewformula.pypi, "files",
+                        lambda name, *a, **k: calls.append(name) or files(name, *a, **k))
+    monkeypatch.setattr(homebrewclosure, "measure", lambda *a: calls.append("measure") or CLOSURE)
+    assert _build(source="pypi") == 0
+    assert calls.index("measure") < calls.index("simplon"), calls
+
+
 def test_pypi_sha_that_differs_from_the_local_wheel_is_refused(product, pypi, capsys):
     root, sha = product
     pypi["/pypi/simplon/0.36.0/json"] = _release((WHEEL, "0" * 64))
