@@ -313,6 +313,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_image typeOf simplon.architecture.Module {
     path = "tasks.image"
   }
+  module m_tasks_manifestcheck typeOf simplon.architecture.Module {
+    path = "tasks.manifestcheck"
+  }
   module m_tasks_manifestmodel typeOf simplon.architecture.Module {
     path = "tasks.manifestmodel"
   }
