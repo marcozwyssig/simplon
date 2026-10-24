@@ -94,4 +94,7 @@ def check(ctx: typer.Context, image: str = "", network: str | None = "none") -> 
                                caches=None, network=network, cwd=cwd, extra=[])
     if got is None:
         return 1
-    return docker.run_container(*got).rc
+    rc = docker.run_container(*got).rc
+    if rc == 0:
+        log.ok(f"firn found the model of {name} valid against the M2 of simplon {__version__}")
+    return rc

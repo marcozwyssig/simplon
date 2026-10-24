@@ -79,6 +79,9 @@ jobs:
       # tree like the two before it, so it sits beside them. The image is public and the runner
       # already reaches docker for the image build below, so it needs nothing new.
       - run: ./simplon.sh test model
+      # simplon's manifest, exported fresh and checked by firn against the M2 the kernel ships (si#522):
+      # the route a product takes, beside the check of the tree it is copied from.
+      - run: ./simplon.sh test manifest-model
       - run: ./simplon.sh build wheel
       # The kernel's own container image (si#200), BUILT here and published nowhere. Building
       # needs no credential, so the half of the loop that can run on every push does - which is

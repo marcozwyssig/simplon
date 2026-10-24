@@ -158,3 +158,16 @@ def test_the_products_own_firn_toml_is_untouched(product, firn):
 
     # assert
     assert own.read_text() == 'name = "netctl"\nmodel = ["model"]\n'
+
+
+def test_a_clean_verdict_says_what_was_checked(product, firn, capsys):
+    # arrange: firn prints nothing on a clean model, so the green run must say what it judged
+    _, answer = firn
+    answer.rc = 0
+
+    # act
+    task.check(_ctx(), image="ghcr.io/marcozwyssig/firn:v0.2.0")
+
+    # assert
+    out = capsys.readouterr().out
+    assert "demo" in out and "M2" in out and task.__version__ in out

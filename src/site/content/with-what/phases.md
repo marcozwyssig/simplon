@@ -437,11 +437,17 @@ firn names take no `-` yet (firn#962 will allow it), so names are mangled - the 
 `t_`, `e_`, `i_`, `a_`, `s_` or `d_` prefix - and the original is kept in `key`. simplon checks its own
 model in CI: `simplon.yaml` lists it under `generated:`, so `test generated` fails when the committed file
 is not what the command writes, and `test model` runs `firn validate` over it with the M2 packages beside it.
-A product's exported model names `simplon.manifest.*` and `simplon.pipeline.*`, and those packages live in
-this repository's `src/firn/`, not in the kernel's interface: checking a product's model needs simplon's
-M2 beside it, and shipping the M2 for that is not done yet. (The wheel carries `simplon` only: `firn*` is
-excluded since si#378 and `site*` since si#344 B1, when the website moved to `src/site`, and `test_wheel`
-holds both.)
+A product's exported model names four of simplon's M2 packages, `simplon.manifest`, `simplon.pipeline`,
+`simplon.catalogue` and `simplon.vocabulary`, and since si#522 the wheel ships exactly those four as
+package data, `simplon/m2/simplon/`. Their source stays in this repository's `src/firn/`: firn refuses a
+model folder inside its own `simplon` target (E105), so the build copies them, and `test_wheel` holds the
+copy to the source byte for byte. `architecture` and `components` describe simplon's own code and do not
+ship. `test:manifest-model` (`test manifest-model`, which `support toolchain firn` scaffolds) uses them:
+it exports the manifest fresh, stages a firn project of its own below the output root, with the export and
+the M2 as a path dependency, and runs `firn validate` there in the product's pinned firn image. firn's rc
+passes through, and the product's own `firn.toml` is not touched. simplon runs it on itself in `test all`
+and in CI. (The wheel's top level is still `simplon` only: `firn*` is excluded since si#378 and `site*`
+since si#344 B1, when the website moved to `src/site`, and `test_wheel` holds both.)
 
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants

@@ -207,6 +207,14 @@ are promised, its text is not. Promoting `model.task` made it collide with the t
 `simplon.tasks.tasks` (the bodies of `support tasks generate` and `support tasks catalogue`), so that
 module is `simplon.tasks.taskverbs` since 0.33.0.
 
+**The firn M2 is a promise too** (si#522). The four packages the wheel ships under `simplon/m2/simplon/`
+(`manifest`, `pipeline`, `catalogue`, `vocabulary`) are what a product's exported manifest model is
+validated against, so their type, attribute and literal names are part of the interface. They are
+versioned with the kernel: an export and the M2 it is checked against always come from the same kernel,
+so there is no skew to bridge, and a rename or removal is a breaking change named in the release notes,
+with no deprecation period. Nothing compares the names against a baseline; that waits for the first M2
+change that breaks a product.
+
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why
 `actions/setup-python` cannot help there — and a product reaches those facts by naming a kind in its
