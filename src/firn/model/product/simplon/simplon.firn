@@ -85,11 +85,16 @@ simplon typeOf simplon.manifest.Product {
       member = product.simplon.simplon.test.suite
       member = product.simplon.simplon.test.typecheck_python
       member = product.simplon.simplon.test.generated
+      member = product.simplon.simplon.test.manifest_model
       member = product.simplon.simplon.test.release_notes
     }
     command model typeOf simplon.pipeline.TaskCommand {
       key = "model"
       task = simplon.catalogue.toolchain_run
+    }
+    command manifest_model typeOf simplon.pipeline.TaskCommand {
+      key = "manifest-model"
+      task = simplon.catalogue.test_manifest_model
     }
   }
   ci release typeOf simplon.pipeline.Group {

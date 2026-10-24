@@ -181,6 +181,9 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
     si#344 C.3 added `test image`, which runs the kernel image built by `build image` and writes its verdict
     record. Run on 2026-10-14 with `--platform linux/amd64` (the arm64 half was not built on this machine):
     it exits 0 and writes `build/test/kernel-image.json`, which is under the ignored `build/`.
+
+    si#522 added `test manifest-model`, which validates the manifest's fresh export against the shipped M2.
+    Run on 2026-10-24: it exits 0 and writes only `build/manifest-check/`, under the ignored `build/`.
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
@@ -188,10 +191,10 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
         "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
         "build model-gen", "test suite", "test typecheck-python", "test release-notes",
         "test report", "test generated", "test image",
-        "test model"]
+        "test model", "test manifest-model"]
 
 
-def test_this_repository_runs_eight_of_those_fourteen_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_nine_of_those_fifteen_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and

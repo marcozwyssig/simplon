@@ -123,6 +123,26 @@ def test_the_wheel_installs_nothing_beside_simplon(wheel):
     assert {t for t in tops if not t.endswith(".dist-info")} == {"simplon"}, sorted(tops)
 
 
+#: The M2 a product's exported manifest model needs (si#522, measured over the export of simplon.yaml).
+M2 = ("catalogue", "manifest", "pipeline", "vocabulary")
+M2_SOURCE = ROOT / "src" / "firn" / "model" / "simplon"
+
+
+def test_the_wheel_carries_the_four_m2_packages_byte_for_byte(wheel):
+    """si#522: the M2 ships as package data, copied at build time from its one source (firn refuses a
+    model folder inside its `simplon` target, E105, so the source cannot move into the package)."""
+    # arrange
+    archive = zipfile.ZipFile(wheel)
+
+    # act
+    shipped = {name: archive.read(name) for name in archive.namelist() if name.startswith("simplon/m2/")}
+
+    # assert
+    expected = {f"simplon/m2/simplon/{path.relative_to(M2_SOURCE).as_posix()}": path.read_bytes()
+                for package in M2 for path in sorted((M2_SOURCE / package).rglob("*.firn"))}
+    assert expected and shipped == expected, sorted(set(shipped) ^ set(expected))
+
+
 def test_the_catalogue_in_the_wheel_is_readable_by_everyone(wheel):
     """firn writes its output 0600 (measured on v0.1.0), and a wheel that carries 0600 installs a
     catalogue only its installer can read. `build model` sets 0644 after `firn gen`; this holds it."""
@@ -170,6 +190,25 @@ def test_the_wheel_carries_its_catalogue(installed):
     # assert
     assert out.returncode == 0, out.stderr
     assert int(out.stdout.strip()) > 0
+
+
+def test_the_installed_kernel_finds_and_stages_its_own_m2(installed, tmp_path):
+    """si#522 final review: the editable checkout reads the M2's source, so only an installed wheel
+    proves that `m2_source()` looks where `setup.py` copies. Two spellings of one path, held here."""
+    # arrange
+    py = installed / ("python.exe" if sys.platform == "win32" else "python")
+    probe = ("import sys, pathlib; from simplon.tasks import manifestcheck as m;"
+             "src = m.m2_source(); print(src);"
+             "print(m.stage(pathlib.Path(sys.argv[1]), 'p', 'package product.p\\n', src, '0') or 'staged')")
+
+    # act
+    out = subprocess.run([str(py), "-c", probe, str(tmp_path / "s")], capture_output=True, text=True)
+
+    # assert
+    assert out.returncode == 0, out.stderr
+    source, verdict = out.stdout.strip().splitlines()
+    assert "site-packages" in source and source.endswith(str(Path("simplon", "m2", "simplon"))), source
+    assert verdict == "staged"
 
 
 def test_the_installed_console_script_scaffolds_a_product(installed, tmp_path):

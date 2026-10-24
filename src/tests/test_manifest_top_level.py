@@ -122,6 +122,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.carrier": (),
     # si#346: fetches the document and hands it, with the validated Manifest, to `manifestmodel.export`
     # - the same shape as tasks.deploy; it declares no key of its own
+    # si#522: reads `layout`'s build root through `layout.declared` and hands the document on; no key of its own
+    "tasks.manifestcheck": (),
     "tasks.manifestmodel": (),
     "tasks.generated": ("generated",),
     # si#314: the one directory a build writes into. A top-level SCALAR rather than a section - it

@@ -97,3 +97,15 @@ def test_the_catalogue_places_it_beside_migrate():
 
     # assert
     assert "support:model" in cat.tasks
+
+
+def test_current_is_the_text_model_writes(tmp_path, product_context):
+    # arrange: si#522 - `test:manifest-model` checks the text `support manifest model` would write
+    written = tmp_path / "p.firn"
+
+    # act
+    name, text = task.current()
+    rc = task.model(output=str(written))
+
+    # assert
+    assert name == "demo" and rc == 0 and written.read_text() == text

@@ -35,6 +35,11 @@ def test_every_profile_declares_a_body_the_toolchain_gate_will_accept():
         assert "{" not in resolved.image and resolved.image.endswith("1")
         for name, body in prof.commands.items():
             where = f"{language}.{name}"
+            if "task" in body:
+                # si#522: a body that names its own catalogue task is that task's `with:` minus the image
+                from simplon.manifest import catalogue
+                assert body["task"] in catalogue.load().tasks and set(body) == {"task"}, where
+                continue
             assert isinstance(body["argv"], list) and body["argv"], where
             assert all(isinstance(word, str) for word in body["argv"]), where
             assert isinstance(body["workdir"], str) and body["workdir"], where
@@ -363,8 +368,9 @@ def test_the_firn_profile_runs_the_pinned_firn_image_in_its_own_workspace():
 
     # assert: a release tag, never a moving one
     assert prof.image == "ghcr.io/marcozwyssig/firn:v0.2.0"
-    assert set(prof.commands) == {"validate", "gen"}
-    for body in prof.commands.values():
+    assert set(prof.commands) == {"validate", "gen", "manifest-model"}
+    assert prof.commands["manifest-model"] == {"task": "test:manifest-model"}
+    for body in (prof.commands["validate"], prof.commands["gen"]):
         assert body["workdir"] == "/workspace"
         assert body["network"] == "none"
 

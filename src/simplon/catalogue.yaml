@@ -371,6 +371,14 @@ tasks:
   # DECLARED, NOT PLACED, by si#58's bar: it needs `.feature` files to walk, so placed it would be a
   # command that refuses on its first line in every product that writes none. A product declares it the
   # day it has scenarios; simplon does exactly that.
+  # si#522: `firn validate` over the product's manifest, exported fresh, against the M2 the kernel ships, in
+  # a project staged below the output root - the product's own firn.toml is not touched.
+  test:manifest-model:
+    help: "Validate this product's manifest, exported fresh as a firn model, against the M2 simplon ships."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn image" }
+      network: { help: "the docker network firn runs on (default 'none')" }
   test:walk:
     help: "Walk the product's acceptance scenarios with a person answering each step."
     unattended: false

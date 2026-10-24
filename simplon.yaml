@@ -309,8 +309,8 @@ ci:
         produces: { test-result: kernel-checked }
         with: { argv: "simplon --help", expect: "usage: simplon" }
       all:
-        help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
-        depends_on: [suite, typecheck-python, generated, release-notes]
+        help: "Run every test: the pytest suite, the type gate, the staleness gate, the manifest's own model, then the release-notes guard."
+        depends_on: [suite, typecheck-python, generated, manifest-model, release-notes]
       # `firn validate` over simplon's own pipeline model (si#371, si#410): rc passes through unchanged - 0 clean,
       # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/, where firn.toml is.
       model:
@@ -322,6 +322,13 @@ ci:
           cwd: src
           argv:
           - validate
+      # si#522: the manifest exported fresh and validated against the M2 the kernel ships, in a firn project
+      # staged below the output root - the route every product takes, so the kernel takes it on itself.
+      # `model` above stays: it also checks `architecture` and `components`, which do not ship.
+      manifest-model:
+        task: "test:manifest-model"
+        with:
+          image: ghcr.io/marcozwyssig/firn:v0.2.0
   release:
     commands:
       # The release's members (si#344 C.3, spec C.4; si#491): the gate, the notes and the tag are separate
@@ -741,6 +748,10 @@ workflows:
               tree like the two before it, so it sits beside them. The image is public and the runner
               already reaches docker for the image build below, so it needs nothing new.
             command: test model
+          - note: |
+              simplon's manifest, exported fresh and checked by firn against the M2 the kernel ships (si#522):
+              the route a product takes, beside the check of the tree it is copied from.
+            command: test manifest-model
           - command: build wheel
           - note: |
               The kernel's own container image (si#200), BUILT here and published nowhere. Building

@@ -394,6 +394,10 @@ support_migrate typeOf simplon.pipeline.CatalogueTask {
   key = "support:migrate"
   body = "simplon.tasks.migrate:migrate"
 }
+test_manifest_model typeOf simplon.pipeline.CatalogueTask {
+  key = "test:manifest-model"
+  body = "simplon.tasks.manifestcheck:check"
+}
 support_model typeOf simplon.pipeline.CatalogueTask {
   key = "support:model"
   body = "simplon.tasks.manifestmodel:model"

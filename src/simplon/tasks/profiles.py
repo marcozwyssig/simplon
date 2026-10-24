@@ -466,8 +466,9 @@ PROFILES: dict[str, Profile] = {
     # si#371. Not a language: a model checker and generator, which simplon and every product run over their
     # own model. Measured against the published image on 2026-10-11: its ENTRYPOINT is `/firn` and its
     # WORKDIR `/workspace`, so `argv` is firn's own subcommand and the tree is mounted where firn looks.
-    # firn reads `firn.toml` from the directory it starts in and takes no project option, so a product
-    # whose firn project is not at its root adds `cwd:` to both commands. Neither needs a network: the
+    # firn reads `firn.toml` from the directory it starts in, so a product whose firn project is not at its
+    # root adds `cwd:` to both commands. (firn v0.2.0 also has `--project` and `-cp`, measured 2026-10-24;
+    # `cwd:` stays the kernel's way because it needs no firn option.) Neither needs a network: the
     # model, the templates and the metamodels firn ships are all on the mount or in the image. The image
     # runs as uid 65532, and `toolchain:run` runs it as the caller instead, which is what firn's docs/07
     # recommends for anything that writes - `gen` writes, and the files belong to whoever ran it.
@@ -480,8 +481,12 @@ PROFILES: dict[str, Profile] = {
         commands={
             "validate": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
             "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]},
+            # si#522: the manifest's own model checked against the M2 the kernel ships. A catalogue task of
+            # its own, so its body names the task and carries no argv: the task stages firn's project.
+            "manifest-model": {"task": "test:manifest-model"},
         },
-        placements={"validate": ("test", "model"), "gen": ("build", "model")},
+        placements={"validate": ("test", "model"), "gen": ("build", "model"),
+                    "manifest-model": ("test", "manifest-model")},
     ),
 }
 
