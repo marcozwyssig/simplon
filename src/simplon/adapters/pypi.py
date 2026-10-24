@@ -10,6 +10,7 @@ raised as "not listed", with the way out (rerun), and is never an empty tuple: "
 """
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import urllib.error
@@ -44,6 +45,11 @@ def files(name: str, version: str, *, index: str = "https://pypi.org", timeout: 
         if isinstance(e.reason, (TimeoutError, socket.timeout)):
             raise PyPIError(f"GET {url} did not answer within {timeout}s; raise the timeout or rerun.") from e
         raise PyPIError(f"GET {url} failed: {e.reason}. Check the index address and the network.") from e
+    except (http.client.HTTPException, OSError) as e:
+        # urllib wraps OSError only around sending the request: a connection closed or reset while the
+        # response is read (RemoteDisconnected, ConnectionResetError, IncompleteRead) arrives bare
+        raise PyPIError(f"GET {url} broke off before an answer was read ({type(e).__name__}: {e}); nothing was "
+                        f"read, rerun.") from e
     try:
         data = json.loads(body)
     except ValueError as e:

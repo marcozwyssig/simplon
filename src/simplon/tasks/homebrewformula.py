@@ -185,15 +185,24 @@ def render(meta: WheelMeta, url: str, sha256: str, resources: Sequence[Resource]
 def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "", depends_on: Sequence[str] = (),
           python: str = "", env: Mapping[str, str] | None = None, test: Mapping[str, object] | None = None) -> int:
     """Render the formula for the one wheel in the `wheel` artifact into the `formula` artifact's path."""
+    ctx = context.current()
+    out = ctx.root / str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry).path)
+    # An earlier run's formula goes before any refusal below, so the test and the tap never read it as this
+    # run's.
+    out.unlink(missing_ok=True)
     if source not in SOURCES:
         raise ValueError(f"source must be 'pypi' (a real run, after the upload) or 'local' (a dry run), got "
-                         f"{source!r}; bind it with `with:` on each of the two steps")
+                         f"{source!r}; bind it with `params:` on each of the two steps")
     form = shape_of(shape, depends_on, python, {} if env is None else env, test)
-    ctx = context.current()
     wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)
-    out = ctx.root / str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry).path)
     path = the_wheel(wheel_dir)
     meta = wheel_meta(path)
+    # the rule test:homebrew-formula enforces, asked before the closure run it would otherwise waste
+    wanted = re.sub(r"[-_.]+", "-", meta.name).lower()
+    if out.stem != wanted:
+        raise ValueError(f"the formula file {out.relative_to(ctx.root)} is named {out.stem!r}, and its wheel's "
+                         f"formula is {wanted!r} (class {class_name(meta.name)}); name the artifact's path "
+                         f"{wanted}.rb")
     try:
         if source == "local":
             url, sha256 = PLACEHOLDER + meta.filename, meta.sha256

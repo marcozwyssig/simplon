@@ -125,9 +125,11 @@ def check(formula: str = "", wheel: str = "", results: str = "", online: str = "
     # An earlier run's record goes before any refusal below, so its verdict does not outlive this run.
     if record is not None:
         record.unlink(missing_ok=True)
+    # case-blind: workflowgen renders `params: {online: false}` as `--online False` (measured)
+    given, online = online, online.strip().lower()
     if online not in ONLINE:
         raise ValueError(f"online must be 'true' (a real run, after the PyPI upload) or 'false' (a dry run), got "
-                         f"{online!r}; bind it with `params:` on each of the two steps")
+                         f"{given!r}; bind it with `params:` on each of the two steps")
     ctx = context.current()
     formula_rel = Path(str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry).path))
     wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)

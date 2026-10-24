@@ -149,6 +149,29 @@ def test_a_closure_refusal_is_logged_and_nothing_is_written(product, pypi, monke
     assert not (root / "build" / "homebrew" / "simplon.rb").exists()
 
 
+def test_a_refused_build_removes_the_formula_an_earlier_run_left(product, pypi, capsys):
+    # a refusal must not leave yesterday's formula where the test and the tap read today's
+    root, _ = product
+    old = root / "build" / "homebrew" / "simplon.rb"
+    old.parent.mkdir(parents=True)
+    old.write_text("an earlier run's formula\n", encoding="utf-8")
+
+    assert _build(source="pypi") == 1
+    assert "not listed" in _said(capsys)
+    assert not old.exists()
+
+
+def test_a_formula_path_not_named_for_the_wheel_is_refused_before_the_closure(product, pypi, monkeypatch):
+    root, _ = product
+    (root / "sample.yaml").write_text(MANIFEST.replace("simplon.rb", "tool.rb"), encoding="utf-8")
+    measured: list = []
+    monkeypatch.setattr(homebrewclosure, "measure", lambda *a: measured.append(a) or CLOSURE)
+
+    with pytest.raises(ValueError, match=r"named 'tool'.*simplon\.rb"):
+        _build(source="local")
+    assert measured == []
+
+
 @pytest.mark.parametrize("source", ["", "pip", "PyPI"])
 def test_an_empty_source_is_refused(product, pypi, source):
     with pytest.raises(ValueError, match="source"):

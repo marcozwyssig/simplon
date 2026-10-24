@@ -185,8 +185,9 @@ READS_INLINE = {
     "tasks.homebrewformula": "`_entry(name, param)` reads its two `artifacts:` entries inline at the front of "
                              "`build:homebrew-formula`, the same shape as tasks.githubrelease, and hands "
                              "`artifactsection.entry` the SECTION (si#536)",
-    "tasks.homebrewtap": "`_entry(name, param)` reads its three `artifacts:` entries inline at the front of "
-                         "`test:homebrew-formula`, the same shape as tasks.homebrewformula, and hands "
+    "tasks.homebrewtap": "`_entry(name, param)` reads its `artifacts:` entries inline at the front of "
+                         "`test:homebrew-formula` (three) and `release:homebrew-tap` (one), the same shape as "
+                         "tasks.homebrewformula, and hands "
                          "`artifactsection.entry` the SECTION (si#536)",
     "tasks.fetchfile": "`fetch(name)` reads its `artifacts:` entry inline, the same shape as tasks.artifact, and "
                        "hands `declared` the SECTION; the version it reads is in the product tree (si#343)",

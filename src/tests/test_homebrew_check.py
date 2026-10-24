@@ -85,7 +85,7 @@ def test_formula_digests_reads_the_top_level_sha_and_each_resource(product):
     assert resources == [hf.Resource("pyyaml", PYYAML.url, PYYAML.sha256)]
 
 
-@pytest.mark.parametrize("online", ["", "False", "yes", "1"])
+@pytest.mark.parametrize("online", ["", "yes", "1", "no", "truthy"])
 def test_online_none_is_refused(product, pypi, online):  # noqa: F811
     # a bool param would be a CLI flag, which `params: {online: false}` cannot reach; so it is a string
     # with exactly two values and no default
@@ -95,6 +95,20 @@ def test_online_none_is_refused(product, pypi, online):  # noqa: F811
         _check(online=online)
     assert calls == []
     assert not (root / "build" / "results" / "homebrew.json").exists()
+
+
+@pytest.mark.parametrize(("online", "is_online"), [("False", False), ("True", True), (" false ", False)])
+def test_online_as_the_workflow_renders_it_is_accepted(product, pypi, online, is_online):  # noqa: F811
+    # measured: workflowgen renders `params: {online: false}` as `--online False`, and true as `True`
+    root, sha, calls = product
+    pypi["/pypi/simplon/0.36.0/json"] = _release((WHEEL, sha))
+    pypi["/pypi/pyyaml/6.0.2/json"] = _release(("pyyaml-6.0.2.tar.gz", "cc" * 32))
+
+    rc = _check(online=online)
+
+    assert [c[2] for c in calls] == [is_online]
+    assert _record(root)["runs"][0]["online"] is is_online
+    assert rc == (1 if is_online else 0)   # online: the placeholder url is red on a real run
 
 
 def test_a_formula_sha_that_differs_from_the_wheel_is_red(product, pypi, capsys):  # noqa: F811

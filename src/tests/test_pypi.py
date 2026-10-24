@@ -29,6 +29,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/pypi/slow/1.0/json":
             time.sleep(1.5)
+        if self.path == "/pypi/hangup/1.0/json":
+            self.close_connection = True          # no status line: the client sees RemoteDisconnected
+            return
         status, body = ROUTES.get(self.path, (404, "not found"))
         data = body.encode()
         self.send_response(status)
@@ -86,3 +89,10 @@ def test_a_body_that_is_not_json_is_an_error(index):
 def test_a_timeout_names_the_limit(index):
     with pytest.raises(pypi.PyPIError, match=r"0\.2"):
         pypi.files("slow", "1.0", index=index, timeout=0.2)
+
+
+def test_a_connection_closed_without_an_answer_is_an_error(index):
+    # urllib wraps OSError only around sending the request; a server that hangs up before the status line
+    # raises http.client.RemoteDisconnected from reading the response
+    with pytest.raises(pypi.PyPIError, match=r"hangup/1\.0/json.*rerun"):
+        pypi.files("hangup", "1.0", index=index)
