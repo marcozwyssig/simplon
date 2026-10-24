@@ -88,7 +88,7 @@ repository with `with: { repository: <owner>/<repo> }`, and every generated job,
 and a product's own, mints a GitHub App token for it in a step directly before the leaf's, under the leaf
 step's `if:`. Only the leaf's step sees the token, as `GH_APP_TOKEN` in its `env:`. The two secrets that
 mint it are named by the repository: `marcozwyssig/homebrew-tap` reads `HOMEBREW_TAP_CLIENT_ID` and
-`HOMEBREW_TAP_APP_KEY` (the name after the `/`, upper-cased, `-` as `_`). The
+`HOMEBREW_TAP_APP_KEY` (the name after the `/`, every character outside `[A-Za-z0-9]` as `_`, upper-cased). The
 [manifest page](../manifest/) lists what is refused.
 
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and

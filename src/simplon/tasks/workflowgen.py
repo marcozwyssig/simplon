@@ -985,16 +985,20 @@ _TOKEN = {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
 
 def secret_prefix(repository: str) -> str:
     """The prefix of the two secrets a `token: app` leaf's token is minted with: the repository's NAME,
-    upper-cased, `-` written as `_`. `marcozwyssig/homebrew-tap` gives `HOMEBREW_TAP`, so the secrets are
-    `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY`."""
-    return repository.rpartition("/")[2].upper().replace("-", "_")
+    every character a secret name cannot carry (outside `[A-Za-z0-9]`) written as `_`, upper-cased.
+    `marcozwyssig/homebrew-tap` gives `HOMEBREW_TAP`, so the secrets are `HOMEBREW_TAP_CLIENT_ID` and
+    `HOMEBREW_TAP_APP_KEY`; `owner/owner.github.io` gives `OWNER_GITHUB_IO`."""
+    return re.sub(r"[^A-Za-z0-9]", "_", repository.rpartition("/")[2]).upper()
 
 
 APP_TOKEN_NOTE = """{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
-token for {repository} and nothing else, with contents: write. The leaf below reads it as
-${env} from its own `env:`; no `run:` line carries the token or a secret. The step carries the
-leaf's `if:`, so a run that skips the leaf mints nothing and needs neither secret:
-{prefix}_CLIENT_ID and {prefix}_APP_KEY."""
+token for {repository} and nothing else, with contents: write, from the secrets {prefix}_CLIENT_ID
+and {prefix}_APP_KEY. The leaf below reads it as ${env} from its own `env:`; no `run:` line
+carries the token or a secret."""
+
+#: Said only when the leaf step HAS an `if:` to copy.
+APP_TOKEN_IF_NOTE = """This step carries the leaf's `if:`, so a run that skips the leaf mints nothing and needs
+neither secret."""
 
 
 def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: int,
@@ -1021,11 +1025,21 @@ def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: i
             f"{where}: '{words}' declares `token: app` and binds `repository` as {repository!r}, so there is no "
             f"one repository to mint its token for - bind `with: {{ repository: <owner>/<repo> }}`")
     env = step.modifiers.get("env")
+    if env is not None and not isinstance(env, Mapping):
+        raise ValueError(
+            f"{where}: '{words}' declares `token: app`, and the step's `env:` is {env!r}, not a mapping, so the "
+            f"kernel cannot add {APP_TOKEN_ENV} to it - `env:` must be a mapping of name -> value on this step")
     if isinstance(env, Mapping) and APP_TOKEN_ENV in env:
         raise ValueError(
             f"{where}: '{words}' declares `token: app`, and the step sets {APP_TOKEN_ENV} in its own `env:` too, "
             f"so which value wins would be hidden - take {APP_TOKEN_ENV} out of the step's `env:`")
     prefix = secret_prefix(repository)
+    if prefix[:1].isdigit() or prefix.startswith("GITHUB_"):
+        # GitHub refuses a secret name that starts with a digit or with GITHUB_; mapping cannot cure either.
+        raise ValueError(
+            f"{where}: '{words}' binds `repository: {repository}`, whose secrets would be named {prefix}_CLIENT_ID "
+            f"and {prefix}_APP_KEY, and GitHub refuses a secret name that starts with a digit or with GITHUB_ - "
+            f"the secret prefix is the repository's name, so mint for a repository whose name does not")
     ident = f"app-token-{index}"
     body: dict[str, object] = {"id": ident}
     if "if" in step.modifiers:
@@ -1034,9 +1048,9 @@ def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: i
     body["with"] = {"client-id": f"${{{{ secrets.{prefix}_CLIENT_ID }}}}",
                     "private-key": f"${{{{ secrets.{prefix}_APP_KEY }}}}",
                     "owner": owner, "repositories": name, "permission-contents": "write"}
-    token = Step(verbatim=body, note=APP_TOKEN_NOTE.format(version=APP_TOKEN_VERSION, words=words,
-                                                           repository=repository, env=APP_TOKEN_ENV,
-                                                           prefix=prefix))
+    note = APP_TOKEN_NOTE.format(version=APP_TOKEN_VERSION, words=words, repository=repository,
+                                 env=APP_TOKEN_ENV, prefix=prefix)
+    token = Step(verbatim=body, note=f"{note}\n{APP_TOKEN_IF_NOTE}" if "if" in body else note)
     leaf_env = {**(env if isinstance(env, Mapping) else {}),
                 APP_TOKEN_ENV: f"${{{{ steps.{ident}.outputs.token }}}}"}
     return token, step._replace(modifiers={**step.modifiers, "env": leaf_env})

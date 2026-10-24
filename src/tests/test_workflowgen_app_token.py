@@ -170,3 +170,32 @@ def test_an_aggregate_step_with_an_app_leaf_is_refused_in_a_product_job():
 def test_a_step_that_declares_gh_app_token_itself_is_refused():
     with pytest.raises(ValueError, match="GH_APP_TOKEN"):
         _render("- command: release tap\n  env: { GH_APP_TOKEN: mine }\n")
+
+
+def test_a_step_env_that_is_not_a_mapping_is_refused():
+    with pytest.raises(ValueError, match=r"'release tap'.*`env:` must be a mapping"):
+        _render('- command: release tap\n  env: "${{ fromJSON(vars.E) }}"\n')
+
+
+@pytest.mark.parametrize("repository, prefix", [("homebrew-tap", "HOMEBREW_TAP"),
+                                                ("owner.github.io", "OWNER_GITHUB_IO")])
+def test_secret_prefix_maps_what_a_secret_name_cannot_carry(repository, prefix):
+    assert workflowgen.secret_prefix(f"marcozwyssig/{repository}") == prefix
+    token, _ = _token_and_leaf(_steps(_render("- command: release tap\n",
+                                              _PRODUCT.replace("homebrew-tap", repository))),
+                               "./app.sh release tap")
+    assert token["with"]["client-id"] == f"${{{{ secrets.{prefix}_CLIENT_ID }}}}"
+
+
+@pytest.mark.parametrize("repository, prefix", [("1tap", "1TAP"), ("github-tap", "GITHUB_TAP")])
+def test_a_prefix_github_forbids_is_refused(repository, prefix):
+    with pytest.raises(ValueError, match=re.escape(f"marcozwyssig/{repository}")) as exc:
+        _render("- command: release tap\n", _PRODUCT.replace("homebrew-tap", repository))
+    assert prefix in str(exc.value)
+
+
+def test_the_note_mentions_the_if_only_when_one_is_copied():
+    plain = _render("- command: release tap\n")
+    guarded = _render("- command: release tap\n  if: ${{ !inputs.dry_run }}\n")
+    assert "carries the leaf's `if:`" not in plain
+    assert "carries the leaf's `if:`" in guarded
