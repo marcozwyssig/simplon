@@ -201,7 +201,7 @@ longer needs A.)*
   (D), as their own steps under `if: ${{ inputs.dry_run }}` with `source: local` and `online: false`. simplon creates no GitHub Release for this, and `release:github-draft` and `release:github-publish`
   stay out of simplon's release. The order is stated in `release all`'s help.
 - **simplon's `with:`** for `build:homebrew-formula` (amended 2026-10-24: no template file):
-  - `shape: python`, `asset: simplon-<version>-py3-none-any.whl`;
+  - `shape: python` (the wheel arrives through the `wheel` port bound to `dist`, never as a file name in `with:`; amended 2026-10-24 by si#536's final review: `build` has no `asset` parameter);
   - `depends_on: [cryptography, libsodium, libyaml, pydantic, python@3.14]`, `python: python@3.14`;
   - `env: {SODIUM_INSTALL: system}`;
   - `test: {args: ["--help"], expect: "usage:"}` (lowercase, measured; `--version` exits 2).
