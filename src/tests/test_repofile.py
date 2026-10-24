@@ -167,6 +167,49 @@ def test_a_readback_that_differs_is_refused(standin):
     assert commit in outcome.reason
 
 
+def test_a_file_github_will_not_inline_is_refused_before_any_put(standin):
+    # arrange: over 1 MB, the contents API answers `encoding: "none"` and no content
+    standin["files"][("main", "pkg/x.txt")] = b"old\n"
+    standin["large"] = {"branch"}
+
+    # act
+    outcome = _write(b"new\n")
+
+    # assert
+    assert outcome.state is State.REFUSED
+    assert "pkg/x.txt" in outcome.reason
+    assert "none" in outcome.reason
+    assert _puts(standin) == []
+
+
+def test_a_readback_github_will_not_inline_is_refused_naming_the_commit(standin):
+    # arrange
+    standin["large"] = {"commit"}
+
+    # act
+    outcome = _write(b"new\n")
+
+    # assert: the commit landed, and the verdict says which one
+    assert outcome.state is State.REFUSED
+    [commit] = standin["commits"]
+    assert commit in outcome.reason
+    assert "none" in outcome.reason
+
+
+def test_a_failed_readback_is_refused_naming_the_commit(standin):
+    # arrange
+    standin["fail_readback"] = 502
+
+    # act
+    outcome = _write(b"new\n")
+
+    # assert
+    assert outcome.state is State.REFUSED
+    [commit] = standin["commits"]
+    assert f"read back failed at commit {commit}" in outcome.reason
+    assert "HTTP 502" in outcome.reason
+
+
 def test_an_unreachable_api_is_refused(monkeypatch):
     # arrange: a port nothing listens on
     shared = githubstandin.state()

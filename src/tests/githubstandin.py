@@ -12,7 +12,9 @@ not its behaviour. One repository, `o/n`, and only the routes the adapters call:
                                              `path` is a directory of stored paths; `r` is a branch
                                              (default `main`) or a commit sha a PUT answered; 404 for a
                                              missing file, branch or commit (si#535)
-    PUT   /repos/o/n/contents/<path>         create or update on `branch`: 404 for an unknown branch,
+    PUT   /repos/o/n/contents/<path>         create or update on `branch`: 404 for an unknown branch (the
+                                             stand-in's assumption, not measured against real GitHub; the
+                                             adapter refuses on any error status either way),
                                              409 when `sha` is not the stored blob's, 422 when the file
                                              exists and no `sha` was sent; answers the new commit's sha
 
@@ -20,7 +22,9 @@ not its behaviour. One repository, `o/n`, and only the routes the adapters call:
 `state["commits"]` maps each commit sha a PUT answered to that branch's files at that commit.
 `state["race"]`, when set to bytes, is written to the file by "another writer" just before the next PUT
 is handled, so the PUT's sha is stale; `state["corrupt_readback"]` makes a GET by commit sha answer
-different bytes than were stored.
+different bytes than were stored, and `state["fail_readback"]` (a status) makes it fail.
+`state["large"]` names the kinds of ref, `"branch"` and/or `"commit"`, at which a file answers as one over
+1 MB does: `encoding: "none"`, `content` empty.
 `state["fail"]` forces a status for a `(method, path prefix)`; `state["keep_draft"]` makes a PATCH answer
 200 while leaving `draft` as it was (a proxy, a race); `state["force_public"]` makes a PATCH answer with the release public whatever was asked;
 `state["requests"]` records every call as (method, path, body) and `state["auth"]` the Authorization header of
@@ -45,7 +49,7 @@ def state(**overrides: Any) -> dict:
     fresh: dict[str, Any] = {"repo": {"full_name": REPO}, "releases": [], "fail": {}, "requests": [],
                              "auth": [], "keep_draft": False,
                              "files": {}, "branches": {"main"}, "commits": {}, "race": None,
-                             "corrupt_readback": False}
+                             "corrupt_readback": False, "fail_readback": None, "large": set()}
     fresh.update(overrides)
     return fresh
 
@@ -167,9 +171,16 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
                     "url": f"{self._base()}/repos/{REPO}/contents/{path}"}
 
         def _contents_get(self, path: str, query: dict) -> None:
-            files = self._files_at(query.get("ref", ["main"])[0])
-            if files is None:
+            ref = query.get("ref", ["main"])[0]
+            kind = "commit" if ref in shared["commits"] else "branch"
+            files = self._files_at(ref)
+            if kind == "commit" and shared["fail_readback"]:
+                self._send(shared["fail_readback"], {"message": f"forced {shared['fail_readback']}"})
+            elif files is None:
                 self._send(404, {"message": "No commit found for the ref"})
+            elif path in files and kind in shared["large"]:
+                self._send(200, {**self._file(path, files[path]), "encoding": "none", "content": "",
+                                 "size": 2 * 1024 * 1024})
             elif path in files:
                 self._send(200, self._file(path, files[path]))
             elif below := sorted(p for p in files if not path or p.startswith(path.rstrip("/") + "/")):

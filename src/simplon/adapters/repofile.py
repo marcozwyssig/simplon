@@ -20,6 +20,7 @@ from enum import Enum
 
 import requests
 from github import GithubException, UnknownObjectException
+from github.ContentFile import ContentFile
 
 from simplon.adapters import github
 
@@ -48,23 +49,44 @@ def write(repository: str, branch: str, path: str, content: bytes, message: str,
             # No such file, or no such branch: GitHub answers both with 404. The PUT names the branch, so
             # an unknown one is refused there rather than written to the default branch.
             existing = None
-        if isinstance(existing, list):
-            return Outcome(State.REFUSED, reason=f"{where} is a directory, not a file: nothing was written")
+        if existing is not None and (unreadable := _unreadable(existing)):
+            return Outcome(State.REFUSED, reason=f"{where} is {unreadable}: nothing was written")
         if existing is None:
             result = repo.create_file(path, message, content, branch=branch)
         elif existing.decoded_content == content:
             return Outcome(State.CURRENT)
         else:
             result = repo.update_file(path, message, content, sha=existing.sha, branch=branch)
-        commit = result["commit"].sha
-        back = repo.get_contents(path, ref=commit)
-        if isinstance(back, list) or back.decoded_content != content:
-            return Outcome(State.REFUSED, reason=f"{where}: read back differs at commit {commit}, which "
-                                                 f"holds other bytes than were sent")
     except github.Unanswered as unanswered:
         return Outcome(State.REFUSED, reason=str(unanswered))
     except GithubException as refused:
         return Outcome(State.REFUSED, reason=f"{where}: {github.said(refused)}")
     except requests.exceptions.RequestException as unreachable:
         return Outcome(State.REFUSED, reason=f"{where}: could not reach GitHub: {unreachable}")
+    commit = result["commit"].sha
+    # The commit has landed from here on, so every refusal names it: the caller must know what is there.
+    try:
+        back = repo.get_contents(path, ref=commit)
+    except GithubException as refused:
+        return Outcome(State.REFUSED, reason=f"{where}: read back failed at commit {commit}: {github.said(refused)}")
+    except requests.exceptions.RequestException as unreachable:
+        return Outcome(State.REFUSED, reason=f"{where}: read back failed at commit {commit}: could not reach "
+                                             f"GitHub: {unreachable}")
+    if unreadable := _unreadable(back):
+        return Outcome(State.REFUSED, reason=f"{where}: read back at commit {commit} is {unreadable}")
+    if back.decoded_content != content:
+        return Outcome(State.REFUSED, reason=f"{where}: read back differs at commit {commit}, which "
+                                             f"holds other bytes than were sent")
     return Outcome(State.WRITTEN, commit=commit)
+
+
+def _unreadable(found: ContentFile | list[ContentFile]) -> str:
+    """Why `found` has no bytes to compare, or "" when it does. The contents API inlines a file's content,
+    base64, only up to 1 MB; a larger file answers `encoding: "none"`, and a symlink or submodule is no
+    file at all. PyGithub's `decoded_content` asserts base64, so this is asked first."""
+    if isinstance(found, list):
+        return "a directory, not a file"
+    if found.type != "file" or found.encoding != "base64":
+        return (f"a {found.type} of {found.size} bytes that GitHub answers with encoding {found.encoding!r}, "
+                f"not inline content (the contents API inlines files up to 1 MB)")
+    return ""
