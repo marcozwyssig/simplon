@@ -11,7 +11,7 @@ from simplon.tasks.homebrewclosure import Dist
 
 def _doc(*dists: Dist) -> str:
     return json.dumps([{"name": d.name, "version": d.version, "requires": list(d.requires), "in_venv": d.in_venv,
-                        "differs": [list(x) for x in d.differs]} for d in dists])
+                        "differs": [[r, dict(results)] for r, results in d.differs]} for d in dists])
 
 
 def test_parse_reads_the_document_after_the_marker():
@@ -48,10 +48,12 @@ def test_a_marker_that_differs_between_linux_and_macos_is_refused_with_both_resu
     req = 'pyobjc; sys_platform == "darwin"'
     dists = hc.parse(_doc_with_differs([
         {"name": "simplon", "version": "0.36.0", "requires": [], "in_venv": True, "differs": []},
-        {"name": "thing", "version": "1.0", "requires": [req], "in_venv": True, "differs": [[req, False, True]]}]))
+        {"name": "thing", "version": "1.0", "requires": [req], "in_venv": True, "differs": [[req, {
+            "linux-x86_64": False, "linux-aarch64": False, "darwin-x86_64": True, "darwin-arm64": True}]]}]))
     [refusal] = hc.refusals(dists, "simplon")
     assert "thing 1.0" in refusal and req in refusal
-    assert "False on Linux and True on macOS" in refusal and "depends_on formula" in refusal
+    assert "true on darwin-x86_64, darwin-arm64" in refusal and "false on linux-x86_64, linux-aarch64" in refusal
+    assert "depends_on formula" in refusal
 
 
 def test_a_windows_only_marker_passes():
@@ -70,7 +72,8 @@ def test_a_python_version_marker_passes():
 
 def test_a_differing_marker_of_a_formula_dist_is_not_the_closures():
     req = "tzdata; sys_platform == 'darwin'"
-    assert hc.refusals([Dist("pydantic", "2.14.1", (req,), False, ((req, False, True),))], "simplon") == []
+    differs = ((req, (("linux-x86_64", False), ("darwin-arm64", True))),)
+    assert hc.refusals([Dist("pydantic", "2.14.1", (req,), False, differs)], "simplon") == []
 
 
 def test_a_document_without_differs_is_not_the_closure():
@@ -86,6 +89,8 @@ def test_a_document_without_differs_is_not_the_closure():
     ("uvloop; platform_system != 'Darwin'", True),
     ("x; os_name == 'nt'", False),
     ("dev; extra == 'test' and sys_platform == 'darwin'", False),
+    ("fast; platform_machine == 'x86_64'", True),
+    ("armonly; platform_machine == 'arm64'", True),
 ])
 def test_the_container_comparison_itself(req, listed):
     """The `differs` the container runs, run here on pip's vendored packaging (the dev venv has pip)."""
@@ -93,6 +98,14 @@ def test_the_container_comparison_itself(req, listed):
     namespace: dict = {}
     exec(hc._REPORT.split("dists = []")[0], namespace)
     assert bool(namespace["differs"]([req])) is listed
+
+
+def test_the_container_comparison_spans_four_environments():
+    pytest.importorskip("pip._vendor.packaging.requirements")
+    namespace: dict = {}
+    exec(hc._REPORT.split("dists = []")[0], namespace)
+    [[req, results]] = namespace["differs"](["fast; platform_machine == 'x86_64'"])
+    assert results == {"linux-x86_64": True, "linux-aarch64": False, "darwin-x86_64": True, "darwin-arm64": False}
 
 
 def test_a_shadowed_formula_dist_is_refused_with_both_versions():
@@ -129,6 +142,57 @@ def test_an_unreadable_wheel_directory_is_refused_before_docker(tmp_path, monkey
         hc.measure(wheel, ["cryptography"], "python@3.14")
 
 
+def _answering(monkeypatch, stdout):
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(hc, "run", lambda argv, **kw: Result(0, stdout, ""))
+
+
+def _wheel(tmp_path, name="x-1.0-py3-none-any.whl"):
+    wheel = tmp_path / name
+    wheel.write_bytes(b"")
+    tmp_path.chmod(0o755)
+    return wheel
+
+
+@pytest.mark.parametrize("dists", [(), (Dist("x", "1.0", (), False), Dist("PyYAML", "6.0.3", (), True))])
+def test_a_successful_run_whose_venv_shows_no_product_is_refused(tmp_path, monkeypatch, dists):
+    _answering(monkeypatch, hc.MARKER + "\n" + _doc(*dists) + "\n")
+    with pytest.raises(ValueError, match="the venv shows no x; the measurement did not see pip's install"):
+        hc.measure(_wheel(tmp_path), ["cryptography"], "python@3.14")
+
+
+def test_the_product_is_found_by_its_normalised_name(tmp_path, monkeypatch):
+    _answering(monkeypatch, hc.MARKER + "\n" + _doc(Dist("My.Tool", "1.0", (), True)) + "\n")
+    assert hc.measure(_wheel(tmp_path, "my_tool-1.0-py3-none-any.whl"), [], "python@3.14")
+
+
+def test_a_python_without_a_version_is_refused_by_its_form(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "run", lambda argv, **kw: pytest.fail("docker ran"))
+    with pytest.raises(ValueError, match=r"python@3\.N.*'python'"):
+        hc.measure(_wheel(tmp_path), ["cryptography"], "python")
+
+
+def test_a_missing_wheel_is_refused_by_its_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "run", lambda argv, **kw: pytest.fail("docker ran"))
+    tmp_path.chmod(0o755)
+    missing = tmp_path / "x-1.0-py3-none-any.whl"
+    with pytest.raises(ValueError, match=f"{missing} does not exist"):
+        hc.measure(missing, ["cryptography"], "python@3.14")
+
+
+def test_a_failed_run_joins_stderr_and_stdout_on_a_line_boundary(tmp_path, monkeypatch):
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(hc, "run", lambda argv, **kw: Result(1, "out line", "err line"))
+    with pytest.raises(ValueError) as e:
+        hc.measure(_wheel(tmp_path), ["cryptography"], "python@3.14")
+    assert "err line\nout line" in str(e.value)
+
+
+def test_brew_install_backs_off_between_attempts():
+    script = hc.script("x-1.0-py3-none-any.whl", [], "python@3.14")
+    assert "sleep $((i*5))" in script
+
+
 def test_a_timeout_is_a_refusal_naming_the_limit(tmp_path, monkeypatch):
     import subprocess
 
@@ -159,12 +223,12 @@ def test_the_container_line_installs_python_and_the_formulae(tmp_path, monkeypat
     def answered(argv, **kw):
         seen["argv"], seen["timeout"] = argv, kw.get("timeout")
         from simplon.kernel.run import Result
-        return Result(0, hc.MARKER + "\n[]\n", "")
+        return Result(0, hc.MARKER + "\n" + _doc(Dist("x", "1.0", (), True)) + "\n", "")
     monkeypatch.setattr(hc, "run", answered)
     wheel = tmp_path / "x-1.0-py3-none-any.whl"
     wheel.write_bytes(b"")
     tmp_path.chmod(0o755)
-    assert hc.measure(wheel, ["pydantic", "cryptography"], "python@3.14") == ()
+    assert hc.measure(wheel, ["pydantic", "cryptography"], "python@3.14") == (Dist("x", "1.0", (), True),)
     argv = seen["argv"]
     assert seen["timeout"] == hc.CLOSURE_TIMEOUT_S
     assert argv[:3] == ["docker", "run", "--rm"] and hc.BREW_IMAGE in argv and "--user" not in argv
