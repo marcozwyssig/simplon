@@ -1,8 +1,15 @@
 """A Homebrew formula for a Python CLI, rendered from the wheel's own metadata (si#536).
 
-This part is pure: it reads a wheel, checks the shape of the `with:` values and renders text. It touches no
-docker and no network, so it imports anywhere. Every refusal is a `ValueError` that names the field or value
-and the way out; the task body that turns it into a return code lives further down this module.
+The first part is pure: it reads a wheel, checks the shape of the `with:` values and renders text. It
+touches no docker and no network, so it imports anywhere. Every refusal is a `ValueError` that names the
+field or value and the way out.
+
+`build` is the body of `build:homebrew-formula`. It reads the product's URL and sha256 from PyPI (`source:
+pypi`, after the upload) or from the local wheel with a placeholder URL (`source: local`, a dry run), measures
+the install closure in the pinned brew image (`homebrewclosure`) and gives each added distribution its PyPI
+sdist. ANYTHING PyPI DOES NOT LIST IS A REFUSAL, NEVER A FALLBACK: the adapter answers `()` for a 200 with an
+empty `urls`, so a wheel file or an sdist that is not there is refused here by name. Nothing is written unless
+every part was answered.
 """
 from __future__ import annotations
 
@@ -15,7 +22,20 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
+from simplon.adapters import pypi
+from simplon.kernel import log
+from simplon.manifest import artifactsection, context
+from simplon.model import artifactschema
+
 _PYTHON_FORMULA = re.compile(r"^python@3\.\d+$")
+
+COORDINATE = "build:homebrew-formula"
+ARTIFACTS = "artifacts"
+SOURCES = ("pypi", "local")
+#: The index the URLs and sha256s are read from; a test points it at a local server.
+PYPI_INDEX = "https://pypi.org"
+#: The URL a dry run renders, followed by the wheel's file name: `.invalid` never resolves (RFC 2606).
+PLACEHOLDER = "https://pypi.invalid/dry-run/"
 
 
 class WheelMeta(NamedTuple):
@@ -160,3 +180,82 @@ def render(meta: WheelMeta, url: str, sha256: str, resources: Sequence[Resource]
               f'    assert_match "{_ruby(shape.test_expect)}", shell_output("{command}")',
               "  end", "end", ""]
     return "\n".join(lines)
+
+
+def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "", depends_on: Sequence[str] = (),
+          python: str = "", env: Mapping[str, str] | None = None, test: Mapping[str, object] | None = None) -> int:
+    """Render the formula for the one wheel in the `wheel` artifact into the `formula` artifact's path."""
+    if source not in SOURCES:
+        raise ValueError(f"source must be 'pypi' (a real run, after the upload) or 'local' (a dry run), got "
+                         f"{source!r}; bind it with `with:` on each of the two steps")
+    form = shape_of(shape, depends_on, python, {} if env is None else env, test)
+    ctx = context.current()
+    wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)
+    out = ctx.root / str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry).path)
+    path = the_wheel(wheel_dir)
+    meta = wheel_meta(path)
+    try:
+        if source == "local":
+            url, sha256 = PLACEHOLDER + meta.filename, meta.sha256
+            log.info(f"source local: {meta.filename} is rendered with its local sha256 and the placeholder URL "
+                     f"{url}; the PyPI comparison and the online audit run only on a real run (source pypi)")
+        else:
+            url, sha256 = _from_pypi(meta)
+        # lazy: the closure validates its pinned image at import, and the part above imports anywhere
+        from simplon.tasks import homebrewclosure
+        dists = homebrewclosure.measure(path, form.depends_on, form.python)
+        refused = homebrewclosure.refusals(dists, meta.name)
+        for line in refused:
+            log.error(line)
+        if refused:
+            log.error(f"no formula was written for {meta.filename}: {len(refused)} refusal(s) in its closure")
+            return 1
+        resources = [_sdist(d.name, d.version) for d in homebrewclosure.added(dists, meta.name)]
+        text = render(meta, url, sha256, resources, form)
+    except (pypi.PyPIError, ValueError) as refused_with:
+        log.error(f"no formula was written for {meta.filename}: {refused_with}")
+        return 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    log.ok(f"wrote {out.relative_to(ctx.root)} for {meta.name} {meta.version} with {len(resources)} "
+           f"resource(s), source {source}")
+    return 0
+
+
+def _entry(name: str, param: str, wanted: type[artifactsection.Entry]) -> artifactsection.Entry:
+    """The `artifacts:` entry the port binding `param` names, validated as `wanted`'s kind."""
+    if not name:
+        raise ValueError(f"which artifact? bind `{param}` with `consumes:` or `produces:` from the "
+                         f"`{ARTIFACTS}:` section, or pass --{param}")
+    ctx = context.current()
+    section = ctx.manifest_data().get(ARTIFACTS) or {}
+    if name not in section:
+        raise ValueError(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` section; "
+                         f"declared are: {', '.join(sorted(section)) or '(none)'}")
+    return artifactsection.entry(section, name, wanted, ctx.manifest_path.name, COORDINATE, param=param)
+
+
+def _from_pypi(meta: WheelMeta) -> tuple[str, str]:
+    """PyPI's URL and sha256 for the wheel's own file, which must be the local wheel's sha256."""
+    listed = pypi.files(meta.name, meta.version, index=PYPI_INDEX)
+    found = [f for f in listed if f.filename == meta.filename]
+    if len(found) != 1:
+        raise ValueError(f"PyPI lists {meta.name} {meta.version} but not as the file {meta.filename} (it lists: "
+                         f"{', '.join(f.filename for f in listed) or 'no files'}); upload this wheel, or "
+                         f"rerun once PyPI shows it")
+    if found[0].sha256 != meta.sha256:
+        raise ValueError(f"PyPI's {meta.filename} has sha256 {found[0].sha256}, the local wheel {meta.sha256}: "
+                         f"they are not the same build. Render from the wheel that was uploaded")
+    return found[0].url, found[0].sha256
+
+
+def _sdist(name: str, version: str) -> Resource:
+    """The PyPI sdist of one distribution the closure added, as a resource."""
+    listed = pypi.files(name, version, index=PYPI_INDEX)
+    sdists = [f for f in listed if f.packagetype == "sdist"]
+    if len(sdists) != 1:
+        raise ValueError(f"{name} {version} has {len(sdists)} sdist(s) on PyPI (it lists: "
+                         f"{', '.join(f.filename for f in listed) or 'no files'}), and a resource is built from "
+                         f"exactly one; provide {name} through a depends_on formula, or pin a version with "
+                         f"an sdist")
+    return Resource(name, sdists[0].url, sdists[0].sha256)

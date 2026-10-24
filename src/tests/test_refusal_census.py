@@ -182,6 +182,9 @@ READS_INLINE = {
     "tasks.githubrelease": "`_notes(name)` reads its `artifacts:` entry inline at the front of "
                            "`release:github-draft`, the same shape as tasks.artifact, and hands "
                            "`artifactsection.entry` the SECTION (si#486)",
+    "tasks.homebrewformula": "`_entry(name, param)` reads its two `artifacts:` entries inline at the front of "
+                             "`build:homebrew-formula`, the same shape as tasks.githubrelease, and hands "
+                             "`artifactsection.entry` the SECTION (si#536)",
     "tasks.fetchfile": "`fetch(name)` reads its `artifacts:` entry inline, the same shape as tasks.artifact, and "
                        "hands `declared` the SECTION; the version it reads is in the product tree (si#343)",
     "tasks.env": "`environments()` reads the document inline to answer a listing",

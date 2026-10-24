@@ -172,9 +172,10 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # (si#105), and a token is exactly what a manifest may not name.
     # `fetch` (si#343): a checksummed download a build context can be handed, so a Dockerfile never
     # downloads it itself. `model` (si#400 4b) is the newest: `firn gen` over a product's firn project,
-    # refusing what firn only warns about.
-    assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "fetch", "image",
-                                              "maven-pack", "model", "nuget-config", "nuget-pack", "nuget-restore"]
+    # refusing what firn only warns about. `homebrew-formula` (si#536) renders a Homebrew formula from a wheel.
+    assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "fetch",
+                                              "homebrew-formula", "image", "maven-pack", "model", "nuget-config",
+                                              "nuget-pack", "nuget-restore"]
     # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
     # cuts the name the release is made under and pushes it, which is what makes the workflows run at

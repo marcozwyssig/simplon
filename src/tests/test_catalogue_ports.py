@@ -37,6 +37,9 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "release:github-publish": (P("github-release", "output", "github-release", "", ()),),
         "release:nuget": (P("nuget", "input", "nuget", "name", ("registry", "image", "path")), EVIDENCE),
         "build:maven-pack": (P("maven", "output", "maven", "name", ("image", "group", "modules", "path")),),
+        # si#536: two artifact ports on one body, so each binds a parameter of its own name, not `name`
+        "build:homebrew-formula": (P("wheel", "input", "directory", "wheel", ("path",)),
+                                   P("formula", "output", "homebrew-formula", "formula", ("path",))),
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
                           EVIDENCE),
         "docs:site": (P("site", "output", "site", "", ()),),
