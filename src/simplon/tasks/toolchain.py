@@ -508,8 +508,11 @@ def scaffold(language: str, version: str = "") -> int:
         if name in _declared_commands(text, phase):
             kept.append(label)
             continue
-        by_phase.setdefault(phase, {})[name] = {"task": "toolchain:run",
-                                                "with": {"image": prof.image, **body}}
+        # A body that names its own catalogue task (si#522) is placed as that task; every other one is a
+        # `toolchain:run`.
+        rest = {k: v for k, v in body.items() if k != "task"}
+        by_phase.setdefault(phase, {})[name] = {"task": body.get("task", "toolchain:run"),
+                                                "with": {"image": prof.image, **rest}}
         written.append(label)
     # ALL OR NOTHING (si#371). Every phase is spliced into the text before anything is written, so a
     # phase the splice cannot place refuses the whole profile: a `build model` without the `test model`

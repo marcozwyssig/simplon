@@ -231,7 +231,42 @@ def test_the_report_names_each_firn_command_with_its_phase(two_phases, capsys):
     toolchain.scaffold("firn", version="0.2.0")
 
     # assert
-    assert "wrote 2 command(s) - test model, build model" in capsys.readouterr().out
+    assert "wrote 3 command(s) - test model, build model, test manifest-model" in capsys.readouterr().out
+
+
+def test_the_firn_scaffold_places_the_manifest_check(two_phases, capsys):
+    # arrange / act (si#522): the export check is a catalogue task of its own, not a `toolchain:run`
+    rc = toolchain.scaffold("firn", version="0.2.0")
+
+    # assert
+    data = yaml.safe_load(two_phases.read_text())
+    assert rc == 0
+    assert data["ci"]["test"]["commands"]["manifest-model"] == {
+        "task": "test:manifest-model", "with": {"image": "ghcr.io/marcozwyssig/firn:v0.2.0"}}
+    assert "test manifest-model" in capsys.readouterr().out
+
+
+def test_a_second_scaffold_adds_only_the_manifest_check(two_phases, capsys):
+    # arrange: a product scaffolded before si#522 has `test model` and `build model` and nothing else
+    toolchain.scaffold("firn", version="0.2.0")
+    data = yaml.safe_load(two_phases.read_text())
+    before = (data["ci"]["test"]["commands"]["model"], data["ci"]["build"]["commands"]["model"])
+    text = two_phases.read_text()
+    start = text.index("      manifest-model:")
+    end = text.index("\n", text.index("image:", start)) + 1
+    two_phases.write_text(text[:start] + text[end:])
+    assert "manifest-model" not in two_phases.read_text()
+    capsys.readouterr()
+
+    # act
+    toolchain.scaffold("firn", version="0.2.0")
+
+    # assert
+    data = yaml.safe_load(two_phases.read_text())
+    assert (data["ci"]["test"]["commands"]["model"], data["ci"]["build"]["commands"]["model"]) == before
+    assert data["ci"]["test"]["commands"]["manifest-model"]["task"] == "test:manifest-model"
+    out = capsys.readouterr().out
+    assert "wrote 1 command(s) - test manifest-model" in out and "kept your own 'test model'" in out
 
 
 def test_scaffolding_into_two_phases_only_inserts(two_phases):
