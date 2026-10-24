@@ -146,6 +146,33 @@ jobs:
           }
       - uses: pypa/gh-action-pypi-publish@release/v1
         if: ${{ !inputs.dry_run }}
+      - if: ${{ inputs.dry_run }}
+        run: ./simplon.sh build homebrew-formula --source local
+      - if: ${{ !inputs.dry_run }}
+        run: ./simplon.sh build homebrew-formula --source pypi
+      - if: ${{ inputs.dry_run }}
+        run: ./simplon.sh test homebrew-formula --online false
+      - if: ${{ !inputs.dry_run }}
+        run: ./simplon.sh test homebrew-formula --online true
+      # v3.2.0: si#534 - 'release homebrew-tap' declares `token: app`, so this step mints a GitHub App
+      # token for marcozwyssig/homebrew-tap and nothing else, with contents: write, from the secrets HOMEBREW_TAP_CLIENT_ID
+      # and HOMEBREW_TAP_APP_KEY. The leaf below reads it as $GH_APP_TOKEN from its own `env:`; no `run:` line
+      # carries the token or a secret.
+      # This step carries the leaf's `if:`, so a run that skips the leaf mints nothing and needs
+      # neither secret.
+      - id: app-token-9
+        if: ${{ !inputs.dry_run }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.HOMEBREW_TAP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_KEY }}
+          owner: marcozwyssig
+          repositories: homebrew-tap
+          permission-contents: write
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token-9.outputs.token }}
+        run: ./simplon.sh release homebrew-tap
 
   # The website, built by the one command a person types (`build docs`) and deployed by the two
   # actions that exist only inside a runner. No `paths:` filter: every release republishes the

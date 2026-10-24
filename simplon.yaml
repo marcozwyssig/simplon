@@ -22,6 +22,9 @@ tasks:
     impl: "orchestrator.cli:build_wheel"
     help: "Build the wheel."
     unattended: true
+    # si#537: python -m build writes the wheel into dist/, and `build homebrew-formula` reads it from there.
+    output:
+      directory: { accepts: directory }
   # NAMED `suite` since si#156, and the rename is the whole mechanism of that ticket. This body is the
   # pytest run and nothing else; `all` is now the AGGREGATE over it and the release-notes guard, and a
   # command either instantiates a task or plans other commands (si#895/si#896), so the leaf had to give
@@ -60,7 +63,9 @@ tasks:
 ci:
   build:
     commands:
-      wheel: { task: wheel }
+      # `dist` is the directory the wheel lands in (si#537): `build homebrew-formula` consumes it, because the
+      # wheel's file name carries the version and an artifact's `path:` is fixed.
+      wheel: { task: wheel, produces: { directory: dist } }
       # The command reference the documentation website embeds is GENERATED, so simplon generates its own
       # with the kernel it ships - the same rule that makes it build and test itself here.
       #
@@ -166,6 +171,22 @@ ci:
       # makes "before" true: with the default (false) the aggregate would run `model-gen` after a red
       # guard and delete the lines anyway. firn v0.2.0's W303 says the same about hand edits; it arrived
       # with the bump (si#410), and the guard stays until W303 is measured to cover what the guard refuses.
+      # The Homebrew formula (si#537), rendered by the kernel from the wheel in `dist` (si#536). Its URL and
+      # sha256 are not here: `source` says where they come from, PyPI on a real run and the local wheel on a
+      # dry run, and it is a step parameter in release.yml rather than a `with:` value, because the same
+      # command runs both ways. In NO aggregate: its test pulls the 3.2 GB brew image, and nothing a developer
+      # types as `all` should. `depends_on` and `python`: Homebrew's `cryptography` and `pydantic` exist only
+      # for python@3.14/3.15. `test`: `--help`, lowercase `usage:` (measured; `--version` exits 2).
+      homebrew-formula:
+        task: "build:homebrew-formula"
+        consumes: { wheel: dist }
+        produces: { formula: simplon-formula }
+        with:
+          shape: python
+          depends_on: [cryptography, libsodium, libyaml, pydantic, python@3.14]
+          python: python@3.14
+          env: { SODIUM_INSTALL: system }
+          test: { args: ["--help"], expect: "usage:" }
       model:
         help: "Guard the catalogue's hand-written lines, then generate the catalogue's kinds, the artifact schema, one class per catalogue task, the kinds page and the architecture data and page from simplon's firn model."
         depends_on: [model-guard, model-gen]
@@ -308,6 +329,13 @@ ci:
         consumes: { image: kernel }
         produces: { test-result: kernel-checked }
         with: { argv: "simplon --help", expect: "usage: simplon" }
+      # `brew audit` and `brew style` over the formula in the pinned brew image, and its digests against PyPI
+      # and the local wheel (si#536). The verdict record is the evidence `release homebrew-tap` consumes.
+      # `online` is a step parameter, like `source` above. Not in `all`, for the same 3.2 GB reason.
+      homebrew-formula:
+        task: "test:homebrew-formula"
+        consumes: { formula: simplon-formula, wheel: dist }
+        produces: { test-result: simplon-formula-checked }
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, the manifest's own model, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, manifest-model, release-notes]
@@ -381,12 +409,21 @@ ci:
         consumes:
           image: kernel
           evidence: [kernel-checked]
+      # The tested formula, committed to the tap as Formula/simplon.rb (si#537) with a GitHub App's token, which
+      # release.yml mints in the step before it (si#534). It runs in the `publish` job AFTER the PyPI upload,
+      # so the formula never names a URL that is not live, and for that reason it is not a member of `all`.
+      homebrew-tap:
+        task: "release:homebrew-tap"
+        consumes:
+          formula: simplon-formula
+          evidence: [simplon-formula-checked]
+        with: { repository: marcozwyssig/homebrew-tap }
       all:
         depends_on: [version, suite, typecheck-python, generated, release-notes, notes, tag]
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release: the version's spelling, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml)."
+        help: "The release: the version's spelling, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders, audits and commits the Homebrew formula: the tap follows PyPI, so the formula never names a URL that is not live."
 
 support:
   commands:
@@ -608,6 +645,17 @@ artifacts:
     kind: tag
   kernel-release:
     kind: release
+  # The Homebrew formula's chain (si#537): the directory the wheel is built into, the formula rendered from
+  # it, and the verdict record about the formula that the tap commit consumes.
+  dist:
+    kind: directory
+    path: dist
+  simplon-formula:
+    kind: homebrew-formula
+    path: build/homebrew/simplon.rb
+  simplon-formula-checked:
+    kind: test-result
+    path: build/test/homebrew-formula.json
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #
@@ -907,6 +955,24 @@ workflows:
                 exit 1
               }
           - uses: pypa/gh-action-pypi-publish@release/v1
+            if: ${{ !inputs.dry_run }}
+          # si#537: the Homebrew formula, after PyPI so its URL is live. Each of the first two runs twice under
+          # the switch: a dry run renders and audits the local wheel (`--strict` only, the URL a placeholder),
+          # a real run reads the URL and sha256 PyPI now serves and audits online. The tap commit is real-run
+          # only; its token step is derived (si#534).
+          - command: build homebrew-formula
+            params: { source: local }
+            if: ${{ inputs.dry_run }}
+          - command: build homebrew-formula
+            params: { source: pypi }
+            if: ${{ !inputs.dry_run }}
+          - command: test homebrew-formula
+            params: { online: "false" }
+            if: ${{ inputs.dry_run }}
+          - command: test homebrew-formula
+            params: { online: "true" }
+            if: ${{ !inputs.dry_run }}
+          - command: release homebrew-tap
             if: ${{ !inputs.dry_run }}
       docs:
         note: |
