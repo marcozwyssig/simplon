@@ -235,3 +235,21 @@ def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_m
 
     assert loaded.commands["test"]["walk"].unattended is False
     assert "test walk" not in _ci_steps()
+
+
+def test_ci_runs_the_suite_on_the_formulas_python():
+    """si#537: the Homebrew formula runs simplon on python@3.14, so CI runs the suite there too.
+
+    Held on the committed ci.yml, the file GitHub runs. The runner is a hosted one because the
+    self-hosted kind refuses a `python:`; the job is found by what it does, not by its name.
+    """
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+
+    on_314 = [job for job in workflow["jobs"].values()
+              if any(step.get("uses", "").startswith("actions/setup-python")
+                     and str(step.get("with", {}).get("python-version")) == "3.14"
+                     for step in job["steps"])]
+
+    assert len(on_314) == 1
+    assert on_314[0]["runs-on"] == "ubuntu-latest"
+    assert any(step.get("run", "").endswith("test suite") for step in on_314[0]["steps"])
