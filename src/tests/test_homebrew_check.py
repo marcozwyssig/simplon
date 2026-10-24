@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from simplon.kernel.run import Result
 from simplon.manifest import context
 from simplon.tasks import homebrewformula as hf
 from simplon.tasks import homebrewtap
@@ -23,6 +26,8 @@ MANIFEST = ("product: sample\nartifacts:\n"
             "  formula: { kind: homebrew-formula, path: build/homebrew/simplon.rb }\n"
             "  checked: { kind: test-result, path: build/results/homebrew.json }\n")
 SHAPE = hf.shape_of("python", ["libsodium"], "python@3.14", {}, {"args": ["--version"], "expect": "simplon"})
+#: the real `audit`, for the tests that stub only its `run`; the `product` fixture stubs `audit` itself
+AUDIT = homebrewtap.audit
 PYYAML = hf.Resource("PyYAML", "https://files.example/pyyaml-6.0.2.tar.gz", "cc" * 32)
 
 
@@ -61,6 +66,13 @@ def _record(root):
     return json.loads((root / "build" / "results" / "homebrew.json").read_text(encoding="utf-8"))
 
 
+def _seed(root):
+    """A green record an earlier run left, which a run that reaches no verdict must remove."""
+    path = root / "build" / "results" / "homebrew.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"formula": "simplon", "verdict": 0, "runs": []}), encoding="utf-8")
+
+
 def _said(capsys) -> str:
     out = capsys.readouterr()
     return out.out + out.err
@@ -78,6 +90,7 @@ def test_online_none_is_refused(product, pypi, online):  # noqa: F811
     # a bool param would be a CLI flag, which `params: {online: false}` cannot reach; so it is a string
     # with exactly two values and no default
     root, _, calls = product
+    _seed(root)
     with pytest.raises(ValueError, match="online must be 'true'.*or 'false'"):
         _check(online=online)
     assert calls == []
@@ -187,3 +200,103 @@ def test_the_audit_rc_lines_are_read_and_their_absence_is_no_verdict():
     assert homebrewtap.parse(out, "") == (1, 0)
     with pytest.raises(ValueError, match="style"):
         homebrewtap.parse("--- simplon audit rc=0 ---\n", "boom")
+
+
+class _Failing(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def failing_index(monkeypatch):
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Failing)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(hf, "PYPI_INDEX", f"http://127.0.0.1:{httpd.server_address[1]}")
+    try:
+        yield
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.mark.parametrize("online", ["false", "true"])
+def test_an_index_that_answers_500_is_no_verdict(product, failing_index, online):
+    # a failed probe is not a result: PyPI not answering says nothing about the formula
+    root, _, calls = product
+    _seed(root)
+    with pytest.raises(ValueError, match="500"):
+        _check(online=online)
+    assert calls == []
+    assert not (root / "build" / "results" / "homebrew.json").exists()
+
+
+def test_an_unreachable_index_is_no_verdict(product, monkeypatch):
+    root, _, calls = product
+    monkeypatch.setattr(hf, "PYPI_INDEX", "http://127.0.0.1:1")
+    _seed(root)
+    with pytest.raises(ValueError, match="pyyaml-6.0.2.tar.gz"):
+        _check()
+    assert calls == []
+    assert not (root / "build" / "results" / "homebrew.json").exists()
+
+
+def test_a_formula_file_not_named_for_the_wheel_is_refused(product, pypi):  # noqa: F811
+    # brew taps `local/check/<file stem>` and looks for the class of that name; `formula.rb` holding
+    # `class Simplon` is a setup fault, not a red verdict
+    root, _, calls = product
+    pypi["/pypi/pyyaml/6.0.2/json"] = _release(("pyyaml-6.0.2.tar.gz", "cc" * 32))
+    (root / "sample.yaml").write_text(MANIFEST.replace("simplon.rb", "formula.rb"), encoding="utf-8")
+    (root / "build" / "homebrew" / "simplon.rb").rename(root / "build" / "homebrew" / "formula.rb")
+    _seed(root)
+    with pytest.raises(ValueError, match="'formula'.*'simplon'"):
+        _check()
+    assert calls == []
+    assert not (root / "build" / "results" / "homebrew.json").exists()
+
+
+def _container(monkeypatch, out, err="", rc=0):
+    """`run` as the audit container answers it: the lines `out` and `err`, and the argv it was handed."""
+    seen = []
+
+    def fake(argv, **kw):
+        seen.append((argv, kw))
+        return Result(rc, out, err)
+    monkeypatch.setattr(homebrewtap, "run", fake)
+    return seen
+
+
+def _tapped(text):
+    return f"--- simplon tapped sha256={hashlib.sha256(text.encode()).hexdigest()} ---\n"
+
+
+def test_a_red_audit_shows_the_containers_stderr(product, monkeypatch, capsys):
+    text = "class Simplon < Formula\nend\n"
+    _container(monkeypatch, _tapped(text) + "--- simplon audit rc=1 ---\n--- simplon style rc=0 ---\n",
+               err="Error: the reason audit gives on stderr\n")
+    assert AUDIT(text, "simplon", False) == (1, 0)
+    assert "the reason audit gives on stderr" in _said(capsys)
+
+
+def test_a_tapped_file_that_is_not_the_bytes_sent_is_no_verdict(product, monkeypatch):
+    text = "class Simplon < Formula\nend\n"
+    _container(monkeypatch, _tapped(text + "x") + "--- simplon audit rc=0 ---\n--- simplon style rc=0 ---\n")
+    with pytest.raises(ValueError, match="sha256"):
+        AUDIT(text, "simplon", False)
+
+
+def test_a_run_that_reports_no_tapped_digest_is_no_verdict(product, monkeypatch):
+    _container(monkeypatch, "--- simplon audit rc=0 ---\n--- simplon style rc=0 ---\n")
+    with pytest.raises(ValueError, match="tapped"):
+        AUDIT("class Simplon < Formula\nend\n", "simplon", False)
+
+
+def test_the_tapped_file_is_the_bytes_sent(product, monkeypatch):
+    text = "class Simplon < Formula\nend\n"
+    seen = _container(monkeypatch, _tapped(text) + "--- simplon audit rc=0 ---\n--- simplon style rc=0 ---\n")
+    assert AUDIT(text, "simplon", False) == (0, 0)
+    assert seen[0][1]["input_text"] == text

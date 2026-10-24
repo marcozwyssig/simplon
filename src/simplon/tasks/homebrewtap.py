@@ -14,9 +14,9 @@ THE RECORD IS WRITTEN FOR EVERY VERDICT, RED INCLUDED, AND FOR NOTHING ELSE. A r
 (`results.tested()`): its one run names the formula's path as `reference` and the file's digest as `id`, so a
 formula changed after the test is not the one the record vouches for. A run that reaches no verdict (a bad
 `online`, a missing input, an audit container that did not get to audit) writes none and removes the one an
-earlier run left, so yesterday's green does not outlive today's refusal. A failed PyPI lookup during the
-digest checks is a red verdict that names the file: the digest was not confirmed, and a release must not
-read that as green.
+earlier run left, so yesterday's green does not outlive today's refusal. A FAILED PYPI LOOKUP IS ONE OF THOSE:
+a 5xx, a timeout or a 404 ("not listed yet") says nothing about the formula, so it is a ValueError naming the
+file and the cause, never a red verdict. Red is what PyPI answered: no such file, or another sha256.
 """
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ AUDIT_TIMEOUT_S = 900
 
 TAIL_LINES = 20
 _RC = re.compile(r"^--- simplon (audit|style) rc=(\d+) ---$")
+_TAPPED = re.compile(r"^--- simplon tapped sha256=([0-9a-f]{64}) ---$")
 _QUOTED = r'"((?:[^"\\]|\\.)*)"'
 _TOP_URL = re.compile(r"^  url " + _QUOTED)
 _TOP_SHA = re.compile(r"^  sha256 " + _QUOTED)
@@ -124,6 +125,13 @@ def check(formula: str = "", wheel: str = "", results: str = "", online: str = "
     found = _digests(text)
     meta = homebrewformula.wheel_meta(homebrewformula.the_wheel(wheel_dir))
     name = path.stem
+    # brew taps `local/check/<stem>` and looks in it for the class `class_name(<stem>)`; a file named for
+    # anything but the wheel would be a setup fault reported as a red audit
+    wanted = re.sub(r"[-_.]+", "-", meta.name).lower()
+    if name != wanted:
+        raise ValueError(f"the formula file {formula_rel} is named {name!r}, and its wheel's formula is {wanted!r} "
+                         f"(class {homebrewformula.class_name(meta.name)}); name the artifact's path "
+                         f"{wanted}.rb")
     is_online = online == "true"
 
     problems = _top_problems(found, meta, is_online) + [p for r in found.resources for p in _resource_problems(r)]
@@ -166,8 +174,8 @@ def _top_problems(found: Digests, meta: homebrewformula.WheelMeta, online: bool)
     try:
         listed = pypi.files(meta.name, meta.version, index=homebrewformula.PYPI_INDEX)
     except pypi.PyPIError as e:
-        return out + [f"PyPI's digest for {meta.filename} could not be read, so the formula's sha256 is "
-                      f"unconfirmed: {e}"]
+        raise ValueError(f"PyPI's digest for {meta.filename} could not be read, so there is no verdict on the "
+                         f"formula's sha256: {e}") from e
     on_pypi = [f for f in listed if f.filename == meta.filename]
     if not on_pypi:
         out.append(f"PyPI lists {meta.name} {meta.version} but not as the file {meta.filename} (it lists: "
@@ -190,8 +198,8 @@ def _resource_problems(res: Resource) -> list[str]:
     try:
         listed = pypi.files(res.name, version, index=homebrewformula.PYPI_INDEX)
     except pypi.PyPIError as e:
-        return [f"resource '{res.name}': PyPI's digest for {filename} could not be read, so its sha256 is "
-                f"unconfirmed: {e}"]
+        raise ValueError(f"resource '{res.name}': PyPI's digest for {filename} could not be read, so there is no "
+                         f"verdict on its sha256: {e}") from e
     found = [f for f in listed if f.filename == filename]
     if not found:
         return [f"resource '{res.name}': PyPI lists {res.name} {version} but not the file {filename} (it lists: "
@@ -210,7 +218,9 @@ def script(name: str, online: bool) -> str:
         "set -euo pipefail",
         "export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1",
         "brew tap-new --no-git local/check >&2",
-        f'cat > "$(brew --repository local/check)/Formula/"{shlex.quote(name + ".rb")}',
+        f'tapped="$(brew --repository local/check)/Formula/"{shlex.quote(name + ".rb")}',
+        'cat > "$tapped"',
+        'echo "--- simplon tapped sha256=$(sha256sum "$tapped" | cut -d" " -f1) ---"',
         "set +e",
         f"brew audit {flags} {quoted}",
         'echo "--- simplon audit rc=$? ---"',
@@ -222,9 +232,10 @@ def script(name: str, online: bool) -> str:
 def audit(text: str, name: str, online: bool) -> tuple[int, int]:
     """`(audit rc, style rc)` for the formula `text`, tapped as `local/check/<name>` in the brew image.
 
-    The formula reaches the container on stdin, so no host path has to be readable by the image's own user.
-    A run that does not print both result lines did not get to audit: that is a ValueError with its last
-    lines, never a red verdict.
+    The formula reaches the container on stdin, so no host path has to be readable by the image's own user,
+    and the container reports the sha256 of the file it tapped: a file that is not the bytes sent (the record's
+    `id`) is a ValueError. So is a run that does not print both result lines: it did not get to audit, and that
+    is no verdict, never a red one.
     """
     # lazy: the closure module validates its pinned image at import, and the part above imports anywhere
     from simplon.tasks.homebrewclosure import BREW_IMAGE
@@ -239,7 +250,16 @@ def audit(text: str, name: str, online: bool) -> tuple[int, int]:
                          f"and was stopped; rerun it, and raise AUDIT_TIMEOUT_S if brew is that slow") from e
     if result.out:
         log.info(result.out.rstrip("\n"))
-    return parse(result.out, result.err)
+    rcs = parse(result.out, result.err)
+    if any(rcs) and result.err.strip():
+        log.info(result.err.rstrip("\n"))
+    sent = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    tapped = [m.group(1) for line in result.out.splitlines() if (m := _TAPPED.match(line))]
+    if tapped != [sent]:
+        raise ValueError(f"the container tapped {tapped[0] if tapped else 'no file it reported'} as sha256, and the "
+                         f"formula sent was {sent}: the verdict would be about other bytes than the record names, "
+                         f"so there is none. Rerun it")
+    return rcs
 
 
 def parse(stdout: str, stderr: str) -> tuple[int, int]:
