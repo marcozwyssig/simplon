@@ -335,15 +335,17 @@ class _CommandSpecModel(BaseModel):
     @field_validator("token", mode="before")
     @classmethod
     def _issuer(cls, value: object) -> str:
-        # si#490: the one issuer a derived workflow can hand a step is the run's own GITHUB_TOKEN.
+        # si#490: `github` hands a derived workflow's step the run's own GITHUB_TOKEN. si#534: `app` mints a
+        # GitHub App token for the one repository the leaf's `repository` names.
         if value is None or value == "":
             return ""
-        if value != "github":
+        if value not in ("github", "app"):
             raise ValueError(
-                f"'token' is github or absent, got '{value}'. It says this task's body authenticates to "
-                f"GitHub, so a derived release hands its step the run's GITHUB_TOKEN; any other secret goes "
-                f"in the workflow's own `env:`")
-        return "github"
+                f"'token' is github, app or absent, got '{value}'. `github` says this task's body "
+                f"authenticates to GitHub, so a derived release hands its step the run's GITHUB_TOKEN; `app` "
+                f"mints a GitHub App token for the one repository the leaf's `repository` names; any other "
+                f"secret goes in the workflow's own `env:`")
+        return str(value)
 
 
 class _ManifestModel(BaseModel):
