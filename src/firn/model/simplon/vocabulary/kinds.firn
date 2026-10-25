@@ -95,6 +95,9 @@ file typeOf simplon.pipeline.ArtifactKind {
     shape = "table"
   }
 }
+homebrew_formula typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.file
+}
 site typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.directory
 }

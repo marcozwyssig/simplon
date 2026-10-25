@@ -20,7 +20,7 @@ from test_manifest import _OK
 
 PARENTS = artifactschema.REFINES
 PRODUCTS = sorted(p.stem for p in (realmanifests.FIXTURES / "golden").glob("*.json"))
-KINDS = "artifact, image, directory, file, site, nuget, maven, conan, test-result, release-notes, tag, release, github-release"
+KINDS = "artifact, image, directory, file, homebrew-formula, site, nuget, maven, conan, test-result, release-notes, tag, release, github-release"
 
 
 @pytest.mark.parametrize("wanted,kind,accepted", [
@@ -173,6 +173,21 @@ def test_a_use_of_an_entry_with_no_kind_says_it_declares_none():
 
     # assert: the wording `check` uses, not "names no kind ... (None)"
     assert str(caught.value) == (f"demo.yaml: 'artifacts.app' declares no `kind:`; the kinds are: {KINDS}")
+
+
+def test_a_port_that_binds_another_parameter_is_read_by_that_parameter():
+    # arrange: si#536's two artifact ports bind `wheel` and `formula`, so neither is in READERS or NEEDS
+    section = {"dist": {"kind": "directory"}, "f": {"kind": "homebrew-formula", "path": "f.rb"}}
+
+    # act / assert: each port reads its own kind and its own needs, and no port reads by `name`
+    got = artifactsection.entry(section, "f", artifactschema.Homebrew_formulaEntry, "demo.yaml",
+                                "build:homebrew-formula", param="formula")
+    assert got.path == "f.rb"
+    with pytest.raises(ValueError, match="declares no `path:`, which build:homebrew-formula needs"):
+        artifactsection.entry(section, "dist", artifactschema.DirectoryEntry, "demo.yaml", "build:homebrew-formula",
+                              param="wheel")
+    with pytest.raises(KeyError):
+        artifactsection.entry(section, "dist", artifactschema.DirectoryEntry, "demo.yaml", "build:homebrew-formula")
 
 
 def test_a_use_names_the_first_key_its_coordinate_needs_and_all_of_them():

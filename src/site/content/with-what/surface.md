@@ -138,9 +138,11 @@ take.
 
 The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
 coordinate points its body at is reachable, by coordinate first and by import where a composition
-root has reason to. A module in there that **no** coordinate names is innards — `allure`, `gitops`,
-`handoff`, `profiles` and `proxmoxapi` today — and nothing outside the directory imports any of them.
+root has reason to. A module in there that **no** coordinate names is innards (`allure`, `gitops`,
+`handoff`, `homebrewclosure`, `profiles` and `proxmoxapi` today), and nothing outside the directory imports any of them.
 `handoff` works out which artifacts cross a job boundary of a generated workflow; only `workflowgen` calls it.
+`homebrewclosure` measures a wheel's install closure in the pinned brew image; only `build:homebrew-formula`'s
+body calls it.
 `proxmoxapi` arrived as a demotion rather than as a new module: it was written beside `cli.py`, where
 a library lives, and this rule moved it. It asks Proxmox one question — can this node really put a
 container on this storage — so that a carrier's mistake is a refusal naming a line instead of an HTTP
@@ -194,7 +196,7 @@ no product manifest, command or import is affected either way.
 
 Short enough to state, and the half you most need, because everything else is yours:
 
-`adapters.brew` · `adapters.diskguard` · `adapters.gh` · `adapters.github` · `adapters.hostinstall` · `adapters.oras` · `adapters.repofile` · `adapters.tools` · `cli.bootstrap` ·
+`adapters.brew` · `adapters.diskguard` · `adapters.gh` · `adapters.github` · `adapters.hostinstall` · `adapters.oras` · `adapters.pypi` · `adapters.repofile` · `adapters.tools` · `cli.bootstrap` ·
 `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
 `manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls` · `ui.clipboard`
