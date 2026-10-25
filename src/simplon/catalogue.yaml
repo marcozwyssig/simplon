@@ -97,6 +97,10 @@ groups:
       claude-plugins: { task: "support:claude-plugins" }
       # Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
       claude-md: { task: "support:claude-md" }
+      # PLACED since si#550, by the same bar. si#525 made `toolchains:` a list every product has (init
+      # writes claude and gh), and this is the command that adds to it, so a product without a compiled
+      # language uses it too. Unplaced, the scaffold's comment promised a command nobody had.
+      toolchain: { task: "support:toolchain" }
       # PLACED rather than offered (si#58), and it is the same argument `install` above is placed on.
       # The placement bar is "useful in EVERY product": this one reads no manifest section - the command
       # tree it writes out is the tree every manifest already has - it publishes nothing, it touches
@@ -903,19 +907,19 @@ tasks:
   # toolchain should not receive the command with the kernel.
   # The ready-made configuration, GENERATED rather than resolved (si#95). It lands under `support`
   # because it touches the product's own tree and reads no phase - the same argument `install` sits on.
-  # Declared and not placed for the reason above: a product without a compiled toolchain has no use for
-  # it, and a command nobody asked for is a command nobody reviews.
+  # Placed since si#550 (see `support: commands:` above). It was declared and not placed while it wrote
+  # only compiled toolchains; si#525 gave it claude and gh, which every product has.
   support:toolchain:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
-      language: { help: "java | cpp | dotnet | python | firn | claude | gh", argument: true }
+      language: { help: "java | cpp | dotnet | python | firn | claude | gh | brew", argument: true }
       # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
       # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
       # parameter, so the value was accepted at load and silently discarded. A product either types it
       # (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
       # because the parameter exists.
-      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude and gh take none", argument: true }
+      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude, gh and brew take none", argument: true }
 
   toolchain:run:
     help: "Run a pinned toolchain image over the product tree, as the calling user."

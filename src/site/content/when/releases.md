@@ -26,8 +26,27 @@ it is the one section held only to existing.
 ## 0.37.0
 
 **What a product has to do:** nothing is removed, and a product on 0.36.0 moves both simplon pins
-together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. No change goes red on
-the bump. A product gains three catalogue tasks and one token issuer, and uses them only by naming them.
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. One change can go red on
+the bump:
+
+1. **`support toolchain` is now placed by the kernel (si#550).** A product with a command named
+   `toolchain` in another group, which a `depends_on` names, now hears "dependency 'toolchain' is
+   ambiguous (owned by groups [...])". Measured over every reachable manifest, only firn has one
+   (`build toolchain`, which `deploy devcontainer` depends on). The way out: rename that command. A
+   product that placed `toolchain: { task: "support:toolchain" }` itself, as cleon-firn did, loads
+   unchanged and can delete the line.
+
+A product also gains three catalogue tasks and one token issuer, and uses them only by naming them.
+
+### `support toolchain` exists in every product (si#550)
+
+- **The scaffold promised it, and no product had it.** The manifest `simplon init` writes says
+  "`support toolchain <name>` adds one", but the task was declared and not placed, so the command
+  answered "No such command" (found by cleon-firn). The 0.36.0 way out for a `claude:` section, "run
+  `support toolchain claude`", works from this release on without placing anything.
+- **Its language list names `brew` too** (si#526 made it a toolchain).
+- A test now holds every `support` command the scaffold's comments name to the tree a fresh product
+  loads.
 
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 

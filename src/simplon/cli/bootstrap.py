@@ -400,7 +400,8 @@ product: @@PRODUCT@@
 #           refreshes its deps); `support claude-md` writes CLAUDE.md with your own region kept. Add to the
 #           set in a `claude:` section (`plugins:`, `exclude:`), or remove `claude` here to turn it off.
 #   gh      the GitHub CLI, which the release and git commands use.
-# `support toolchain <name>` adds one: python, java, cpp, dotnet, firn (and their commands), claude, gh.
+# `support toolchain <name>` adds one: python, java, cpp, dotnet, firn (and their commands), claude, gh,
+# brew.
 # A block list, so adding one inserts a line and rewrites none (si#110).
 toolchains:
   - claude
