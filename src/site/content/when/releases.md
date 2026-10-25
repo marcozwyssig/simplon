@@ -23,6 +23,59 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.37.0
+
+**What a product has to do:** nothing is removed, and a product on 0.36.0 moves both simplon pins
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. No change goes red on
+the bump. A product gains three catalogue tasks and one token issuer, and uses them only by naming them.
+
+### `token: app` mints a GitHub App token for one other repository (si#534)
+
+- **`token:` accepts `github`, `app` or absent.** A `token: app` leaf binds `repository: <owner>/<repo>`
+  in its `with:`, and the generated workflow puts a pinned `actions/create-github-app-token` step
+  directly before the leaf's step, with the leaf step's `if:`. Only the leaf's step sees the token, as
+  `GH_APP_TOKEN` in its `env:`; no secret reaches a `run:` line.
+- **The two secrets are named by the repository.** `marcozwyssig/homebrew-tap` reads
+  `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY`. A missing or malformed `repository`, an aggregate
+  step whose plan holds a `token: app` leaf, and a step that declares `GH_APP_TOKEN` itself are each
+  refused when the workflow is generated, with the way out.
+
+### `adapters.repofile` commits one file to another repository (si#535)
+
+- **Three outcomes, never two:** written (with the new commit), already current (byte-identical,
+  nothing committed), or refused (with GitHub's status and message). After a write, the file is read
+  back at the new commit, and a difference is refused.
+- Nothing in it is specific to a package manager.
+
+### The Homebrew formula is generated, checked and committed to a tap (si#536)
+
+- **`build:homebrew-formula`** renders a formula from the wheel's metadata and measures the install
+  closure in a pinned brew image, one `resource` per dependency. Its step parameter `source` is
+  `pypi` (the formula names PyPI's URL, and the build refuses unless PyPI's sha256 equals the local
+  wheel's) or `local` (a dry run, with a placeholder URL). It has no default.
+- **`test:homebrew-formula`** runs `brew audit --strict` and `brew style`, and with `online: true` also
+  `--online --new`. PyPI without an answer is no verdict, and no test result is written.
+- **`release:homebrew-tap`** is a `token: app` task. It commits the formula through
+  `adapters.repofile`, refuses without a bound test result, refuses the placeholder URL, and asks PyPI
+  once more right before the commit.
+- **The artifact kind `homebrew-formula`** is new.
+
+### simplon releases its own formula (si#537, the Homebrew part of si#449)
+
+- **`brew install marcozwyssig/tap/simplon`** installs the kernel on macOS and Linux. The release's
+  `publish` job builds, checks and commits the formula after the PyPI upload, so the formula never names
+  a URL that is not live. A dry run renders and audits it and publishes nothing. [The release
+  procedure](../../how/releasing/) has the order, the secrets and the rerun rule.
+- **The PyPI step has `skip-existing: true`, and `build wheel` sets `SOURCE_DATE_EPOCH`** from the
+  commit time, so a rerun of `publish` after the upload rebuilds the same bytes and reaches the tap.
+- **CI runs the suite on Python 3.14 too**, the interpreter the formula runs simplon on, in the new job
+  `suite-python-3-14`.
+
+### Also in this release
+
+- **#533** pins `deploy/image/image.pin` to the published v0.36.0 kernel image.
+- **#545** is these notes.
+
 ## 0.36.0
 
 **What a product has to do:** a product on 0.35.0 moves both simplon pins together, the one in
