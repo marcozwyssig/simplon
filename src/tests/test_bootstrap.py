@@ -643,3 +643,22 @@ def test_starter_manifest_with_toolchains_still_loads():
 
     # act / assert: the loader accepts the new top-level list
     load.load(bootstrap.manifest_yaml("demo"), catalogue=catalogue.load(), manifest_path="demo.yaml")
+
+
+# --- si#550: a `support` command the scaffold's comments name is one the scaffolded product has --------
+
+def test_every_support_command_the_scaffold_names_exists_in_the_scaffolded_product():
+    """si#550: the scaffold's comment said "`support toolchain <name>` adds one" while the catalogue left
+    `support:toolchain` unplaced, so the command it promised answered "No such command" in every product
+    (cleon-firn measured it, cleon-firn#3 placed it by hand). A comment is a second source for the command
+    tree; this holds it to the tree a fresh product actually loads."""
+    # arrange
+    text = bootstrap.manifest_yaml("fooctl")
+    mf = _load_scaffold()
+    named = set(re.findall(r"`(?:fooctl )?support ([a-z][a-z-]*)", text))
+
+    # assert: each is a command under `support`, or a subgroup of it
+    assert named, "the scaffold names no support command, so this test checks nothing"
+    missing = {word for word in named
+               if word not in mf.commands["support"] and f"support.{word}" not in mf.commands}
+    assert not missing, f"the scaffold names `support {sorted(missing)}`, which a scaffolded product does not have"

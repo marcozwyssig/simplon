@@ -722,9 +722,11 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # it says Claude support is off and exits 0, and with it simplon's default is the whole declaration.
     # `support:claude-md` joins by the same argument: off without the toolchain, and it writes only the
     # product's own CLAUDE.md and .claude/settings.json.
+    # `support:toolchain` (si#550) joins by the same bar: si#525 gave every product a `toolchains:` list,
+    # and this is the command that adds to it. It writes only the product's own manifest.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
                       "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
-                      "support:model", "support:claude-plugins", "support:claude-md",
+                      "support:model", "support:claude-plugins", "support:claude-md", "support:toolchain",
                       "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is

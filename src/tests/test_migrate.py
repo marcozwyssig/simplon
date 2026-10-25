@@ -852,7 +852,7 @@ NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
 #: A command si#525 placed in an EXISTING group, `support claude-plugins`, so it is not a new group to pop.
 #: The catalogue places it first after `install`; a product that declared its own (netctl) keeps its own
 #: help and impl, and only its position in the group moved - that is what is taken back out here.
-NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"))
+NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"), ("support", "toolchain"))
 
 
 @pytest.mark.parametrize("product", PRODUCTS)
@@ -865,6 +865,14 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     surface = cli_surface(manifest.load(realmanifests.answer_release_rule(product, migrated.text),
                                         catalogue=catalogue.load(), manifest_path=f"{product}.yaml"))
 
+    # assert: a command the product renamed itself (realmanifests.RENAMED) is held under its fixture name
+    for (group, old), new in realmanifests.RENAMED.get(product, {}).items():
+        names = surface["groups"][group]
+        names[names.index(new)] = old
+        surface["commands"][group] = {old if k == new else k: v for k, v in surface["commands"][group].items()}
+        for specs in surface["commands"].values():
+            for spec in specs.values():
+                spec["depends_on"] = [old if dep == new else dep for dep in spec["depends_on"]]
     # assert: the one command the answer adds is taken out, as NEW_IN_EVERY_PRODUCT's are
     if product in realmanifests.RELEASE_RULE_ANSWERS:
         assert surface["groups"]["test"].remove(realmanifests.ADDED_TEST_COMMAND) is None

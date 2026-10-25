@@ -53,9 +53,7 @@ def test_every_reachable_manifest_still_loads_after_migration():
     paths = sorted((pathlib.Path(__file__).parent / "fixtures" / "manifests").glob("*.yaml"))
     assert len(paths) == 8, [p.name for p in paths]
     for path in paths:
-        text = path.read_text(encoding="utf-8")
-        if path.name == "cleon.yaml":
-            text = text.replace("updatesite:\n", "updatesite:\n    kind: directory\n", 1)
+        text = realmanifests.text(path.stem)  # with each product's own hand edits (cleon, firn)
         result = migrate_text(text)
         assert result.status == "migrated", (path.name, result.reason)
         try:

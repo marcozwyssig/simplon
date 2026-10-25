@@ -201,7 +201,9 @@ artifacts:
 """
 
 FETCH = '      fetch: { task: "build:fetch", produces: { file: gradle-dist } }\n'
-IMAGE = '      toolchain: { task: "build:image", produces: { image: toolchain } }\n'
+# The command is `toolchain-image`, not `toolchain`: since si#550 the kernel places `support toolchain`, and a
+# bare `depends_on: [toolchain]` would be ambiguous between the two groups.
+IMAGE = '      toolchain-image: { task: "build:image", produces: { image: toolchain } }\n'
 
 
 def _load(commands: str) -> manifest_mod.Manifest:
@@ -211,7 +213,7 @@ def _load(commands: str) -> manifest_mod.Manifest:
 
 def test_an_image_consumes_the_files_its_contexts_name_without_saying_so_twice():
     # act
-    spec = _load(FETCH + IMAGE).spec_for("build", "toolchain")
+    spec = _load(FETCH + IMAGE).spec_for("build", "toolchain-image")
 
     # assert: the binding is derived from the entry, and the body still receives only the image's name
     assert spec.consumes == {"file": ("gradle-dist",)}
@@ -220,7 +222,7 @@ def test_an_image_consumes_the_files_its_contexts_name_without_saying_so_twice()
 
 def test_consumes_on_the_derived_port_is_refused_as_a_second_statement():
     # arrange
-    image = ('      toolchain: { task: "build:image", produces: { image: toolchain }, '
+    image = ('      toolchain-image: { task: "build:image", produces: { image: toolchain }, '
              'consumes: { file: gradle-dist } }\n')
 
     # act / assert
@@ -230,19 +232,19 @@ def test_consumes_on_the_derived_port_is_refused_as_a_second_statement():
 
 def test_a_plan_that_builds_the_image_before_fetching_its_file_is_refused():
     # arrange
-    plan = '      all: { help: both, depends_on: [toolchain, fetch] }\n'
+    plan = '      all: { help: both, depends_on: [toolchain-image, fetch] }\n'
 
     # act / assert: rule 5, reached through the derived binding
-    with pytest.raises(ValueError, match="plans 'toolchain' before 'fetch'"):
+    with pytest.raises(ValueError, match="plans 'toolchain-image' before 'fetch'"):
         _load(FETCH + IMAGE + plan)
 
 
 def test_a_plan_that_fetches_first_loads():
     # act
-    manifest = _load(FETCH + IMAGE + '      all: { help: both, depends_on: [fetch, toolchain] }\n')
+    manifest = _load(FETCH + IMAGE + '      all: { help: both, depends_on: [fetch, toolchain-image] }\n')
 
     # assert
-    assert manifest.plan_for("all", group="build") == ("fetch", "toolchain")
+    assert manifest.plan_for("all", group="build") == ("fetch", "toolchain-image")
 
 
 def test_a_file_context_nobody_fetches_is_refused_at_load():
