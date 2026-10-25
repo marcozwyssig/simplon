@@ -379,7 +379,23 @@ def _publishing(step) -> bool:
     """A step that reaches PyPI, Pages, the registry or the remote - what a rehearsal must not do."""
     uses, run = str(step.get("uses", "")), str(step.get("run", ""))
     return (uses.startswith(("pypa/gh-action-pypi-publish", "actions/deploy-pages"))
-            or any(word in run for word in ("release push-image", "git push", "gh pr create")))
+            or any(word in run for word in ("release push-image", "release homebrew-tap", "git push",
+                                            "gh pr create")))
+
+
+#: si#537: what a real run passes the formula steps. They read the version from PyPI, which a dry run never
+#: uploaded, so they are real-run steps without publishing anything; `local`/`false` are their dry-run twins.
+READS_PYPI = ("--source pypi", "--online true")
+REHEARSES_LOCALLY = ("--source local", "--online false")
+
+
+def _reads_pypi(step) -> bool:
+    return any(flag in str(step.get("run", "")) for flag in READS_PYPI)
+
+
+def _mints_a_token(step) -> bool:
+    """si#534's derived step: the tap's token, minted only where the tap commit runs."""
+    return str(step.get("uses", "")).startswith(workflowgen.APP_TOKEN_ACTION.split("@")[0])
 
 
 def test_the_release_job_runs_the_gate_before_the_tag(workflow):
@@ -458,8 +474,89 @@ def test_a_dry_run_publishes_nothing(workflow):
     for name in PRODUCT_JOBS:
         for step in workflow["jobs"][name]["steps"]:
             guarded = step.get("if") == "${{ !inputs.dry_run }}"
-            expected = _publishing(step) or step.get("name") == TAG_REQUIRED
+            expected = (_publishing(step) or _reads_pypi(step) or _mints_a_token(step)
+                        or step.get("name") == TAG_REQUIRED)
             assert guarded == expected, f"{name}: {step.get('uses') or step.get('run', '')[:60]!r}"
+
+
+def _tap_step(steps) -> int:
+    return next(i for i, step in enumerate(steps) if "./simplon.sh release homebrew-tap" in str(step.get("run", "")))
+
+
+def test_a_rerun_of_publish_passes_the_upload_it_already_made(workflow):
+    """si#537: "rerun the failed job, never a second tag" must reach the formula steps, so the upload skips a
+    file PyPI already has. Safe because the `source pypi` build after it refuses unless PyPI's sha256 equals
+    the local wheel's: different bytes under an existing name stop before the tap."""
+    # Arrange
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+
+    # Act
+    pypi = next(i for i, step in enumerate(steps)
+                if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish"))
+    compared = next(i for i, step in enumerate(steps)
+                    if "./simplon.sh build homebrew-formula --source pypi" in str(step.get("run", "")))
+
+    # Assert
+    assert steps[pypi].get("with", {}).get("skip-existing") is True
+    assert pypi < compared
+
+
+def test_the_tap_follows_pypi(workflow):
+    """si#537: the formula names PyPI's URL, so the tap commit comes after the upload, never before it."""
+    # Arrange
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+
+    # Act
+    pypi = next(i for i, step in enumerate(steps)
+                if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish"))
+
+    # Assert
+    assert pypi < _tap_step(steps)
+
+
+def test_a_dry_run_reads_nothing_from_pypi_and_commits_nothing(workflow):
+    """si#537: a dry run uploads nothing, so a step reading PyPI would go red on a version PyPI does not list.
+    Each formula step comes twice - PyPI on a real run, the local wheel on a dry run - and the switch picks."""
+    # Arrange
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+    real = [s for s in steps if _reads_pypi(s) or "./simplon.sh release homebrew-tap" in str(s.get("run", ""))]
+    rehearsal = [s for s in steps if any(flag in str(s.get("run", "")) for flag in REHEARSES_LOCALLY)]
+
+    # Assert: the build and the test on each side, the tap on the real side only
+    assert len(real) == 3 and len(rehearsal) == 2
+    assert {s.get("if") for s in real} == {"${{ !inputs.dry_run }}"}
+    assert {s.get("if") for s in rehearsal} == {"${{ inputs.dry_run }}"}
+
+
+def test_the_tap_step_has_its_app_token(workflow):
+    """si#534 derives the token step from `token: app`; si#537 is the first manifest that binds one."""
+    # Arrange
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+
+    # Act
+    token = steps[_tap_step(steps) - 1]
+
+    # Assert
+    assert token["uses"] == workflowgen.APP_TOKEN_ACTION
+    assert token["with"]["client-id"] == "${{ secrets.HOMEBREW_TAP_CLIENT_ID }}"
+    assert token["with"]["private-key"] == "${{ secrets.HOMEBREW_TAP_APP_KEY }}"
+    assert token.get("if") == "${{ !inputs.dry_run }}"
+
+
+def test_no_aggregate_runs_homebrew(product):
+    """si#537: a developer's `test all` must not pull the 3.2 GB brew image, and `release all` typed in a
+    checkout must not commit to the tap. Over every aggregate, not a named list."""
+    # Arrange
+    aggregates = [(group, name) for group, commands in product.commands.items()
+                  for name, spec in commands.items() if getattr(spec, "depends_on", None)]
+
+    # Act
+    planned = {(group, name): product.plan_for(name, group=group) for group, name in aggregates}
+
+    # Assert: the homebrew leaves exist, and no aggregate plans one
+    assert {"homebrew-formula", "homebrew-tap"} <= {n for commands in product.commands.values() for n in commands}
+    assert ("release", "all") in planned and ("test", "all") in planned
+    assert {key: plan for key, plan in planned.items() if any("homebrew" in leaf for leaf in plan)} == {}
 
 
 def test_no_script_reads_an_input_or_the_ref_name(workflow):

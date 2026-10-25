@@ -184,17 +184,26 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
 
     si#522 added `test manifest-model`, which validates the manifest's fresh export against the shipped M2.
     Run on 2026-10-24: it exits 0 and writes only `build/manifest-check/`, under the ignored `build/`.
+
+    si#537 added `build homebrew-formula` and `test homebrew-formula`, and THEY ARE THE EXCEPTION TO THIS
+    TEST'S CLAIM, measured rather than hidden. Each takes a parameter with no default (`source`, `online`)
+    that release.yml binds per step under the dry-run switch, and a derived step passes none: run bare on
+    2026-10-24, each exits 1 at once with "source must be 'pypi' ... or 'local' ..., got ''" (and the
+    same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
+    and audit the formula. So a pipeline derived from this manifest would go red on those two steps;
+    this repository derives nothing, which is why it is recorded here and not repaired in the manifest.
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
     assert [step.command for step in derived.steps] == [
-        "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
-        "build model-gen", "test suite", "test typecheck-python", "test release-notes",
-        "test report", "test generated", "test image",
+        "build wheel", "build reference", "build acceptance", "build site", "build image",
+        "build homebrew-formula", "build model-guard", "build model-gen", "test suite", "test typecheck-python",
+        "test release-notes",
+        "test report", "test generated", "test image", "test homebrew-formula",
         "test model", "test manifest-model"]
 
 
-def test_this_repository_runs_nine_of_those_fifteen_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_a_subset_of_those_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
@@ -208,7 +217,11 @@ def test_this_repository_runs_nine_of_those_fifteen_and_the_difference_is_a_choi
     `generated:` entry, regenerated and diffed there. Its two leaves (`model-guard` since B1's final
     review; `model-whole` and `model-mode` stood beside them until si#400 4b folded both into `model-gen`)
     are the fourth and fifth difference, and as cheap as the two above. `test image` (si#344 C.3) is the sixth: the release runs it, between building and publishing the image,
-    and ci.yml builds that image for amd64 only and does not run it.
+    and ci.yml builds that image for amd64 only and does not run it. `build homebrew-formula` and `test
+    homebrew-formula` (si#537) are the seventh and eighth: the release's `publish` job runs them after the
+    PyPI upload, and the test pulls the 3.2 GB brew image, which no push to this repository should. Derived
+    bare, both would refuse for want of their step parameter (the test above), so for them "correct" is
+    not true either.
 
     simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
     is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
@@ -224,8 +237,9 @@ def test_this_repository_runs_nine_of_those_fifteen_and_the_difference_is_a_choi
     run_here = set(_ci_steps())
 
     assert run_here < derived
-    assert sorted(derived - run_here) == ["build acceptance", "build model-gen", "build model-guard",
-                                          "build reference", "build site", "test image"]
+    assert sorted(derived - run_here) == ["build acceptance", "build homebrew-formula", "build model-gen",
+                                          "build model-guard", "build reference", "build site",
+                                          "test homebrew-formula", "test image"]
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():
@@ -235,3 +249,21 @@ def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_m
 
     assert loaded.commands["test"]["walk"].unattended is False
     assert "test walk" not in _ci_steps()
+
+
+def test_ci_runs_the_suite_on_the_formulas_python():
+    """si#537: the Homebrew formula runs simplon on python@3.14, so CI runs the suite there too.
+
+    Held on the committed ci.yml, the file GitHub runs. The runner is a hosted one because the
+    self-hosted kind refuses a `python:`; the job is found by what it does, not by its name.
+    """
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+
+    on_314 = [job for job in workflow["jobs"].values()
+              if any(step.get("uses", "").startswith("actions/setup-python")
+                     and str(step.get("with", {}).get("python-version")) == "3.14"
+                     for step in job["steps"])]
+
+    assert len(on_314) == 1
+    assert on_314[0]["runs-on"] == "ubuntu-latest"
+    assert any(step.get("run", "").endswith("test suite") for step in on_314[0]["steps"])

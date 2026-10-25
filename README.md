@@ -15,6 +15,10 @@ written down in `simplon.cli.surface`.
 
     pip install simplon
 
+or, on macOS and Linux, through Homebrew:
+
+    brew install marcozwyssig/tap/simplon
+
 The runtime dependencies are ranges, not exact pins: a product's own
 `requirements.txt` is where exact versions belong, and a published package's
 pins become its consumers' pins.
@@ -197,8 +201,9 @@ The run is `release all`, the same aggregate a checkout runs: the pytest suite,
 the type gate, the staleness gate and the release-notes guard, then the notes,
 then `release tag`, which cuts and pushes the tag. A red test therefore leaves
 no tag behind. After the tag, the wheel goes to PyPI via Trusted Publishing, and
-then the website and the kernel image go up. A dry run builds and checks all
-of it, and publishes nothing: no tag, no wheel, no site, no image, no pin.
+then the Homebrew formula in `marcozwyssig/homebrew-tap`, the website and the
+kernel image go up. A dry run builds and checks all of it, and publishes
+nothing: no tag, no wheel, no formula, no site, no image, no pin.
 
 **The tag IS the version.** There is no number to edit first: `pyproject.toml`
 declares `dynamic = ["version"]` and setuptools-scm derives it from the tag, so
