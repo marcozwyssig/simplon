@@ -60,7 +60,7 @@ the bump. A product gains three catalogue tasks and one token issuer, and uses t
   once more right before the commit.
 - **The artifact kind `homebrew-formula`** is new.
 
-### simplon releases its own formula (si#537)
+### simplon releases its own formula (si#537, the Homebrew part of si#449)
 
 - **`brew install marcozwyssig/tap/simplon`** installs the kernel on macOS and Linux. The release's
   `publish` job builds, checks and commits the formula after the PyPI upload, so the formula never names
@@ -74,7 +74,7 @@ the bump. A product gains three catalogue tasks and one token issuer, and uses t
 ### Also in this release
 
 - **#533** pins `deploy/image/image.pin` to the published v0.36.0 kernel image.
-- **#NOTES** is these notes.
+- **#545** is these notes.
 
 ## 0.36.0
 
