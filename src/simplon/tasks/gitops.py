@@ -193,10 +193,68 @@ def push() -> int:
     return 0
 
 
+def _pr_heads(state: str) -> set[str] | None:
+    """The head-branch names of this repository's pull requests in `state` (merged / open), or None when
+    gh is missing or the query failed. None is not the empty set: "no open PR" licenses deleting a
+    branch on origin, "could not ask" must not."""
+    if shutil.which("gh") is None:
+        return None
+    res = run(["gh", "pr", "list", "--state", state, "--limit", "300",
+               "--json", "headRefName", "-q", ".[].headRefName"])
+    if not res.ok:
+        return None
+    return {ln.strip() for ln in (res.out or "").splitlines() if ln.strip()}
+
+
+def _prune_origin_only(*, main: str, cur: str, local: set[str], worktree_branches: set[str],
+                       merged_prs: set[str], dry: bool) -> int:
+    """`--remote` for the branches that exist ONLY on origin (si#555): a merged branch deleted locally
+    after its merge was never reached, because origin was cleaned only beside a local `branch -D`.
+
+    Proven merged only: `--unmerged` does not reach here. An unproven branch on origin may be someone
+    else's work, and with no local ref there is no tip to recover it from. A branch that heads an OPEN
+    pull request is kept, since deleting it closes the PR; without that list nothing here is deleted.
+    Returns how many it deleted, or would delete on a dry run."""
+    done = 0
+    refs = (_git(["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/"]).out or "")
+    candidates = sorted(r[len("origin/"):] for r in refs.split()
+                        if r.startswith("origin/") and r not in ("origin", "origin/HEAD")
+                        and r[len("origin/"):] not in local)
+    if not candidates:
+        return 0
+    open_prs = _pr_heads("open")
+    if open_prs is None:
+        log.warn(f"no list of open pull requests from gh; {len(candidates)} branch(es) that exist only "
+                 "on origin are left in place (deleting one would close its PR)")
+        return 0
+    for b in candidates:
+        action, reason = prune_verdict(
+            is_main_or_current=(b == main or b == cur),
+            in_worktree=(b in worktree_branches),
+            is_ancestor=_git(["merge-base", "--is-ancestor", f"origin/{b}", f"origin/{main}"]).ok,
+            in_merged_prs=(b in merged_prs),
+        )
+        if action != "delete" or b in open_prs:
+            continue
+        why = f"merged into {main}" if reason == "ancestor" else "PR merged"
+        if dry:
+            log.info(f"would delete origin/{b} ({why}, only on origin)")
+            done += 1
+        elif _git(["push", "origin", "--delete", b]).ok:
+            log.ok(f"deleted origin/{b} ({why}, only on origin)")
+            done += 1
+        else:
+            log.warn(f"could not delete origin/{b}")
+    if done and not dry:
+        log.ok(f"pruned {done} merged branch(es) that existed only on origin")
+    return done
+
+
 def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = False) -> int:
     """Delete local branches already merged into main - including SQUASH-merged ones, detected via the
     merged-PR head-branch names (gh). main + the current branch + any worktree-checked-out branch are kept.
-    --dry-run previews; --remote also deletes them on origin.
+    --dry-run previews; --remote also deletes them on origin, and the merged ones that exist only there
+    (si#555, `_prune_origin_only`).
 
     `unmerged` additionally clears the branches that cannot be PROVEN merged (#1136). That bucket never
     empties on its own, so finished work piles up in it. It is reported separately from the provably
@@ -215,16 +273,10 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
     worktree_branches = {ln[len("branch refs/heads/"):] for ln in wt.splitlines()
                          if ln.startswith("branch refs/heads/")}
 
-    merged_prs: set[str] = set()
-    if shutil.which("gh") is not None:
-        res = run(["gh", "pr", "list", "--state", "merged", "--limit", "300",
-                   "--json", "headRefName", "-q", ".[].headRefName"])
-        if res.ok:
-            merged_prs = {ln.strip() for ln in (res.out or "").splitlines() if ln.strip()}
-        else:
-            log.warn("gh pr list failed; using the ancestor check only (squash-merged branches may be kept)")
-    else:
-        log.warn("gh not found; using the ancestor check only (squash-merged branches may be kept - install gh for full cleanup)")
+    merged = _pr_heads("merged")
+    if merged is None:
+        log.warn("no merged-PR list from gh; using the ancestor check only (squash-merged branches may be kept)")
+    merged_prs: set[str] = merged or set()
 
     branches = [ln.strip() for ln in (_git(["for-each-ref", "--format=%(refname:short)",
                                             "refs/heads/"]).out or "").splitlines() if ln.strip()]
@@ -271,7 +323,12 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
         else:
             log.warn(f"could not delete {b} (left in place)")
 
-    if dry and not deleted_preview and not kept:
+    origin_only = 0
+    if remote:
+        origin_only = _prune_origin_only(main=main, cur=cur, local=set(branches),
+                                         worktree_branches=worktree_branches, merged_prs=merged_prs, dry=dry)
+
+    if dry and not deleted_preview and not origin_only and not kept:
         # A dry run that prints nothing cannot be told apart from a dry run that failed to look.
         log.ok("nothing to prune: no local branch besides main and the current one")
     if not dry:

@@ -92,6 +92,11 @@ A product also gains three catalogue tasks and one token issuer, and uses them o
 
 ### Also in this release
 
+- **`support git prune-branches --remote` reaches a merged branch that exists only on origin
+  (si#555).** Before, origin was cleaned only beside a local `git branch -D`, so a branch deleted
+  locally after its merge stayed on origin. Only proven-merged branches go; `--unmerged` does not reach
+  origin, a branch that heads an open pull request is kept, and without gh's list of open pull requests
+  no origin-only branch is deleted. `--dry-run` names them.
 - **#533** pins `deploy/image/image.pin` to the published v0.36.0 kernel image.
 - **#545** is these notes.
 
