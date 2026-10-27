@@ -186,3 +186,98 @@ def test_the_refresh_asks_for_exactly_the_scopes_it_was_given(monkeypatch):
 
     assert argv_seen == [["gh", "auth", "refresh", "-h", "github.com",
                           "-s", "read:packages,write:packages"]]
+
+
+# --- prune_branches against real repositories: the origin-only case (si#555) -------------------------
+#
+# A merged branch deleted locally after its merge stays on origin, and `--remote` used to reach origin
+# only as a side effect of deleting the LOCAL branch. These run real git against a bare origin in
+# tmp_path; gh is replaced by `_pr_heads`, the one seam the PR lists come through.
+
+import subprocess
+
+import pytest
+
+
+def _sh(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+def _origin_heads(origin):
+    out = subprocess.run(["git", "-C", str(origin), "for-each-ref", "--format=%(refname:short)",
+                          "refs/heads/"], check=True, capture_output=True, text=True).stdout
+    return set(out.split())
+
+
+@pytest.fixture
+def _repos(tmp_path, monkeypatch):
+    """A bare origin with main, `done` (merged into main, deleted locally) and `wip` (pushed, unmerged,
+    deleted locally). Returns (clone, origin)."""
+    origin, clone = tmp_path / "origin.git", tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
+    for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                 "GIT_COMMITTER_EMAIL": "t@t"}.items():
+        monkeypatch.setenv(k, v)
+    _sh(clone, "commit", "-q", "--allow-empty", "-m", "root")
+    _sh(clone, "push", "-q", "origin", "main")
+    _sh(clone, "remote", "set-head", "origin", "main")
+    _sh(clone, "switch", "-q", "-c", "done")
+    _sh(clone, "commit", "-q", "--allow-empty", "-m", "done")
+    _sh(clone, "push", "-q", "origin", "done")
+    _sh(clone, "switch", "-q", "main")
+    _sh(clone, "merge", "-q", "--ff-only", "done")
+    _sh(clone, "push", "-q", "origin", "main")
+    _sh(clone, "switch", "-q", "-c", "wip")
+    _sh(clone, "commit", "-q", "--allow-empty", "-m", "wip")
+    _sh(clone, "push", "-q", "origin", "wip")
+    _sh(clone, "switch", "-q", "main")
+    _sh(clone, "branch", "-q", "-D", "done", "wip")
+    monkeypatch.setattr(gitops, "ROOT", clone)
+    monkeypatch.setattr(gitops, "_pr_heads", lambda state: set(), raising=False)
+    return clone, origin
+
+
+def test_remote_deletes_a_merged_branch_that_exists_only_on_origin(_repos):
+    clone, origin = _repos
+
+    assert gitops.prune_branches(remote=True) == 0
+
+    assert _origin_heads(origin) == {"main", "wip"}
+
+
+def test_a_dry_run_names_the_origin_branch_and_deletes_nothing(_repos, capsys):
+    clone, origin = _repos
+
+    gitops.prune_branches(dry=True, remote=True)
+
+    assert "would delete origin/done" in capsys.readouterr().out
+    assert _origin_heads(origin) == {"main", "done", "wip"}
+
+
+def test_unmerged_never_reaches_a_branch_that_exists_only_on_origin(_repos):
+    clone, origin = _repos
+
+    gitops.prune_branches(remote=True, unmerged=True)
+
+    assert "wip" in _origin_heads(origin)
+
+
+def test_a_merged_origin_branch_that_heads_an_open_pr_is_kept(_repos, monkeypatch):
+    clone, origin = _repos
+    monkeypatch.setattr(gitops, "_pr_heads", lambda state: {"done"} if state == "open" else set())
+
+    gitops.prune_branches(remote=True)
+
+    assert "done" in _origin_heads(origin)
+
+
+def test_without_the_open_pr_list_no_origin_only_branch_is_deleted(_repos, monkeypatch, capsys):
+    # A failed `gh pr list --state open` is not "no open PR": it must not license a deletion.
+    clone, origin = _repos
+    monkeypatch.setattr(gitops, "_pr_heads", lambda state: None if state == "open" else set())
+
+    gitops.prune_branches(remote=True)
+
+    assert "done" in _origin_heads(origin)
+    assert "open pull requests" in capsys.readouterr().out
