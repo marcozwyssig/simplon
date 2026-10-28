@@ -531,7 +531,7 @@ tasks:
       tag:    { help: "the tag to run, when it is not the one the build derives" }
       argv:   { help: "what to run in the container, as one string" }
       mount:  { help: "'<directory under the product>:<absolute path in the container>' to bind" }
-      expect: { help: "text the output must contain for the run to count as green" }
+      expect: { help: "text the output must contain for the run to count as green; `{tag}` is replaced with the tag" }
       rc:     { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
       platform: { help: "one of the image's declared `platforms:` to run; default every declared one" }
