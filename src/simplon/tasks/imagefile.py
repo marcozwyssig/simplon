@@ -12,9 +12,13 @@ and already the longest module in the kernel. This one READS an image and WRITES
 `image`'s declarations and references unchanged and adds nothing they need. Kept apart, the file side of
 si#552 (this task and `test:file`) has one home and `image.py` does not grow a second subject.
 
-WHERE IT READS FROM. The platform's reference this checkout's `build:image` recorded (`read_built`), held by
-the daemon as `platform_reference`. It never pulls: a platform this checkout did not build is a refusal that
-names the build, not a silent copy of something older.
+WHERE IT READS FROM. Without `tag`: the platform's reference this checkout's `build:image` recorded
+(`read_built`), held by the daemon as `platform_reference`. It never pulls then: a platform this checkout did
+not build is a refusal that names the build, not a silent copy of something older. With `tag`: the PUBLISHED
+image - the registry's multi-platform index is read with `oras manifest fetch`, and the platform's own manifest
+is pulled by digest, `<repository>@<digest>`, so the bytes are the ones the registry serves for that platform
+whatever the daemon holds under the tag. A tag the registry does not serve, a single manifest and an index
+without the platform are refusals; none of them falls back to a local build.
 
 THE COPY LEAVES A REGULAR FILE OR NOTHING. `docker cp -L` follows a symlink (a measured `/link ->
 /bin/busybox` arrives as the file); a directory arrives as a directory and is refused, and a symlink to
@@ -29,7 +33,7 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
-from simplon.adapters import docker
+from simplon.adapters import docker, githubpackages
 from simplon.kernel import log
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context
@@ -112,28 +116,113 @@ def extract(name: str = "", file: str = "", inside: str = "", tag: str = "") -> 
         log.error(f"`inside:` is {inside!r}; give the file's absolute path inside the image, e.g. /usr/bin/firn")
         return 1
     docker.ensure_docker()
-    source = _built_reference(cfg, name, tag, platform, root)
+    if tag:
+        return _copy_published(cfg, tag, platform, inside, str(entry.path), root)
+    source = _built_reference(cfg, name, platform, root)
     if source is None:
         return 1
+    return _copy(source, inside, str(entry.path), root)
+
+
+def _copy(source: str, inside: str, path: str, root: Path) -> int:
+    """`copy_out` from the daemon's `source` to the entry's `path`, naming the image id it copied from."""
     image_id = image.local_id(source)
-    if not copy_out(source, inside, root / str(entry.path)):
+    if not copy_out(source, inside, root / path):
         return 1
-    log.ok(f"copied {inside} out of {source} ({image_id or 'its id could not be read'}) to {entry.path}")
+    log.ok(f"copied {inside} out of {source} ({image_id or 'its id could not be read'}) to {path}")
     return 0
 
 
-def _built_reference(cfg: image.Image, name: str, tag: str, platform: str, root: Path) -> str | None:
+def _copy_published(cfg: image.Image, tag: str, platform: str, inside: str, path: str, root: Path) -> int:
+    """The published image's `platform` manifest, pulled by digest and copied from.
+
+    The login is `release:image`'s: for GitHub Packages a token minted into a docker config that ends with
+    the block (si#443), and the index read, the pull AND the `docker create` all happen inside it - so no
+    credential outlives the command, and none is missing for a step that might still need the registry. For
+    any other host no GitHub token is minted (si#200): the operator's stored `docker login` is used, outside
+    a scope, because the scope would leave exactly that credential behind.
+    """
+    try:
+        githubpackages.require_oras()
+    except githubpackages.PackageError as failure:
+        log.error(f"the published index of {image.reference(cfg, tag)} cannot be read, so nothing was "
+                  f"pulled: {failure}")
+        return 1
+    if not githubpackages.is_github_packages(cfg.registry):
+        host = githubpackages.registry_host(cfg.registry)
+        if not docker.has_stored_login(host):
+            log.error(f"no credential for {host}, so {image.reference(cfg, tag)} was not read.\n"
+                      f"  run `docker login {host}` first (in CI: log in with the registry's own token, "
+                      f"never with a GitHub one)")
+            return 1
+        return _pull_and_copy(cfg, tag, platform, inside, path, root)
+    with githubpackages.scoped_credentials():
+        try:
+            githubpackages.docker_login(cfg.registry)
+        except githubpackages.PackageError as failure:
+            log.error(str(failure))
+            return 1
+        return _pull_and_copy(cfg, tag, platform, inside, path, root)
+
+
+def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path: str, root: Path) -> int:
+    """Resolve, pull and copy from `platform`'s published manifest, in whatever credential scope the caller
+    holds."""
+    source = published_reference(cfg, tag, platform)
+    if source is None:
+        return 1
+    pulled = run(["docker", "pull", source])
+    if not pulled.ok:
+        log.error(f"`docker pull {source}` failed, so nothing was copied: "
+                  f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}")
+        return 1
+    return _copy(source, inside, path, root)
+
+
+def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None:
+    """`<registry>/<repository>@<digest>` of `platform`'s manifest in the index the registry serves under
+    `tag`, or None after saying why.
+
+    A failed fetch is the registry not serving the reference - oras's own words say whether it was absent
+    or refused - and is never read as "no index". A published `linux/arm64/v8` answers for a declared
+    `linux/arm64`, as in `image.missing_platforms`.
+    """
+    ref = image.reference(cfg, tag)
+    fetched = run(["oras", "manifest", "fetch", ref])
+    if not fetched.ok:
+        log.error(f"the registry does not serve {ref}, so nothing was pulled: "
+                  f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"
+                  f"  publish it first (`release:image` with the same tag), or drop `tag` to copy from "
+                  f"this checkout's build")
+        return None
+    manifests = image.index_manifests(fetched.out)
+    if manifests is None:
+        log.error(f"{ref} is published as a single manifest, not a multi-platform index, so it has no "
+                  f"{platform} manifest to pull by digest; publish it from an image entry with "
+                  f"`platforms:` (`release:image`)")
+        return None
+    if image.missing_platforms([platform], manifests):
+        log.error(f"{ref} is published without {platform}: its index carries "
+                  f"{', '.join(sorted(manifests)) or 'no platform at all'}. Publish {ref} for {platform} "
+                  f"(`release:image`), or copy for a platform the index carries")
+        return None
+    digest = manifests.get(platform) or next((digest for found, digest in sorted(manifests.items())
+                                              if found.startswith(platform + "/")), "")
+    return f"{cfg.registry.rstrip('/')}/{cfg.repository.strip('/')}@{digest}"
+
+
+def _built_reference(cfg: image.Image, name: str, platform: str, root: Path) -> str | None:
     """The daemon reference this checkout's `build:image` loaded `platform` under, or None after saying why.
 
-    The tag is resolved the way `build:image` and `test:image` resolve it, so the three cannot name three
-    references."""
-    resolved = image.resolve_tag(cfg, tag, image.build_arguments(cfg, root).get(image.VERSION_ARG, ""))
+    The tag is resolved the way `build:image` and `test:image` resolve it without one, so the three cannot
+    name three references."""
+    resolved = image.resolve_tag(cfg, "", image.build_arguments(cfg, root).get(image.VERSION_ARG, ""))
     ref = image.reference(cfg, resolved)
     source = image.platform_reference(ref, platform)
     if platform not in image.read_built(name, ref) or not image.present_locally(source):
         log.error(f"this checkout has no build of image '{name}' for {platform} under {ref}, so there is "
                   f"nothing to copy out of; nothing was pulled.\n"
-                  f"  build it first: `build:image` with `with: {{ name: {name} }}` and the same tag")
+                  f"  build it first: `build:image` with `with: {{ name: {name} }}`")
         return None
     return source
 

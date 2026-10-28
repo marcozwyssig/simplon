@@ -7,11 +7,13 @@ before docker is asked.
 AAA; the name states the behaviour under test. Nothing touches docker: the command line is a recorder whose
 `docker cp` leaves behind what a real one would - a regular file, or a directory.
 """
+import os
 import stat
 
 import pytest
+from test_tasks_image import _INDEX_AMD64_ONLY, _INDEX_BOTH, _SINGLE_MANIFEST
 
-from simplon.adapters import docker
+from simplon.adapters import docker, githubpackages
 from simplon.kernel.run import Result
 from simplon.manifest import catalogue, context
 from simplon.manifest import load as manifest_mod
@@ -44,6 +46,14 @@ artifacts:
     dockerfile: Dockerfile
     context: .
     tag: v1.0
+  elsewhere:
+    kind: image
+    registry: registry.example.com/team
+    repository: firn
+    dockerfile: Dockerfile
+    context: .
+    tag: v1.0
+    platforms: [linux/amd64, linux/arm64]
   firn-arm64:
     kind: file
     path: build/firn-linux-arm64
@@ -69,15 +79,23 @@ def product(tmp_path, monkeypatch):
 
 
 class _Cli:
-    """The command line, recorded. `docker cp` leaves `copied` at its destination: "file" or "dir"."""
+    """The command line, recorded with the `DOCKER_CONFIG` each call ran under. `docker cp` leaves `copied`
+    at its destination: "file" or "dir". `oras manifest fetch` answers `index`, or fails when it is None."""
 
     def __init__(self, copied="file"):
         self.calls: list[list[str]] = []
+        self.configs: list[str | None] = []
         self.copied = copied
+        self.index: str | None = _INDEX_BOTH
 
     def run(self, argv, **kwargs) -> Result:
         argv = list(argv)
         self.calls.append(argv)
+        self.configs.append(os.environ.get("DOCKER_CONFIG"))
+        if argv[:3] == ["oras", "manifest", "fetch"]:
+            if self.index is None:
+                return Result(rc=1, out="", err="Error: ghcr.io/owner/firn:v9.9: not found")
+            return Result(rc=0, out=self.index, err="")
         if argv[:2] == ["docker", "cp"]:
             from pathlib import Path
             dest = Path(argv[-1])
@@ -234,3 +252,137 @@ def test_extract_refuses_a_directory_and_leaves_nothing(product, cli, built, cap
     created = [c for c in cli.calls if c[:2] == ["docker", "create"]][0]
     container = created[created.index("--name") + 1]
     assert ["docker", "rm", container] in cli.calls
+
+
+# --- with a tag: the published image, by the platform's digest -----------------------------------------
+
+PUBLISHED = "ghcr.io/owner/firn:v2.0"
+
+
+@pytest.fixture
+def registry(monkeypatch, tmp_path):
+    """oras is on hand, the GitHub login records the config it wrote into, and nothing reads a local build:
+    with a tag the published image is the source, whatever this checkout built."""
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "operator"))
+    logins: list[str] = []
+    monkeypatch.setattr(githubpackages, "require_oras", lambda: None)
+    monkeypatch.setattr(githubpackages, "docker_login",
+                        lambda registry, **kw: logins.append(os.environ["DOCKER_CONFIG"]))
+
+    def _no_local_build(name, ref):
+        raise AssertionError("a tag reads the registry, not this checkout's build")
+
+    monkeypatch.setattr(image, "read_built", _no_local_build)
+    return logins
+
+
+def _pulls(cli) -> list[list[str]]:
+    return [c for c in cli.calls if c[:2] == ["docker", "pull"]]
+
+
+def test_tag_pulls_the_platforms_digest_from_the_index(product, cli, registry, tmp_path):
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert: the index was read, arm64's digest pulled and copied from, all inside one scoped login
+    assert rc == 0
+    fetches = [c for c in cli.calls if c[:3] == ["oras", "manifest", "fetch"]]
+    assert fetches == [["oras", "manifest", "fetch", PUBLISHED]]
+    by_digest = "ghcr.io/owner/firn@sha256:f674"
+    assert _pulls(cli) == [["docker", "pull", by_digest]]
+    created = [c for c in cli.calls if c[:2] == ["docker", "create"]]
+    assert len(created) == 1 and created[0][-2:] == [by_digest, imagefile.NEVER_STARTED]
+    scope = registry[0]
+    assert scope != str(tmp_path / "operator")
+    for call in (fetches[0], _pulls(cli)[0], created[0]):
+        assert cli.configs[cli.calls.index(call)] == scope
+    assert os.environ["DOCKER_CONFIG"] == str(tmp_path / "operator")
+    assert (product / "build/firn-linux-arm64").read_bytes() == b"\x7fELF firn"
+
+
+def test_tag_takes_a_variant_the_registry_added(product, cli, registry):
+    # arrange: a registry may publish `linux/arm64/v8` for a declared `linux/arm64`, as missing_platforms reads
+    cli.index = _INDEX_BOTH.replace('"architecture": "arm64", "os": "linux"',
+                                    '"architecture": "arm64", "os": "linux", "variant": "v8"')
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    assert rc == 0
+    assert _pulls(cli) == [["docker", "pull", "ghcr.io/owner/firn@sha256:f674"]]
+
+
+def test_tag_refuses_a_tag_the_registry_does_not_serve(product, cli, registry, capsys):
+    # arrange
+    cli.index = None
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert: said as the registry not serving it, with oras's own words - never as "no index"
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"the registry does not serve {PUBLISHED}" in err
+    assert "not found" in err
+    assert "index" not in err
+    assert _pulls(cli) == []
+    assert not [c for c in cli.calls if c[:2] == ["docker", "create"]]
+
+
+def test_tag_refuses_an_index_without_the_platform(product, cli, registry, capsys):
+    # arrange
+    cli.index = _INDEX_AMD64_ONLY
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert PUBLISHED in err and "linux/arm64" in err
+    assert "its index carries linux/amd64" in err
+    assert _pulls(cli) == []
+
+
+def test_tag_refuses_a_single_manifest(product, cli, registry, capsys):
+    # arrange
+    cli.index = _SINGLE_MANIFEST
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert PUBLISHED in err and "not a multi-platform index" in err
+    assert _pulls(cli) == []
+
+
+def test_tag_refuses_a_foreign_registry_without_a_stored_login(product, cli, registry, monkeypatch, capsys):
+    # arrange: no GitHub token is minted for a host that is not GitHub's (si#200's reasoning in release())
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: False)
+
+    # act
+    rc = imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "docker login registry.example.com" in err
+    assert registry == []
+    assert [c for c in cli.calls if c[:1] in (["oras"], ["docker"])] == []
+
+
+def test_tag_pulls_from_a_foreign_registry_with_the_operators_login(product, cli, registry, monkeypatch, tmp_path):
+    # arrange: the stored login lives in the operator's config, which a scope would leave behind
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: host == "registry.example.com")
+
+    # act
+    rc = imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    assert rc == 0
+    assert registry == []
+    assert _pulls(cli) == [["docker", "pull", "registry.example.com/team/firn@sha256:f674"]]
+    assert cli.configs[cli.calls.index(_pulls(cli)[0])] == str(tmp_path / "operator")

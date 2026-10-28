@@ -555,7 +555,7 @@ tasks:
       name:   { help: "the image to copy from (normally bound with `consumes:`)" }
       file:   { help: "the file artifact to write, whose `platform:` names the platform (normally bound with `produces:`)" }
       inside: { help: "the absolute path of the file inside the image; a symlink is followed" }
-      tag:    { help: "the tag to copy from, when it is not the one the build derives" }
+      tag:    { help: "copy from the PUBLISHED image under this tag, pulled by the file's platform digest; without it, from this checkout's build" }
 
   # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
   # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
