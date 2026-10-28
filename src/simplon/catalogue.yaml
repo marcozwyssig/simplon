@@ -545,6 +545,18 @@ tasks:
       tag:  { help: "the tag to build under, for a version only known after a build" }
       platform: { help: "one of the image's declared `platforms:` to build; default every declared one" }
 
+  # si#552: one file out of an image, for the platform the FILE ENTRY names (`platform:`, required here and one
+  # of the image's `platforms:`). No `platform` param: one entry per platform, so no command can write arm64's
+  # bytes under amd64's name. It copies what this checkout's `build:image` recorded and never pulls.
+  build:image-file:
+    help: "Copy one file out of an image, for the platform its file entry names."
+    unattended: true
+    params:
+      name:   { help: "the image to copy from (normally bound with `consumes:`)" }
+      file:   { help: "the file artifact to write, whose `platform:` names the platform (normally bound with `produces:`)" }
+      inside: { help: "the absolute path of the file inside the image; a symlink is followed" }
+      tag:    { help: "the tag to copy from, when it is not the one the build derives" }
+
   # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
   # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
   # compiler reads. They meet in the tree and nowhere else.

@@ -52,6 +52,23 @@ test_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+build_image_file typeOf simplon.pipeline.CatalogueTask {
+  key = "build:image-file"
+  body = "simplon.tasks.imagefile:extract"
+  input image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
+  }
+  output file typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.file
+    param = "file"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
 release_image typeOf simplon.pipeline.CatalogueTask {
   key = "release:image"
   body = "simplon.tasks.image:release"
