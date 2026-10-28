@@ -320,14 +320,32 @@ def test_tag_refuses_a_tag_the_registry_does_not_serve(product, cli, registry, c
     # act
     rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
 
-    # assert: said as the registry not serving it, with oras's own words - never as "no index"
+    # assert: both causes, oras's own words, the GitHub token as the way to read - never "no index"
     err = capsys.readouterr().err
     assert rc == 1
-    assert f"the registry does not serve {PUBLISHED}" in err
+    assert f"{PUBLISHED} could not be read from the registry" in err
     assert "not found" in err
+    assert "not published" in err and "may not read it" in err
+    assert "GITHUB_TOKEN" in err
     assert "index" not in err
     assert _pulls(cli) == []
     assert not [c for c in cli.calls if c[:2] == ["docker", "create"]]
+
+
+def test_a_failed_fetch_from_a_foreign_registry_names_docker_login(product, cli, registry, monkeypatch, capsys):
+    # arrange: a 401 and an absent tag look alike from here, so both causes are named
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: True)
+    cli.index = None
+
+    # act
+    rc = imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "not published" in err and "may not read it" in err
+    assert "if the registry needs a login: `docker login registry.example.com`" in err
+    assert _pulls(cli) == []
 
 
 def test_tag_refuses_an_index_without_the_platform(product, cli, registry, capsys):
@@ -359,24 +377,38 @@ def test_tag_refuses_a_single_manifest(product, cli, registry, capsys):
     assert _pulls(cli) == []
 
 
-def test_tag_refuses_a_foreign_registry_without_a_stored_login(product, cli, registry, monkeypatch, capsys):
-    # arrange: no GitHub token is minted for a host that is not GitHub's (si#200's reasoning in release())
+def test_tag_reads_a_foreign_registry_without_a_stored_login(product, cli, registry, monkeypatch):
+    # arrange: no credential for the host - a public image pulls anonymously, so nothing refuses before trying
     monkeypatch.setattr(docker, "has_stored_login", lambda host: False)
 
     # act
     rc = imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")
 
-    # assert
-    err = capsys.readouterr().err
-    assert rc == 1
-    assert "docker login registry.example.com" in err
+    # assert: no GitHub token minted for it, and the registry was asked
+    assert rc == 0
     assert registry == []
-    assert [c for c in cli.calls if c[:1] in (["oras"], ["docker"])] == []
+    assert ["oras", "manifest", "fetch", "registry.example.com/team/firn:v2.0"] in cli.calls
+    assert _pulls(cli) == [["docker", "pull", "registry.example.com/team/firn@sha256:f674"]]
+
+
+def test_tag_reads_github_packages_anonymously_without_a_token(product, cli, registry, monkeypatch, tmp_path):
+    # arrange: no GITHUB_TOKEN and no `gh` - a public package still pulls without one
+    def _no_token(registry, **kw):
+        raise githubpackages.PackageError("no GitHub token: GITHUB_TOKEN is not set")
+
+    monkeypatch.setattr(githubpackages, "docker_login", _no_token)
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    # assert: fetched and pulled anyway, inside a scope rather than the operator's config
+    assert rc == 0
+    assert _pulls(cli) == [["docker", "pull", "ghcr.io/owner/firn@sha256:f674"]]
+    assert cli.configs[cli.calls.index(_pulls(cli)[0])] not in (None, str(tmp_path / "operator"))
 
 
 def test_tag_pulls_from_a_foreign_registry_with_the_operators_login(product, cli, registry, monkeypatch, tmp_path):
-    # arrange: the stored login lives in the operator's config, which a scope would leave behind
-    monkeypatch.setattr(docker, "has_stored_login", lambda host: host == "registry.example.com")
+    # arrange: a stored login lives in the operator's config, which a scope would leave behind
 
     # act
     rc = imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")

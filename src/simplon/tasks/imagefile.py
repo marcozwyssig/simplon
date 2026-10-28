@@ -17,8 +17,9 @@ WHERE IT READS FROM. Without `tag`: the platform's reference this checkout's `bu
 not build is a refusal that names the build, not a silent copy of something older. With `tag`: the PUBLISHED
 image - the registry's multi-platform index is read with `oras manifest fetch`, and the platform's own manifest
 is pulled by digest, `<repository>@<digest>`, so the bytes are the ones the registry serves for that platform
-whatever the daemon holds under the tag. A tag the registry does not serve, a single manifest and an index
-without the platform are refusals; none of them falls back to a local build.
+whatever the daemon holds under the tag. No credential is demanded before the registry is asked: a public
+image pulls anonymously. A tag this host cannot read (absent, or not readable without a login), a single
+manifest and an index without the platform are refusals; none of them falls back to a local build.
 
 THE COPY LEAVES A REGULAR FILE OR NOTHING. `docker cp -L` follows a symlink (a measured `/link ->
 /bin/busybox` arrives as the file); a directory arrives as a directory and is refused, and a symlink to
@@ -136,11 +137,15 @@ def _copy(source: str, inside: str, path: str, root: Path) -> int:
 def _copy_published(cfg: image.Image, tag: str, platform: str, inside: str, path: str, root: Path) -> int:
     """The published image's `platform` manifest, pulled by digest and copied from.
 
-    The login is `release:image`'s: for GitHub Packages a token minted into a docker config that ends with
-    the block (si#443), and the index read, the pull AND the `docker create` all happen inside it - so no
-    credential outlives the command, and none is missing for a step that might still need the registry. For
-    any other host no GitHub token is minted (si#200): the operator's stored `docker login` is used, outside
-    a scope, because the scope would leave exactly that credential behind.
+    NOTHING REFUSES FOR WANT OF A CREDENTIAL BEFORE THE REGISTRY IS ASKED: a public image pulls anonymously,
+    and a push's precondition (`release:image` checks for a stored login) would turn that into a refusal of
+    something that works. Only a failed fetch or pull refuses, and its message names the login as one way out.
+
+    For GitHub Packages a token is minted, when there is one, into a docker config that ends with the block
+    (si#443); the index read, the pull AND the `docker create` all happen inside it, so no credential
+    outlives the command. Without a token the same block goes on anonymously. For any other host no GitHub
+    token is minted (si#200), and the block is not entered: the scope keeps no credential of the caller's,
+    so it would drop exactly the `docker login` the operator stored for that host.
     """
     try:
         githubpackages.require_oras()
@@ -149,20 +154,23 @@ def _copy_published(cfg: image.Image, tag: str, platform: str, inside: str, path
                   f"pulled: {failure}")
         return 1
     if not githubpackages.is_github_packages(cfg.registry):
-        host = githubpackages.registry_host(cfg.registry)
-        if not docker.has_stored_login(host):
-            log.error(f"no credential for {host}, so {image.reference(cfg, tag)} was not read.\n"
-                      f"  run `docker login {host}` first (in CI: log in with the registry's own token, "
-                      f"never with a GitHub one)")
-            return 1
         return _pull_and_copy(cfg, tag, platform, inside, path, root)
     with githubpackages.scoped_credentials():
         try:
             githubpackages.docker_login(cfg.registry)
         except githubpackages.PackageError as failure:
-            log.error(str(failure))
-            return 1
+            log.warn(f"reading {image.reference(cfg, tag)} without a login, which a public package allows: "
+                     f"{failure}")
         return _pull_and_copy(cfg, tag, platform, inside, path, root)
+
+
+def _login_advice(cfg: image.Image) -> str:
+    """The credential that lets this host read `cfg`'s registry: the GitHub token for GitHub Packages (a
+    stored `docker login` is not read inside the scope), the operator's `docker login` for any other."""
+    if githubpackages.is_github_packages(cfg.registry):
+        return (f"a GitHub token that may read the package - set GITHUB_TOKEN or run `gh auth login`; "
+                f"{githubpackages.scope_advice()}")
+    return f"`docker login {githubpackages.registry_host(cfg.registry)}`"
 
 
 def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path: str, root: Path) -> int:
@@ -174,7 +182,8 @@ def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path:
     pulled = run(["docker", "pull", source])
     if not pulled.ok:
         log.error(f"`docker pull {source}` failed, so nothing was copied: "
-                  f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}")
+                  f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}.\n"
+                  f"  if the registry needs a login: {_login_advice(cfg)}")
         return 1
     return _copy(source, inside, path, root)
 
@@ -183,17 +192,19 @@ def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None
     """`<registry>/<repository>@<digest>` of `platform`'s manifest in the index the registry serves under
     `tag`, or None after saying why.
 
-    A failed fetch is the registry not serving the reference - oras's own words say whether it was absent
-    or refused - and is never read as "no index". A published `linux/arm64/v8` answers for a declared
+    A failed fetch is never read as "no index". From here an absent tag and a refused read look alike (a
+    registry may answer either way for a package this host may not see), so the message names both, with
+    oras's own words and the login that would let this host read it. A published `linux/arm64/v8` answers for a declared
     `linux/arm64`, as in `image.missing_platforms`.
     """
     ref = image.reference(cfg, tag)
     fetched = run(["oras", "manifest", "fetch", ref])
     if not fetched.ok:
-        log.error(f"the registry does not serve {ref}, so nothing was pulled: "
+        log.error(f"{ref} could not be read from the registry, so nothing was pulled: "
                   f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"
-                  f"  publish it first (`release:image` with the same tag), or drop `tag` to copy from "
-                  f"this checkout's build")
+                  f"  either it is not published: publish it (`release:image` with the same tag), or drop "
+                  f"`tag` to copy from this checkout's build;\n"
+                  f"  or this host may not read it: if the registry needs a login: {_login_advice(cfg)}")
         return None
     manifests = image.index_manifests(fetched.out)
     if manifests is None:
