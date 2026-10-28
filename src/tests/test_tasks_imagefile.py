@@ -439,6 +439,7 @@ class _Docker:
     def __init__(self):
         self.calls: list[tuple[list[str], dict]] = []
         self.answer: tuple[int, str, str] | None = (0, "firn v1.0.0\n", "")
+        self.pulled: tuple[int, str, str] = (0, "", "")
 
     def run(self, argv, **kwargs) -> Result:
         argv = list(argv)
@@ -447,6 +448,9 @@ class _Docker:
             if self.answer is None:
                 raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
             rc, out, err = self.answer
+            return Result(rc=rc, out=out, err=err)
+        if argv[:2] == ["docker", "pull"]:
+            rc, out, err = self.pulled
             return Result(rc=rc, out=out, err=err)
         return Result(rc=0, out="", err="")
 
@@ -637,10 +641,12 @@ def test_check_on_a_foreign_platform_without_emulation_carries_the_advice(produc
     # act
     rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5)
 
-    # assert
+    # assert: the register command, in a sentence about a run - not the bake's builder and its `buildx rm`
     err = capsys.readouterr().err
     assert rc == 1
-    assert image._emulation_advice(["linux/arm64"]).strip() in err
+    assert image._emulation_command(["linux/arm64"]) in err
+    assert "no emulator for linux/arm64" in err
+    assert "builder" not in err and "buildx rm" not in err
 
 
 def test_check_refuses_a_file_build_image_file_has_not_written(product, box, capsys):
@@ -652,3 +658,74 @@ def test_check_refuses_a_file_build_image_file_has_not_written(product, box, cap
     assert rc == 1
     assert "build/firn-linux-amd64" in err and "build:image-file" in err
     assert box.runs() == []
+
+
+def test_check_feeds_stdin_byte_exact_keeping_crlf(product, box):
+    # arrange: LSP framing, whose header lines end in CRLF
+    request = product / "tests/lsp/initialize.lsp"
+    request.parent.mkdir(parents=True)
+    request.write_bytes(b"Content-Length: 2\r\n\r\n{}")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="lsp", stdin="tests/lsp/initialize.lsp", timeout=5)
+
+    # assert
+    assert rc == 0
+    [(_, kwargs)] = box.runs()
+    assert kwargs["input_text"] == "Content-Length: 2\r\n\r\n{}"
+
+
+def test_check_refuses_a_stdin_file_that_is_not_utf8(product, box, capsys):
+    # arrange
+    request = product / "tests/lsp/latin1.txt"
+    request.parent.mkdir(parents=True)
+    request.write_bytes(b"caf\xe9\n")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="lsp", stdin="tests/lsp/latin1.txt", timeout=5)
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "tests/lsp/latin1.txt" in err and "UTF-8" in err
+    assert box.runs() == []
+
+
+def test_check_pulls_the_test_image_for_the_platform_before_the_timed_run(product, box):
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5)
+
+    # assert: the pull is not inside the time limit, and it pulls the entry's platform
+    assert rc == 0
+    pulls = [i for i, (argv, _) in enumerate(box.calls) if argv[:2] == ["docker", "pull"]]
+    runs = [i for i, (argv, _) in enumerate(box.calls) if argv[:2] == ["docker", "run"]]
+    assert len(pulls) == 1 and pulls[0] < runs[0]
+    assert box.calls[pulls[0]][0] == ["docker", "pull", "--platform", "linux/arm64", imagefile.FILE_TEST_IMAGE]
+    assert "timeout" not in box.calls[pulls[0]][1]
+
+
+def test_check_pulls_without_platform_for_a_host_run(product, box):
+    # arrange
+    (product / "build/firn").write_bytes(_BYTES)
+
+    # act
+    imagefile.check(file="firn-anywhere", argv="--version", timeout=5)
+
+    # assert
+    assert ["docker", "pull", imagefile.FILE_TEST_IMAGE] in [argv for argv, _ in box.calls]
+
+
+def test_a_failed_pull_refuses_with_its_own_message_and_no_timeout(product, box, capsys):
+    # arrange
+    box.pulled = (1, "", "Error response from daemon: Get \"https://registry-1.docker.io/v2/\": dial tcp: i/o timeout")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5, results="firn-checked")
+
+    # assert: the pull's own words, never a timeout about the file, and no verdict about a file that never ran
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "docker pull" in err and "dial tcp: i/o timeout" in err
+    assert "no answer within" not in err
+    assert box.runs() == []
+    assert not (product / "build/test/firn.json").exists()

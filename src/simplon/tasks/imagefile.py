@@ -336,7 +336,14 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
         if not fed.is_file():
             log.error(f"`stdin:` names {fed}, which is not a file under {root}; give the file to feed the run")
             return 1
-        stdin_text = fed.read_text(encoding="utf-8")
+        # `newline=""`: read as written. Universal newlines would turn LSP's `\r\n` framing into `\n`.
+        try:
+            with open(fed, encoding="utf-8", newline="") as stream:
+                stdin_text = stream.read()
+        except UnicodeDecodeError as undecodable:
+            log.error(f"`stdin:` names {stdin}, which is not UTF-8 text ({undecodable.reason} at byte "
+                      f"{undecodable.start}); save it as UTF-8")
+            return 1
     if not (root / path).is_file():
         log.error(f"file '{file}' has nothing at {path}, so there is nothing to run; write it first "
                   f"(`build:image-file` with `produces: {{ file: {file} }}`)")
@@ -356,6 +363,8 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
     except ValueError as refused:
         log.error(str(refused))
         return 1
+    if not _pull_test_image(platform):
+        return 1
     verdict, got = _run_file(path, platform, mount, argv, stdin_text, expected, rc, timeout)
     if record_path is not None:
         record_path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,6 +373,21 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
             "runs": [{"reference": path, "id": subject, "platform": platform, "argv": argv, "expected_rc": rc,
                       "rc": got, "verdict": verdict}]}, indent=2) + "\n", encoding="utf-8")
     return verdict
+
+
+def _pull_test_image(platform: str) -> bool:
+    """Pull `FILE_TEST_IMAGE` for `platform` (the host's when empty) OUTSIDE the time limit, or say why not.
+
+    Inside it a slow first pull would read as the file giving no answer. A failed pull is the pull's own
+    refusal: the file never ran, so no verdict about it is recorded. Measured 2026-10-28: with the image
+    already held, the pull still asks the registry, about 3 s.
+    """
+    pulled = run(["docker", "pull", *(["--platform", platform] if platform else []), FILE_TEST_IMAGE])
+    if not pulled.ok:
+        log.error(f"`docker pull {FILE_TEST_IMAGE}`" + (f" for {platform}" if platform else "")
+                  + f" failed, so nothing was run: {(pulled.err or pulled.out).strip() or '(it said nothing)'}")
+        return False
+    return True
 
 
 def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text: str, expect: str, rc: int,
@@ -385,8 +409,7 @@ def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text:
         return (1, None)
     if result.rc != rc:
         said = image._indented(result)
-        # The bake's advice, for the same cause: this host has no emulator for the entry's platform.
-        advice = image._emulation_advice([platform]) if platform and "exec format error" in said else ""
+        advice = _emulation_advice(platform) if platform and "exec format error" in said else ""
         log.error(f"{path} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n" + said
                   + advice)
         # `or 1`: when a refusal was expected and the file exited 0, that 0 is the success being refused.
@@ -397,3 +420,11 @@ def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text:
         return (1, result.rc)
     log.ok(f"ran {path} in {FILE_TEST_IMAGE}" + (f" for {platform}" if platform else ""))
     return (0, result.rc)
+
+
+def _emulation_advice(platform: str) -> str:
+    """What to do when the run says `exec format error`: the bake's register command, in a sentence about a
+    run - there is no builder here to recreate."""
+    return (f"\n  `exec format error` means this host has no emulator for {platform}. Register one - a "
+            f"privileged act on the whole host, which is why simplon does not do it for you:\n"
+            f"    {image._emulation_command([platform])}")

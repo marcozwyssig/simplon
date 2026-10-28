@@ -74,6 +74,7 @@ artifacts:
   hello-amd64: {{ kind: file, path: build/files/hello-linux-amd64, platform: linux/amd64 }}
   hello-arm64: {{ kind: file, path: build/files/hello-linux-arm64, platform: linux/arm64 }}
   hello-dynamic-amd64: {{ kind: file, path: build/files/hello-dynamic-linux-amd64, platform: linux/amd64 }}
+  stdin-probe: {{ kind: file, path: build/files/stdin-probe }}
   hello-checked: {{ kind: test-result, path: build/test/hello.json }}
 """
 
@@ -221,6 +222,22 @@ def test_stdin_reaches_the_file(product):
 
     # act
     verdict = imagefile.check(file="hello-amd64", expect=said, stdin="stdin.txt", timeout=30)
+
+    # assert
+    assert verdict == 0
+
+
+def test_stdin_reaches_the_file_with_its_crlf(product):
+    # arrange: LSP framing, and a script that prints every byte it reads (busybox `od -c` shows CR as `\\r`)
+    (product.root / "stdin.lsp").write_bytes(b"Content-Length: 2\r\n\r\n{}")
+    probe = product.root / "build/files/stdin-probe"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text("#!/bin/sh\nexec od -c\n", encoding="utf-8")
+    probe.chmod(0o755)
+
+    # act
+    verdict = imagefile.check(file="stdin-probe", expect="2  \\r  \\n  \\r  \\n   {   }", stdin="stdin.lsp",
+                              timeout=30)
 
     # assert
     assert verdict == 0

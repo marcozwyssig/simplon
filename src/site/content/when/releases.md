@@ -59,8 +59,9 @@ A product also gains five catalogue tasks and one token issuer, and uses them on
   quietly links glibc or musl dynamically is red here and not on a user's machine. It runs with
   `--network none`, and `timeout` (seconds) is required: a run past it is red and its container is
   removed. Its record names the file's sha256, the subject a release that uploads the file compares with.
-- **`kind: file` takes an optional `platform:`**, exactly one platform. Both tasks read it, and a file
-  entry without one, or with one the image does not declare, is refused before docker is asked. One entry
+- **`kind: file` takes an optional `platform:`**, exactly one platform. `build:image-file` requires
+  it: a file entry without one, or with one the image does not declare, is refused before docker is asked.
+  `test:file` runs the file under the entry's platform, or under the host's when it names none. One entry
   per platform: firn declares two, for linux/amd64 and linux/arm64.
 - **`{tag}` in `test:image`'s `expect`** is replaced with the resolved tag, and in `test:file`'s with
   `tag`, else the version the checkout derives. No reachable manifest had `{` in an `expect`, so nothing

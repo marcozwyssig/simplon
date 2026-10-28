@@ -547,7 +547,8 @@ tasks:
 
   # si#552: one file out of an image, for the platform the FILE ENTRY names (`platform:`, required here and one
   # of the image's `platforms:`). No `platform` param: one entry per platform, so no command can write arm64's
-  # bytes under amd64's name. It copies what this checkout's `build:image` recorded and never pulls.
+  # bytes under amd64's name. Without `tag` it copies what this checkout's `build:image` recorded and never
+  # pulls; with `tag` it pulls the published image's platform manifest by digest.
   build:image-file:
     help: "Copy one file out of an image, for the platform its file entry names."
     unattended: true
