@@ -96,14 +96,17 @@ def extract(name: str = "", file: str = "", inside: str = "", tag: str = "") -> 
                   f"`platform:` to `{SECTION}.{file}` - one of {choices} - and declare one file entry per "
                   f"platform")
         return 1
-    # Not `_platform_declared`'s first message: it tells a command to "drop `platform:`", and a file entry's
-    # `platform:` is required here.
+    # Not `_platform_declared`: its first message tells a command to "drop `platform:`", which a file entry
+    # cannot, and its second names neither the file entry at fault nor a way out.
     if not cfg.platforms:
         log.error(f"image '{name}' declares no `platforms:`, so it has no per-platform build to copy "
                   f"{platform}'s file out of. Declare `platforms:` on `{SECTION}.{name}`, with {platform} "
                   f"among them")
         return 1
-    if not image._platform_declared(cfg, name, platform):
+    if platform not in cfg.platforms:
+        log.error(f"`{SECTION}.{file}.platform` is {platform}, and image '{name}' is not built for it; its "
+                  f"declared platforms are {', '.join(cfg.platforms)}. Change the file entry's `platform:` "
+                  f"to one of them, or add {platform} to `platforms:` on `{SECTION}.{name}`")
         return 1
     if not inside.startswith("/"):
         log.error(f"`inside:` is {inside!r}; give the file's absolute path inside the image, e.g. /usr/bin/firn")

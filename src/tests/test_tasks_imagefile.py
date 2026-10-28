@@ -148,10 +148,13 @@ def test_extract_refuses_a_platform_the_image_does_not_declare(product, cli, bui
     # act
     rc = imagefile.extract(name="amd-only", file="firn-arm64", inside="/firn")
 
-    # assert
+    # assert: the entry at fault, and both ways out
     err = capsys.readouterr().err
     assert rc == 1
     assert "linux/arm64" in err and "linux/amd64" in err
+    assert "artifacts.firn-arm64.platform" in err
+    assert "Change the file entry's `platform:`" in err
+    assert "add linux/arm64 to `platforms:` on `artifacts.amd-only`" in err
     assert cli.docker_calls() == []
 
 
