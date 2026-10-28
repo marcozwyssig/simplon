@@ -439,7 +439,7 @@ class _Docker:
     def __init__(self):
         self.calls: list[tuple[list[str], dict]] = []
         self.answer: tuple[int, str, str] | None = (0, "firn v1.0.0\n", "")
-        self.pulled: tuple[int, str, str] = (0, "", "")
+        self.pulled: tuple[int, str, str] | None = (0, "", "")
 
     def run(self, argv, **kwargs) -> Result:
         argv = list(argv)
@@ -450,6 +450,8 @@ class _Docker:
             rc, out, err = self.answer
             return Result(rc=rc, out=out, err=err)
         if argv[:2] == ["docker", "pull"]:
+            if self.pulled is None:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
             rc, out, err = self.pulled
             return Result(rc=rc, out=out, err=err)
         return Result(rc=0, out="", err="")
@@ -506,7 +508,7 @@ def test_check_runs_the_file_in_the_pinned_image(product, box):
     assert rc == 0
     [(argv, kwargs)] = box.runs()
     name = argv[argv.index("--name") + 1]
-    assert argv == ["docker", "run", "--rm", "-i", "--platform", "linux/arm64", "--network", "none",
+    assert argv == ["docker", "run", "--rm", "-i", "--pull", "never", "--platform", "linux/arm64", "--network", "none",
                     *docker.lifecycle_args(name, "demo"),
                     "-v", f"{product}/build/firn-linux-arm64:/run/file:ro",
                     imagefile.FILE_TEST_IMAGE, "/run/file", "--version", "two words"]
@@ -701,7 +703,7 @@ def test_check_pulls_the_test_image_for_the_platform_before_the_timed_run(produc
     runs = [i for i, (argv, _) in enumerate(box.calls) if argv[:2] == ["docker", "run"]]
     assert len(pulls) == 1 and pulls[0] < runs[0]
     assert box.calls[pulls[0]][0] == ["docker", "pull", "--platform", "linux/arm64", imagefile.FILE_TEST_IMAGE]
-    assert "timeout" not in box.calls[pulls[0]][1]
+    assert box.calls[pulls[0]][1]["timeout"] == imagefile.PULL_TIMEOUT == 300
 
 
 def test_check_pulls_without_platform_for_a_host_run(product, box):
@@ -715,17 +717,49 @@ def test_check_pulls_without_platform_for_a_host_run(product, box):
     assert ["docker", "pull", imagefile.FILE_TEST_IMAGE] in [argv for argv, _ in box.calls]
 
 
-def test_a_failed_pull_refuses_with_its_own_message_and_no_timeout(product, box, capsys):
-    # arrange
+def test_a_failed_pull_warns_and_the_run_goes_on(product, box, capsys):
+    # arrange: the warm-up fails; the daemon may still hold the image, and the run decides
     box.pulled = (1, "", "Error response from daemon: Get \"https://registry-1.docker.io/v2/\": dial tcp: i/o timeout")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", expect="firn", timeout=5, results="firn-checked")
+
+    # assert: the pull's own words as a warning, never a timeout of the file, and the timed run reached
+    said = capsys.readouterr()
+    err = said.out + said.err
+    assert rc == 0
+    assert "docker pull" in err and "dial tcp: i/o timeout" in err and "whatever the daemon holds" in err
+    assert "gave no answer" not in err
+    assert len(box.runs()) == 1
+    assert _record(product)["verdict"] == 0
+
+
+def test_a_pull_past_its_limit_warns_and_the_run_goes_on(product, box, capsys):
+    # arrange
+    box.pulled = None
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", expect="firn", timeout=5)
+
+    # assert: the limit named is the pull's, not the file's
+    said = capsys.readouterr()
+    err = said.out + said.err
+    assert rc == 0
+    assert "docker pull" in err and "no answer within 300 s" in err and "whatever the daemon holds" in err
+    assert "gave no answer within 5 s" not in err
+    assert len(box.runs()) == 1
+
+
+def test_without_the_image_the_run_is_red_with_dockers_words(product, box, capsys):
+    # arrange: the warm-up failed and the daemon holds nothing; `--pull never` keeps the run from pulling
+    box.pulled = (1, "", "dial tcp: i/o timeout")
+    box.answer = (125, "", "docker: Error response from daemon: No such image: busybox:1.37.0-musl")
 
     # act
     rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5, results="firn-checked")
 
-    # assert: the pull's own words, never a timeout about the file, and no verdict about a file that never ran
+    # assert
     err = capsys.readouterr().err
-    assert rc == 1
-    assert "docker pull" in err and "dial tcp: i/o timeout" in err
-    assert "no answer within" not in err
-    assert box.runs() == []
-    assert not (product / "build/test/firn.json").exists()
+    assert rc == 125
+    assert "No such image" in err
+    assert _record(product)["verdict"] == 125

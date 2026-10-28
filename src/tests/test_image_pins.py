@@ -57,7 +57,7 @@ SRC = ROOT / "src" / "simplon"
 #: the image is simply the first POSITIONAL after the flags.
 _FLAGS_TAKING_A_VALUE = {"-v", "-w", "-e", "-u", "-o", "-p", "-c", "--volume", "--workdir", "--env",
                          "--user", "--entrypoint", "--platform", "--network", "--name", "--mount",
-                         "--add-host", "--label", "--publish"}
+                         "--add-host", "--label", "--publish", "--pull"}
 
 
 def _modules() -> list:

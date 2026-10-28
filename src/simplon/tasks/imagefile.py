@@ -84,6 +84,10 @@ FILE_TEST_IMAGE = docker.pinned_image(
     "busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
     "simplon.tasks.imagefile")
 
+#: Seconds the warm-up pull of `FILE_TEST_IMAGE` may take: a pull is a download, not the file's answer, so it is
+#: outside `timeout`, and bounded so a hung registry cannot hang the test.
+PULL_TIMEOUT = 300
+
 #: Where the file is mounted, read-only, inside `FILE_TEST_IMAGE`.
 MOUNTED = "/run/file"
 
@@ -363,8 +367,7 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
     except ValueError as refused:
         log.error(str(refused))
         return 1
-    if not _pull_test_image(platform):
-        return 1
+    _warm_up(platform)
     verdict, got = _run_file(path, platform, mount, argv, stdin_text, expected, rc, timeout)
     if record_path is not None:
         record_path.parent.mkdir(parents=True, exist_ok=True)
@@ -375,19 +378,26 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
     return verdict
 
 
-def _pull_test_image(platform: str) -> bool:
-    """Pull `FILE_TEST_IMAGE` for `platform` (the host's when empty) OUTSIDE the time limit, or say why not.
+def _warm_up(platform: str) -> None:
+    """Pull `FILE_TEST_IMAGE` for `platform` (the host's when empty) before the timed run, warning if it fails.
 
-    Inside it a slow first pull would read as the file giving no answer. A failed pull is the pull's own
-    refusal: the file never ran, so no verdict about it is recorded. Measured 2026-10-28: with the image
-    already held, the pull still asks the registry, about 3 s.
+    A WARM-UP, NOT A GATE (Marco, 2026-10-28). Inside `timeout` a slow first pull would read as the file giving
+    no answer, so it happens here, under its own `PULL_TIMEOUT`. A failed or hung pull is only a warning: the
+    daemon may hold the image already (an offline host does), and the run decides - it is started with
+    `--pull never`, so a local copy runs and no image at all is red with docker's own "No such image". So a
+    pull failure is never reported as the file's timeout, and never as green. Measured 2026-10-28: with the
+    image already held, the pull still asks the registry, about 3 s.
     """
-    pulled = run(["docker", "pull", *(["--platform", platform] if platform else []), FILE_TEST_IMAGE])
-    if not pulled.ok:
-        log.error(f"`docker pull {FILE_TEST_IMAGE}`" + (f" for {platform}" if platform else "")
-                  + f" failed, so nothing was run: {(pulled.err or pulled.out).strip() or '(it said nothing)'}")
-        return False
-    return True
+    command = ["docker", "pull", *(["--platform", platform] if platform else []), FILE_TEST_IMAGE]
+    try:
+        pulled = run(command, timeout=PULL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        reason = f"no answer within {PULL_TIMEOUT} s"
+    else:
+        if pulled.ok:
+            return
+        reason = (pulled.err or pulled.out).strip() or "(it said nothing)"
+    log.warn(f"`{' '.join(command)}` failed: {reason}; the run goes on with whatever the daemon holds")
 
 
 def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text: str, expect: str, rc: int,
@@ -399,7 +409,7 @@ def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text:
     the exception with `docker rm -f` before it reaches here.
     """
     name, lifecycle = docker.lifecycle()
-    command = ["docker", "run", "--rm", "-i", *(["--platform", platform] if platform else []),
+    command = ["docker", "run", "--rm", "-i", "--pull", "never", *(["--platform", platform] if platform else []),
                "--network", "none", *lifecycle, *mount, FILE_TEST_IMAGE, MOUNTED, *shlex.split(argv)]
     try:
         with docker.stopped_on_interrupt(name):
