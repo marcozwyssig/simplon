@@ -26,18 +26,32 @@ THE COPY LEAVES A REGULAR FILE OR NOTHING. `docker cp -L` follows a symlink (a m
 nothing or an absent path is docker's own `Could not find the file` (both measured 2026-10-28). The bytes land
 beside `path` under a staging name and are renamed into place only once they are a regular file, mode 0755.
 The container is removed whatever the copy said.
+
+`test:file` RUNS THAT FILE, ALONE (si#552). An image proves its binary works beside the image's libc; the bare
+file is handed out without one, so it is run in `FILE_TEST_IMAGE` - busybox built on musl, pinned by digest -
+where a binary that quietly links glibc fails here instead of on a user's machine (measured 2026-10-28: a
+host's glibc `/bin/true` answers `exec /run/file: no such file or directory`, rc 255 - its loader is absent).
+The platform is the file entry's `platform:` (absent: the host's, `--platform` omitted), `--network none`
+because a file test that needs the network is a different test, and `timeout` is required because a run
+without a limit has no verdict. The record names the file's sha256 as the subject `manifest.results` reads, so a release that
+uploads the file can compare what it uploads with what was tested (si#553).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shlex
 import shutil
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-from simplon.adapters import docker, githubpackages
+from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import log
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context
+from simplon.manifest import results as results_mod
 from simplon.manifest.layout import validate_relative_dir
 from simplon.model import artifactschema
 from simplon.tasks import image
@@ -61,6 +75,17 @@ STAGING = ".partial"
 #: with neither CMD nor ENTRYPOINT (a `FROM scratch` stage holding one binary) is refused by `docker create`
 #: with "no command specified" without one (measured 2026-10-28).
 NEVER_STARTED = "simplon-copy-only"
+
+CHECK_COORDINATE = "test:file"
+
+#: What `test:file` runs a bare file in: a shell and nothing else, no glibc. The index digest, so every platform
+#: resolves to its own manifest (measured with `docker pull` on 2026-10-28).
+FILE_TEST_IMAGE = docker.pinned_image(
+    "busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
+    "simplon.tasks.imagefile")
+
+#: Where the file is mounted, read-only, inside `FILE_TEST_IMAGE`.
+MOUNTED = "/run/file"
 
 
 def file_entry(name: str, coordinate: str) -> tuple[artifactschema.FileEntry, Path]:
@@ -281,3 +306,94 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
     else:
         path.unlink(missing_ok=True)
+
+
+def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: str = "", stdin: str = "",
+          timeout: int = 0, results: str = "") -> int:
+    """Run the file the entry `file` names in `FILE_TEST_IMAGE`, for the entry's platform, and check its answer.
+
+    `rc` is an expectation, not a tolerance, and `{tag}` in `expect` is the tag - `tag`, else the VERSION this
+    checkout derives - exactly as on `test:image`. The record follows `test:image`'s rules too: an earlier one
+    is removed before any refusal, a refused run writes none, and a red run writes its verdict.
+    """
+    record_path = results_mod.path_of(results) if results else None
+    if record_path is not None:
+        record_path.unlink(missing_ok=True)
+    if timeout <= 0:
+        log.error(f"{CHECK_COORDINATE} has no `timeout`, and a run without a limit has no verdict; give "
+                  f"`timeout:` in seconds, greater than 0, e.g. `with: {{ timeout: 30 }}`")
+        return 1
+    entry, root = file_entry(file, CHECK_COORDINATE)
+    path = str(entry.path)
+    platform = entry.platform or ""
+    stdin_text = ""
+    if stdin:
+        try:
+            fed = root / image._inside_the_product(stdin, "stdin", CHECK_COORDINATE)
+        except ValueError as refused:
+            log.error(str(refused))
+            return 1
+        if not fed.is_file():
+            log.error(f"`stdin:` names {fed}, which is not a file under {root}; give the file to feed the run")
+            return 1
+        stdin_text = fed.read_text(encoding="utf-8")
+    if not (root / path).is_file():
+        log.error(f"file '{file}' has nothing at {path}, so there is nothing to run; write it first "
+                  f"(`build:image-file` with `produces: {{ file: {file} }}`)")
+        return 1
+    expected = expect
+    if "{tag}" in expect:
+        resolved = tag or image.provenance(root).get(image.VERSION_ARG, "")
+        if not resolved:
+            log.error(f"`expect:` says {{tag}}, and no tag was given and none could be derived (the warning "
+                      f"above says why); pass `tag:`")
+            return 1
+        expected = image.expand_tag(expect, resolved)
+    subject = "sha256:" + hashlib.sha256((root / path).read_bytes()).hexdigest()
+    docker.ensure_docker()
+    try:
+        mount = hostpath.mount_argv(root, path, MOUNTED, readonly=True, must_exist=False)
+    except ValueError as refused:
+        log.error(str(refused))
+        return 1
+    verdict, got = _run_file(path, platform, mount, argv, stdin_text, expected, rc, timeout)
+    if record_path is not None:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps({
+            "file": file, "verdict": verdict,
+            "runs": [{"reference": path, "id": subject, "platform": platform, "argv": argv, "expected_rc": rc,
+                      "rc": got, "verdict": verdict}]}, indent=2) + "\n", encoding="utf-8")
+    return verdict
+
+
+def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text: str, expect: str, rc: int,
+              timeout: int) -> tuple[int, int | None]:
+    """One `docker run` of the mounted file: its verdict and the container's own rc, None when it gave none.
+
+    Stdin is always a pipe, empty without `stdin`, so `-i` never hands the run the caller's terminal. A run
+    past `timeout` is stopped by name: `subprocess` kills only the client, and `stopped_on_interrupt` answers
+    the exception with `docker rm -f` before it reaches here.
+    """
+    name, lifecycle = docker.lifecycle()
+    command = ["docker", "run", "--rm", "-i", *(["--platform", platform] if platform else []),
+               "--network", "none", *lifecycle, *mount, FILE_TEST_IMAGE, MOUNTED, *shlex.split(argv)]
+    try:
+        with docker.stopped_on_interrupt(name):
+            result = run(command, timeout=timeout, input_text=stdin_text)
+    except subprocess.TimeoutExpired:
+        log.error(f"{path} gave no answer within {timeout} s; its container {name} was removed")
+        return (1, None)
+    if result.rc != rc:
+        said = image._indented(result)
+        # The bake's advice, for the same cause: this host has no emulator for the entry's platform.
+        advice = image._emulation_advice([platform]) if platform and "exec format error" in said else ""
+        log.error(f"{path} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n" + said
+                  + advice)
+        # `or 1`: when a refusal was expected and the file exited 0, that 0 is the success being refused.
+        return (result.rc or 1, result.rc)
+    if expect and expect not in result.out:
+        log.error(f"{path} exited {result.rc} and did not say what was expected.\n"
+                  f"  expected to find: {expect}\n" + image._indented(result))
+        return (1, result.rc)
+    log.ok(f"ran {path} in {FILE_TEST_IMAGE}" + (f" for {platform}" if platform else ""))
+    return (0, result.rc)

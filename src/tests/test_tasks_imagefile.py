@@ -4,11 +4,17 @@ Decided 2026-10-28 (si#552, Marco's item 4): the kind `file` carries an optional
 `build:image-file` reads it - a file entry without one, or with one the image does not declare, is refused
 before docker is asked.
 
+`test:file` runs that file alone in `imagefile.FILE_TEST_IMAGE`, for the same entry's platform, under a required
+time limit, and records the file's sha256 as the subject a release compares with (si#553).
+
 AAA; the name states the behaviour under test. Nothing touches docker: the command line is a recorder whose
 `docker cp` leaves behind what a real one would - a regular file, or a directory.
 """
+import hashlib
+import json
 import os
 import stat
+import subprocess
 
 import pytest
 from test_tasks_image import _INDEX_AMD64_ONLY, _INDEX_BOTH, _SINGLE_MANIFEST
@@ -17,6 +23,7 @@ from simplon.adapters import docker, githubpackages
 from simplon.kernel.run import Result
 from simplon.manifest import catalogue, context
 from simplon.manifest import load as manifest_mod
+from simplon.manifest import results as results_mod
 from simplon.manifest.context import ProductContext
 from simplon.tasks import image, imagefile
 
@@ -418,3 +425,230 @@ def test_tag_pulls_from_a_foreign_registry_with_the_operators_login(product, cli
     assert registry == []
     assert _pulls(cli) == [["docker", "pull", "registry.example.com/team/firn@sha256:f674"]]
     assert cli.configs[cli.calls.index(_pulls(cli)[0])] == str(tmp_path / "operator")
+
+
+# --- test:file: the bare file, run in a pinned libc-free container -------------------------------------
+
+_BYTES = b"\x7fELF firn arm64"
+
+
+class _Docker:
+    """The command line for `check`: `docker run` answers `answer` (rc, out, err), or raises
+    `subprocess.TimeoutExpired` when `answer` is None; every call is recorded with its keyword arguments."""
+
+    def __init__(self):
+        self.calls: list[tuple[list[str], dict]] = []
+        self.answer: tuple[int, str, str] | None = (0, "firn v1.0.0\n", "")
+
+    def run(self, argv, **kwargs) -> Result:
+        argv = list(argv)
+        self.calls.append((argv, kwargs))
+        if argv[:2] == ["docker", "run"]:
+            if self.answer is None:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+            rc, out, err = self.answer
+            return Result(rc=rc, out=out, err=err)
+        return Result(rc=0, out="", err="")
+
+    def runs(self) -> list[tuple[list[str], dict]]:
+        return [(argv, kw) for argv, kw in self.calls if argv[:2] == ["docker", "run"]]
+
+
+@pytest.fixture
+def box(product, monkeypatch):
+    """The arm64 file `build:image-file` wrote, a test result to record into, and a recorded docker."""
+    (product / "build").mkdir()
+    (product / "build/firn-linux-arm64").write_bytes(_BYTES)
+    text = (product / "demo.yaml").read_text(encoding="utf-8")
+    (product / "demo.yaml").write_text(
+        text + "  firn-checked: { kind: test-result, path: build/test/firn.json }\n", encoding="utf-8")
+    fake = _Docker()
+    monkeypatch.setattr(imagefile, "run", fake.run)
+    monkeypatch.setattr(docker, "run", fake.run)
+
+    def _no_git(root):
+        raise AssertionError("a tag was given or none is expected, so git is not asked")
+
+    monkeypatch.setattr(image, "provenance", _no_git)
+    return fake
+
+
+def _record(product) -> dict:
+    return json.loads((product / "build/test/firn.json").read_text(encoding="utf-8"))
+
+
+def test_check_refuses_without_a_timeout(product, box, capsys):
+    # arrange: yesterday's green record, which must not outlive the refusal
+    stale = product / "build/test/firn.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"file": "firn-arm64", "verdict": 0, "runs": []}\n', encoding="utf-8")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", tag="v1.0.0", timeout=0, results="firn-checked")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "timeout" in err
+    assert box.calls == []
+    assert not stale.exists()
+
+
+def test_check_runs_the_file_in_the_pinned_image(product, box):
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version 'two words'", expect="firn", timeout=5)
+
+    # assert: the Global Constraints line, for the entry's platform, under a time limit
+    assert rc == 0
+    [(argv, kwargs)] = box.runs()
+    name = argv[argv.index("--name") + 1]
+    assert argv == ["docker", "run", "--rm", "-i", "--platform", "linux/arm64", "--network", "none",
+                    *docker.lifecycle_args(name, "demo"),
+                    "-v", f"{product}/build/firn-linux-arm64:/run/file:ro",
+                    imagefile.FILE_TEST_IMAGE, "/run/file", "--version", "two words"]
+    assert kwargs["timeout"] == 5
+    assert imagefile.FILE_TEST_IMAGE.startswith("busybox:1.37.0-musl@sha256:")
+
+
+def test_check_omits_platform_for_an_entry_without_one(product, box):
+    # arrange
+    (product / "build/firn").write_bytes(_BYTES)
+
+    # act
+    rc = imagefile.check(file="firn-anywhere", argv="--version", timeout=5)
+
+    # assert: the host's platform, by saying none
+    assert rc == 0
+    [(argv, _)] = box.runs()
+    assert "--platform" not in argv
+
+
+def test_check_feeds_stdin_from_the_product(product, box):
+    # arrange
+    request = product / "tests/lsp/initialize.json"
+    request.parent.mkdir(parents=True)
+    request.write_text('{"jsonrpc": "2.0", "method": "initialize"}\n', encoding="utf-8")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="lsp", stdin="tests/lsp/initialize.json", timeout=5)
+
+    # assert
+    assert rc == 0
+    [(_, kwargs)] = box.runs()
+    assert kwargs["input_text"] == '{"jsonrpc": "2.0", "method": "initialize"}\n'
+
+
+def test_check_refuses_stdin_outside_the_product(product, box, capsys):
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="lsp", stdin="../secrets.json", timeout=5)
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "stdin" in err and "product root" in err
+    assert box.runs() == []
+
+
+def test_check_expands_tag_in_expect(product, box):
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", expect="firn {tag}", tag="v1.0.0", timeout=5)
+
+    # assert
+    assert rc == 0
+
+
+def test_check_without_tag_expects_the_derived_version(product, box, monkeypatch, capsys):
+    # arrange
+    monkeypatch.setattr(image, "provenance", lambda root: {image.VERSION_ARG: "v2.0.0"})
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", expect="firn {tag}", timeout=5)
+
+    # assert: the file printed v1.0.0, and v2.0.0 was expected
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "firn v2.0.0" in err
+
+
+def test_check_writes_the_record_naming_the_files_sha256(product, box):
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", expect="firn", timeout=5, results="firn-checked")
+
+    # assert: the subject si#553 compares with what it uploads
+    assert rc == 0
+    record = _record(product)
+    assert record == {"file": "firn-arm64", "verdict": 0,
+                      "runs": [{"reference": "build/firn-linux-arm64",
+                                "id": "sha256:" + hashlib.sha256(_BYTES).hexdigest(),
+                                "platform": "linux/arm64", "argv": "--version", "expected_rc": 0, "rc": 0,
+                                "verdict": 0}]}
+    assert results_mod._subjects("firn-checked", record) is not None
+
+
+def test_a_changed_file_gets_a_new_id(product, box):
+    # arrange
+    imagefile.check(file="firn-arm64", argv="--version", timeout=5, results="firn-checked")
+    before = _record(product)["runs"][0]["id"]
+    (product / "build/firn-linux-arm64").write_bytes(_BYTES + b" rebuilt")
+
+    # act
+    imagefile.check(file="firn-arm64", argv="--version", timeout=5, results="firn-checked")
+
+    # assert
+    after = _record(product)["runs"][0]["id"]
+    assert after != before
+    assert after == "sha256:" + hashlib.sha256(_BYTES + b" rebuilt").hexdigest()
+
+
+def test_check_red_on_timeout_removes_the_container(product, box, capsys):
+    # arrange
+    box.answer = None
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="lsp", timeout=5, results="firn-checked")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc != 0
+    assert "no answer within 5 s" in err
+    [(argv, _)] = box.runs()
+    name = argv[argv.index("--name") + 1]
+    assert (["docker", "rm", "-f", name]) in [c for c, _ in box.calls]
+    assert _record(product)["verdict"] != 0
+
+
+def test_check_red_writes_the_record(product, box):
+    # arrange
+    box.answer = (3, "", "boom")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5, results="firn-checked")
+
+    # assert
+    assert rc == 3
+    record = _record(product)
+    assert record["verdict"] == 3 and record["runs"][0]["rc"] == 3
+
+
+def test_check_on_a_foreign_platform_without_emulation_carries_the_advice(product, box, capsys):
+    # arrange
+    box.answer = (1, "", "exec /run/file: exec format error\n")
+
+    # act
+    rc = imagefile.check(file="firn-arm64", argv="--version", timeout=5)
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert image._emulation_advice(["linux/arm64"]).strip() in err
+
+
+def test_check_refuses_a_file_build_image_file_has_not_written(product, box, capsys):
+    # act
+    rc = imagefile.check(file="firn-amd64", argv="--version", timeout=5)
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "build/firn-linux-amd64" in err and "build:image-file" in err
+    assert box.runs() == []

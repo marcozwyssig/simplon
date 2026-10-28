@@ -557,6 +557,23 @@ tasks:
       inside: { help: "the absolute path of the file inside the image; a symlink is followed" }
       tag:    { help: "copy from the PUBLISHED image under this tag, pulled by the file's platform digest; without it, from this checkout's build" }
 
+  # si#552: the bare file `build:image-file` wrote, run in a pinned libc-free container (busybox musl) for the
+  # platform its FILE ENTRY names - a file that needs the image's libc fails here, not on a user's machine.
+  # `timeout` is required: a run without a limit has no verdict. The record names the file's sha256, the
+  # subject a release that uploads the file compares with (si#553).
+  test:file:
+    help: "Run a bare file in a pinned libc-free container, for the platform its file entry names."
+    unattended: true
+    params:
+      file:    { help: "the file artifact to run, whose `platform:` names the platform (normally bound with `consumes:`)" }
+      argv:    { help: "the arguments to run it with, as one string" }
+      expect:  { help: "text the output must contain for the run to count as green; `{tag}` is replaced with the tag" }
+      rc:      { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
+      tag:     { help: "the tag `{tag}` stands for, when it is not the version the checkout derives" }
+      stdin:   { help: "a file under the product fed to the run's standard input" }
+      timeout: { help: "seconds the run may take (required); a run past it is red and its container removed" }
+      results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
+
   # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
   # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
   # compiler reads. They meet in the tree and nowhere else.
