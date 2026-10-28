@@ -1,0 +1,161 @@
+# si#552: `build:image-file` and `test:file`
+
+Ticket: si#552 (from marcozwyssig/firn#1132, Linux binaries as release assets). Marco decided on
+2026-10-25 that everything build-specific is simplon's, and on 2026-10-26 that firn moves to the
+dispatch release flow (si#463) in the same step. This is the first of three pieces firn waits for:
+si#552 (this), si#553 (release assets, #449 part A), si#463 (the dispatch release).
+
+## Intent
+
+firn ships one container image per platform and wants the bare `/firn` binary from each as a release
+asset. Today nothing in the kernel takes a file out of an image, and nothing runs a bare file. firn's
+release workflow fills the gap with verbatim shell ("Each platform's image names the tag",
+`docker run ... --version` compared against `$GITHUB_REF_NAME`). The kernel should do both steps, and
+leave a verdict record that si#553 can bind as the evidence for the upload.
+
+## Goals
+
+- `build:image-file`: one file, one platform, out of an image this checkout built or the registry
+  serves, written to the product with mode 0755.
+- `test:file`: run that file on its platform, in a container with no libc, and write a verdict record
+  rule 6 can read.
+- `{tag}` in `expect` expands to the derived VERSION, in `test:file` and `test:image`.
+
+## Non-goals
+
+- Uploading the file (si#553).
+- Compiling on a host (si#447).
+- **The host mode of `test:file`** (run the file directly on macOS or Windows without docker, for
+  firn#1133/#1134). Decided by Marco 2026-10-28: later, its own ticket, reopened when firn#1133 or
+  firn#1134 is built. No runner and no consumer exists for it today.
+- A time limit for `test:image`. That is si#554.
+
+## Anti-goals
+
+- A dynamically linked binary that tests green. The point of the libc-free container is that it is red.
+- A test record that is green about something unnamed (si#439).
+- A step that runs without a time limit.
+
+## Decided by Marco (2026-10-28)
+
+1. **Acceptance in two stages.** simplon proves the tasks first on an image of its own, two platforms,
+   real docker, arm64 under QEMU. firn's release is the ticket's acceptance after that.
+2. **Host mode later**, see Non-goals.
+3. **`{tag}` expansion in both `test:file` and `test:image`**, as the ticket says.
+4. **One file entry per platform, and the entry says which.** The kind `file` gains an optional
+   `platform:` (exactly one platform). `build:image-file` and `test:file` read it, and a command whose
+   platform differs from its entry's is refused before anything runs. firn: two entries (amd64,
+   arm64), two extract commands, four test commands. Rejected: an entry without the field (a miswired
+   platform would surface as `exec format error` and read like a QEMU problem), and one entry for all
+   platforms with `{platform}` in `path` (a larger schema change, and si#553 would have to know several
+   files per entry). Reopened if a product declares more than two platforms per file.
+
+## Measured (2026-10-28)
+
+- **No reachable manifest has `{` in an `expect`.** Ten manifests via the GitHub API (cleon,
+  biz-cockpit, asbundle, agile-cockpit, swi, netctl, firn, simplon, cleon-firn, smcctl). The only
+  `expect` values with `{` in simplon.yaml belong to `build:homebrew-formula`'s `test:` (`usage:`),
+  which is not a `test:image` param. Expanding `{tag}` changes the meaning of nothing that exists.
+- **`busybox:1.37.0-musl` has no libc.** `ls /lib /usr/lib` says "No such file or directory" in it,
+  and `/bin/busybox` is the static binary. A glibc- or musl-dynamic file finds no loader there and
+  fails; a static file runs.
+- **What exists to build on** (file:line on main at 6a2222c):
+  - `build:image` records each platform in `built-<name>.json` under `outputs.for_kind("docker")`:
+    `{"reference", "platforms": {"linux/amd64": "sha256:..."}}` (`tasks/image.py` `read_built` 1348,
+    `_write_built` 1360). The daemon carries each platform as `platform_reference(ref, p)`,
+    `<ref>-linux-<arch>` (1012).
+  - `test:image` is `image.smoke` (651): it runs every platform even after a red one, and writes its
+    record even when red. It has **no time limit**.
+  - `release:image` logs in inside `githubpackages.scoped_credentials()` (si#443) and reads an index
+    with `oras manifest fetch` and `index_manifests` (1450). oras is a pinned host binary (`ORAS_VERSION`
+    1.3.4), not an image.
+  - `_emulation_advice` (1128) is today used only on bake failures.
+  - `docker create` / `docker cp` / `docker rm` with `docker.lifecycle()` and `stopped_on_interrupt`
+    exists in `tasks/ciarm64.py` 169-181.
+  - Pinned images are module constants through `docker.pinned_image(ref, where)` (adapters/docker.py
+    231).
+  - The artifact kind `file` exists (`FileEntry`, `path` plus `url`, `sha256`, `version_from`). There is
+    no `binary` kind.
+  - `manifest/results._subjects` requires each run to carry a non-empty `reference` and `id`.
+  - New tasks are declared in `src/firn/model/simplon/catalogue/tasks.firn` and generated by
+    `./simplon.sh build model` (classes, `catalogue.yaml`, `model/artifactschema.py`).
+
+## Design
+
+### `build:image-file`
+
+- **Ports:** input `image` (param `name`), output `file` (the existing kind; param names the entry).
+- **Params:** `name` (the image entry), `file` (the file entry it writes), `from` (the path inside the
+  image, absolute), `tag` (optional). The platform is the file entry's `platform:`, which is required
+  for this task; it must be one of the image entry's `platforms:`.
+- **Where it reads from:**
+  - without `tag`: the platform's reference this checkout's `build:image` recorded, looked up through
+    `read_built`; the daemon reference is `platform_reference`. The image id read before the copy is
+    what the log names.
+  - with `tag`: the published index, read with `oras manifest fetch` and `index_manifests` inside
+    `scoped_credentials()`, then `docker pull <repository>@<platform digest>` in the same scope.
+- **The copy:** `docker create` (named by `docker.lifecycle()`, stopped on interrupt), `docker cp
+  <container>:<from> <tmp>`, `docker rm`. The file is moved into the entry's `path:` with mode 0755.
+- **Refusals (diagnoses):**
+  - a file entry without `platform:`, or a platform the image entry does not declare;
+  - an image entry without `platforms:` (the message says to declare them; a single-platform image
+    has no per-platform reference and its registry manifest is no index);
+  - no recorded build for that platform here, and no `tag` (the message names `build <image command>`);
+  - with `tag`: a registry that does not serve the tag, or an index without that platform;
+  - `from` is not a regular file in the image (a directory, a symlink to nothing, absent).
+- **Measure:** time for both platforms from the registry (expected well under a minute).
+
+### `test:file`
+
+- **Ports:** input `file` (param `file`), output `test_result` (param `results`).
+- **Params:** `file`, `argv`, `expect`, `rc` (default 0), `tag` (optional, for `{tag}`), `stdin` (a
+  product-relative file, optional), `timeout` (seconds, **required**, my call: a run without a limit has
+  no verdict), `results`. The platform is the file entry's `platform:` when it has one, else the host's.
+  One run per command; firn's four records are four commands.
+- **The run:** `docker run --rm -i --platform <p> --network none -v <file>:/run/file:ro
+  <FILE_TEST_IMAGE> /run/file <argv...>`, stdin fed from the `stdin` file, through `docker.lifecycle()`.
+  `FILE_TEST_IMAGE = docker.pinned_image("busybox:1.37.0-musl", ...)`, pinned by digest. A run past
+  `timeout` stops its container and is red with "no answer within <n> s". `--network none` is my call:
+  a file test that needs the network is a different test.
+- **Another platform than the host's** runs under QEMU. When the host cannot run it (`exec format
+  error`), the message carries `_emulation_advice`, as the bake's does.
+- **The record** has `test:image`'s shape and writing rules (old record deleted first, written even
+  when red, every platform runs):
+  `{"file": <entry>, "verdict": N, "runs": [{"reference": <product-relative path>, "id":
+  "sha256:<hex of the file>", "platform", "argv", "expected_rc", "rc", "verdict"}]}`.
+  `reference` + `id` are the subject `_subjects` already reads, so si#553 compares the sha256 of what it
+  uploads with what was tested and `results.py` needs no change (my call).
+
+### `{tag}` in `expect`
+
+`{tag}` in `test:file`'s and `test:image`'s `expect` is replaced with the tag: for `test:image` the one
+`resolve_tag` gives (the argument, else `cfg.tag`, else the derived VERSION); for `test:file`, which has
+no image section, the `tag` argument, else the derived VERSION from `provenance(root)` (my call). The
+release passes the same version to the extract and the test, so both name one tag. Literal
+`str.replace`, the way `build:fetch` expands `{version}`; no other placeholder.
+
+### Acceptance
+
+1. **simplon's own proof.** A test image of simplon's own (a static file in a two-platform image) is
+   built, the file is taken out for linux/amd64 and linux/arm64, and `test:file` checks both, arm64
+   under QEMU. A dynamically linked file in the same image is red with the loader's message. The `tag:`
+   path is proven against a local `registry:2` container: the image pushed as an index, the file taken
+   out by platform digest, and the refusals "tag not served" and "platform not in the index" seen red
+   (my call: otherwise neither stage reaches them). Runs in the e2e suite on ghr-8.
+2. **firn's release** (the ticket's acceptance): `/firn` from the published `firn:<tag>` for
+   linux/amd64 and linux/arm64; each answers `--version` with `firn {tag}` and an LSP `initialize` over
+   stdin, the arm64 one under QEMU, four verdict records. This happens in firn after its bump, with
+   si#553 and si#463.
+
+## Not this ticket
+
+- **Rule 6 for a release that publishes a file entry** is si#553's. `file` is not in `OWN_KINDS`
+  (`manifest/ports.py`), so a release of a file entry will require the `test:file` records whose
+  producers consume it; si#552 only has to write one record per file entry that names its subject.
+
+## Left to the builder
+
+- The help texts, the exact refusal wording, the names of helpers.
+- Whether `build:image-file` and `test:file` live in `tasks/image.py` or a new module beside it.
+- How the test image for stage 1 is built (a Dockerfile under the tests' fixtures is the obvious way).
+- Release notes for the release that ships it, naming si#552.
