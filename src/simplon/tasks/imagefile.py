@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import shlex
 import shutil
 import subprocess
@@ -217,6 +218,21 @@ def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path:
     return _copy(source, inside, path, root)
 
 
+def docker_config_file() -> Path:
+    """The registry login file docker itself reads, for oras to read the same one.
+
+    `$DOCKER_CONFIG/config.json`, else `$HOME/.docker/config.json`, else the passwd entry's home - the
+    order docker resolves it in. Handed to oras as `--registry-config` because oras, unlike docker, has
+    no fallback: without `$HOME` it dies with "failed to get user home directory" before it asks the
+    registry (measured on ghr-8, whose self-build runs without HOME). Inside `scoped_credentials()`
+    `DOCKER_CONFIG` is the scope's, so the GitHub Packages path reads the minted login as before."""
+    configured = os.environ.get("DOCKER_CONFIG", "")
+    if configured:
+        return Path(configured) / "config.json"
+    home = os.environ.get("HOME", "") or pwd.getpwuid(os.getuid()).pw_dir
+    return Path(home) / ".docker" / "config.json"
+
+
 def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None:
     """`<registry>/<repository>@<digest>` of `platform`'s manifest in the index the registry serves under
     `tag`, or None after saying why.
@@ -227,7 +243,7 @@ def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None
     `linux/arm64`, as in `image.missing_platforms`.
     """
     ref = image.reference(cfg, tag)
-    fetched = run(["oras", "manifest", "fetch", ref])
+    fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref])
     if not fetched.ok:
         log.error(f"{ref} could not be read from the registry, so nothing was pulled: "
                   f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"

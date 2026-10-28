@@ -17,6 +17,7 @@ import stat
 import subprocess
 
 import pytest
+from pathlib import Path
 from test_tasks_image import _INDEX_AMD64_ONLY, _INDEX_BOTH, _SINGLE_MANIFEST
 
 from simplon.adapters import docker, githubpackages
@@ -294,7 +295,9 @@ def test_tag_pulls_the_platforms_digest_from_the_index(product, cli, registry, t
     # assert: the index was read, arm64's digest pulled and copied from, all inside one scoped login
     assert rc == 0
     fetches = [c for c in cli.calls if c[:3] == ["oras", "manifest", "fetch"]]
-    assert fetches == [["oras", "manifest", "fetch", PUBLISHED]]
+    # the fetch reads the scope's login file, not the operator's (si#443)
+    assert fetches == [["oras", "manifest", "fetch", "--registry-config",
+                        str(Path(registry[0]) / "config.json"), PUBLISHED]]
     by_digest = "ghcr.io/owner/firn@sha256:f674"
     assert _pulls(cli) == [["docker", "pull", by_digest]]
     created = [c for c in cli.calls if c[:2] == ["docker", "create"]]
@@ -394,7 +397,8 @@ def test_tag_reads_a_foreign_registry_without_a_stored_login(product, cli, regis
     # assert: no GitHub token minted for it, and the registry was asked
     assert rc == 0
     assert registry == []
-    assert ["oras", "manifest", "fetch", "registry.example.com/team/firn:v2.0"] in cli.calls
+    assert ["oras", "manifest", "fetch", "--registry-config", str(imagefile.docker_config_file()),
+            "registry.example.com/team/firn:v2.0"] in cli.calls
     assert _pulls(cli) == [["docker", "pull", "registry.example.com/team/firn@sha256:f674"]]
 
 
@@ -763,3 +767,43 @@ def test_without_the_image_the_run_is_red_with_dockers_words(product, box, capsy
     assert rc == 125
     assert "No such image" in err
     assert _record(product)["verdict"] == 125
+
+
+# --- oras reads the login docker reads, with or without $HOME (found on ghr-8, PR #557) -----------------
+#
+# Measured: `env -u HOME oras manifest fetch ...` dies with "failed to get user home directory: $HOME is
+# not defined" before it asks the registry, where docker falls back to the passwd entry. The self-build
+# job runs the suite without HOME, so every `tag:` read from a registry that is not GitHub's failed there.
+
+
+def test_oras_is_pointed_at_docker_config_from_docker_config_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "cfg"))
+    monkeypatch.delenv("HOME", raising=False)
+
+    assert imagefile.docker_config_file() == tmp_path / "cfg" / "config.json"
+
+
+def test_oras_is_pointed_at_the_home_docker_would_use(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_CONFIG", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert imagefile.docker_config_file() == tmp_path / ".docker" / "config.json"
+
+
+def test_without_home_oras_gets_the_passwd_home_as_docker_does(monkeypatch):
+    import pwd
+    monkeypatch.delenv("DOCKER_CONFIG", raising=False)
+    monkeypatch.delenv("HOME", raising=False)
+
+    expected = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".docker" / "config.json"
+    assert imagefile.docker_config_file() == expected
+
+
+def test_the_fetch_names_the_registry_config(product, cli, registry, monkeypatch, tmp_path):
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: False)
+    monkeypatch.delenv("HOME", raising=False)
+
+    imagefile.extract(name="elsewhere", file="firn-arm64", inside="/firn", tag="v2.0")
+
+    fetch = next(c for c in cli.calls if c[:3] == ["oras", "manifest", "fetch"])
+    assert fetch[3:5] == ["--registry-config", str(imagefile.docker_config_file())]
