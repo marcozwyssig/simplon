@@ -36,7 +36,7 @@ the bump:
    product that placed `toolchain: { task: "support:toolchain" }` itself, as cleon-firn did, loads
    unchanged and can delete the line.
 
-A product also gains three catalogue tasks and one token issuer, and uses them only by naming them.
+A product also gains five catalogue tasks and one token issuer, and uses them only by naming them.
 
 ### `support toolchain` exists in every product (si#550)
 
@@ -47,6 +47,27 @@ A product also gains three catalogue tasks and one token issuer, and uses them o
 - **Its language list names `brew` too** (si#526 made it a toolchain).
 - A test now holds every `support` command the scaffold's comments name to the tree a fresh product
   loads.
+
+### A binary built in an image is taken out and tested alone (si#552)
+
+- **`build:image-file`** copies one file out of an image, for the platform its `kind: file` entry names,
+  to that entry's `path:`, mode 0755. Without `tag` it reads what this checkout's `build:image` recorded
+  and never pulls; with `tag` it reads the published index and pulls that platform's manifest by digest.
+  A directory, a missing path, a tag the registry does not serve, a single manifest and an index without
+  the platform are each refused with the way out, and nothing falls back to a local build.
+- **`test:file`** runs that file alone in a pinned busybox on musl, which has no libc, so a binary that
+  quietly links glibc or musl dynamically is red here and not on a user's machine. It runs with
+  `--network none`, and `timeout` (seconds) is required: a run past it is red and its container is
+  removed. Its record names the file's sha256, the subject a release that uploads the file compares with.
+- **`kind: file` takes an optional `platform:`**, exactly one platform. Both tasks read it, and a file
+  entry without one, or with one the image does not declare, is refused before docker is asked. One entry
+  per platform: firn declares two, for linux/amd64 and linux/arm64.
+- **`{tag}` in `test:image`'s `expect`** is replaced with the resolved tag, and in `test:file`'s with
+  `tag`, else the version the checkout derives. No reachable manifest had `{` in an `expect`, so nothing
+  changes meaning.
+- simplon proves both on an image of its own: a static and a dynamic file, built for both platforms, the
+  arm64 one run under QEMU, and the `tag` path read from a local `registry:2`
+  (`src/tests/test_imagefile_e2e.py`).
 
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 
