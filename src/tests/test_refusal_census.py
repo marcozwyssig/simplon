@@ -189,6 +189,11 @@ READS_INLINE = {
                          "`test:homebrew-formula` (three) and `release:homebrew-tap` (one), the same shape as "
                          "tasks.homebrewformula, and hands "
                          "`artifactsection.entry` the SECTION (si#536)",
+    "tasks.imagefile": "`file_entry(name, coordinate)` reads its `artifacts:` entry inline at the front of "
+                       "`build:image-file` and `test:file`, the same shape as tasks.fetchfile, and hands "
+                       "`artifactsection.entry` the SECTION; its own refusals (`platform:` missing or not "
+                       "declared, `inside:` not absolute, no `timeout`, a `stdin` outside the product, no "
+                       "file to run) are `log.error` and rc 1 at run time (si#552)",
     "tasks.fetchfile": "`fetch(name)` reads its `artifacts:` entry inline, the same shape as tasks.artifact, and "
                        "hands `declared` the SECTION; the version it reads is in the product tree (si#343)",
     "tasks.env": "`environments()` reads the document inline to answer a listing",

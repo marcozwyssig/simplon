@@ -94,6 +94,10 @@ file typeOf simplon.pipeline.ArtifactKind {
     key = "version_from"
     shape = "table"
   }
+  field f_platform typeOf simplon.pipeline.ArtifactField {
+    key = "platform"
+    shape = "text"
+  }
 }
 homebrew_formula typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.file

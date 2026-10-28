@@ -648,6 +648,15 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     return 0
 
 
+def expand_tag(text: str, tag: str) -> str:
+    """`text` with every `{tag}` replaced by the resolved tag (si#552).
+
+    A plain replace and not `str.format`: the text is a product's expectation about its own output, and
+    output is full of braces (JSON, templates) that would be read as fields.
+    """
+    return text.replace("{tag}", tag)
+
+
 def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
           rc: int = 0, user: bool = True, platform: str = "", results: str = "") -> int:
     """Run the container image `name` declares and check that it answers (si#301).
@@ -697,6 +706,10 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     **Each run records the daemon `id` of what it ran** (si#439), read before the container starts. A
     reference names bytes only until the next build under the same tag; the id is what `release` compares
     with the reference it pushes, so a green record about yesterday's build is not evidence about today's.
+
+    **`{tag}` in `expect` is the resolved tag** (si#552): an image that prints its version is expected to
+    print the tag it was built under, which the product would otherwise have to restate beside the one
+    it already declared.
     """
     cfg, root = _declared_for(name, "test:image")
     # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
@@ -708,6 +721,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
+    expected = expand_tag(expect, resolved)
     if not _platform_declared(cfg, name, platform):
         return 1
     runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
@@ -727,7 +741,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
             return 1
         options += bound
     outcomes = [(one, each, local_id(each),
-                 *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect, rc))
+                 *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expected, rc))
                 for one, each in runs]
     verdict = next((v for _, _, _, v, _ in outcomes if v != 0), 0)
     if record_path is not None:

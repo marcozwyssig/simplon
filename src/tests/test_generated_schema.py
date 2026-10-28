@@ -90,7 +90,7 @@ def test_every_reader_names_a_catalogue_coordinate_a_kind_and_needs_of_that_kind
              for c, needs in artifactschema.NEEDS.items()}
 
     # assert
-    assert len(artifactschema.READERS) == 15
+    assert len(artifactschema.READERS) == 16
     assert unknown == []
     assert set(artifactschema.READERS.values()) <= set(artifactschema.REFINES)
     assert set(artifactschema.NEEDS) == set(artifactschema.READERS)
@@ -105,6 +105,7 @@ def test_a_reader_needs_what_its_body_checked_before_si344_b2():
         "build:image": ("registry", "repository", "dockerfile", "context"),
         "build:fetch": ("path", "url", "sha256"),
         "release:image": ("registry", "repository", "dockerfile", "context"),
+        "build:image-file": ("registry", "repository", "dockerfile", "context"),
         "release:artifact": ("registry", "repository", "media_type", "path"),
         "build:conan-cache": ("registry", "repository", "media_type", "path"),
         "release:conan": ("registry", "repository", "media_type", "path"),
@@ -200,6 +201,8 @@ def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
             continue  # shares tasks.releasenotes with `release:notes` but reads `releases:`, not an artifact entry
         if coordinate in ("release:github-unpublished", "release:github-publish"):
             continue  # share tasks.githubrelease with `release:github-draft`, the one of the three that reads an entry
+        if coordinate == "test:file":
+            continue  # shares tasks.imagefile (ENTRY: the image `build:image-file` binds by `name`) and binds no `name` itself: its file port binds `file`
         if section == "artifacts" and hasattr(module, "ENTRY"):
             readers[coordinate] = module.ENTRY.KIND
 

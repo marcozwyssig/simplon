@@ -875,6 +875,17 @@ workflows:
         runs-on: ubuntu-latest
         python: "3.14"
         steps:
+          - name: Register linux/arm64 emulation
+            note: |
+              si#552: the e2e of `test:file` runs a linux/arm64 file under QEMU, and a hosted runner has
+              none (PR #557: "Exec format error"). `support ci-arm64` is the kernel's way, but it needs root
+              and the launcher run as root would leave root-owned files for the steps after it; the action
+              registers through docker, which this runner's user may use. The image is the kernel's own pin
+              (`labhost.BINFMT_IMAGE`), and test_own_workflows holds the two equal.
+            uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+            with:
+              image: tonistiigi/binfmt:qemu-v10.2.3
+              platforms: arm64
           - command: test suite
           - command: test typecheck-python
 

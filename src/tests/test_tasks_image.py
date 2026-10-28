@@ -1192,6 +1192,29 @@ def test_a_smoke_run_refuses_output_that_does_not_say_what_was_expected(_no_prov
     assert "0 errors" in capsys.readouterr().err
 
 
+def test_expand_tag_replaces_every_tag_placeholder():
+    # act / assert
+    assert image.expand_tag("firn {tag} / {tag}", "v1.2.3") == "firn v1.2.3 / v1.2.3"
+    assert image.expand_tag("no braces", "v1") == "no braces"
+
+
+def test_smoke_expects_the_resolved_tag(_no_provenance, _product, monkeypatch):
+    """`expect` is what the output must contain, and an image that prints its own version names the tag
+    it was built under; a product should not retype that constant in a second place."""
+    # arrange
+    handed = []
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "_run_once",
+                        lambda ref, options, argv, expect, rc: handed.append(expect) or (0, 0))
+
+    # act
+    rc = image.smoke("app", argv="--version", tag="v9.9.9", expect="firn {tag}")
+
+    # assert
+    assert rc == 0
+    assert handed == ["firn v9.9.9"]
+
+
 def test_a_smoke_run_refuses_a_mount_that_is_not_a_directory_of_this_product(cli, _no_provenance,
                                                                             _product, _tagged,
                                                                             monkeypatch, capsys):

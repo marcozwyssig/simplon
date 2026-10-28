@@ -267,3 +267,23 @@ def test_ci_runs_the_suite_on_the_formulas_python():
     assert len(on_314) == 1
     assert on_314[0]["runs-on"] == "ubuntu-latest"
     assert any(step.get("run", "").endswith("test suite") for step in on_314[0]["steps"])
+
+
+def test_the_hosted_suite_job_can_run_linux_arm64_before_the_suite():
+    """si#552: the e2e of `test:file` runs a linux/arm64 file under QEMU, and a hosted runner has no
+    emulator (measured on PR #557: "Exec format error" on ubuntu-latest). The job registers one before
+    the suite, from the same binfmt image the kernel pins, so the two cannot drift apart."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    job = next(job for job in workflow["jobs"].values() if job["runs-on"] == "ubuntu-latest"
+               and any(step.get("run", "").endswith("test suite") for step in job["steps"]))
+    steps = job["steps"]
+    qemu = [i for i, step in enumerate(steps) if step.get("uses", "").startswith("docker/setup-qemu-action@")]
+    suite = next(i for i, step in enumerate(steps) if step.get("run", "").endswith("test suite"))
+
+    assert len(qemu) == 1 and qemu[0] < suite
+    step = steps[qemu[0]]
+    assert len(step["uses"].split("@", 1)[1]) == 40, "pinned by commit sha"
+    assert step["with"]["image"] == BINFMT_IMAGE
+    assert "arm64" in step["with"]["platforms"]

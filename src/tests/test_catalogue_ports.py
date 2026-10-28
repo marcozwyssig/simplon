@@ -24,6 +24,12 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "build:fetch": (P("file", "output", "file", "name", ("path", "url", "sha256")),),
         "test:image": (P("image", "input", "image", "name", IMAGE_NEEDS),
                        P("test-result", "output", "test-result", "results", ("path",))),
+        # si#552: the file port binds `file`, the image port keeps `name`
+        "build:image-file": (P("image", "input", "image", "name", IMAGE_NEEDS),
+                             P("file", "output", "file", "file", ("path",))),
+        # si#552: the file port binds `file`, and nothing binds `name`
+        "test:file": (P("file", "input", "file", "file", ("path",)),
+                      P("test-result", "output", "test-result", "results", ("path",))),
         "release:image": (P("image", "input", "image", "name", IMAGE_NEEDS), EVIDENCE),
         "release:artifact": (P("directory", "input", "directory", "name", OCI_NEEDS), EVIDENCE),
         "build:conan-cache": (P("conan", "input", "conan", "name", OCI_NEEDS),),
