@@ -878,10 +878,10 @@ tasks:
     params:
       tag: { help: "the tag to cut, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
 
-  # The GITHUB RELEASE, in four moments (si#486, part of si#463; the fourth is si#553): asked before the
+  # The GITHUB RELEASE, one task per moment (si#486, part of si#463; the attach is si#553): asked before the
   # build (is the tag's release still unpublished?), drafted before the build with the notes as its body,
-  # the built files attached to the draft after the build, and published after the image. Four coordinates
-  # rather than one with a `--step`, because the ports differ per moment - only the draft reads the notes,
+  # the built files attached to the draft after the build, and published after the image. One coordinate
+  # per moment rather than one with a `--step`, because the ports differ per moment - only the draft reads the notes,
   # only the attach reads files and their evidence, only the publish produces the release - and a port cannot
   # depend on a parameter. The attach is its own moment, not a part of the draft, because the files it
   # attaches exist only after the build (si#463 D).

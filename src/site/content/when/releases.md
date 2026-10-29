@@ -36,7 +36,8 @@ the bump:
    product that placed `toolchain: { task: "support:toolchain" }` itself, as cleon-firn did, loads
    unchanged and can delete the line.
 
-A product also gains five catalogue tasks and one token issuer, and uses them only by naming them.
+A product also gains six catalogue tasks and one token issuer, and uses them only by naming them. `asset_name` on `kind: file` is optional, and the new kind
+`release-assets` is new, so no existing manifest goes red on either.
 
 ### `support toolchain` exists in every product (si#550)
 
@@ -69,6 +70,44 @@ A product also gains five catalogue tasks and one token issuer, and uses them on
 - simplon proves both on an image of its own: a static and a dynamic file, built for both platforms, the
   arm64 one run under QEMU, and the `tag` path read from a local `registry:2`
   (`src/tests/test_imagefile_e2e.py`).
+
+### `release:github-attach` attaches tested files to the draft release (si#553)
+
+- **A new coordinate, the third moment of a GitHub Release** (after `release:github-draft`, before
+  `release:github-publish`). It puts the files bound to `files` on the tag's draft, each with a
+  `<asset_name>.sha256` sidecar, and is offered rather than placed. `release:github-draft` is unchanged.
+- **What a product writes.** A `kind: file` entry gains the optional `asset_name:`, the name the file is
+  published under (`{tag}` is replaced with the task's `tag`); a file bound to `attach` without one is
+  refused, and so are two files with the same expanded name. A new artifact kind, `release-assets`
+  (a `path:` and nothing else), is where the task records what it attached. The task consumes `files`
+  and `evidence` (the `test-result`s of `test:file`) and produces `release-assets`.
+- **Only tested bytes.** Before GitHub is asked, each file's product-relative path and `sha256:<hex>` are
+  compared with the records the bound tests wrote. A file no record names, or one changed after its
+  test, is refused, as is a bound file missing on disk, and so is `attach` bound to no files.
+- **Names GitHub would rewrite are refused up front.** GitHub keeps `A-Z a-z 0-9 _ . + @ -` and rewrites
+  the rest (other ASCII becomes `.`, non-ASCII and a leading dot get a `default.` prefix), measured
+  2026-10-29 on a throwaway draft. A rewritten name would make the published URL wrong, so the name is
+  refused in `asset_name` instead.
+- **The sidecar is `sha256sum -c` format**: `<hex>  <asset_name>` (two spaces) and a newline. After each
+  upload GitHub's own `digest` is read back and compared with the local sha256, for the file and for the
+  sidecar. A mismatch, or an asset GitHub reports with no digest, is red.
+- **The draft carries exactly the bound files and their sidecars afterwards.** An asset of a name this
+  run uploads is deleted and uploaded again (GitHub answers 422 for a taken name), and every other
+  asset on the draft is deleted and named in the log, so nothing a later publish makes public lacks
+  evidence from this run. A failure after the first upload leaves a half-attached draft; the message
+  says what the draft holds, and a re-run puts it right. A published release, two drafts and no draft
+  are refused before any byte moves, and `attach` never publishes.
+- **The record names URLs that are public only after publishing.** `release-assets` is JSON: per file
+  its asset name, `url_after_publish`, sha256 and its sidecar's name, URL and sha256, with URLs of the
+  form `https://github.com/<owner>/<repo>/releases/download/<tag>/<name>`. A draft's own download URL
+  is `.../download/untagged-<hash>/<name>` and answers 404 without a token, so it is not what the record
+  names.
+- **GitHub's release listing lags a create.** The end-to-end test (`src/tests/test_githubattach_e2e.py`,
+  opt-in, against a throwaway draft on this repository, deleted by id afterwards) measured a draft
+  that `create` had answered missing from the listing for several seconds. `attach` finds the draft
+  through that listing, so an `attach` right behind a `draft` can be told there is no draft. In a
+  dispatch release the build sits between the two, which is why this is recorded and not worked
+  around.
 
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 

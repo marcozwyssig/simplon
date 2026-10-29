@@ -1,6 +1,6 @@
 """`release:github-unpublished`, `release:github-draft`, `release:github-attach` and `release:github-publish` (si#486, part of si#463; the attach is si#553).
 
-FOUR COORDINATES, ONE PER MOMENT OF A RELEASE STARTED FROM GITHUB ACTIONS (Marco, si#463 D1):
+ONE COORDINATE PER MOMENT OF A RELEASE STARTED FROM GITHUB ACTIONS (Marco, si#463 D1):
 
   `unpublished`  before anything is built: does the tag have a PUBLISHED GitHub Release? A draft or none
                  is green, because that is an unfinished release, and a re-run may finish it. A published one is red,

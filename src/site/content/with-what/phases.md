@@ -291,7 +291,7 @@ pushed image is somebody else's dependency by the time you notice.
 - `release:tag`
 
 **What a product brings itself.** An `artifacts:` entry of the kind the task reads, or an `assets:` section, and - for
-`release:tag` - a workflow that a tag actually triggers. All thirteen are **offered** rather than placed, and `release:tag`
+`release:tag` - a workflow that a tag actually triggers. Every one of them is **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.
@@ -301,11 +301,11 @@ registry that a consuming pipeline pulls with its own token, and files on a rele
 downloads. Which of the two a product offers is a question about its audience, and about what its
 licence lets it hand out - never one the kernel answers for it.
 
-The four `release:github-*` tasks are one GitHub Release in four moments: `unpublished` asks, before
+The `release:github-*` tasks are one GitHub Release, one task per moment of it: `unpublished` asks, before
 anything is built, whether the tag's release is still unfinished (a draft or none - a published one is
 never overwritten); `draft` writes the draft with the release notes as its body before the build; `attach` puts the tested
 files and their `.sha256` sidecars on that draft after the build; and `publish` makes it public after the image,
-once origin carries the tag. A question GitHub did not answer is red in all four, never read as "no release".
+once origin carries the tag. A question GitHub did not answer is red in each of them, never read as "no release".
 
 `release:image` is worth reading as a rule rather than a task. It pushes *and then asks the registry
 whether the tag is there*, because a push nobody verifies is the same defect as a report nobody reads.
