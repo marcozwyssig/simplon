@@ -1,6 +1,11 @@
 # The site is simple: six sections, far less text, and a shape every product inherits
 
-Ticket: none yet (Marco, 2026-10-29). Open one before the plan.
+Ticket: si#348 (Marco, 2026-10-10: "simplify it massively"). Structure and rules decided by Marco
+on 2026-10-29.
+
+si#348 says it waits for si#344 (ci/cd/support, the artifact chain, `docs:` renamed to `website:`), and
+si#344 is still open on 2026-10-29. Whether this change goes first, after, or in between is Marco's call;
+the plan names the task that touches the `website:` seam so it can be reordered without a rewrite.
 
 ## Intent
 
@@ -136,6 +141,15 @@ product gets the same five verbs.
 - Migration of the existing products (netctl and the others in `surface.CONSUMERS`) is one ticket per
   product after the kernel ships the template: `init --force` for the shape, then the content moved by
   hand under the mapping rule above. Simplon goes first and is the worked example.
+
+## Pages held by tests
+
+si#348 lists what pins prose to code today: `test_site_counts`, `test_phases_chapter`, the census
+numbers on the rules page (`tests/test_refusal_census.py`) and the release notes guard
+(`src/simplon/tasks/test_release_notes.py`). The plan lists each such seam and says, per page it moves
+or drops, whether the test follows the page, moves to the Reference it now belongs to, or is removed
+with the page. A test removed because its page is gone is named in the plan with the page; a test that
+goes quietly red or quietly green is the recurring defect.
 
 ## Out of scope
 
