@@ -1476,6 +1476,27 @@ def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
     assert "from simplon.manifest import results as _results" in text
 
 
+def test_a_command_with_a_bound_list_port_runs_its_call_within_the_bound_names():
+    # arrange: si#553 - a port with no `param` hands its names to the body through `bound.names`
+    from simplon.model.artifactschema import Port
+
+    m = _load()
+    spec = dataclasses.replace(m.commands["lab"]["seed"], consumes={"files": ("a", "b")},
+                               ports=(Port("files", "input", "file", "", ()),))
+
+    # act
+    text = taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")
+
+    # assert
+    assert "_bound.within({'files': ('a', 'b')}, lambda: _rc(" in text
+    assert "from simplon.manifest import bound as _bound" in text
+
+
+def test_a_command_with_no_bound_list_port_has_no_bound_wrapper():
+    text = _render_with_produces({})
+    assert "_bound" not in text
+
+
 def test_a_generated_cli_runs_a_catalogue_coordinates_class_not_just_builds_it():
     # arrange: si#400 4c - a coordinate's impl names its task class; `Class(...)` would build an instance and
     # run nothing, with rc 0, so the generated call must go through `run`

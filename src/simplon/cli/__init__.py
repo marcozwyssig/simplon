@@ -28,7 +28,7 @@ from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, Typed
 import typer
 
 import simplon
-from simplon.manifest import clitaxonomy, outputs, signatures
+from simplon.manifest import bound, clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
 from simplon.manifest.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
@@ -245,6 +245,8 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
     # si#434: a command bound to evidence runs its body only when every record it is bound to is green,
     # and si#439: the body learns what those records ran (`results.tested`).
     evidence = results.evidence_of(spec)
+    # si#553: the names bound to a list port (no `param`) reach the body through `bound.names`.
+    listed = bound.of(spec)
 
     @functools.wraps(fn)
     def _wrapped(*args: object, **kwargs: object) -> None:
@@ -253,7 +255,8 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
                 return _rc(fn(*args, **{**kwargs, **pinned}))
             snapshot = results.before(produced)
             return results.held(snapshot, _rc(fn(*args, **{**kwargs, **pinned})))
-        raise typer.Exit(code=results.guarded(evidence, body) if evidence else body())
+        run = (lambda: results.guarded(evidence, body)) if evidence else body
+        raise typer.Exit(code=bound.within(listed, run) if listed else run())
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
     # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and
