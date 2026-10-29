@@ -137,6 +137,9 @@ A product also gains five catalogue tasks and one token issuer, and uses them on
   no origin-only branch is deleted. `--dry-run` names them.
 - **#533** pins `deploy/image/image.pin` to the published v0.36.0 kernel image.
 - **#545** is these notes.
+- **The website's redesign is specified (si#348), ordered against si#344.** The design is in
+  `docs/superpowers/specs/2026-10-29-the-site-is-simple-design.md`; nothing on the site changes in this
+  release.
 
 ## 0.36.0
 
