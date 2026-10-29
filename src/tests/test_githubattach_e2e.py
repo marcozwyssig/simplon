@@ -12,6 +12,11 @@ with that tag and no remote tag remains, so a run that cannot clean up is red ra
     SIMPLON_E2E_GITHUB_REPO=marcozwyssig/simplon deploy/orchestrator/.venv/bin/python -m pytest \\
         tests/test_githubattach_e2e.py -q
 
+GitHub's release LISTING lags a create by several seconds (measured: a draft `create_git_release` answered was
+missing from `get_releases()`), and `_one_draft` reads that listing, so a production pipeline with no time
+between `draft` and `attach` inherits the lag and may be told there is no draft. Recorded for the maintainer;
+`attach` is not changed. This test waits for the listing, and tears down by the created release's id.
+
 The stand-in server of `test_tasks_githubrelease.py` confirms only what was written into it; this is the
 measurement against GitHub's own digests, name rules and asset listing.
 """
@@ -26,8 +31,11 @@ import uuid
 from pathlib import Path
 
 import pytest
+import requests
 
-from simplon.adapters import github, githubpackages
+from github.Repository import Repository
+
+from simplon.adapters import github
 from simplon.manifest import bound, context, results
 from simplon.tasks import gitops, githubrelease
 
@@ -35,10 +43,16 @@ REPO = "marcozwyssig/simplon"
 
 
 def _token() -> str:
+    """`GITHUB_TOKEN`, else `gh auth token` with a time limit: this runs at collection, and the kernel's own
+    `githubpackages.token()` puts none on `gh`, so a hung `gh` would hang every collection of the suite."""
+    held = os.environ.get("GITHUB_TOKEN", "").strip()
+    if held:
+        return held
     try:
-        return githubpackages.token()
-    except (githubpackages.PackageError, OSError):
+        shown = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
         return ""
+    return shown.stdout.strip() if shown.returncode == 0 else ""
 
 
 pytestmark = pytest.mark.skipif(
@@ -109,16 +123,52 @@ def real(tmp_path, monkeypatch):
     monkeypatch.setattr(gitops, "head_commit", lambda: head)
     tag = f"v0.0.0-si553-{uuid.uuid4().hex[:8]}"
     repo = github.repository()
+    # The id of every release this test's create call answered, so teardown does not depend on the listing
+    # (which lags a create): it deletes by id, and only what was created here.
+    created: list[int] = []
+    make = Repository.create_git_release
+
+    def remembered(self, *args, **kwargs):
+        made = make(self, *args, **kwargs)
+        created.append(made.id)
+        return made
+
+    monkeypatch.setattr(Repository, "create_git_release", remembered)
     try:
         assert bound.within({}, lambda: githubrelease.draft("notes", tag)) == 0
         assert _listed(repo, tag, present=True), f"the draft {tag} never appeared in the release listing"
         yield root, tag, repo
     finally:
-        for release in _listed(repo, tag, present=True):
-            assert release.draft, f"{tag} is published: refusing to delete it"
+        _teardown(repo, tag, created)
+
+
+def _teardown(repo, tag: str, created: list[int]) -> None:
+    """Delete this test's draft(s) by id, then check nothing remains; every step runs whatever the others did,
+    and a failure names the tag and id so a leftover can be removed by hand."""
+    failures: list[str] = []
+    for rid in created:
+        try:
+            release = repo.get_release(rid)
+            if release.tag_name != tag or not release.draft:
+                failures.append(f"release {rid} is not this test's draft {tag}: not deleted")
+                continue
             release.delete_release()
-        assert _listed(repo, tag, present=False) == [], f"the draft {tag} is still listed after its delete"
-        assert _remote_tags(tag) == ""
+        except (github.GithubException, requests.exceptions.RequestException) as error:
+            failures.append(f"could not delete the draft {tag} (release id {rid}): {error}; delete it by hand")
+    if not created:
+        failures.append(f"no create call was seen for {tag}; check by hand: "
+                        f"gh api repos/{REPO}/releases --paginate -q '.[]|select(.tag_name==\"{tag}\")|.id'")
+    try:
+        if _listed(repo, tag, present=False):
+            failures.append(f"the draft {tag} (ids {created}) is still listed after its delete")
+    except (github.Unanswered, github.GithubException, requests.exceptions.RequestException) as error:
+        failures.append(f"could not list the releases to check {tag} is gone: {error}")
+    try:
+        if _remote_tags(tag):
+            failures.append(f"origin carries the tag {tag}")
+    except (subprocess.CalledProcessError, OSError) as error:
+        failures.append(f"could not ask origin whether it carries {tag}: {error}")
+    assert not failures, "; ".join(failures)
 
 
 def _attach(tag: str) -> int:
@@ -127,7 +177,7 @@ def _attach(tag: str) -> int:
 
 
 def _draft_assets(repo, tag: str) -> dict:
-    (release,) = [r for r in github.releases_for(repo, tag)]
+    (release,) = _listed(repo, tag, present=True)
     assert release.draft
     return {a.name: a for a in github.assets(release)}
 
@@ -148,7 +198,7 @@ def test_attach_puts_both_files_and_sidecars_on_a_real_draft(real):
 def test_a_rerun_replaces_and_a_foreign_asset_is_removed(real, tmp_path_factory):
     root, tag, repo = real
     assert _attach(tag) == 0
-    (release,) = github.releases_for(repo, tag)
+    (release,) = _listed(repo, tag, present=True)
     foreign = tmp_path_factory.mktemp("foreign") / "foreign"
     foreign.write_bytes(b"nobody tested this\n")
     github.upload(release, foreign, "si553-foreign")
