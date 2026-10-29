@@ -536,6 +536,8 @@ tasks:
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
       platform: { help: "one of the image's declared `platforms:` to run; default every declared one" }
       results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
+      timeout: { help: "seconds each run may take (default 300); a run past it is red and its container removed" }
+      env:     { help: "the container's environment, a mapping of names to values; a name with no value (`NAME: ~`) is forwarded from the caller" }
 
   build:image:
     help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform."

@@ -26,7 +26,7 @@ it is the one section held only to existing.
 ## 0.37.0
 
 **What a product has to do:** nothing is removed, and a product on 0.36.0 moves both simplon pins
-together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. One change can go red on
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. Two changes can go red on
 the bump:
 
 1. **`support toolchain` is now placed by the kernel (si#550).** A product with a command named
@@ -35,6 +35,10 @@ the bump:
    (`build toolchain`, which `deploy devcontainer` depends on). The way out: rename that command. A
    product that placed `toolchain: { task: "support:toolchain" }` itself, as cleon-firn did, loads
    unchanged and can delete the line.
+2. **A `test:image` run now ends after 300 s by default (si#554).** One that ran longer is red with
+   "gave no answer within 300 s". Measured over the last six green CI runs of firn and agile-cockpit, the
+   only reachable manifests with `test image`, every such step took 1 to 3 s. The way out: `timeout:` in
+   the command's `with:`.
 
 A product also gains five catalogue tasks and one token issuer, and uses them only by naming them.
 
@@ -69,6 +73,18 @@ A product also gains five catalogue tasks and one token issuer, and uses them on
 - simplon proves both on an image of its own: a static and a dynamic file, built for both platforms, the
   arm64 one run under QEMU, and the `tag` path read from a local `registry:2`
   (`src/tests/test_imagefile_e2e.py`).
+
+### `test:image` is bounded and takes an environment (si#554)
+
+- **Every run has a time limit.** `timeout:` (seconds, default 300) bounds each run; a run past it is red
+  with its own sentence, its container is removed, and its verdict record says `rc: null`. A server image
+  whose `CMD` never exits no longer hangs the gate (agile-cockpit#157). `timeout: 0` is refused.
+- **`env:` is the container's environment**, a mapping passed as `-e NAME=value`. A name with no value
+  (`SECRET_KEY: ~`) is forwarded from the caller's environment, so a secret stays out of the manifest; one
+  the caller does not have is refused before anything runs. A value is a string or an integer.
+  agile-cockpit's `env COCKPIT_REQUIRE_SECRET=0` in front of its `argv` becomes
+  `env: { COCKPIT_REQUIRE_SECRET: "0" }`.
+- The task's docstring now says that an image with no `mount` usually wants `user: false`.
 
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 
