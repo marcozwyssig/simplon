@@ -367,7 +367,26 @@ def test_attach_refuses_a_file_no_subject_names(built, api, capsys):
 def test_attach_refuses_a_file_changed_after_its_test(built, api, capsys):
     (built / "build" / "tool-mac").write_bytes(b"changed")
     assert _attach() == 1
-    _refused(api, capsys, "build/tool-mac", _sha(MAC), _sha(b"changed"), "changed after its test")
+    _refused(api, capsys, "build/tool-mac", _sha(MAC), _sha(b"changed"), "changed after that test")
+
+
+def test_attach_refuses_a_file_one_record_names_with_another_digest(built, api, capsys):
+    """Two green records name the file: one with its current digest, one with the old bytes'. The current one
+    does not excuse the stale one (spec goal 6)."""
+    _record(built, [{"reference": "build/tool-linux", "id": _sha(LINUX)},
+                    {"reference": "build/tool-linux", "id": _sha(b"old bytes")},
+                    {"reference": "build/tool-mac", "id": _sha(MAC)}])
+    assert _attach() == 1
+    _refused(api, capsys, "build/tool-linux", _sha(LINUX), _sha(b"old bytes"), "changed after that test",
+             "re-run it")
+
+
+def test_attach_says_a_missing_repository_as_a_sentence(built, api, capsys, monkeypatch):
+    def nowhere(origin=""):
+        raise githubrelease.github.Unanswered("no GitHub repository to ask: nothing set")
+    monkeypatch.setattr(githubrelease.github, "where", nowhere)
+    assert _attach("v1.2.3") == 1
+    _refused(api, capsys, "nothing was attached to v1.2.3: no GitHub repository to ask")
 
 
 def test_attach_refuses_a_red_record_before_reading_the_files(built, api, capsys):

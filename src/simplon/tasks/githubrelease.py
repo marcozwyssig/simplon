@@ -150,8 +150,8 @@ def attach(tag: str = "", assets: str = "") -> int:
     plan = _planned(version)
     if plan is None:
         return 1
-    owner = _public_repository()
     try:
+        owner = _public_repository()
         repo = _repository()
         usable, release = _one_draft(repo, version)
         if not usable:
@@ -260,7 +260,7 @@ def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, re
                      "sha256": hashlib.sha256(_sidecar(u)).hexdigest()}} for u in plan]}
     record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    log.ok(f"attached {len(plan)} files and their sidecars to the draft {tag} ({release.html_url}), checked "
+    log.ok(f"attached {len(plan)} file{'' if len(plan) == 1 else 's'} and their sidecars to the draft {tag} ({release.html_url}), checked "
            f"against GitHub's digests; the URLs in {record_path.name} are public only after publishing")
     return 0
 
@@ -285,7 +285,7 @@ def _planned(tag: str) -> list[_Upload] | None:
             raise ValueError(f"{source}: no artifact '{name}' in the `{ARTIFACTS}:` section; declared are: "
                              f"{', '.join(sorted(str(k) for k in section)) or '(none)'}")
         entry = artifactsection.entry(section, name, artifactschema.FileEntry, source, ATTACH_COORDINATE,
-                                      param="")
+                                      port="files")
         if not entry.asset_name:
             problems.append(f"'{name}' has no `asset_name`: give the name the file is attached under, e.g. "
                             f"`asset_name: tool-{{tag}}-linux-amd64`")
@@ -341,10 +341,12 @@ def _tested(planned: list[_Upload]) -> bool:
             ran = ", ".join(s.reference for s in subjects) or "nothing"
             problems.append(f"{upload.relative} ('{upload.entry}'): no test names it (the evidence tested "
                             f"{ran}); run test:file on it with its result bound to `evidence`")
-        elif all(s.id != digest for s in named):
+        elif stale := [s for s in named if s.id != digest]:
+            # ANY record naming the file with another digest refuses, not only when none matches: a current
+            # record does not excuse a stale one (spec goal 6)
             problems.append(f"{upload.relative} ('{upload.entry}') is {digest}, and the evidence tested "
-                            f"{', '.join(s.id for s in named)}: the file changed after its test; run "
-                            f"test:file on it again, then attach")
+                            f"{', '.join(sorted({s.id for s in stale}))}: the file changed after that test; "
+                            f"re-run it (test:file on the file), then attach")
     if problems:
         log.error("refused, so no asset was uploaded or deleted:\n  " + "\n  ".join(problems))
         return False

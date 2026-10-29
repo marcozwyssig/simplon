@@ -36,8 +36,9 @@ the bump:
    product that placed `toolchain: { task: "support:toolchain" }` itself, as cleon-firn did, loads
    unchanged and can delete the line.
 
-A product also gains six catalogue tasks and one token issuer, and uses them only by naming them. `asset_name` on `kind: file` is optional, and the new kind
-`release-assets` is new, so no existing manifest goes red on either.
+A product also gains six catalogue tasks and one token issuer, and uses them only by naming them.
+`asset_name` on `kind: file` is optional and `release-assets` is a new kind, so no existing manifest goes
+red on either.
 
 ### `support toolchain` exists in every product (si#550)
 

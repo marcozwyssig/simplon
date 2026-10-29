@@ -228,5 +228,5 @@ def test_a_file_changed_after_its_record_uploads_nothing(real, capsys):
     (root / "build" / "tool-a").write_bytes(b"changed after the test\n")
     assert _attach(tag) == 1
     out = capsys.readouterr()
-    assert "the file changed after its test" in out.out + out.err
+    assert "the file changed after that test" in out.out + out.err
     assert _draft_assets(repo, tag) == {}
