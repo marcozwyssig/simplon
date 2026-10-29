@@ -172,7 +172,7 @@ from simplon.tasks import image
 product, root, ref, seconds = sys.argv[1:5]
 context.set_current(context.ProductContext(product, Path(root), Path(root) / "x.yaml"))
 print("-", flush=True)
-sys.exit(image._run_once(ref, [], "sleep " + seconds, "", 0))
+sys.exit(image._run_once(ref, [], "sleep " + seconds, "", 0, image.SMOKE_TIMEOUT))
 """
 
 

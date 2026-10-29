@@ -104,6 +104,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -539,6 +540,16 @@ def present_locally(ref: str) -> bool:
 #: The file `build:image` leaves behind, under `<output>/docker/` (si#314).
 RECORD = "image.txt"
 
+#: The seconds a `test:image` run may take when the command names no `timeout` (si#554). A DEFAULT, not
+#: required as `test:file` requires it: every reachable manifest with `test image` would otherwise go red
+#: for a run that works today. Measured 2026-10-29 over the last six green CI runs of firn and
+#: agile-cockpit, every `test:image` step took 1-3 s; this is two orders above that, and nothing is pulled
+#: inside it, because the verb never pulls.
+SMOKE_TIMEOUT = 300
+
+#: What `env:` may name: a POSIX environment variable, which is also all `docker run -e` passes unchanged.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
 
 def local_id(ref: str) -> str:
     """The daemon's id for `ref`, or '' when it cannot be read. NOT a registry digest, and the two are
@@ -658,7 +669,8 @@ def expand_tag(text: str, tag: str) -> str:
 
 
 def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
-          rc: int = 0, user: bool = True, platform: str = "", results: str = "") -> int:
+          rc: int = 0, user: bool = True, platform: str = "", results: str = "",
+          timeout: int = SMOKE_TIMEOUT, env: Mapping[str, object] | None = None) -> int:
     """Run the container image `name` declares and check that it answers (si#301).
 
     `rc` IS AN EXPECTATION AND NOT A TOLERANCE (si#303), which is the whole of why it takes a value
@@ -710,6 +722,20 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     **`{tag}` in `expect` is the resolved tag** (si#552): an image that prints its version is expected to
     print the tag it was built under, which the product would otherwise have to restate beside the one
     it already declared.
+
+    **Every run is bounded** (si#554). A server image whose `CMD` never exits would otherwise hang the gate
+    with no verdict at all, so `timeout` has a default, `SMOKE_TIMEOUT`, and a run past it is red, its
+    container removed, and its record says `rc: null` - the run gave no exit code, which is not the same
+    answer as any number it could have given.
+
+    **`env` is the environment the container starts in** (si#554), a mapping of names to values passed as
+    `-e NAME=value`. A name without a value (`SECRET_KEY: ~`) is forwarded from the caller's environment as
+    `-e NAME`, so a secret stays out of the manifest; one the caller does not have is refused, because
+    docker would start the image without it and the run would look configured when it is not.
+
+    **`user` defaults to the caller's uid for the bind mount's sake.** An image with no `mount` that writes
+    to a volume owned by its own `USER` fails to start under it (agile-cockpit#157: "unable to open database
+    file"), and usually wants `user: false`.
     """
     cfg, root = _declared_for(name, "test:image")
     # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
@@ -718,11 +744,19 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     record_path = results_mod.path_of(results) if results else None
     if record_path is not None:
         record_path.unlink(missing_ok=True)
+    # After the unlink, for the same reason: a malformed `env` raises, and that is a run that did not happen.
+    environment = _env_argv(env)
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
     expected = expand_tag(expect, resolved)
     if not _platform_declared(cfg, name, platform):
+        return 1
+    if timeout <= 0:
+        log.error(f"`timeout: {timeout}` is no limit, and a run without one has no verdict; give `timeout:` "
+                  f"in seconds, greater than 0, or leave it out for {SMOKE_TIMEOUT}")
+        return 1
+    if environment is None:
         return 1
     runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
             if cfg.platforms else [("", ref)])
@@ -740,8 +774,10 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
         if bound is None:
             return 1
         options += bound
+    options += environment
     outcomes = [(one, each, local_id(each),
-                 *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expected, rc))
+                 *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expected, rc,
+                            timeout))
                 for one, each in runs]
     verdict = next((v for _, _, _, v, _ in outcomes if v != 0), 0)
     if record_path is not None:
@@ -754,9 +790,10 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     return verdict
 
 
-def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> tuple[int, int]:
+def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int,
+              timeout: int) -> tuple[int, int | None]:
     """One `docker run` of `ref`: its verdict - 0, or the code `smoke` hands back - and the container's own
-    rc, which the verdict record carries (si#344 C.3).
+    rc, which the verdict record carries (si#344 C.3), None when a run past `timeout` gave none (si#554).
 
     Named and labelled `simplon.run=<product>`, and removed if the run is interrupted (si#412): an image
     under test is exactly the container nobody knows the lifetime of, and a cancelled job must not leave
@@ -765,8 +802,13 @@ def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> 
     """
     name, lifecycle = docker.lifecycle()
     command = ["docker", "run", "--rm", *options, *lifecycle, ref, *shlex.split(argv)]
-    with docker.stopped_on_interrupt(name):
-        result = run(command)
+    try:
+        with docker.stopped_on_interrupt(name):
+            result = run(command, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log.error(f"{ref} gave no answer within {timeout} s; its container {name} was removed. An image whose "
+                  f"command does not exit (a server) needs an `argv` that does, or a longer `timeout:`")
+        return (1, None)
     if result.rc != rc:
         log.error(f"{ref} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n"
                   + _indented(result))
@@ -780,6 +822,37 @@ def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> 
         return (1, result.rc)
     log.ok(f"ran {ref}")
     return (0, result.rc)
+
+
+def _env_argv(env: object) -> list[str] | None:
+    """`-e` arguments for `env`, or None after saying which forwarded name the caller does not have.
+
+    A malformed `env` is a ValueError, raised before anything is asked: it is the manifest's shape, and no
+    run could have answered it. A value is a string or an integer (YAML reads `0` as one); anything else is
+    refused rather than spelled, because `yes` arrives as True and a list has no spelling docker would read.
+    """
+    if env is None:
+        return []
+    if not isinstance(env, Mapping):
+        raise ValueError(f"env must be a mapping of variable names to values, e.g. `env: {{ NAME: value }}`, "
+                         f"got {env!r}")
+    out: list[str] = []
+    for key, value in env.items():
+        if not isinstance(key, str) or not _ENV_NAME.match(key):
+            raise ValueError(f"env names {key!r}, which is not an environment variable name "
+                             f"(letters, digits and `_`, not starting with a digit)")
+        if value is None:
+            if key not in os.environ:
+                log.error(f"`env:` forwards {key} from the caller's environment, and it is not set there; "
+                          f"nothing was run. Set {key}, or give it a value in `env:`")
+                return None
+            out += ["-e", key]
+        elif isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool)):
+            out += ["-e", f"{key}={value}"]
+        else:
+            raise ValueError(f"env gives {key} the value {value!r}; a value is a string (quote it) or an "
+                             f"integer, and a name with no value (`{key}: ~`) is forwarded from the caller")
+    return out
 
 
 def _mount_argv(mount: str, root: Path) -> list[str] | None:
