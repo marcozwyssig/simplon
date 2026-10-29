@@ -308,7 +308,7 @@ def test_attach_refuses_bound_to_no_files(built, api, capsys, files):
 
 
 def test_attach_refuses_called_outside_a_command(built, api, capsys):
-    assert githubrelease.attach("v1.0.0") == 1
+    assert githubrelease.attach("v1.0.0", "shipped") == 1
     _refused(api, capsys, "bound to no files")
 
 
@@ -354,7 +354,7 @@ def test_attach_refuses_a_bound_file_missing_on_disk(built, api, capsys):
 
 
 def test_attach_refuses_when_no_evidence_is_bound(built, api, capsys):
-    assert bound.within({"files": ("linux", "mac")}, lambda: githubrelease.attach("v1.0.0")) == 1
+    assert bound.within({"files": ("linux", "mac")}, lambda: githubrelease.attach("v1.0.0", "shipped")) == 1
     _refused(api, capsys, "no evidence bound", "`evidence`")
 
 
@@ -529,7 +529,7 @@ def test_attach_removes_an_earlier_record_before_it_asks_github(built, api):
 
 def test_attach_command_hands_the_bound_release_assets_name_to_the_body():
     # the catalogue declares no `params: assets:`, so the pin comes from the `release-assets` output port's
-    # `param = "assets"` alone; this proves it reaches the body's keyword, not just the loader
+    # `param = "assets"` alone; the loader pins it, and the cli's wrapper calls the body with it
     import inspect
 
     from simplon.manifest import catalogue
@@ -555,3 +555,48 @@ def test_attach_command_hands_the_bound_release_assets_name_to_the_body():
     assert spec.with_["assets"] == "shipped"
     assert spec.consumes["files"] == ("linux",)
     assert "assets" in inspect.signature(githubrelease.attach).parameters
+
+    import dataclasses
+
+    import typer
+
+    from simplon import cli
+    seen: dict[str, object] = {}
+
+    def body(tag: str = "", assets: str = "") -> int:
+        seen.update(tag=tag, assets=assets)
+        return 0
+
+    # no ports bound for the call itself: the wrapper's evidence and record checks need a product on disk
+    wrapper = cli._bound(body, dataclasses.replace(spec, produces={}, consumes={}), where="release attach")
+    with pytest.raises(typer.Exit) as left:
+        wrapper(tag="v1.2.3")
+    assert left.value.exit_code == 0 and seen == {"tag": "v1.2.3", "assets": "shipped"}
+
+
+def test_attach_removes_an_earlier_record_when_a_check_before_github_refuses(built, api):
+    record = built / "build" / "release" / "assets.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text("{}", encoding="utf-8")
+    (built / "build" / "tool-mac").write_bytes(b"changed after its test")
+    assert _attach("v1.2.3") == 1
+    assert not record.exists() and api["requests"] == []
+
+
+def test_attach_names_the_stray_it_could_not_delete(built, api, capsys):
+    _draft(api)
+    _left(api, "stray-binary", b"x")
+    api["fail"][("DELETE", "/repos/o/n/releases/assets/")] = 500
+    assert _attach("v1.2.3") == 1
+    said = _said(capsys)
+    assert "refused to delete stray-binary" in said and "re-run" in said and LINUX_NAME in said
+    assert f"refused {MAC_NAME}.sha256" not in said
+
+
+def test_attach_says_nothing_was_changed_when_the_first_listing_fails(built, api, capsys):
+    _draft(api)
+    api["fail"][("GET", f"/repos/o/n/releases/{DRAFT}/assets")] = 500
+    assert _attach("v1.2.3") == 1
+    said = _said(capsys)
+    assert "nothing on the draft v1.2.3 was changed" in said and "not publishable" not in said
+    assert [r for r in api["requests"] if r[0] in ("POST", "DELETE")] == []

@@ -143,12 +143,13 @@ def attach(tag: str = "", assets: str = "") -> int:
     release step: the message names what is on the draft and that a re-run replaces it. `attach` never calls
     `update_release`, so it cannot publish."""
     version = _tag(tag)
+    record_path = _record_path(assets)
+    # A record from an earlier run says "attached"; this run has not yet, and may refuse below, so it is not
+    # left standing. Needs no GitHub, so no request precedes a refusal.
+    record_path.unlink(missing_ok=True)
     plan = _planned(version)
     if plan is None:
         return 1
-    record_path = _record_path(assets)
-    # A record from an earlier run says "attached"; this run has not yet, so it is not left standing
-    record_path.unlink(missing_ok=True)
     owner = _public_repository()
     try:
         repo = _repository()
@@ -210,10 +211,13 @@ def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, re
         wanted += [(upload.name, upload.path, upload.sha256),
                    (f"{upload.name}.sha256", side, hashlib.sha256(content).hexdigest())]
     doing = ""
+    touched = False   # a delete or an upload was sent: until then the draft is as this run found it
     on_draft: list[str] = []   # what this run has put there, for every failure below
 
     def now() -> str:
         """What the draft holds, as GitHub lists it now; what this run put there when it cannot be asked."""
+        if not touched:
+            return f"nothing on the draft {tag} was changed; a re-run of {ATTACH_COORDINATE} starts again"
         try:
             holds = f"the draft {tag} holds {', '.join(sorted(a.name for a in github.assets(release))) or 'no assets'}"
         except (github.Unanswered, GithubException):
@@ -224,9 +228,10 @@ def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, re
     try:
         existing = {a.name: a for a in github.assets(release)}
         for name, path, digest in wanted:
-            doing = name
             if name in existing:
+                doing, touched = f"to delete the earlier {name}", True
                 github.delete(existing.pop(name))
+            doing, touched = f"the upload of {name}", True
             made = github.upload(release, path, name)
             on_draft.append(name)
             if made.digest != "sha256:" + digest:
@@ -236,7 +241,9 @@ def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, re
                             f"were tested. {now()}")
                 return 1
         kept = {name for name, _, _ in wanted}
+        doing = "to list the assets of the draft"
         for stray in [a for a in github.assets(release) if a.name not in kept]:
+            doing = f"to delete {stray.name}"
             github.delete(stray)
             log.warn(f"deleted the asset {stray.name} from the draft {tag}: this run did not upload it, so "
                      f"nothing says it was tested")
@@ -244,7 +251,7 @@ def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, re
         log.error(f"{unanswered}. {now()}")
         return 1
     except GithubException as refused:
-        log.error(f"GitHub refused {doing or 'to list the assets'}: {github.said(refused)}. {now()}")
+        log.error(f"GitHub refused {doing or 'to list the assets of the draft'}: {github.said(refused)}. {now()}")
         return 1
     base = f"https://github.com/{owner}/releases/download/{tag}/"
     record = {"tag": tag, "assets": [
