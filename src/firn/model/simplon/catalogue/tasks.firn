@@ -289,6 +289,22 @@ release_github_draft typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+release_github_attach typeOf simplon.pipeline.CatalogueTask {
+  key = "release:github-attach"
+  body = "simplon.tasks.githubrelease:attach"
+  input files typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.file
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
+  output release_assets typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.release_assets
+    param = "assets"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
 release_github_publish typeOf simplon.pipeline.CatalogueTask {
   key = "release:github-publish"
   body = "simplon.tasks.githubrelease:publish"

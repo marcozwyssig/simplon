@@ -1,13 +1,15 @@
 """si#486: `release:github-unpublished`, `-draft` and `-publish`, against a local stand-in of the API."""
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 import githubstandin
-from simplon.manifest import context
+from simplon.manifest import bound, context, results
 from simplon.tasks import gitops, githubrelease
 
 NOTES = "## v1.0.0\n\n- a merge\n"
@@ -237,3 +239,144 @@ def test_reuse_and_publish_keep_a_prerelease_a_prerelease(api, monkeypatch):
     # assert: neither PATCH turned it into a full release
     patches = [body for method, _, body in api["requests"] if method == "PATCH"]
     assert len(patches) == 2 and all(body.get("prerelease") is True for body in patches)
+
+
+# --- attach: every refusal before GitHub is asked (si#553) ----------------------------------------------
+
+ATTACH_MANIFEST = """product: sample
+artifacts:
+  linux: { kind: file, path: build/tool-linux, asset_name: "tool-{tag}-linux" }
+  mac: { kind: file, path: build/tool-mac, asset_name: "tool-{tag}-mac" }
+  proof: { kind: test-result, path: build/proof.json }
+"""
+LINUX, MAC = b"linux bytes", b"mac bytes"
+
+
+def _sha(raw: bytes) -> str:
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _record(root: Path, runs: list, verdict: int = 0) -> None:
+    (root / "build" / "proof.json").write_text(json.dumps({"verdict": verdict, "runs": runs}), encoding="utf-8")
+
+
+def _both_tested(root: Path) -> None:
+    _record(root, [{"reference": "build/tool-linux", "id": _sha(LINUX)},
+                   {"reference": "build/tool-mac", "id": _sha(MAC)}])
+
+
+@pytest.fixture
+def built(api, product, monkeypatch):
+    """Two built files, a manifest that declares them, and a green record naming both."""
+    (product / "sample.yaml").write_text(ATTACH_MANIFEST, encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext("sample", product, product / "sample.yaml"))
+    (product / "build").mkdir(exist_ok=True)
+    (product / "build" / "tool-linux").write_bytes(LINUX)
+    (product / "build" / "tool-mac").write_bytes(MAC)
+    _both_tested(product)
+    return product
+
+
+def _attach(tag="v1.0.0", files=("linux", "mac"), evidence=("proof",)) -> int:
+    def run() -> int:
+        return results.guarded(evidence, lambda: githubrelease.attach(tag))
+    return bound.within({"files": files} if files is not None else {}, run)
+
+
+def _refused(api, capsys, *phrases) -> None:
+    said = _said(capsys)
+    for phrase in phrases:
+        assert phrase in said, said
+    assert api["requests"] == []
+
+
+def test_attach_refuses_without_a_tag(built):
+    with pytest.raises(ValueError, match="which release"):
+        _attach(tag="")
+
+
+def test_attach_refuses_an_invalid_tag(built):
+    with pytest.raises(ValueError, match="not a tag git would accept"):
+        _attach(tag="a b")
+
+
+@pytest.mark.parametrize("files", [None, ()])
+def test_attach_refuses_bound_to_no_files(built, api, capsys, files):
+    assert _attach(files=files) == 1
+    _refused(api, capsys, "bound to no files", "consumes: { files: [...] }")
+
+
+def test_attach_refuses_called_outside_a_command(built, api, capsys):
+    assert githubrelease.attach("v1.0.0") == 1
+    _refused(api, capsys, "bound to no files")
+
+
+def test_attach_refuses_an_entry_with_no_asset_name(built, api, capsys):
+    (built / "sample.yaml").write_text(ATTACH_MANIFEST.replace(', asset_name: "tool-{tag}-mac"', ""),
+                                       encoding="utf-8")
+    assert _attach() == 1
+    _refused(api, capsys, "'mac'", "no `asset_name`")
+
+
+@pytest.mark.parametrize("name", [".hidden", "a/b", "tool linux", "tool\u00e4", "tool*", "tool~1", "a:b"])
+def test_attach_refuses_an_asset_name_github_would_rewrite(built, api, capsys, name):
+    (built / "sample.yaml").write_text(ATTACH_MANIFEST.replace("tool-{tag}-mac", name), encoding="utf-8")
+    assert _attach() == 1
+    _refused(api, capsys, "'mac'", "GitHub would store another name", "release-assets")
+
+
+def test_attach_refuses_an_empty_asset_name_in_the_schema(built, api, capsys):
+    (built / "sample.yaml").write_text(ATTACH_MANIFEST.replace("tool-{tag}-mac", ""), encoding="utf-8")
+    with pytest.raises(ValueError, match="'asset_name' must be a non-empty string"):
+        _attach()
+    assert api["requests"] == []
+
+
+def test_attach_checks_the_name_after_the_tag_is_expanded(built, api, capsys):
+    # `{tag}` is only a placeholder: a tag with a character GitHub rewrites makes the expanded name wrong
+    (built / "sample.yaml").write_text(ATTACH_MANIFEST.replace("tool-{tag}-mac", "{tag}"), encoding="utf-8")
+    assert _attach(tag="v1.0.0#rc") == 1
+    _refused(api, capsys, "'mac'", "GitHub would store another name", "v1.0.0#rc")
+
+
+def test_attach_refuses_two_entries_with_the_same_expanded_name(built, api, capsys):
+    (built / "sample.yaml").write_text(ATTACH_MANIFEST.replace("tool-{tag}-mac", "tool-{tag}-linux"),
+                                       encoding="utf-8")
+    assert _attach() == 1
+    _refused(api, capsys, "tool-v1.0.0-linux", "'linux'", "'mac'")
+
+
+def test_attach_refuses_a_bound_file_missing_on_disk(built, api, capsys):
+    (built / "build" / "tool-mac").unlink()
+    assert _attach() == 1
+    _refused(api, capsys, "'mac'", "build/tool-mac", "run the command that produces it first")
+
+
+def test_attach_refuses_when_no_evidence_is_bound(built, api, capsys):
+    assert bound.within({"files": ("linux", "mac")}, lambda: githubrelease.attach("v1.0.0")) == 1
+    _refused(api, capsys, "no evidence bound", "`evidence`")
+
+
+def test_attach_refuses_a_file_no_subject_names(built, api, capsys):
+    _record(built, [{"reference": "build/tool-linux", "id": _sha(LINUX)}])
+    assert _attach() == 1
+    _refused(api, capsys, "build/tool-mac", "no test names it")
+
+
+def test_attach_refuses_a_file_changed_after_its_test(built, api, capsys):
+    (built / "build" / "tool-mac").write_bytes(b"changed")
+    assert _attach() == 1
+    _refused(api, capsys, "build/tool-mac", _sha(MAC), _sha(b"changed"), "changed after its test")
+
+
+def test_attach_refuses_a_red_record_before_reading_the_files(built, api, capsys):
+    _record(built, [{"reference": "build/tool-linux", "id": _sha(LINUX)}], verdict=1)
+    assert _attach() == 1
+    _refused(api, capsys, "is red")
+
+
+def test_attach_that_passes_every_check_is_not_yet_implemented_and_never_green(built, api):
+    # the guard against `return 0`: a green run that attached nothing (Task 4 replaces the raise)
+    with pytest.raises(NotImplementedError, match="si#553 Task 4"):
+        _attach()
+    assert api["requests"] == []

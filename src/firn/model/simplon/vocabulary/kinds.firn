@@ -98,6 +98,10 @@ file typeOf simplon.pipeline.ArtifactKind {
     key = "platform"
     shape = "text"
   }
+  field f_asset_name typeOf simplon.pipeline.ArtifactField {
+    key = "asset_name"
+    shape = "text"
+  }
 }
 homebrew_formula typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.file
@@ -171,5 +175,8 @@ release typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
 }
 github_release typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.release
+}
+release_assets typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.release
 }
