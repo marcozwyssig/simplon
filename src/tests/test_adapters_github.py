@@ -1,9 +1,11 @@
 """si#486: `adapters.github` - found, absent or unanswered, over PyGithub, against a local stand-in."""
 from __future__ import annotations
 
+import hashlib
 import socket
 
 import pytest
+from github import GithubException
 
 import githubstandin
 from simplon.adapters import github
@@ -208,3 +210,90 @@ def test_other_maps_404_to_unanswered(standin):
     # assert
     assert "404" in str(why.value)
     assert "o/missing" in str(why.value)
+
+
+def _draft(standin):
+    standin["releases"].append(githubstandin.release(1, "v1.0.0", draft=True))
+    return github.releases_for(github.repository(), "v1.0.0")[0]
+
+
+def test_upload_returns_the_asset_with_githubs_digest(standin, tmp_path):
+    # arrange
+    blob = tmp_path / "a.bin"
+    blob.write_bytes(b"\x00payload\xff")
+
+    # act
+    asset = github.upload(_draft(standin), blob, "named.bin")
+
+    # assert: GitHub's own digest, measured 2026-10-28, and the name given rather than the file's
+    assert asset.name == "named.bin"
+    assert asset.size == 9
+    assert asset.digest == "sha256:" + hashlib.sha256(b"\x00payload\xff").hexdigest()
+    assert standin["asset_bytes"][asset.id] == b"\x00payload\xff"
+
+
+def test_uploading_a_taken_name_is_githubs_422(standin, tmp_path):
+    # arrange
+    blob = tmp_path / "a.bin"
+    blob.write_bytes(b"x")
+    release = _draft(standin)
+    github.upload(release, blob, "a.bin")
+
+    # act
+    with pytest.raises(GithubException) as refused:
+        github.upload(release, blob, "a.bin")
+
+    # assert
+    assert refused.value.status == 422
+    assert refused.value.data["errors"][0]["code"] == "already_exists"
+
+
+def test_assets_lists_what_was_uploaded(standin, tmp_path):
+    # arrange
+    blob = tmp_path / "a.bin"
+    blob.write_bytes(b"x")
+    release = _draft(standin)
+    assert github.assets(release) == []
+    github.upload(release, blob, "one")
+    github.upload(release, blob, "two")
+
+    # act / assert
+    assert [a.name for a in github.assets(release)] == ["one", "two"]
+
+
+def test_delete_removes_an_asset(standin, tmp_path):
+    # arrange
+    blob = tmp_path / "a.bin"
+    blob.write_bytes(b"x")
+    release = _draft(standin)
+    keep, drop = github.upload(release, blob, "keep"), github.upload(release, blob, "drop")
+
+    # act
+    github.delete(drop)
+
+    # assert
+    assert [a.id for a in github.assets(release)] == [keep.id]
+
+
+def test_asset_calls_that_do_not_get_through_are_unanswered(tmp_path, monkeypatch):
+    # arrange: a release and an asset from a stand-in of its own, which is then stopped (PyGithub insists the
+    # port in a URL is the API's, so a closed port is only reachable by closing the API's)
+    shared = githubstandin.state()
+    base, stop = githubstandin.serve(shared)
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_API_URL", base)
+    monkeypatch.setenv("GITHUB_REPOSITORY", githubstandin.REPO)
+    blob = tmp_path / "a.bin"
+    blob.write_bytes(b"x")
+    release = _draft(shared)
+    asset = github.upload(release, blob, "a")
+    stop()
+    release._requester.close()    # the stand-in's kept-alive connection would still answer
+
+    # act / assert: a transport failure is "could not ask", never an empty list or a quiet success
+    with pytest.raises(github.Unanswered):
+        github.assets(release)
+    with pytest.raises(github.Unanswered):
+        github.upload(release, blob, "b")
+    with pytest.raises(github.Unanswered):
+        github.delete(asset)

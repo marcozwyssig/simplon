@@ -8,6 +8,14 @@ not its behaviour. One repository, `o/n`, and only the routes the adapters call:
     GET   /repos/o/n/releases?per_page&page  every release, drafts included, paged
     POST  /repos/o/n/releases                create
     PATCH /repos/o/n/releases/<id>           update
+    GET   /repos/o/n/releases/<id>/assets    the release's assets, paged
+    POST  /uploads/repos/o/n/releases/<id>/assets?name=
+                                             upload the raw body as an asset (si#553): `upload_url` on every
+                                             release points here in GitHub's URI-template form; the answer
+                                             carries `digest: "sha256:<hex>"` as real GitHub does (measured
+                                             2026-10-28), and a taken name is 422 with `errors: [{resource:
+                                             ReleaseAsset, code: already_exists, field: name}]`
+    DELETE /repos/o/n/releases/assets/<id>   delete an asset
     GET   /repos/o/n/contents/<path>?ref=<r> a file (base64 `content`, blob `sha`), or a JSON list when
                                              `path` is a directory of stored paths; `r` is a branch
                                              (default `main`) or a commit sha a PUT answered; 404 for a
@@ -25,6 +33,10 @@ is handled, so the PUT's sha is stale; `state["corrupt_readback"]` makes a GET b
 different bytes than were stored, and `state["fail_readback"]` (a status) makes it fail.
 `state["large"]` names the kinds of ref, `"branch"` and/or `"commit"`, at which a file answers as one over
 1 MB does: `encoding: "none"`, `content` empty.
+`state["assets"]` lists the uploaded assets (each with its `release_id`) and `state["asset_bytes"]` maps
+an asset id to the bytes uploaded; `state["asset_digest"]` is what an upload's answer says about the content:
+`"real"` (default) the sha256 GitHub computes, `"none"` no `digest` key at all (an API that does not send one),
+`"wrong"` a digest of other bytes.
 `state["fail"]` forces a status for a `(method, path prefix)`; `state["keep_draft"]` makes a PATCH answer
 200 while leaving `draft` as it was (a proxy, a race); `state["force_public"]` makes a PATCH answer with the release public whatever was asked;
 `state["requests"]` records every call as (method, path, body) and `state["auth"]` the Authorization header of
@@ -49,7 +61,7 @@ def state(**overrides: Any) -> dict:
     fresh: dict[str, Any] = {"repo": {"full_name": REPO}, "releases": [], "fail": {}, "requests": [],
                              "auth": [], "keep_draft": False,
                              "files": {}, "branches": {"main"}, "commits": {}, "race": None,
-                             "corrupt_readback": False, "fail_readback": None, "large": set()}
+                             "corrupt_readback": False, "fail_readback": None, "large": set(), "assets": [], "asset_bytes": {}, "asset_digest": "real"}
     fresh.update(overrides)
     return fresh
 
@@ -89,6 +101,7 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
             # the release's own url, which is a request the real API never needs
             return {"prerelease": False, **rel, "url": f"{base}/repos/{REPO}/releases/{rel['id']}",
                     # A draft's page is not under its tag, as on GitHub: `releases/tag/untagged-<hash>`.
+                    "upload_url": f"{base}/uploads/repos/{REPO}/releases/{rel['id']}/assets{{?name,label}}",
                     "html_url": f"https://github.example/{REPO}/releases/tag/"
                                 + (f"untagged-{rel['id']}" if rel["draft"] else rel["tag_name"])}
 
@@ -96,13 +109,18 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
             split = urlsplit(self.path)
             path = split.path
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length) or b"null") if length else None
+            raw = self.rfile.read(length) if length else b""
+            uploading = method == "POST" and split.path.startswith(f"/uploads/repos/{REPO}/releases/")
+            body = raw if uploading else (json.loads(raw or b"null") if length else None)
             shared["requests"].append((method, path, body))
             shared["auth"].append(self.headers.get("Authorization"))   # parallel to "requests", same index
             for (m, prefix), status in shared["fail"].items():
                 if m == method and path.startswith(prefix):
                     self._send(status, {"message": f"forced {status}"})
                     return
+            if uploading:
+                self._upload(split.path, parse_qs(split.query), raw)
+                return
             repo_path = f"/repos/{REPO}"
             if not path.startswith(repo_path) or shared["repo"] is None:
                 self._send(404, {"message": "Not Found"})
@@ -132,6 +150,23 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
                 made["target_commitish"] = body.get("target_commitish", "")
                 releases.append(made)
                 self._send(201, self._dressed(made))
+            elif method == "GET" and rest.startswith("/releases/") and rest.endswith("/assets"):
+                rid = int(rest[len("/releases/"):-len("/assets")])
+                query = parse_qs(split.query)
+                per_page = int(query.get("per_page", ["30"])[0])
+                page = int(query.get("page", ["1"])[0])
+                mine = [a for a in shared["assets"] if a["release_id"] == rid]
+                self._send(200, [self._asset(a) for a in mine[(page - 1) * per_page:page * per_page]])
+            elif method == "DELETE" and rest.startswith("/releases/assets/"):
+                aid = int(rest[len("/releases/assets/"):])
+                if not any(a["id"] == aid for a in shared["assets"]):
+                    self._send(404, {"message": "Not Found"})
+                    return
+                shared["assets"][:] = [a for a in shared["assets"] if a["id"] != aid]
+                shared["asset_bytes"].pop(aid, None)
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
             elif method == "GET" and rest.startswith("/contents/"):
                 self._contents_get(unquote(rest[len("/contents/"):]), parse_qs(split.query))
             elif method == "PUT" and rest.startswith("/contents/"):
@@ -154,6 +189,33 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
                 self._send(200, self._dressed(target))
             else:
                 self._send(404, {"message": "Not Found"})
+
+        def _asset(self, stored: dict) -> dict:
+            made = {k: v for k, v in stored.items() if k != "release_id"}
+            made["url"] = f"{self._base()}/repos/{REPO}/releases/assets/{stored['id']}"
+            return made
+
+        def _upload(self, path: str, query: dict, content: bytes) -> None:
+            rid = int(path[len(f"/uploads/repos/{REPO}/releases/"):-len("/assets")])
+            name = query.get("name", [""])[0]
+            if not any(r["id"] == rid for r in shared["releases"]):
+                self._send(404, {"message": "Not Found"})
+                return
+            if any(a["release_id"] == rid and a["name"] == name for a in shared["assets"]):
+                self._send(422, {"message": "Validation Failed", "errors": [
+                    {"resource": "ReleaseAsset", "code": "already_exists", "field": "name"}]})
+                return
+            aid = max([a["id"] for a in shared["assets"]], default=100) + 1
+            made: dict[str, Any] = {"id": aid, "release_id": rid, "name": name, "size": len(content),
+                                    "state": "uploaded", "content_type": self.headers.get("Content-Type", ""),
+                                    "browser_download_url": f"https://github.example/{REPO}/releases/download/x/{name}"}
+            if shared["asset_digest"] == "real":
+                made["digest"] = "sha256:" + hashlib.sha256(content).hexdigest()
+            elif shared["asset_digest"] == "wrong":
+                made["digest"] = "sha256:" + hashlib.sha256(content + b"other").hexdigest()
+            shared["assets"].append(made)
+            shared["asset_bytes"][aid] = content
+            self._send(201, self._asset(made))
 
         def _files_at(self, ref: str) -> dict[str, bytes] | None:
             if ref in shared["branches"]:
@@ -218,6 +280,9 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
 
         def do_PATCH(self) -> None:                       # noqa: N802
             self._handle("PATCH")
+
+        def do_DELETE(self) -> None:                      # noqa: N802
+            self._handle("DELETE")
 
         def do_PUT(self) -> None:                         # noqa: N802
             self._handle("PUT")

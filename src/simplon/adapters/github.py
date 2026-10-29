@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 import requests
 from github import Auth, Github, GithubException, UnknownObjectException
 from github.GitRelease import GitRelease
+from github.GitReleaseAsset import GitReleaseAsset
 from github.Repository import Repository
 
 from simplon.adapters import githubpackages
@@ -160,6 +162,37 @@ def releases_for(repo: Repository, tag: str) -> list[GitRelease]:
         raise Unanswered(f"could not list the releases: {unreachable}") from None
     raise Unanswered(f"the repository has more than {PAGES * PER_PAGE} releases, and the search for {tag} "
                      f"stops there rather than answer 'none' about the rest")
+
+
+def assets(release: GitRelease) -> list[GitReleaseAsset]:
+    """Every asset on `release`, as the API lists them (si#553). A failed read is Unanswered, never an empty
+    list: an attach that took "could not ask" for "no assets" would upload over, or fail to clear, what it
+    never saw."""
+    try:
+        return list(release.get_assets())
+    except GithubException as refused:
+        raise Unanswered(f"could not list the assets of release {release.id}: {said(refused)}") from None
+    except requests.exceptions.RequestException as unreachable:
+        raise Unanswered(f"could not list the assets of release {release.id}: {unreachable}") from None
+
+
+def upload(release: GitRelease, path: Path, name: str) -> GitReleaseAsset:
+    """Upload the file at `path` to `release` as the asset `name`, content type `application/octet-stream`
+    (si#553). A taken name is GitHub's own HTTP 422 `already_exists`, a GithubException the caller sees as
+    it is; only a transport failure is Unanswered."""
+    try:
+        return release.upload_asset(str(path), name=name, content_type="application/octet-stream")
+    except requests.exceptions.RequestException as unreachable:
+        raise Unanswered(f"could not upload {name} to release {release.id}: {unreachable}") from None
+
+
+def delete(asset: GitReleaseAsset) -> None:
+    """Delete `asset` from its release (si#553). A transport failure is Unanswered; a refusal is the
+    GithubException, as for `upload`."""
+    try:
+        asset.delete_asset()
+    except requests.exceptions.RequestException as unreachable:
+        raise Unanswered(f"could not delete asset {asset.name}: {unreachable}") from None
 
 
 def said(refused: GithubException) -> str:
