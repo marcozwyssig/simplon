@@ -21,7 +21,7 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon.manifest import clitaxonomy, results, signatures
+from simplon.manifest import bound, clitaxonomy, results, signatures
 from simplon.model import task
 from simplon.model.command import AggregateCommand, TaskCommand
 from simplon.manifest.load import Manifest
@@ -159,6 +159,7 @@ def render(manifest: Manifest, *, source: str, product: str,
     body: list[str] = []
     has_aggregate = False
     uses_results = False
+    uses_bound = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -196,6 +197,12 @@ def render(manifest: Manifest, *, source: str, product: str,
                 if evidence:
                     uses_results = True
                     wrapped = f"_results.guarded({evidence!r}, lambda: {wrapped})"
+                # si#553: the names bound to a list port (no `param`) reach the body through `bound.names`;
+                # outside `guarded`, so the body sees both.
+                listed = bound.of(spec)
+                if listed:
+                    uses_bound = True
+                    wrapped = f"_bound.within({listed!r}, lambda: {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": wrapped})
@@ -296,7 +303,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                      for name in manifest.groups.get(group, ()))
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
                                                 tasks=tasks, body=body, covered=covered,
-                                                has_aggregate=has_aggregate, uses_results=uses_results)
+                                                has_aggregate=has_aggregate, uses_results=uses_results, uses_bound=uses_bound)
 
 
 def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:

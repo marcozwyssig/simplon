@@ -201,6 +201,8 @@ def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
             continue  # shares tasks.releasenotes with `release:notes` but reads `releases:`, not an artifact entry
         if coordinate in ("release:github-unpublished", "release:github-publish"):
             continue  # share tasks.githubrelease with `release:github-draft`, the one of the three that reads an entry
+        if coordinate == "release:github-attach":
+            continue  # shares tasks.githubrelease (ENTRY: the notes `draft` binds by `name`) and binds no `name`: its files port has no param
         if coordinate == "test:file":
             continue  # shares tasks.imagefile (ENTRY: the image `build:image-file` binds by `name`) and binds no `name` itself: its file port binds `file`
         if section == "artifacts" and hasattr(module, "ENTRY"):

@@ -1,6 +1,6 @@
-"""`release:github-unpublished`, `release:github-draft` and `release:github-publish` (si#486, part of si#463).
+"""`release:github-unpublished`, `release:github-draft`, `release:github-attach` and `release:github-publish` (si#486, part of si#463; the attach is si#553).
 
-THREE COORDINATES, ONE PER MOMENT OF A RELEASE STARTED FROM GITHUB ACTIONS (Marco, si#463 D1):
+ONE COORDINATE PER MOMENT OF A RELEASE STARTED FROM GITHUB ACTIONS (Marco, si#463 D1):
 
   `unpublished`  before anything is built: does the tag have a PUBLISHED GitHub Release? A draft or none
                  is green, because that is an unfinished release, and a re-run may finish it. A published one is red,
@@ -10,12 +10,16 @@ THREE COORDINATES, ONE PER MOMENT OF A RELEASE STARTED FROM GITHUB ACTIONS (Marc
                  body. A draft is not public and needs no tag on origin. A draft an earlier run left is
                  reused and its body replaced, so a failed run leaves at most one draft and the next run
                  picks it up.
+  `attach`       after the build: the tested files, and a `.sha256` sidecar for each, become the assets of
+                 the draft; every other asset on it is deleted. Its own moment because the files exist only
+                 after the build (si#463 D) and its ports (files, evidence, the release-assets it produces)
+                 are nobody else's. Every refusal that needs no GitHub comes first (`_planned`).
   `publish`      after the image push: the draft becomes the published release. Refused unless origin
                  carries the tag, because publishing a release whose tag does not exist makes GitHub create
                  that tag at the default branch's head - a tag nobody validated.
 
 One coordinate each, not one with a `--step`, because the ports differ per moment (only `draft` reads the
-notes, only `publish` produces the release) and a port cannot depend on a parameter.
+notes, only `attach` reads files, only `publish` produces the release) and a port cannot depend on a parameter.
 
 firn built these three as a product module (`orchestrator/ghrelease.py`, firn#1040) and is not merging it:
 this is that module, moved where every product reaches it. The differences are deliberate.
@@ -31,6 +35,12 @@ PyGithub's `update_release` DEFAULTS `draft` TO FALSE. A reuse that rewrote the 
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
 import requests
 from github import GithubException
 from github.GitRelease import GitRelease
@@ -38,12 +48,19 @@ from github.Repository import Repository
 
 from simplon.adapters import github
 from simplon.kernel import log
-from simplon.manifest import artifactsection, context
+from simplon.manifest import artifactsection, bound, context, outputs
+from simplon.manifest import results as results_mod
+from simplon.manifest.layout import validate_relative_dir
 from simplon.model import artifactschema
 from simplon.tasks import gitops
 
 ARTIFACTS = "artifacts"
 ENTRY = artifactschema.Release_notesEntry
+ATTACH_COORDINATE = "release:github-attach"
+
+#: What GitHub keeps of an asset name as it is (measured, si#553 Task 0). Any other ASCII character is stored as
+#: `.`, a non-ASCII one or a leading `.` earns a `default.` prefix, so the URL the release would name is wrong.
+_KEPT_NAME = re.compile(r"^[A-Za-z0-9_+@-][A-Za-z0-9_.+@-]*$")
 
 
 def unpublished(tag: str = "") -> int:
@@ -100,6 +117,240 @@ def draft(name: str = "", tag: str = "") -> int:
         return 1
     log.ok(said)
     return 0
+
+
+@dataclass(frozen=True)
+class _Upload:
+    """One file `attach` puts on the draft: its entry, where it is, and the name and digest it goes by."""
+    entry: str
+    path: Path
+    relative: str
+    name: str
+    sha256: str
+
+
+def attach(tag: str = "", assets: str = "") -> int:
+    """Attach the tested files bound to `files`, and a `.sha256` sidecar for each, to the DRAFT release for `tag`,
+    and write what was attached to the `release-assets` artifact `assets` (si#553).
+
+    Every refusal that needs no GitHub is `_planned`'s and comes first. Then: the one draft (a published
+    release is never touched), each file and then its sidecar (an asset of that name from an earlier run is
+    deleted first, because GitHub refuses a taken name), GitHub's own digest read back and compared with the
+    local one, and every asset this run did not upload deleted, each named in the log. The record is written
+    last, so a record on disk is always the account of a draft that was checked.
+
+    A failure after the first upload leaves a half-attached draft, which is the normal state of a failed
+    release step: the message names what is on the draft and that a re-run replaces it. `attach` never calls
+    `update_release`, so it cannot publish."""
+    version = _tag(tag)
+    record_path = _record_path(assets)
+    # A record from an earlier run says "attached"; this run has not yet, and may refuse below, so it is not
+    # left standing. Needs no GitHub, so no request precedes a refusal.
+    record_path.unlink(missing_ok=True)
+    plan = _planned(version)
+    if plan is None:
+        return 1
+    try:
+        owner = _public_repository()
+        repo = _repository()
+        usable, release = _one_draft(repo, version)
+        if not usable:
+            return 1
+        if release is None:
+            log.error(f"there is no draft release for {version} to attach to: `release:github-draft` makes "
+                      f"it, before the build")
+            return 1
+        return _attached(release, version, plan, owner, record_path)
+    except github.Unanswered as unanswered:
+        log.error(f"nothing was attached to {version}: {unanswered}")
+        return 1
+
+
+def _public_repository() -> str:
+    """`owner/name` as the adapter reads it (environment first, origin for the rest), for the URLs a record
+    names."""
+    gitops.configure(context.current().root)
+    return github.where(gitops.origin_url())[0]
+
+
+def _record_path(name: str) -> Path:
+    """The absolute path of the `release-assets` entry `name`, refused by name when it is not one, as
+    `results.path_of` does for a `test-result`."""
+    ctx = context.current()
+    section = ctx.manifest_data().get(ARTIFACTS) or {}
+    if not name:
+        raise ValueError(f"which artifact does {ATTACH_COORDINATE} record what it attached in? bind a "
+                         f"`release-assets` artifact with `produces: {{ release-assets: <artifact> }}`")
+    body = section.get(name) if isinstance(section, dict) else None
+    if not isinstance(body, dict):
+        raise ValueError(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` section")
+    kind = str(body.get("kind", ""))
+    if not artifactsection.is_a(kind, "release-assets"):
+        raise ValueError(f"artifact '{name}' is a `{kind}`, not a `release-assets`: {ATTACH_COORDINATE} "
+                         f"writes only to a `release-assets` artifact")
+    if not body.get("path"):
+        raise ValueError(f"release-assets '{name}' declares no `path:`: it is the file {ATTACH_COORDINATE} "
+                         f"writes what it attached to")
+    return ctx.root / str(body["path"])
+
+
+def _sidecar(upload: _Upload) -> bytes:
+    """What `sha256sum -c` reads: the hash, two spaces, the name the file is published under."""
+    return f"{upload.sha256}  {upload.name}\n".encode()
+
+
+def _attached(release: GitRelease, tag: str, plan: list[_Upload], owner: str, record_path: Path) -> int:
+    """Put `plan` on `release` and write the record, or return 1 after saying what the draft holds."""
+    staging = outputs.root() / "release-assets"
+    staging.mkdir(parents=True, exist_ok=True)
+    wanted: list[tuple[str, Path, str]] = []   # (published name, local path, local sha256)
+    for upload in plan:
+        side = staging / f"{upload.name}.sha256"
+        content = _sidecar(upload)
+        side.write_bytes(content)
+        wanted += [(upload.name, upload.path, upload.sha256),
+                   (f"{upload.name}.sha256", side, hashlib.sha256(content).hexdigest())]
+    doing = ""
+    touched = False   # a delete or an upload was sent: until then the draft is as this run found it
+    on_draft: list[str] = []   # what this run has put there, for every failure below
+
+    def now() -> str:
+        """What the draft holds, as GitHub lists it now; what this run put there when it cannot be asked."""
+        if not touched:
+            return f"nothing on the draft {tag} was changed; a re-run of {ATTACH_COORDINATE} starts again"
+        try:
+            holds = f"the draft {tag} holds {', '.join(sorted(a.name for a in github.assets(release))) or 'no assets'}"
+        except (github.Unanswered, GithubException):
+            holds = (f"this run had uploaded {', '.join(on_draft) or 'nothing'} when it stopped (the draft could "
+                     f"not be listed to say more; an asset of an earlier run may be gone or still there)")
+        return f"{holds}. It is not publishable as it is, and a re-run of {ATTACH_COORDINATE} puts it right"
+
+    try:
+        existing = {a.name: a for a in github.assets(release)}
+        for name, path, digest in wanted:
+            if name in existing:
+                doing, touched = f"to delete the earlier {name}", True
+                github.delete(existing.pop(name))
+            doing, touched = f"the upload of {name}", True
+            made = github.upload(release, path, name)
+            on_draft.append(name)
+            if made.digest != "sha256:" + digest:
+                log.error(f"GitHub stored {name} with "
+                          + (f"another digest, {made.digest}" if made.digest else "no digest")
+                          + f", and the file is sha256:{digest}: it is not certain these are the bytes that "
+                            f"were tested. {now()}")
+                return 1
+        kept = {name for name, _, _ in wanted}
+        doing = "to list the assets of the draft"
+        for stray in [a for a in github.assets(release) if a.name not in kept]:
+            doing = f"to delete {stray.name}"
+            github.delete(stray)
+            log.warn(f"deleted the asset {stray.name} from the draft {tag}: this run did not upload it, so "
+                     f"nothing says it was tested")
+    except github.Unanswered as unanswered:
+        log.error(f"{unanswered}. {now()}")
+        return 1
+    except GithubException as refused:
+        log.error(f"GitHub refused {doing or 'to list the assets of the draft'}: {github.said(refused)}. {now()}")
+        return 1
+    base = f"https://github.com/{owner}/releases/download/{tag}/"
+    record = {"tag": tag, "assets": [
+        {"name": u.name, "url_after_publish": base + u.name, "sha256": u.sha256,
+         "sidecar": {"name": f"{u.name}.sha256", "url_after_publish": base + f"{u.name}.sha256",
+                     "sha256": hashlib.sha256(_sidecar(u)).hexdigest()}} for u in plan]}
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    log.ok(f"attached {len(plan)} file{'' if len(plan) == 1 else 's'} and their sidecars to the draft {tag} ({release.html_url}), checked "
+           f"against GitHub's digests; the URLs in {record_path.name} are public only after publishing")
+    return 0
+
+
+def _planned(tag: str) -> list[_Upload] | None:
+    """What `attach` would put on the draft, or None after saying why not, before GitHub was asked.
+
+    Every refusal names the entry, what is wrong and the way out. Nothing is read from GitHub: a file that is
+    not the tested one, or whose name GitHub would rewrite, costs a draft's assets once uploaded."""
+    names = bound.names("files")
+    if not names:
+        log.error(f"{ATTACH_COORDINATE} is bound to no files, so there is nothing to attach: bind the files to "
+                  f"attach with `consumes: {{ files: [...] }}`")
+        return None
+    ctx = context.current()
+    section = ctx.manifest_data().get(ARTIFACTS) or {}
+    source = ctx.manifest_path.name
+    planned: list[_Upload] = []
+    problems: list[str] = []
+    for name in names:
+        if name not in section:
+            raise ValueError(f"{source}: no artifact '{name}' in the `{ARTIFACTS}:` section; declared are: "
+                             f"{', '.join(sorted(str(k) for k in section)) or '(none)'}")
+        entry = artifactsection.entry(section, name, artifactschema.FileEntry, source, ATTACH_COORDINATE,
+                                      port="files")
+        if not entry.asset_name:
+            problems.append(f"'{name}' has no `asset_name`: give the name the file is attached under, e.g. "
+                            f"`asset_name: tool-{{tag}}-linux-amd64`")
+            continue
+        asset = entry.asset_name.replace("{tag}", tag)
+        if not _KEPT_NAME.fullmatch(asset):
+            problems.append(f"'{name}': the asset name '{asset}' is empty, starts with `.` or has a character "
+                            f"outside A-Z a-z 0-9 _ . + @ -, and GitHub would store another name (other ASCII "
+                            f"becomes `.`, non-ASCII and a leading dot get a `default.` prefix), so the "
+                            f"`release-assets` URL would be wrong: rename it in `asset_name`")
+            continue
+        relative = validate_relative_dir(entry.path or "", f"{source}: '{ARTIFACTS}.{name}': 'path'",
+                                         "give the file's path under the product root, e.g. 'build/tool'",
+                                         inside="the product root")
+        path = ctx.root / relative
+        if not path.is_file():
+            problems.append(f"'{name}' has nothing at {relative}: run the command that produces it first")
+            continue
+        planned.append(_Upload(name, path, relative, asset, hashlib.sha256(path.read_bytes()).hexdigest()))
+    # every name a run puts on the draft: each file's own and its sidecar's, so `tool` beside `tool.sha256`
+    # (whose sidecar would overwrite the second file) is refused with the rest
+    by_name: dict[str, list[tuple[str, str]]] = {}
+    for upload in planned:
+        by_name.setdefault(upload.name, []).append((upload.entry, repr(upload.entry)))
+        by_name.setdefault(f"{upload.name}.sha256", []).append((upload.entry, f"{upload.entry!r} (its sidecar)"))
+    reported: set[tuple[str, ...]] = set()   # a twice-named file collides again on its sidecar: say it once
+    for asset, owners in by_name.items():
+        entries = tuple(entry for entry, _ in owners)
+        if len(owners) > 1 and entries not in reported:
+            reported.add(entries)
+            problems.append(f"{' and '.join(said for _, said in owners)} both expand to the asset name {asset}: one would "
+                            f"replace the other; make their `asset_name` differ")
+    if problems:
+        log.error(f"{ATTACH_COORDINATE} refused for {tag}, so no asset was uploaded or deleted:\n  "
+                  + "\n  ".join(problems))
+        return None
+    return planned if _tested(planned) else None
+
+
+def _tested(planned: list[_Upload]) -> bool:
+    """True when the bound evidence names every file by its product-relative path with the digest it has now,
+    else False after saying which does not (the `release:homebrew-tap` rule, for several files)."""
+    subjects = results_mod.tested()
+    if subjects is None:
+        log.error(f"refused: {ATTACH_COORDINATE} has no evidence bound, so nothing says the files were tested. "
+                  f"Bind the test:file results to `evidence` with `consumes:`")
+        return False
+    problems: list[str] = []
+    for upload in planned:
+        digest = "sha256:" + upload.sha256
+        named = [s for s in subjects if s.reference == upload.relative]
+        if not named:
+            ran = ", ".join(s.reference for s in subjects) or "nothing"
+            problems.append(f"{upload.relative} ('{upload.entry}'): no test names it (the evidence tested "
+                            f"{ran}); run test:file on it with its result bound to `evidence`")
+        elif stale := [s for s in named if s.id != digest]:
+            # ANY record naming the file with another digest refuses, not only when none matches: a current
+            # record does not excuse a stale one (spec goal 6)
+            problems.append(f"{upload.relative} ('{upload.entry}') is {digest}, and the evidence tested "
+                            f"{', '.join(sorted({s.id for s in stale}))}: the file changed after that test; "
+                            f"re-run it (test:file on the file), then attach")
+    if problems:
+        log.error("refused, so no asset was uploaded or deleted:\n  " + "\n  ".join(problems))
+        return False
+    return True
 
 
 def publish(tag: str = "") -> int:

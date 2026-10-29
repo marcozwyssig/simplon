@@ -90,6 +90,9 @@ manifest typeOf simplon.architecture.Component {
   module m_manifest_results typeOf simplon.architecture.Module {
     path = "manifest.results"
   }
+  module m_manifest_bound typeOf simplon.architecture.Module {
+    path = "manifest.bound"
+  }
   module m_manifest_environments typeOf simplon.architecture.Module {
     path = "manifest.environments"
   }

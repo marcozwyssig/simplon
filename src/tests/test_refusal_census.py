@@ -180,8 +180,10 @@ READS_INLINE = {
                       "document, so it stays an inline reader",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
     "tasks.githubrelease": "`_notes(name)` reads its `artifacts:` entry inline at the front of "
-                           "`release:github-draft`, the same shape as tasks.artifact, and hands "
-                           "`artifactsection.entry` the SECTION (si#486)",
+                           "`release:github-draft`, and `_planned` and `_record_path` read the `files` "
+                           "and `release-assets` entries of `release:github-attach` the same way (si#553); "
+                           "the same shape as tasks.artifact, each handing `artifactsection.entry` the "
+                           "SECTION (si#486)",
     "tasks.homebrewformula": "`_entry(name, param)` reads its two `artifacts:` entries inline at the front of "
                              "`build:homebrew-formula`, the same shape as tasks.githubrelease, and hands "
                              "`artifactsection.entry` the SECTION (si#536)",

@@ -554,6 +554,32 @@ def test_bound_turns_a_body_that_exits_0_without_writing_its_test_result_into_rc
     assert exited.value.exit_code == 1
 
 
+def test_bound_hands_a_body_the_names_bound_to_its_list_port(tmp_path, monkeypatch):
+    # arrange: si#553 - a port with no `param` reaches the body through `bound.names`
+    from simplon.manifest import bound, context
+    from simplon.manifest.context import ProductContext
+    from simplon.model.artifactschema import Port
+    monkeypatch.setattr(context, "_current", ProductContext("demo", tmp_path, tmp_path / "demo.yaml"))
+    seen = []
+
+    def body():
+        seen.append(bound.names("files"))
+        return 0
+
+    spec = command.TaskCommand(impl="demo_impls:body", help="h", consumes={"files": ("a", "b")},
+                               ports=(Port("files", "input", "file", "", ()),))
+    wrapped = cli._bound(body, spec, where="demo cmd")
+
+    # act
+    with pytest.raises(typer.Exit) as exited:
+        wrapped()
+
+    # assert
+    assert exited.value.exit_code == 0
+    assert seen == [("a", "b")]
+    assert bound.names("files") is None
+
+
 # --- one impl bound to several commands (netctl#1406) ---------------------------------------------------
 
 

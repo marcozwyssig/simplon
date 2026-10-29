@@ -168,6 +168,8 @@ LIBRARY = frozenset({
     "model.command", "manifest.outputs", "manifest.treeform",
     # si#344 C.3: a GENERATED product module imports it, to hold a command's test results.
     "manifest.results",
+    # si#553: the same wrapper hands a body the names bound to a list port; a generated module imports it.
+    "manifest.bound",
     # si#473 (Marco, 2026-10-16): every task class firn generates - the kernel's and, from `tasks.firnt`,
     # a product's - imports `model.task.Task`, and each class with ports `model.artifactschema.Port`, so a
     # product's generated code bakes both paths in and both are promised. `task` is also where a product's

@@ -779,6 +779,44 @@ ci:
 - **A file context needs BuildKit** (`--build-context`), the builder that `docker build` uses since
   Docker 23 and the one the kernel image carries.
 
+#### A file attached to a GitHub Release, under a name and a checksum
+
+A `kind: file` entry may carry an optional **`asset_name:`**, the name `release:github-attach` publishes
+the file under (si#553). `{tag}` in it is replaced with the task's `tag`. A second entry of the kind
+`release-assets` is where the task records what it attached; it takes a `path:` and no other key.
+
+```yaml
+artifacts:
+  firn-amd64: { kind: file, path: build/files/firn-linux-amd64, platform: linux/amd64,
+                asset_name: "firn-{tag}-linux-amd64" }
+  firn-arm64: { kind: file, path: build/files/firn-linux-arm64, platform: linux/arm64,
+                asset_name: "firn-{tag}-linux-arm64" }
+  firn-assets: { kind: release-assets, path: build/release/assets.json }
+```
+
+```yaml
+ci:
+  release:
+    commands:
+      attach:
+        task: "release:github-attach"
+        consumes:
+          files: [firn-amd64, firn-arm64]
+          evidence: [firn-amd64-runs, firn-arm64-runs]    # the test:file results about these files
+        produces: { release-assets: firn-assets }
+```
+
+- **`asset_name` is required only by `release:github-attach`.** `build:fetch`, `build:image-file` and
+  `test:file` ignore it, so an existing entry is unchanged. A file bound to `attach` without one is
+  refused, because the path's basename carries no tag.
+- **GitHub keeps `A-Z a-z 0-9 _ . + @ -` and rewrites the rest**, so a name with another character, an
+  empty one or one that starts with `.` is refused when the task runs, before GitHub is asked.
+- **Each file is attached with `<asset_name>.sha256`**, in `sha256sum -c` format, and the draft ends up
+  holding exactly the bound files and their sidecars. The URLs in the `release-assets` record are
+  public only after `release:github-publish`.
+- **The files must be the tested ones.** The `evidence:` results are compared with each file's path and
+  sha256 before any upload.
+
 ### `releases:` - where the notes live, and from when they are complete
 
 `test:release-notes` reads this one. It is the smallest product-data section in the kernel, and that is

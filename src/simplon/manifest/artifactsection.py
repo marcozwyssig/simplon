@@ -136,19 +136,22 @@ def declared(document: Mapping[str, object]) -> dict[str, Declared]:
 
 
 def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source: str, coordinate: str,
-          *, param: str = "name") -> Entry:
+          *, param: str = "name", port: str = "") -> Entry:
     """The entry `name`, validated as the generated model of its kind - `wanted`'s kind or one that refines
     it - and holding every key `coordinate` needs (`NEEDS`, in the model). A ValueError says which kind it is
     and which the task reads, or which key is missing and every key the coordinate reads.
 
     `param` is the body parameter the port binds. `READERS` and `NEEDS` hold only the ports that bind `name`;
     a coordinate with two artifact ports (`build:homebrew-formula`'s `wheel` and `formula`) names its port
-    by its parameter, and that port's kind and needs are read off `PORTS` (si#536)."""
-    if param == "name":
+    by its parameter, and that port's kind and needs are read off `PORTS` (si#536). `port` names the port
+    instead, for a port whose parameter is "" (`release:github-attach`'s `files`): the first port with that
+    parameter would be the right one only by declaration order (si#553)."""
+    if param == "name" and not port:
         reads, needs = READERS.get(coordinate), NEEDS.get(coordinate, ())
     else:
-        port = next((p for p in artifactschema.PORTS.get(coordinate, ()) if p.param == param), None)
-        reads, needs = (port.accepts, port.needs) if port is not None else (None, ())
+        found = next((p for p in artifactschema.PORTS.get(coordinate, ())
+                      if (p.name == port if port else p.param == param)), None)
+        reads, needs = (found.accepts, found.needs) if found is not None else (None, ())
     if reads != wanted.KIND:
         # Not a refusal of the manifest: a body named a coordinate the model does not route to its kind.
         raise KeyError(f"{coordinate} is not a reader of '{wanted.KIND}' through `{param}` in the model "
