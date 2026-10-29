@@ -1,9 +1,11 @@
 /* si#552's test file: `--version` prints `hello <VERSION>`, `--hang` never returns, `--net` says whether a
- * route to the outside exists (a UDP connect sends nothing), anything else echoes stdin to stdout. Built
+ * route to the outside exists (a UDP connect sends nothing), `--env NAME` prints `NAME=<value>` or exits 1
+ * when NAME is unset (si#554's `test:image` `env:`), anything else echoes stdin to stdout. Built
  * twice by the Dockerfile beside it: static as /hello, dynamic as /hello-dynamic. */
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -23,6 +25,15 @@ int main(int argc, char **argv) {
         int s = socket(AF_INET, SOCK_DGRAM, 0);
         int routed = s >= 0 && connect(s, (struct sockaddr *)&to, sizeof to) == 0;
         printf("network: %s\n", routed ? "routed" : "unreachable");
+        return 0;
+    }
+    if (argc > 2 && strcmp(argv[1], "--env") == 0) {
+        const char *value = getenv(argv[2]);
+        if (!value) {
+            printf("%s is unset\n", argv[2]);
+            return 1;
+        }
+        printf("%s=%s\n", argv[2], value);
         return 0;
     }
     char buf[4096];

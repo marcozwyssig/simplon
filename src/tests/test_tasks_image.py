@@ -1198,6 +1198,167 @@ def test_expand_tag_replaces_every_tag_placeholder():
     assert image.expand_tag("no braces", "v1") == "no braces"
 
 
+# --- si#554: a bounded run, and the environment it starts in ------------------------------------------
+
+def _timeouts(monkeypatch, *, hangs: bool = False) -> list:
+    """The `timeout` every `docker run` was handed; with `hangs`, the run raises as `subprocess.run` does."""
+    seen: list = []
+
+    def fake(argv, **kwargs):
+        if argv[:2] == ["docker", "run"]:
+            seen.append(kwargs.get("timeout"))
+            if hangs:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        return Result(rc=0, out="", err="")
+    monkeypatch.setattr(image, "run", fake)
+    return seen
+
+
+def test_a_smoke_run_is_bounded_by_default(_no_provenance, _product, _tagged, monkeypatch):
+    """A server image whose CMD never exits must not hang the gate (agile-cockpit#157): the bound is a
+    default, so the hang is impossible rather than merely avoidable."""
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    seen = _timeouts(monkeypatch)
+
+    # act
+    image.smoke("app")
+
+    # assert
+    assert seen == [image.SMOKE_TIMEOUT]
+    assert image.SMOKE_TIMEOUT > 0
+
+
+def test_a_smoke_run_takes_the_timeout_it_is_given(_no_provenance, _product, _tagged, monkeypatch):
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    seen = _timeouts(monkeypatch)
+
+    # act
+    image.smoke("app", timeout=7)
+
+    # assert
+    assert seen == [7]
+
+
+def test_a_smoke_run_past_its_timeout_is_red_with_its_own_sentence_and_a_red_record(
+        _no_provenance, _product, _tagged, removals, monkeypatch, capsys):
+    # arrange
+    text = (_product / "demo.yaml").read_text(encoding="utf-8")
+    (_product / "demo.yaml").write_text(
+        text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "local_id", lambda ref: "sha256:aa")
+    _timeouts(monkeypatch, hangs=True)
+
+    # act
+    rc = image.smoke("app", timeout=5, results="app-checked")
+
+    # assert: red, said, the container removed, and the record says there was no exit code at all
+    assert rc == 1
+    assert "gave no answer within 5 s" in capsys.readouterr().err
+    assert len(removals) == 1
+    record = json.loads((_product / "build" / "test" / "app.json").read_text(encoding="utf-8"))
+    assert record["verdict"] == 1
+    assert record["runs"][0]["rc"] is None
+
+
+def test_a_smoke_run_refuses_a_timeout_that_is_no_limit(cli, _no_provenance, _product, _tagged, monkeypatch,
+                                                         capsys):
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    rc = image.smoke("app", timeout=0)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "run") == []
+    assert "timeout" in capsys.readouterr().err
+
+
+def test_a_smoke_run_passes_the_environment_it_is_given(cli, _no_provenance, _product, _tagged, monkeypatch):
+    """A run condition belongs beside the run, not inside `argv` behind an `env` the image may not have."""
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    rc = image.smoke("app", argv="check", env={"COCKPIT_REQUIRE_SECRET": "0"})
+
+    # assert
+    assert rc == 0
+    started = cli.argv_starting("docker", "run")[0]
+    assert started[started.index("-e") + 1] == "COCKPIT_REQUIRE_SECRET=0"
+    assert started[-1] == "check"
+
+
+def test_a_smoke_run_forwards_a_name_without_a_value_from_the_callers_environment(
+        cli, _no_provenance, _product, _tagged, monkeypatch):
+    """A secret stays out of the manifest: `NAME: ~` hands docker the name, and docker reads the value."""
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setenv("SECRET_KEY", "s3cret")
+
+    # act
+    rc = image.smoke("app", env={"SECRET_KEY": None})
+
+    # assert: the value is not on the command line
+    assert rc == 0
+    started = cli.argv_starting("docker", "run")[0]
+    assert started[started.index("-e") + 1] == "SECRET_KEY"
+    assert "s3cret" not in " ".join(started)
+
+
+def test_a_smoke_run_refuses_a_forwarded_name_the_caller_does_not_have(cli, _no_provenance, _product, _tagged,
+                                                                       monkeypatch, capsys):
+    """docker would pass nothing for an unset name and the image would start without it - a run that
+    looks configured and is not. So the absent variable is a refusal that names it, before anything runs."""
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+
+    # act
+    rc = image.smoke("app", env={"SECRET_KEY": None})
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "run") == []
+    assert "SECRET_KEY" in capsys.readouterr().err
+
+
+def test_a_smoke_run_refuses_an_env_that_is_not_a_mapping_of_names(cli, _no_provenance, _product, _tagged,
+                                                                   monkeypatch):
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act / assert
+    with pytest.raises(ValueError, match="env"):
+        image.smoke("app", env="SECRET_KEY=1")
+    with pytest.raises(ValueError, match="env"):
+        image.smoke("app", env={"A B": "1"})
+    assert cli.argv_starting("docker", "run") == []
+
+
+def test_a_malformed_env_leaves_no_earlier_record_behind(cli, _no_provenance, _product, _tagged, monkeypatch):
+    """A refusal raised from the manifest's shape is still a run that did not happen: yesterday's green
+    record must not outlive it and be read by a release as today's verdict."""
+    # arrange
+    text = (_product / "demo.yaml").read_text(encoding="utf-8")
+    (_product / "demo.yaml").write_text(
+        text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
+    record = _product / "build" / "test" / "app.json"
+    record.parent.mkdir(parents=True)
+    record.write_text('{"image": "app", "verdict": 0, "runs": []}\n', encoding="utf-8")
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    with pytest.raises(ValueError, match="env"):
+        image.smoke("app", env={"FOO": [1]}, results="app-checked")
+
+    # assert
+    assert not record.exists()
+
+
 def test_smoke_expects_the_resolved_tag(_no_provenance, _product, monkeypatch):
     """`expect` is what the output must contain, and an image that prints its own version names the tag
     it was built under; a product should not retype that constant in a second place."""
@@ -1205,7 +1366,7 @@ def test_smoke_expects_the_resolved_tag(_no_provenance, _product, monkeypatch):
     handed = []
     monkeypatch.setattr(image, "present_locally", lambda ref: True)
     monkeypatch.setattr(image, "_run_once",
-                        lambda ref, options, argv, expect, rc: handed.append(expect) or (0, 0))
+                        lambda ref, options, argv, expect, rc, timeout: handed.append(expect) or (0, 0))
 
     # act
     rc = image.smoke("app", argv="--version", tag="v9.9.9", expect="firn {tag}")

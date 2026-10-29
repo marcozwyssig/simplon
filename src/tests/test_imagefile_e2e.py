@@ -350,3 +350,56 @@ def test_a_platform_the_index_does_not_carry_is_refused(registered, capsys):
     # assert
     assert rc == 1
     assert "published without linux/arm64" in capsys.readouterr().err
+
+
+# --- si#554: `test:image` over the same image, bounded and with an environment ----------------------------
+
+def test_a_hanging_image_run_is_red_within_its_timeout(product, capsys):
+    # act: in a thread, for the reason the file test above gives
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(image.smoke, name="hello-image", argv="/hello --hang", platform="linux/amd64",
+                              timeout=3)
+        try:
+            verdict = running.result(timeout=15)
+        except NoAnswer:
+            for cid in _left_by(product.name):
+                run(["docker", "rm", "-f", cid])
+            pytest.fail("test:image gave no verdict within 15 s for a 3 s timeout")
+    took = time.monotonic() - started
+
+    # assert: red, said so, inside its limit plus the stop, and the container is gone
+    assert verdict != 0
+    assert "no answer within 3 s" in capsys.readouterr().err
+    assert took < 10, f"the run took {took:.1f} s"
+    assert _left_by(product.name) == []
+
+
+def test_an_image_run_starts_with_the_environment_it_is_given(product):
+    # act
+    verdict = image.smoke(name="hello-image", argv="/hello --env GREETING", platform="linux/amd64",
+                          env={"GREETING": "grüezi"}, expect="GREETING=grüezi")
+
+    # assert
+    assert verdict == 0
+
+
+def test_an_image_run_reads_a_forwarded_name_from_the_callers_environment(product, monkeypatch):
+    # arrange
+    monkeypatch.setenv("SI554_SECRET", "s3cret")
+
+    # act
+    verdict = image.smoke(name="hello-image", argv="/hello --env SI554_SECRET", platform="linux/amd64",
+                          env={"SI554_SECRET": None}, expect="SI554_SECRET=s3cret")
+
+    # assert
+    assert verdict == 0
+
+
+def test_an_image_run_without_the_environment_is_red(product):
+    """The other half of the two above: without `env:` the same run is red, so their green is the variable's."""
+    # act
+    verdict = image.smoke(name="hello-image", argv="/hello --env GREETING", platform="linux/amd64")
+
+    # assert
+    assert verdict != 0
