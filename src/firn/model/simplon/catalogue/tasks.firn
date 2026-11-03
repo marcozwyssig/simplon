@@ -3,8 +3,9 @@
 // all ten readers by name take `name`; the direction is what the body does with the entry. A port is named
 // after the kind it accepts, so a product can guess it; `toolchain:run`'s two are the spec's `source`/`out`.
 // si#344 C.3 (decided 2026-10-14): release:nuget and release:maven are split into a pack task (output) and a push task (input), so a test can sit between them.
-// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 plan 4c removes `impl:` there;
-// src/tests/test_catalogue_ports.py holds the two to each other.
+// `key` repeats catalogue.yaml's coordinate; `body` is the one place a task's body is named (since si#400 4c
+// the catalogue names none). src/tests/test_catalogue_ports.py holds the keys to the catalogue's coordinates
+// and each body to the wrapper its generated class imports.
 package simplon.catalogue
 
 build_image typeOf simplon.pipeline.CatalogueTask {
