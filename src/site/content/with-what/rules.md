@@ -84,6 +84,12 @@ aggregate makes its bundle**: no member may produce the artifact the aggregate n
 plan would run, and only the model export broke on it. Measured first, it reaches nothing: of the eight
 reachable manifests only simplon's declares a release aggregate, and no member produces its bundle.
 
+si#487 added one expression rule: the aggregate a `workflows: release:` names plans `release:check` first.
+A dispatch release without it would run, unchecked, so a product loses a way to say something that worked.
+Measured first, it reaches only simplon's own manifest, the one reachable manifest that declares the
+dispatch flow, and simplon adopts the check in the same change. It binds the kernel's release as it binds a
+product's.
+
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
 unknown key under either, would forward nothing, so the command that needed the variable would fail on the

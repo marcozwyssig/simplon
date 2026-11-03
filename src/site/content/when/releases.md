@@ -26,7 +26,7 @@ it is the one section held only to existing.
 ## 0.37.0
 
 **What a product has to do:** nothing is removed, and a product on 0.36.0 moves both simplon pins
-together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. Two changes can go red on
+together, the one in `requirements.txt` and the one in `deploy/image/image.pin`. Three changes can go red on
 the bump:
 
 1. **`support toolchain` is now placed by the kernel (si#550).** A product with a command named
@@ -39,8 +39,13 @@ the bump:
    "gave no answer within 300 s". Measured over the last six green CI runs of firn and agile-cockpit, the
    only reachable manifests with `test image`, every such step took 1 to 3 s. The way out: `timeout:` in
    the command's `with:`.
+3. **A `workflows: release:` aggregate must plan `release:check` first (si#487).** A manifest that
+   declares the dispatch release without it is refused at load, naming the workflow and the member that
+   comes first instead. Measured over every reachable manifest, only simplon's declares `workflows:
+   release:`, and simplon adopts the check in this release. The way out: add
+   `check: { task: "release:check" }` and put it first in the aggregate's `depends_on`.
 
-A product also gains six catalogue tasks and one token issuer, and uses them only by naming them.
+A product also gains seven catalogue tasks and one token issuer, and uses them only by naming them.
 `asset_name` on `kind: file` is optional and `release-assets` is a new kind, so no existing manifest goes
 red on either.
 
@@ -125,6 +130,21 @@ red on either.
   through that listing, so an `attach` right behind a `draft` can be told there is no draft. In a
   dispatch release the build sits between the two, which is why this is recorded and not worked
   around.
+
+### `release:check` refuses a dispatch release before anything is cut (si#487, the last part of si#463)
+
+- **A new coordinate, offered rather than placed.** `release:check <tag>` refuses, each with its reason and
+  the way out: a version not spelled `vX.Y.Z` (fixed for the dispatch flow, no manifest key); a run started
+  from any ref but the default branch (outside Actions, with no `GITHUB_REF`, it says it did not look); an
+  origin it cannot fetch or cannot ask about the tag; a commit origin's default branch does not carry;
+  another version tag at HEAD; and a tag origin carries at another commit. A tag at this commit is an
+  unfinished release and passes. It asks GitHub nothing: whether a release is published stays
+  `release:github-unpublished`'s question.
+- **The load holds it first** in the aggregate a `workflows: release:` names (an expression rule, binding
+  the kernel's own release too), and the derived job runs it before the cut and the stamp, so a malformed
+  version is refused with the check's message rather than the shell's.
+- **simplon's own `release version` command is gone.** It stood in for the check since si#491, checking
+  the spelling only; `release all` now starts with `check`.
 
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 
