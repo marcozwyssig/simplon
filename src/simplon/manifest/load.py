@@ -907,8 +907,21 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     loaded = Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
                       generate=generate, areas=areas)
     ports.check(loaded, artifactsection.declared(data),
-                getattr(catalogue, "kinds", {}) or artifactsection.REFINES)
+                getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
+                _release_workflows(data))
     return loaded
+
+
+def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
+    """Each workflow that releases through an aggregate -> the command words its `release:` names (si#487).
+
+    Only well-formed entries: a malformed `workflows:` section is `workflowgen.parse`'s to diagnose, with its
+    own message, and refusing it here as well would give one mistake two voices."""
+    section = data.get("workflows")
+    if not isinstance(section, Mapping):
+        return {}
+    return {str(key): body["release"] for key, body in section.items()
+            if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
 
 
 def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,

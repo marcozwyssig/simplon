@@ -723,6 +723,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # final review of si#344 C.3: an order the load checks is only an order the run keeps if a failed
     # member stops the plan. A release aggregate that may not say `stop_on_failure: false` - expression.
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): EXPRESSION,
+    # si#487 (si#463 D3, Marco 2026-11-03): the aggregate a `workflows: release:` names starts with
+    # `release:check`. A dispatch release without it would run - unchecked - so a product loses a way to say
+    # something that worked: EXPRESSION. Measured before it shipped: of the eight reachable product manifests
+    # plus smcctl's, only simplon's declares `workflows: release:`, and simplon adopts the check in the same
+    # change; firn meets it at firn#1040, whose migration writes the member anyway.
+    ("ports", "_check_release_first", "a dispatch release is checked before anything is cut"): EXPRESSION,
     # `manifest.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
@@ -1063,6 +1069,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("load", "_command", "a release aggregate names exactly"): REACH_MERGED,
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): REACH_MERGED,
     ("ports", "_check_bundles", "the aggregate makes its bundle"): REACH_MERGED,
+    ("ports", "_check_release_first", "a dispatch release is checked before anything is cut"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.

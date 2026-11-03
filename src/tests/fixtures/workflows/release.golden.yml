@@ -39,6 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - run: ./app.sh release check -- "$RELEASE_VERSION"
       - name: Cut the tag in this checkout
         run: |
           there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"

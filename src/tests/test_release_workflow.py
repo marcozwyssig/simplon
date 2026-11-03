@@ -412,6 +412,19 @@ def test_the_release_job_runs_the_gate_before_the_tag(workflow):
     assert gate == sorted(gate) and max(gate) < tag
 
 
+def test_the_release_check_runs_before_anything_is_cut(workflow):
+    """si#487: the kernel's check, first in `release all`, runs before the cut and the stamp."""
+    # arrange
+    steps = workflow["jobs"]["release"]["steps"]
+
+    # act
+    check = next(i for i, step in enumerate(steps) if step.get("run") == './simplon.sh release check -- "$RELEASE_VERSION"')
+    cut = next(i for i, step in enumerate(steps) if step.get("name") == "Cut the tag in this checkout")
+
+    # assert
+    assert check < cut
+
+
 #: The step a real run takes instead of the cut: the tag the release job pushed must be here, at HEAD.
 TAG_REQUIRED = "The tag is on origin at this commit"
 

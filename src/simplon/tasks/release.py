@@ -23,7 +23,8 @@ WHAT THE GUARD DOES NOT DO, and this is the line #32 draws twice. It does not as
 tag is free. A tag is unique on the remote, whoever pushes first owns the number, and the loser is told
 by `git push` - that is #3's mechanism, it cost three collisions in one day to arrive at, and a
 pre-flight check would replace a fact about the world with this command's opinion of it, raced anyway
-between the asking and the pushing. The push IS the claim. So the collision arrives here as a REJECTION,
+between the asking and the pushing. The push IS the claim. (`check` below asks origin about the tag too,
+and claims nothing: it tells "unfinished at this commit" from "taken at another", si#487.) So the collision arrives here as a REJECTION,
 and this module's job is to say what that rejection left behind.
 
 WHICH IS THE STATE THAT HAD NO NAME. A rejected push leaves the tag cut locally and unpublished: not
@@ -37,9 +38,90 @@ offers both. Today's tag list makes it harmless and the flag makes it structural
 """
 from __future__ import annotations
 
+import os
+import re
+
 from simplon.manifest import context
 from simplon.kernel import log
 from simplon.tasks import gitops
+
+#: The dispatch release's version, fixed in the kernel with no manifest key (Marco, si#463 D3): `vX.Y.Z`, no
+#: leading zero, no suffix. Only `release:check` reads it, so only a product with `workflows: release:` meets it;
+#: `release:tag` keeps git's own rule and nothing more.
+VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+
+
+def check(tag: str) -> int:
+    """Refuse a dispatch release before anything is cut (si#487): 0 when every check is green, 1 at the first red one.
+
+    In order, because a later check's message would be about a state an earlier one already condemned:
+    the `vX.Y.Z` spelling; origin fetched, and its default branch asked of it; the run started from that branch
+    (`GITHUB_REF`, skipped and said so when it is not set); origin's default branch carrying HEAD; no OTHER version tag at HEAD, which
+    `git describe` would stamp the build with; and the tag on origin free, or at this very commit.
+
+    THE QUESTION TO ORIGIN IS NOT THE PRE-FLIGHT #32 FORBIDS. That one would decide whether a free number may
+    be claimed; the push stays the claim. This asks only which situation a dispatch is in: a tag origin
+    carries at THIS commit is a release a re-run may finish, at another commit it is taken. Whether such a
+    release is already PUBLISHED is not asked here (Marco, 2026-11-03): `release:github-unpublished` answers
+    that, and only a product that keeps GitHub Releases has the question.
+    """
+    gitops.require_git()
+    gitops.configure(context.current().root)
+    if not tag.strip():
+        log.error("no tag given - which release? The tag IS the version: `release check vX.Y.Z`")
+        return 1
+    if not VERSION.fullmatch(tag):
+        log.error(f"{tag!r} is not a release version - a release started from the button is spelled vX.Y.Z "
+                  f"(e.g. v1.4.0: no leading zero, no suffix, nothing around it). Nothing was cut; start the "
+                  f"release again with that spelling")
+        return 1
+    if not gitops.fetch_branches():
+        log.error("origin could not be fetched, so 'origin's default branch carries this commit' has no answer, "
+                  "and nothing is released on a question that was not answered. Check the remote and the "
+                  "network, then start the release again")
+        return 1
+    # Asked of origin, after the fetch: an Actions checkout has no origin/HEAD to read it from (final review).
+    branch = gitops.remote_default_branch()
+    if branch is None:
+        log.error("origin could not be asked which branch is its default, so where a release may start from has "
+                  "no answer. Check the remote and the network, then start the release again")
+        return 1
+    ref = os.environ.get("GITHUB_REF")
+    if ref is None:
+        log.info(f"GITHUB_REF is not set, so this is not a run started from Actions: the branch it was started "
+                 f"from is not checked. Whether origin/{branch} carries this commit still is")
+    elif ref != f"refs/heads/{branch}":
+        log.error(f"this run was started from {ref!r} - start the release from {branch}. A release is built from "
+                  f"the commit {branch} carries, and a dispatch on another ref would release that ref instead")
+        return 1
+    head = gitops.head_commit()
+    if not gitops.ref_exists(f"origin/{branch}") or not gitops.carried_by(head, f"origin/{branch}"):
+        log.error(f"origin/{branch} does not carry this commit ({gitops.describe(head)}), so it would be released "
+                  f"from outside {branch} - merge it first and release what {branch} then carries")
+        return 1
+    here = gitops.tags_at(head)
+    if here is None:
+        log.error("git could not list the tags at this commit, so whether `git describe` would stamp the build "
+                  "with another version has no answer. Nothing was cut")
+        return 1
+    others = [t for t in here if t != tag and VERSION.fullmatch(t)]
+    if others:
+        log.error(f"this commit already carries the version {', '.join(others)}, and `git describe` would stamp "
+                  f"the build with it instead of {tag}. Release a new commit, or release {others[0]} again")
+        return 1
+    theirs = gitops.remote_tag_commit(tag)
+    if theirs is None:
+        log.error(f"origin could not be asked whether {tag} exists, and that is not read as 'no such tag'. "
+                  f"Check the remote and the network, then start the release again")
+        return 1
+    if theirs and theirs != head:
+        log.error(f"{tag} is taken: origin carries it at {gitops.describe(theirs)}, not at this commit - "
+                  f"choose the next version")
+        return 1
+    log.ok(f"{tag} may be released from {gitops.describe(head)}"
+           + (": origin carries it here already, so this is an unfinished release this run may finish"
+              if theirs else ": a new version"))
+    return 0
 
 
 def tag(tag: str) -> int:
@@ -49,7 +131,8 @@ def tag(tag: str) -> int:
     Which tags publish is the product's statement, made in its release workflow's trigger and its
     setuptools-scm settings; a kernel that turned `1.4.0` into `v1.4.0` would be guessing at a
     convention it cannot see, and would guess wrong for the first product that spells it differently.
-    The only shape check is `git check-ref-format` - git's own rule, not one of ours.
+    The only shape check HERE is `git check-ref-format` - git's own rule, not one of ours. The dispatch
+    release fixes vX.Y.Z, and says so in `check`, which runs before this in that flow (si#463 D3, si#487).
     """
     gitops.require_git()
     gitops.configure(context.current().root)

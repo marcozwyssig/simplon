@@ -72,8 +72,8 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 255 | nothing - the declaration had no working meaning |
-| expression rule | 42 | something it could otherwise have said |
-| **all load-time refusals** | **297** | |
+| expression rule | 43 | something it could otherwise have said |
+| **all load-time refusals** | **298** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
@@ -83,6 +83,12 @@ a tag after it is a release that never publishes: both are diagnoses. The expres
 aggregate makes its bundle**: no member may produce the artifact the aggregate names as its `release:`. Such a
 plan would run, and only the model export broke on it. Measured first, it reaches nothing: of the eight
 reachable manifests only simplon's declares a release aggregate, and no member produces its bundle.
+
+si#487 added one expression rule: the aggregate a `workflows: release:` names plans `release:check` first.
+A dispatch release without it would run, unchecked, so a product loses a way to say something that worked.
+Measured first, it reaches only simplon's own manifest, the one reachable manifest that declares the
+dispatch flow, and simplon adopts the check in the same change. It binds the kernel's release as it binds a
+product's.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
@@ -161,7 +167,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 35 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 36 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
@@ -185,7 +191,7 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **66** coordinates and its own tree places
+rule is asked what it was actually handed. The catalogue holds **67** coordinates and its own tree places
 **14** of them; those 14 are the platform's half - in the merged tree because the catalogue put them there,
 not because this product asked - and all 14 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown

@@ -160,7 +160,7 @@ by the kind of work instead of by the phase it runs in:
 
 | the work | what the bodies shell out to | coordinates |
 |---|---|---|
-| version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag`, `test:release-notes` |
+| version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag`, `release:check`, `test:release-notes` |
 | testing | pytest, mypy, Allure, docker, `brew` in its pinned image - and, for `test:walk`, a person at the terminal | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python`, `test:walk`, `test:generated`, `test:image`, `test:file`, `test:homebrew-formula` |
 | documentation | Hugo, docToolchain, the assembled command line itself, the product's own `.feature` files | `docs:site`, `docs:render`, `docs:reference`, `docs:acceptance` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet`, the GitHub API, PyPI | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:github-unpublished`, `release:github-draft`, `release:github-attach`, `release:github-publish`, `release:notes`, `release:nuget`, `release:maven`, `release:conan`, `build:maven-pack`, `build:nuget-config`, `build:nuget-pack`, `build:nuget-restore`, `build:conan-cache`, `build:fetch`, `build:homebrew-formula`, `build:image-file`, `release:homebrew-tap` |

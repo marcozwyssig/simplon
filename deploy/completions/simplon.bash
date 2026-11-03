@@ -23,7 +23,7 @@ _simplon_nodes() {
         '') _simplon_reply=('build' 'test' 'release' 'support') ;;
         'build') _simplon_reply=('wheel' 'reference' 'acceptance' 'site' 'image' 'docs' 'homebrew-formula' 'model' 'model-guard' 'model-gen') ;;
         'test') _simplon_reply=('suite' 'typecheck-python' 'release-notes' 'report' 'generated' 'walk' 'image' 'homebrew-formula' 'all' 'model' 'manifest-model') ;;
-        'release') _simplon_reply=('version' 'notes' 'tag' 'push-image' 'homebrew-tap' 'all') ;;
+        'release') _simplon_reply=('check' 'notes' 'tag' 'push-image' 'homebrew-tap' 'all') ;;
         'support') _simplon_reply=('git' 'tasks' 'manifest' 'install' 'claude-plugins' 'claude-md' 'toolchain' 'completion' 'doctor' 'workflows' 'ci-privileges' 'ci-disk-hygiene' 'ci-arm64' 'ci-disk-preflight' 'ci-disk-cleanup') ;;
         'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;
         'support.tasks') _simplon_reply=('catalogue' 'generate') ;;

@@ -43,14 +43,6 @@ tasks:
     impl: "orchestrator.cli:region_guard"
     help: "Refuse a file with hand-written lines outside its protected region, naming them."
     unattended: true
-  # The release's first member (final review of si#491): until `release:check` (si#487), the one thing
-  # standing between a mistyped `0.99.0` on the button and a public tag plus a PyPI upload.
-  release-version:
-    impl: "orchestrator.cli:release_version"
-    help: "Refuse a release version not spelled vX.Y.Z, before anything is cut."
-    unattended: true
-    params:
-      tag: { help: "the version, exactly as its tag will be (e.g. v0.34.0)", metavar: "TAG" }
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -377,8 +369,10 @@ ci:
       # LEFT the aggregate (decision 1): its evidence comes from `build image` and `test image`, which share
       # the name `image` and so cannot be members, and PyPI publishes after the tag in any case. It runs in
       # release.yml's `image` job after `publish`; a failed push is finished by rerunning that job.
-      # FIRST, before the suite spends three minutes: a version spelled other than vX.Y.Z is refused here.
-      version: { task: release-version }
+      # FIRST, before the suite spends three minutes (si#487): the kernel's dispatch-release check - the
+      # vX.Y.Z spelling, started from main, origin fetched and carrying HEAD, no other version tag at HEAD,
+      # the tag free or at this commit on origin. The load holds it first, because release.yml names `all`.
+      check: { task: "release:check" }
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -420,11 +414,11 @@ ci:
           evidence: [simplon-formula-checked]
         with: { repository: marcozwyssig/homebrew-tap }
       all:
-        depends_on: [version, suite, typecheck-python, generated, release-notes, notes, tag]
+        depends_on: [check, suite, typecheck-python, generated, release-notes, notes, tag]
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release: the version's spelling, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders, audits and commits the Homebrew formula: the tap follows PyPI, so the formula never names a URL that is not live."
+        help: "The release: the release check, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders, audits and commits the Homebrew formula: the tap follows PyPI, so the formula never names a URL that is not live."
 
 support:
   commands:

@@ -93,7 +93,9 @@ Tag `main`'s head instead.
 
 Three things, each on purpose.
 
-**It does not ask the remote whether the tag is free.** That is the remote's answer to give. A tag is
+**It does not ask the remote whether the tag is free.** (The dispatch flow's `release:check` asks origin
+about the tag, below, but only to tell an unfinished release from a taken number; it claims nothing.) That is
+the remote's answer to give. A tag is
 unique on the remote, whoever pushes first owns the number, and the loser finds out from `git push`
 rather than from a reviewer. Asking beforehand would move that decision into the command, where it
 would be raced anyway - the answer can go stale between the asking and the pushing - and where losing
@@ -388,9 +390,23 @@ declares `publishes: true` is skipped, and the last step prints the notes the re
 A publishing task that forgot the field would run on a rehearsal, which is why the catalogue's own
 release tasks are held to it by a test.
 
-`release:check` (si#487) will refuse a malformed version or a commit `main` does not carry *before*
-anything is built. Until it lands, an off-`main` commit goes red at `release tag`, before the tag is
-pushed - but **a malformed version is not caught by anything the kernel derives**. Measured on simplon
-(si#491): `0.99.0`, without the `v`, passed the cut, the stamping check and the notes guard, and would have
-published. A product that cannot accept that puts its own check first in the aggregate, as simplon does
-with `release version`.
+**The run starts with `release:check`** (si#487), before the tag is cut in the checkout and before
+anything is built. The load holds it there: the aggregate a `release:` workflow names must plan it first. It
+refuses, each with its reason and the way out:
+
+- a version not spelled `vX.Y.Z` (`0.99.0`, `v1.4`, `v1.4.0-rc1`): the pattern is fixed for the dispatch
+  flow, with no manifest key. `release tag` typed by hand keeps git's own rule and nothing more;
+- a run started from any ref but the default branch (a feature branch, a tag, a pull request). Outside
+  Actions there is no `GITHUB_REF`, and the check says that it did not look;
+- an origin it cannot fetch, or cannot ask about the tag. Neither is read as "nothing there";
+- a commit the default branch on origin does not carry;
+- another version tag on the same commit, which `git describe` would stamp the build with;
+- a tag origin carries at **another** commit: the version is taken, choose the next one.
+
+A tag origin carries at **this** commit is an unfinished release, and the check lets the re-run through.
+Whether its GitHub Release is already published is not the check's question: `release:github-unpublished`
+answers it, in a product that keeps GitHub Releases.
+
+So two cases above now end at the first step instead of later: a new dispatch of a version that is taken
+at another commit, and a dispatch started from anything but the default branch. A run whose origin is
+unreachable stops there too, rather than at the tag push.
