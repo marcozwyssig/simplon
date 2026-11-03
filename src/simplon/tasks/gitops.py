@@ -453,9 +453,28 @@ def tag_commit(name: str) -> str:
     return (result.out or "").strip() if result.ok else ""
 
 
-def tags_at(commit: str) -> list[str]:
-    """The LOCAL tags pointing at `commit` (`git tag --points-at`), sorted; `[]` when there are none."""
-    return sorted((_git(["tag", "--points-at", commit]).out or "").split())
+def tags_at(commit: str) -> list[str] | None:
+    """The LOCAL tags pointing at `commit` (`git tag --points-at`), sorted; `[]` when there are none, and
+    None when git could not list them - which is not "none there" (final review of si#487)."""
+    result = _git(["tag", "--points-at", commit])
+    return sorted((result.out or "").split()) if result.ok else None
+
+
+def remote_default_branch() -> str | None:
+    """The branch origin's HEAD names, ASKED OF ORIGIN (`git ls-remote --symref origin HEAD`); None when origin
+    could not be asked or names none.
+
+    Not `default_branch()`, whose `origin/HEAD` a checkout made the way actions/checkout makes one does not
+    have (measured on git 2.47 by the final review of si#487): there it falls back to `main`, and a product
+    whose default branch is `master` would be told to start its release from a branch it does not have."""
+    result = _git(["ls-remote", "--symref", "origin", "HEAD"])
+    if not result.ok:
+        return None
+    for line in (result.out or "").splitlines():
+        ref, _, name = line.partition("\t")
+        if name == "HEAD" and ref.startswith("ref: refs/heads/"):
+            return ref[len("ref: refs/heads/"):]
+    return None
 
 
 def carried_by(commit: str, ref: str) -> bool:

@@ -64,7 +64,13 @@ condemned.
 
 Notes on the table:
 
-- **Default branch** is `gitops.default_branch()`, the one `release:tag` uses.
+- **Order amended after the final review:** the fetch (row 4) runs before "from main" (row 3), and the
+  default branch is asked of origin (`git ls-remote --symref origin HEAD`) right after it, red when origin
+  cannot say. A checkout made the way actions/checkout makes one has no `origin/HEAD`, so
+  `gitops.default_branch()` would fall back to `main` and refuse a `master` product's release from its own
+  default branch (measured on git 2.47 by the reviewer).
+
+- **Default branch** is asked of origin (`gitops.remote_default_branch()`), see the amendment above.
 - **The fetch** is the existing `gitops.fetch_branches()`: `git fetch --quiet --no-tags origin`, every branch,
   no tags (`gitops.py:476`). Any failure of it is red here, and the row-4 message says "origin could not be
   fetched", not "the default branch" (my call after the builder check: no new refspec fetch, which would be

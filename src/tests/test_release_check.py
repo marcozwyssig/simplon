@@ -108,7 +108,9 @@ def master_lab(tmp_path, monkeypatch) -> Lab:
     _commit(work, "one")
     _git(work, "remote", "add", "origin", str(origin))
     _git(work, "push", "-q", "-u", "origin", "master")
-    _git(work, "remote", "set-head", "origin", "master")
+    # NO `remote set-head`: a checkout made the way actions/checkout makes one has no origin/HEAD (final
+    # review of si#487, measured on git 2.47), so the default branch must be asked of origin, not read here.
+    _git(work, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
     monkeypatch.setattr(context, "_current", ProductContext("sample", work, work / "sample.yaml"))
     return Lab(work, origin)
 
@@ -271,3 +273,26 @@ def test_a_refused_check_cuts_and_pushes_nothing(lab, no_ref):
 
     # assert
     assert lab.local_tags() == ["v0.9.0"] and lab.remote_tags() == {}
+
+
+def test_a_failed_tag_listing_is_not_read_as_no_other_tag(lab):
+    """Final review of si#487: `git tag --points-at` failing must not answer "no tag there". Measured: a name
+    git cannot parse exits 129 ("malformed object name"); an all-zero sha exits 0 and lists nothing."""
+    # arrange
+    gitops.configure(lab.work)
+
+    # act / assert
+    assert gitops.tags_at("nosuchref") is None
+    assert gitops.tags_at(_sha(lab.work)) == []
+
+
+def test_a_check_whose_tag_listing_fails_is_red(lab, no_ref, monkeypatch, capsys):
+    # arrange
+    monkeypatch.setattr(gitops, "tags_at", lambda commit: None)
+
+    # act
+    rc = release.check("v1.0.0")
+
+    # assert
+    assert rc == 1
+    assert "could not list the tags" in _out(capsys)

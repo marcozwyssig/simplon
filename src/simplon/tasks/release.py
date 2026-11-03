@@ -55,8 +55,8 @@ def check(tag: str) -> int:
     """Refuse a dispatch release before anything is cut (si#487): 0 when every check is green, 1 at the first red one.
 
     In order, because a later check's message would be about a state an earlier one already condemned:
-    the `vX.Y.Z` spelling; the run started from the default branch (`GITHUB_REF`, skipped and said so when it
-    is not set); origin fetched, and carrying HEAD on its default branch; no OTHER version tag at HEAD, which
+    the `vX.Y.Z` spelling; origin fetched, and its default branch asked of it; the run started from that branch
+    (`GITHUB_REF`, skipped and said so when it is not set); origin's default branch carrying HEAD; no OTHER version tag at HEAD, which
     `git describe` would stamp the build with; and the tag on origin free, or at this very commit.
 
     THE QUESTION TO ORIGIN IS NOT THE PRE-FLIGHT #32 FORBIDS. That one would decide whether a free number may
@@ -75,26 +75,36 @@ def check(tag: str) -> int:
                   f"(e.g. v1.4.0: no leading zero, no suffix, nothing around it). Nothing was cut; start the "
                   f"release again with that spelling")
         return 1
-    branch = gitops.default_branch()
+    if not gitops.fetch_branches():
+        log.error("origin could not be fetched, so 'origin's default branch carries this commit' has no answer, "
+                  "and nothing is released on a question that was not answered. Check the remote and the "
+                  "network, then start the release again")
+        return 1
+    # Asked of origin, after the fetch: an Actions checkout has no origin/HEAD to read it from (final review).
+    branch = gitops.remote_default_branch()
+    if branch is None:
+        log.error("origin could not be asked which branch is its default, so where a release may start from has "
+                  "no answer. Check the remote and the network, then start the release again")
+        return 1
     ref = os.environ.get("GITHUB_REF")
     if ref is None:
         log.info(f"GITHUB_REF is not set, so this is not a run started from Actions: the branch it was started "
                  f"from is not checked. Whether origin/{branch} carries this commit still is")
     elif ref != f"refs/heads/{branch}":
-        log.error(f"this run was started from {ref} - start the release from {branch}. A release is built from "
+        log.error(f"this run was started from {ref!r} - start the release from {branch}. A release is built from "
                   f"the commit {branch} carries, and a dispatch on another ref would release that ref instead")
-        return 1
-    if not gitops.fetch_branches():
-        log.error(f"origin could not be fetched, so 'origin/{branch} carries this commit' has no answer, and "
-                  f"nothing is released on a question that was not answered. Check the remote and the network, "
-                  f"then start the release again")
         return 1
     head = gitops.head_commit()
     if not gitops.ref_exists(f"origin/{branch}") or not gitops.carried_by(head, f"origin/{branch}"):
         log.error(f"origin/{branch} does not carry this commit ({gitops.describe(head)}), so it would be released "
                   f"from outside {branch} - merge it first and release what {branch} then carries")
         return 1
-    others = [t for t in gitops.tags_at(head) if t != tag and VERSION.fullmatch(t)]
+    here = gitops.tags_at(head)
+    if here is None:
+        log.error("git could not list the tags at this commit, so whether `git describe` would stamp the build "
+                  "with another version has no answer. Nothing was cut")
+        return 1
+    others = [t for t in here if t != tag and VERSION.fullmatch(t)]
     if others:
         log.error(f"this commit already carries the version {', '.join(others)}, and `git describe` would stamp "
                   f"the build with it instead of {tag}. Release a new commit, or release {others[0]} again")

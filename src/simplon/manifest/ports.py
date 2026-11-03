@@ -291,8 +291,9 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
 
 def _first_leaf_task(manifest: "Manifest", group: str, name: str) -> str | None:
     """The task of the first leaf `name`'s plan runs (depth-first, as `plan_for` orders it), or None for an
-    empty plan or a leaf that is no task command. One reading for the rule below and for the generator,
-    which lifts that leaf in front of the cut, so the two cannot disagree on a nested aggregate."""
+    empty plan or a leaf that is no task command. The generator lifts the first leaf of `_leaves`, which reads
+    the same `plan_for` and only drops an entry that is no task command - one this rule has already refused,
+    because its task is then None. So on every manifest that loads, the rule and the lift name the same leaf."""
     plan = manifest.plan_for(name, group=group)
     first = manifest.spec_by_name(plan[0]) if plan else None
     return first.task if isinstance(first, TaskCommand) else None
