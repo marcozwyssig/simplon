@@ -24,7 +24,7 @@ from conftest import ROOT
 
 #: The `release:` tasks that publish nothing: they read (the merges, the API) and write only the checkout.
 #: A new `release:` task is in neither set until somebody says which it is - that is the point.
-PUBLISH_READS = frozenset({"release:notes", "release:github-unpublished"})
+PUBLISH_READS = frozenset({"release:notes", "release:github-unpublished", "release:check"})
 
 #: How a body authenticates to GitHub, read off its module's source: the packages adapter, the Releases
 #: adapter (directly or through `githubrelease`), or the `gh` CLI, which reads GITHUB_TOKEN too.

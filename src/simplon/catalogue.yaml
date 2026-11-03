@@ -862,6 +862,20 @@ tasks:
       name: { help: "the release-notes artifact to write (normally bound with `produces:`)" }
       tag:  { help: "the tag being released, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
 
+  # The dispatch release's CHECK (si#487, si#463 D3): the first member of every release aggregate a
+  # `workflows: release:` names (held there at load), and the derived job runs it before the cut. It refuses
+  # a version not spelled vX.Y.Z (fixed, no manifest key), a run started from another ref, an origin that
+  # cannot be fetched or asked, a commit origin's default branch does not carry, another version tag at HEAD,
+  # and a tag origin carries at another commit. It asks GitHub nothing: whether a release is published is
+  # `release:github-unpublished`'s question.
+  #
+  # OFFERED, not placed: a product without the dispatch flow has no use for a fixed vX.Y.Z.
+  release:check:
+    help: "Refuse a dispatch release before anything is cut: the vX.Y.Z spelling, started from the default branch, origin fetched and carrying HEAD, no other version tag at HEAD, the tag free or at this commit on origin."
+    unattended: true
+    params:
+      tag: { help: "the version exactly as its tag will be (e.g. v1.4.0)", metavar: "TAG" }
+
   # The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
   # the guard #23 asked for, sitting inside it.
   #
@@ -890,7 +904,7 @@ tasks:
   #
   # OFFERED, not placed, for `release:tag`'s reason: each publishes or prepares a publish, a misfire is
   # public, and a product with no GitHub release has nothing waiting for it. No `vX.Y.Z` here: a product
-  # whose release tags are build stamps uses these as they are, and the pattern is the dispatch flow's own.
+  # whose release tags are build stamps uses these as they are, and the pattern is `release:check`'s.
   release:github-unpublished:
     help: "Answer whether a tag's GitHub Release is still unpublished (a draft or none); red when it is published or GitHub does not answer."
     unattended: true

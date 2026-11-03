@@ -128,6 +128,10 @@ def tag_verdict(*, carried_by_main: bool, local_tag_at: str, head: str) -> tuple
     A pre-flight `ls-remote` would move that decision here, where it would be raced anyway (the answer
     can go stale between the check and the push) and where losing would look like this task's opinion
     rather than a fact about the world.
+
+    `release:check` (si#487) does ask origin about the tag, and that is not this pre-flight: it claims no
+    free number - the push still does - but tells a dispatch which situation it is in, a tag origin carries
+    at this commit (an unfinished release a re-run may finish) or at another (taken).
     """
     if not carried_by_main:
         return ("refuse", "off-main")
@@ -429,10 +433,11 @@ def ref_exists(ref: str) -> bool:
 def valid_tag_name(name: str) -> bool:
     """Whether git itself would accept `name` as a tag - `git check-ref-format`, not a convention.
 
-    The kernel deliberately validates nothing beyond this. WHICH tags publish is the product's own
-    statement, made in its release workflow's trigger (`tags: ["v*"]` here) and in its setuptools-scm
-    configuration; a kernel that enforced a shape would be imposing simplon's convention on every
-    product, and the one it enforced could disagree with the workflow that actually listens.
+    `release:tag` validates nothing beyond this. WHICH tags publish is the product's own statement, made
+    in its release workflow and in its setuptools-scm configuration; a kernel that enforced a shape on
+    every tag would be imposing simplon's convention on every product. The dispatch release is the one
+    place a shape is fixed (`release:check`, vX.Y.Z, si#463 D3), and only a product that declares
+    `workflows: release:` meets it.
     """
     return bool(name) and _git(["check-ref-format", f"refs/tags/{name}"]).ok
 
@@ -446,6 +451,11 @@ def tag_commit(name: str) -> str:
     """
     result = _git(["rev-parse", "--verify", "--quiet", f"refs/tags/{name}^{{commit}}"])
     return (result.out or "").strip() if result.ok else ""
+
+
+def tags_at(commit: str) -> list[str]:
+    """The LOCAL tags pointing at `commit` (`git tag --points-at`), sorted; `[]` when there are none."""
+    return sorted((_git(["tag", "--points-at", commit]).out or "").split())
 
 
 def carried_by(commit: str, ref: str) -> bool:
