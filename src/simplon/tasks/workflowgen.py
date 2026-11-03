@@ -399,6 +399,8 @@ FLOW_KEY = "flow"
 # `run:` line. The ORDER is the aggregate's: `plan_for` already returns it in the one order rule 8 accepts
 # (si#489), so nothing here orders anything.
 RELEASE_KEY = "release"
+#: The dispatch release's check (si#487): the first leaf, run before the cut.
+RELEASE_CHECK = "release:check"
 RELEASE_JOB = "release"
 RELEASE_ENV = "RELEASE_VERSION"
 _RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
@@ -1065,7 +1067,11 @@ def _release(workflow: "Workflow", manifest: Manifest,
     - a leaf whose task `publishes:` is skipped on a dry run (si#490 decision 5);
     - a `token: github` leaf, and only that one, gets the run's GITHUB_TOKEN (decision 4);
     - a leaf taking a passed parameter unpinned gets it as `"$RELEASE_VERSION"`, the CLI's own reading of
-      `passes:` (si#433), so `release all --tag v1.4.0` and the workflow hand the same leaves the version.
+      `passes:` (si#433), so `release all --tag v1.4.0` and the workflow hand the same leaves the version;
+    - a first leaf that is `release:check` runs BEFORE the cut and the stamp (si#487). Left after them, a
+      malformed version or another version tag at HEAD would fail in shell with the shell's message, and the
+      check would never speak. The load holds it first (`ports._check_release_first`), so this moves no
+      member past another; it only places the two verbatim steps after it.
     """
     if not workflow.release:
         return ()
@@ -1086,10 +1092,13 @@ def _release(workflow: "Workflow", manifest: Manifest,
         raise ValueError(
             f"{where}: '{workflow.release}' passes {', '.join(sorted(set(spec.passes) - {'tag'}))}, and a "
             f"dispatch carries only the version - pin it on the leaves with `with:`, or pass only `tag`")
-    steps: list[Step] = [Step(verbatim={"name": "Cut the tag in this checkout", "run": RELEASE_CUT}),
-                         Step(verbatim={"name": "The build will be stamped with the version", "run": RELEASE_STAMP})]
+    cut = [Step(verbatim={"name": "Cut the tag in this checkout", "run": RELEASE_CUT}),
+           Step(verbatim={"name": "The build will be stamped with the version", "run": RELEASE_STAMP})]
+    leaves = _leaves(manifest, Step(command=workflow.release), where)
+    lifted = 1 if leaves and leaves[0][1].task == RELEASE_CHECK else 0
+    steps: list[Step] = []
     notes = ""
-    for words, leaf in _leaves(manifest, Step(command=workflow.release), where):
+    for words, leaf in leaves:
         if leaf.unattended is not True:
             raise ValueError(
                 f"{where}: '{words}' cannot run in the release job unattended - it declares `unattended: "
@@ -1109,6 +1118,7 @@ def _release(workflow: "Workflow", manifest: Manifest,
         if leaf.task == "release:notes" and not notes:
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
+    steps[lifted:lifted] = cut
     tail = (f'echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"\n'
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,

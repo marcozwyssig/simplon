@@ -2390,6 +2390,7 @@ ci:
                     with: { tag: "" } }
   release:
     commands:
+      check: { task: "release:check" }
       unpublished: { task: "release:github-unpublished" }
       notes: { task: "release:notes", produces: { release-notes: app-notes } }
       draft: { task: "release:github-draft", consumes: { release-notes: app-notes } }
@@ -2397,7 +2398,7 @@ ci:
       tag: { task: "release:tag", consumes: { release-notes: app-notes }, produces: { tag: app-tag } }
       gh-publish: { task: "release:github-publish", produces: { github-release: app-gh } }
       all:
-        depends_on: [unpublished, notes, draft, build-image, test-image, publish, tag, gh-publish]
+        depends_on: [check, unpublished, notes, draft, build-image, test-image, publish, tag, gh-publish]
         passes: [tag]
         produces: { release: app-release }
         stop_on_failure: true
@@ -2502,7 +2503,7 @@ def test_the_version_goes_to_the_leaves_that_take_it_unpinned():
 
 
 def test_without_a_notes_leaf_the_tail_prints_only_its_line():
-    product = (_RELEASE_PRODUCT.replace("[unpublished, notes, draft,", "[unpublished,")
+    product = (_RELEASE_PRODUCT.replace("[check, unpublished, notes, draft,", "[check, unpublished,")
                .replace('      draft: { task: "release:github-draft", consumes: { release-notes: app-notes } }\n', "")
                .replace("tag: { task: \"release:tag\", consumes: { release-notes: app-notes }, ",
                         "tag: { task: \"release:tag\", "))
@@ -2522,6 +2523,42 @@ def test_a_release_names_an_aggregate_the_manifest_has(change, complaint):
 def test_a_release_aggregate_that_passes_no_tag_is_refused():
     with pytest.raises(ValueError, match="the version would reach no command"):
         _release_text(_RELEASE_PRODUCT.replace("        passes: [tag]\n", ""))
+
+
+def _index(steps: list[dict], *, run_prefix: str = "", name: str = "") -> int:
+    return next(i for i, step in enumerate(steps)
+                if (run_prefix and str(step.get("run", "")).startswith(run_prefix)) or (name and step.get("name") == name))
+
+
+def test_the_check_runs_before_the_cut():
+    """si#487: the check speaks before the cut and the stamp, so a malformed version or another version tag at
+    HEAD is refused with the check's message, not the shell's. It publishes nothing, so a dry run runs it too."""
+    # arrange
+    steps = _release_steps(_release_text())
+
+    # act
+    check = _index(steps, run_prefix="./app.sh release check")
+    cut = _index(steps, name="Cut the tag in this checkout")
+
+    # assert
+    assert check < cut
+    assert "if" not in steps[check]
+    assert steps[check]["run"] == './app.sh release check -- "$RELEASE_VERSION"'
+
+
+def test_without_the_check_first_the_cut_still_comes_first():
+    """The lift is of `release:check` only, not of whatever member happens to come first. Rendered without
+    the load (the `workflows:` section is not handed to it here), so the rule does not run."""
+    # arrange
+    product = (_RELEASE_PRODUCT.replace('      check: { task: "release:check" }\n', "")
+               .replace("depends_on: [check, unpublished,", "depends_on: [unpublished,"))
+
+    # act
+    steps = [step for step in _release_steps(_release_text(product))
+             if not str(step.get("uses", "")).startswith("actions/checkout")]
+
+    # assert
+    assert steps[0].get("name") == "Cut the tag in this checkout"
 
 
 def test_a_leaf_that_cannot_run_unattended_is_refused():
