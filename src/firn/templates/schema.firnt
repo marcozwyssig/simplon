@@ -83,7 +83,7 @@ template ArtifactSchema {
     }
     |}
     |
-    |#: Every catalogue task -> the body the model names. catalogue.yaml names it too until si#400 plan 4c.
+    |#: Every catalogue task -> the body the model names. Since si#400 4c the one place a body is named.
     |BODIES: dict[str, str] = {
     for t : `simplon.pipeline.CatalogueTask` {
       |    "${t.key}": "${t.body}",

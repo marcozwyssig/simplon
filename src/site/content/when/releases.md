@@ -200,6 +200,9 @@ red on either.
 - **The website's redesign is specified (si#348), ordered against si#344.** The design is in
   `docs/superpowers/specs/2026-10-29-the-site-is-simple-design.md`; nothing on the site changes in this
   release.
+- **Two comments still said the catalogue names a task's body "until si#400 plan 4c"** (the firn
+  catalogue model and the `BODIES` template). 4c had already removed it; they now say the model's `body`
+  is the one place a body is named.
 
 ## 0.36.0
 
