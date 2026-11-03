@@ -163,7 +163,7 @@ def _artifacts(where: str, key: str, port: Port, value: object) -> tuple[str, ..
 
 
 def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
-          kinds: Mapping[str, str]) -> None:
+          kinds: Mapping[str, str], release_workflows: Mapping[str, str] | None = None) -> None:
     """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest, all four diagnosis; then
     the test-result rules (si#344 C.3, `_check_results`)."""
     producers: dict[str, list[str]] = {}
@@ -212,6 +212,7 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
             if isinstance(spec, AggregateCommand):
                 _check_plan(manifest, f"{group} {name}", manifest.plan_tree_for(name, group=group))
     _check_bundles(manifest, declared, kinds)
+    _check_release_first(manifest, release_workflows or {})
     about = _check_results(manifest, declared, kinds)
     _check_release(manifest, declared, kinds, about)
 
@@ -286,6 +287,40 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
                         f"aggregate '{where}' plans '{step}' before '{plan[max(publishes)]}' - a tag cut before "
                         f"the push it announces is a public statement that is false if the push fails; list "
                         f"the tag after every publish in `depends_on`")
+
+
+def _first_leaf_task(manifest: "Manifest", group: str, name: str) -> str | None:
+    """The task of the first leaf `name`'s plan runs (depth-first, as `plan_for` orders it), or None for an
+    empty plan or a leaf that is no task command. One reading for the rule below and for the generator,
+    which lifts that leaf in front of the cut, so the two cannot disagree on a nested aggregate."""
+    plan = manifest.plan_for(name, group=group)
+    first = manifest.spec_by_name(plan[0]) if plan else None
+    return first.task if isinstance(first, TaskCommand) else None
+
+
+def _check_release_first(manifest: "Manifest", release_workflows: Mapping[str, str]) -> None:
+    """A dispatch release is checked before anything is cut (si#487, si#463 D3): the aggregate a
+    `workflows: <name>: release:` names starts its plan with `release:check`.
+
+    An EXPRESSION rule, of merged reach: it binds simplon's own release as it binds a product's. It forbids
+    a dispatch release with no check, or with the check after a member that could already have acted on a
+    version nobody validated. Only a manifest that declares the dispatch flow meets it (measured 2026-11-03:
+    simplon's own, of the reachable manifests).
+
+    A name that resolves to no command is skipped, not refused: `workflowgen.resolve_command` diagnoses it
+    when the workflow is rendered, with the group's real members listed."""
+    for key, words in release_workflows.items():
+        tokens = words.split()
+        group, name = ".".join(tokens[:-1]), tokens[-1] if tokens else ""
+        if name not in manifest.commands.get(group, {}):
+            continue
+        first = _first_leaf_task(manifest, group, name)
+        if first != "release:check":
+            plan = manifest.plan_for(name, group=group)
+            raise ValueError(
+                f"workflow '{key}' releases through '{words}', whose plan starts with "
+                f"'{plan[0] if plan else '(nothing)'}' - a dispatch release is checked before anything is cut; "
+                f'add `check: {{ task: "release:check" }}` and put it first in `depends_on`')
 
 
 def _bound(spec: Command | None, side: str) -> Mapping[str, tuple[str, ...]]:

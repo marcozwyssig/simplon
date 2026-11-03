@@ -114,9 +114,9 @@ simplon typeOf simplon.manifest.Product {
   ci release typeOf simplon.pipeline.Group {
     key = "release"
     area = simplon.pipeline.Area.ci
-    command version typeOf simplon.pipeline.TaskCommand {
-      key = "version"
-      task = product.simplon.simplon.t_release_version
+    command check typeOf simplon.pipeline.TaskCommand {
+      key = "check"
+      task = simplon.catalogue.release_check
     }
     command notes typeOf simplon.pipeline.TaskCommand {
       key = "notes"
@@ -143,7 +143,7 @@ simplon typeOf simplon.manifest.Product {
     }
     command all typeOf simplon.pipeline.ReleaseCommand {
       key = "all"
-      member = product.simplon.simplon.release.version
+      member = product.simplon.simplon.release.check
       member = product.simplon.simplon.test.suite
       member = product.simplon.simplon.test.typecheck_python
       member = product.simplon.simplon.test.generated
@@ -270,10 +270,6 @@ simplon typeOf simplon.manifest.Product {
   tasks t_suite typeOf simplon.pipeline.Task {
     key = "suite"
     body = "orchestrator.cli:test_suite"
-  }
-  tasks t_release_version typeOf simplon.pipeline.Task {
-    key = "release-version"
-    body = "orchestrator.cli:release_version"
   }
   tasks t_doctor typeOf simplon.pipeline.Task {
     key = "doctor"

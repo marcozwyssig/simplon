@@ -275,3 +275,52 @@ def test_a_tag_after_the_github_publish_is_refused():
 def test_without_a_github_publish_the_tag_still_follows_every_publish():
     with pytest.raises(ValueError, match="a tag cut before the push it announces"):
         _load(_all("notes, tag, publish", "produces: { release: app-release }"))
+
+
+# --- si#487: a dispatch release starts with `release:check` ----------------------------------------------
+
+CHECK = '      check: { task: "release:check" }\n'
+RELEASE_WORKFLOW = "workflows:\n  rel:\n    release: release all\n"
+
+
+def _dispatched(deps, *, check=True, workflow=RELEASE_WORKFLOW):
+    text = _all(deps, "produces: { release: app-release }")
+    if check:
+        text = text.replace("      all:", CHECK + "      all:", 1)
+    return text + workflow
+
+
+def test_a_release_workflow_whose_aggregate_does_not_start_with_the_check_is_refused():
+    # arrange
+    text = _dispatched("notes, publish, tag", check=False)
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _load(text)
+    message = str(refused.value)
+    assert "release:check" in message and "first" in message
+    assert 'check: { task: "release:check" }' in message
+
+
+def test_the_check_second_is_refused_too():
+    with pytest.raises(ValueError, match="starts with 'notes'"):
+        _load(_dispatched("notes, check, publish, tag"))
+
+
+def test_the_check_first_is_accepted():
+    loaded = _load(_dispatched("check, notes, publish, tag"))
+
+    assert loaded.plan_for("all", group="release")[0] == "check"
+
+
+def test_an_aggregate_no_workflow_names_needs_no_check():
+    _load(_dispatched("notes, publish, tag", check=False, workflow=""))
+
+
+def test_a_nested_aggregate_whose_first_leaf_is_the_check_is_accepted():
+    # arrange: the gate is an aggregate of its own, and the check is its first leaf
+    text = _dispatched("gate, publish, tag").replace(
+        "      all:", "      gate: { depends_on: [check, notes], help: 'g' }\n      all:", 1)
+
+    # act / assert
+    _load(text)

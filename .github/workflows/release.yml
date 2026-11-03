@@ -64,7 +64,7 @@ jobs:
             echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
             exit 1
           }
-      - run: ./simplon.sh release version --tag "$RELEASE_VERSION"
+      - run: ./simplon.sh release check -- "$RELEASE_VERSION"
       - run: ./simplon.sh test suite
       - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh test generated
