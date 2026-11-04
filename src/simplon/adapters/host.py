@@ -1,7 +1,7 @@
 """The Linux-vs-macOS execution router. On Linux the lab runs natively; on macOS it runs inside the
 Colima VM, so commands that touch the lab (docker, a shell in the VM) must be prefixed with
-`colima ssh --`. It is the ONLY module that knows about Colima, so parsers/status logic stay
-host-agnostic and testable. The OS is self-detected via the stdlib `platform`, or injected via os_name.
+`colima ssh --`. It owns the Colima socket path and the docker socket resolution (si#564), so
+parsers/status logic stay host-agnostic and testable; `labhost` knows Colima too, as the VM it starts. The OS is self-detected via the stdlib `platform`, or injected via os_name.
 
 It also answers "is the lab host usable at all?" (netctl#1031), and answers it from the DOCKER SOCKET
 rather than from colima's status record. On the netctl#1002 incident that record read `Stopped` while 43
@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import socket
+import subprocess
+from collections.abc import Mapping
+from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 
@@ -26,7 +30,8 @@ DEFAULT_SOCKET = "/var/run/docker.sock"
 # The daemon's cheapest endpoint: no auth, no payload, answers `200 OK` iff the engine is serving.
 _PING = b"GET /_ping HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n"
 _PING_TIMEOUT_S = 2.0
-_STATUS_LINE_MAX = 256   # read until the status line is complete, never the whole response
+_STATUS_LINE_MAX = 256
+_CONTEXT_TIMEOUT_S = 10.0   # `docker context inspect` reads local files only; a hang is no verdict   # read until the status line is complete, never the whole response
 
 
 class HostReach(str, Enum):
@@ -68,20 +73,97 @@ class HostProbe:
     cause: str
 
 
-def docker_socket_path(*, darwin: bool, environ: dict | None = None) -> str:
-    """The docker socket to open on THIS host: an explicit unix:// DOCKER_HOST wins, then the colima
-    profile socket on macOS, then the default daemon socket. Empty for a non-unix DOCKER_HOST (tcp/ssh -
-    nothing local to open). PURE (the environment is injectable), so the resolution is unit-tested with
-    no host at all."""
+def docker_socket_path(*, darwin: bool, environ: Mapping[str, str] | None = None,
+                       endpoint: str | None = None) -> str:
+    """The docker socket to open on THIS host: an explicit unix:// DOCKER_HOST wins, then the active
+    context's endpoint when the caller asked docker for it (si#564), then the colima profile socket on
+    macOS, then the default daemon socket. Empty for a non-unix DOCKER_HOST or endpoint (tcp/ssh - nothing
+    local to open). PURE (the environment and the endpoint are injected), so the resolution is unit-tested
+    with no host at all; `context_endpoint` is the I/O that feeds it. `endpoint=None` means "not asked, or
+    docker could not say", and keeps the order this function had before the context was asked."""
     env = os.environ if environ is None else environ
-    endpoint = env.get("DOCKER_HOST", "")
-    if endpoint.startswith("unix://"):
-        return endpoint.removeprefix("unix://")
-    if endpoint:
-        return ""
+    for given in (env.get("DOCKER_HOST", ""), endpoint or ""):
+        if given.startswith("unix://"):
+            return given.removeprefix("unix://")
+        if given:
+            return ""
     if darwin:
         return os.path.expanduser(COLIMA_SOCKET.format(profile=env.get("COLIMA_PROFILE") or "default"))
     return DEFAULT_SOCKET
+
+
+@dataclass(frozen=True)
+class DockerContext:
+    """The context the docker CLI would use, as docker itself names it: its name and its endpoint
+    (`unix:///...`, `tcp://...`, `ssh://...`)."""
+
+    name: str
+    endpoint: str
+
+
+#: One call answers both: `docker context inspect` with no name inspects the context the CLI would use,
+#: honouring DOCKER_HOST and DOCKER_CONTEXT exactly as every other docker command does.
+_CONTEXT_FORMAT = "{{.Name}}|{{.Endpoints.docker.Host}}"
+
+
+def context_endpoint(environ: Mapping[str, str] | None = None) -> DockerContext | None:
+    """Ask docker which context it would use, in `environ` (the whole process environment; `os.environ`
+    when None). Asked of docker rather than read from `~/.docker/config.json`, because DOCKER_HOST and
+    DOCKER_CONTEXT override that file.
+
+    `None` means docker COULD NOT SAY - no CLI, a non-zero exit, output that is not a name and an
+    endpoint. It is never read as "the default context": that misreading is exactly what the VS Code
+    Dev Containers extension does when its `docker context ls` throws (si#564), and it is how a Mac with
+    Colima ended up looking for /var/run/docker.sock (firn#287)."""
+    env = dict(os.environ if environ is None else environ)
+    docker = shutil.which("docker", path=env.get("PATH", ""))
+    if docker is None:
+        return None
+    try:
+        done = subprocess.run([docker, "context", "inspect", "--format", _CONTEXT_FORMAT], env=env,
+                              capture_output=True, text=True, timeout=_CONTEXT_TIMEOUT_S, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    name, sep, endpoint = done.stdout.strip().partition("|")
+    if done.returncode != 0 or not sep or not name or not endpoint:
+        return None
+    return DockerContext(name, endpoint)
+
+
+def without_docker_overrides(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """A copy of `environ` without DOCKER_HOST and DOCKER_CONTEXT: the environment a VS Code started from
+    the Dock gives its extensions, which inherit no shell export (si#564)."""
+    env = dict(os.environ if environ is None else environ)
+    env.pop("DOCKER_HOST", None)
+    env.pop("DOCKER_CONTEXT", None)
+    return env
+
+
+def is_colima_socket(path: str) -> bool:
+    """True iff `path` is a Colima profile's host-side docker socket, `~/.colima/<profile>/docker.sock`.
+    The lab paths on macOS take a context's endpoint only when it is one (si#564): any other daemon
+    answering would make a dead Colima VM look alive."""
+    parts = Path(os.path.expanduser(path)).parts
+    home = Path(os.path.expanduser("~")).parts
+    return (len(parts) == len(home) + 3 and parts[:len(home)] == home
+            and parts[len(home)] == ".colima" and parts[-1] == "docker.sock")
+
+
+def lab_socket_path(*, darwin: bool, environ: Mapping[str, str] | None = None) -> str:
+    """The socket the LAB's daemon listens on, for the netctl#1031 probe and `labhost` (si#564).
+
+    The active context is asked, behind a guard on macOS: there the lab is Colima, and an endpoint that is
+    not a Colima profile socket (the `default` context, Docker Desktop, a remote daemon) is ignored, because
+    a different daemon answering would make a dead Colima read as SOCKET_ONLY and skip `colima start`. A
+    Colima endpoint of ANOTHER profile is taken - the improvement, since before only COLIMA_PROFILE or
+    `default` was tried. On Linux any context endpoint is the lab's. When docker cannot say, the order
+    before si#564 holds, and the ping that follows is the verdict."""
+    found = context_endpoint(environ)
+    endpoint = found.endpoint if found else None
+    if darwin and endpoint is not None and not (
+            endpoint.startswith("unix://") and is_colima_socket(endpoint.removeprefix("unix://"))):
+        endpoint = None
+    return docker_socket_path(darwin=darwin, environ=environ, endpoint=endpoint)
 
 
 def socket_answers(path: str, timeout: float = _PING_TIMEOUT_S) -> bool:
@@ -170,7 +252,9 @@ class Host:
         lines = [ln.strip() for ln in ((res.err or "") + "\n" + (res.out or "")).splitlines() if ln.strip()]
         routed_cause = "" if res.ok else (
             lines[-1] if lines else f"docker on the lab host exited {res.rc} without a message")
-        path = docker_socket_path(darwin=self._darwin)
+        # The context is asked only on the socket branch (si#564): a healthy host still costs one docker
+        # call, and `socket_path` on a ROUTED probe keeps naming the socket it named before.
+        path = docker_socket_path(darwin=self._darwin) if res.ok else lab_socket_path(darwin=self._darwin)
         reach = classify_reachability(routed_ok=res.ok, socket_ok=not res.ok and socket_answers(path))
         return HostProbe(reach=reach, socket_path=path,
                          cause=probe_cause(reach, routed_cause, path))

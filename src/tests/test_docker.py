@@ -132,7 +132,7 @@ def test_bootstrap_dies_with_the_socket_hint_when_no_daemon_is_reachable(monkeyp
     # arrange detail: which() must report absent BEFORE the bootstrap branch is taken
     calls = {"n": 0}
 
-    def which_missing_first(tool):
+    def which_missing_first(tool, **kw):   # host.context_endpoint passes path= (si#564)
         calls["n"] += 1
         return None if calls["n"] == 1 else str(bin_dir / "docker")
 
@@ -518,3 +518,87 @@ def test_the_sigterm_handler_is_the_runs_alone(monkeypatch):
 
     # assert
     assert signal.getsignal(signal.SIGTERM) == before
+
+
+# --- the socket the active context names (si#564) -----------------------------------------------------
+
+from dockerstub import context_script, docker_on_path  # noqa: E402
+from simplon.kernel.run import Result as R  # noqa: E402
+
+
+def _context(monkeypatch, tmp_path, name: str, endpoint: str) -> None:
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("PATH", str(docker_on_path(tmp_path, context_script(name, endpoint))))
+
+
+def test_socket_state_names_the_socket_the_context_names(monkeypatch, tmp_path):
+    # arrange: a rootless daemon's socket, named only by the context, absent
+    _context(monkeypatch, tmp_path, "rootless", f"unix://{tmp_path}/docker.sock")
+
+    # act
+    said = docker._socket_state()
+
+    # assert
+    assert f"{tmp_path}/docker.sock" in said and "NOT MOUNTED" in said
+
+
+def test_a_socket_named_only_by_the_context_is_never_chmodded(monkeypatch, tmp_path):
+    # arrange: the context names a socket under a user's own directory; it exists and is not writable
+    sock = tmp_path / "docker.sock"
+    sock.touch()
+    _context(monkeypatch, tmp_path, "rootless", f"unix://{sock}")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_join_docker_group", lambda pfx: None)
+    warned: list[str] = []
+    monkeypatch.setattr(docker.log, "warn", warned.append)
+
+    # act
+    docker._grant_socket_access(["sudo", "-n"])
+
+    # assert: nothing touched that path, and the run says why
+    assert not [argv for argv in calls if str(sock) in argv]
+    assert any(str(sock) in w for w in warned)
+
+
+def test_the_system_socket_and_an_explicit_docker_host_are_still_chmodded(monkeypatch, tmp_path):
+    # arrange / act / assert: the default context names the system socket
+    _context(monkeypatch, tmp_path, "default", "unix:///var/run/docker.sock")
+    assert docker._chmod_target() == docker.Path("/var/run/docker.sock")
+    # an operator-set DOCKER_HOST is chmod'ed as before
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path}/explicit.sock")
+    assert docker._chmod_target() == docker.Path(f"{tmp_path}/explicit.sock")
+    # a non-unix one has nothing to chmod
+    monkeypatch.setenv("DOCKER_HOST", "tcp://h:2375")
+    assert docker._chmod_target() is None
+
+
+def test_socket_state_names_a_non_unix_context_not_an_empty_docker_host(monkeypatch, tmp_path):
+    """Final review of si#564: with DOCKER_HOST unset and an ssh:// context, the die blamed `DOCKER_HOST=`."""
+    _context(monkeypatch, tmp_path, "remote", "ssh://u@h")
+
+    said = docker._socket_state()
+
+    assert "ssh://u@h" in said and "DOCKER_HOST=" not in said
+
+
+def test_the_system_socket_under_another_spelling_is_still_granted(monkeypatch, tmp_path):
+    """Final review of si#564: a context naming the system socket through a symlinked directory (/var/run
+    -> /run on most Linux hosts) is the same socket, and a rootful host must not lose its grant."""
+    # arrange: <tmp>/var/run is a link to <tmp>/run, the socket lives in <tmp>/run
+    (tmp_path / "run").mkdir()
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "run").symlink_to(tmp_path / "run")
+    (tmp_path / "run" / "docker.sock").touch()
+    _context(monkeypatch, tmp_path, "default", f"unix://{tmp_path}/run/docker.sock")
+    monkeypatch.setattr(docker.host_mod, "DEFAULT_SOCKET", f"{tmp_path}/var/run/docker.sock")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_join_docker_group", lambda pfx: calls.append(["join"]))
+
+    # act
+    docker._grant_socket_access(["sudo", "-n"])
+
+    # assert
+    assert ["join"] in calls and any(argv[2:3] == ["setfacl"] for argv in calls)

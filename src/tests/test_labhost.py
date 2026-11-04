@@ -481,3 +481,18 @@ def test_remove_colima_deletes_the_vm_uninstalls_the_package_and_wipes_the_lima_
     assert ["env", "NONINTERACTIVE=1", "brew", "uninstall", "colima"] in argvs
     assert any(p.endswith("/.colima") for p in removed)
     assert any(p.endswith("/.lima") for p in removed)
+
+
+def test_a_stopped_vm_is_asked_about_the_lab_socket(monkeypatch):
+    # arrange (si#564): the socket comes from the guarded lab resolution, not the bare fallback
+    seen = _stopped_vm(monkeypatch, socket_answers=True)
+    asked: list[bool] = []
+    monkeypatch.setattr(labhost.host_mod, "lab_socket_path",
+                        lambda **kw: asked.append(kw.get("darwin")) or "/lab.sock")
+
+    # act
+    labhost.ensure_colima_vm(install=lambda: None)
+
+    # assert
+    assert asked == [True]
+    assert ["colima", "start"] not in seen
