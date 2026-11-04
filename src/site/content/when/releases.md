@@ -146,6 +146,29 @@ red on either.
 - **simplon's own `release version` command is gone.** It stood in for the check since si#491, checking
   the spelling only; `release all` now starts with `check`.
 
+### `support:docker-preflight` finds docker from the active context, without a sudo symlink (si#564)
+
+- **A new coordinate, offered rather than placed.** `support:docker-preflight` is red only when docker
+  does not answer. It names the context and endpoint docker answers on, as `docker context inspect`
+  reports them (honouring `DOCKER_HOST` and `DOCKER_CONTEXT`). It never assumes `/var/run/docker.sock`,
+  which Colima, Rancher Desktop, Podman and a rootless daemon do not use. A context docker cannot name is
+  a warning, never "the default context".
+- **`with: { editor: devcontainer }`** also asks what VS Code's Dev Containers extension will see:
+  docker without the terminal's `DOCKER_HOST`/`DOCKER_CONTEXT`, because VS Code started from the Dock
+  inherits no shell export. It warns, naming the one user setting to add, `"docker.context": "<name>"`.
+  The extension reads that setting before it falls back to `default`, which it does when its own
+  `docker context ls` fails. This is read from the extension's code (0.471.0), not run on a Mac. The
+  check runs no `sudo` and writes no editor setting. Any other `editor` value is refused when the task
+  runs.
+- **The kernel's socket resolution asks the context too:** first `DOCKER_HOST`, then the active
+  context's endpoint, then the old fallbacks. Two guards come with it:
+  - **The lab probe** (`Host.probe`, `labhost`) takes a context endpoint on macOS only when it is a
+    Colima profile socket. Another daemon answering must not make a dead Colima look alive.
+  - **The docker bootstrap** opens up (`setfacl`/`chmod`) only the system socket or an explicit
+    `DOCKER_HOST`, never a socket named only by the context.
+- **For firn**, at its bump: `deploy preflight` and its own `docker-preflight` body give way to
+  `support docker-preflight` on this coordinate, which `deploy devcontainer` keeps in its `depends_on`.
+
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 
 - **`token:` accepts `github`, `app` or absent.** A `token: app` leaf binds `repository: <owner>/<repo>`
