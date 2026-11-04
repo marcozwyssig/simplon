@@ -183,7 +183,7 @@ red on either.
 - **firn's exit code passes through and is named.** The meanings follow firn v0.5.0's table: 4 is
   OUTPUT_NOT_CURRENT, 70 INTERNAL, and so on. docker's 125, 126 and 127 are named as docker's, and any
   other code is named as unknown.
-- **`build:model` changes in four ways:**
+- **`build:model` changes in three ways:**
   - **It no longer refuses** a file holding only firn's id line, or a file firn reports deleted. firn
     covers both since #966 (firn v0.2.0) and judges more accurately: an empty body is valid output, and a
     partial deletion is a regeneration.
@@ -200,7 +200,8 @@ red on either.
   move, replace each with `task: build:model` / `task: test:model` and keep `image`, `network` and `cwd`
   under `with:`.
 - **`support toolchain firn-binary`** writes `build model-binary`, `build model-gen-binary` and
-  `test model-binary`, on `firn-builder` with the same tag.
+  `test model-binary`, on `firn-builder` with the same tag. firn publishes `firn-builder` from v0.5.0
+  on (v0.2.0 has none, measured), so an earlier version is refused by name.
 - **The Gradle cache moves.** A product that ran `firnBinary` with `GRADLE_USER_HOME` at the repo root
   (cleon-firn's `/workspace/.gradle`) finds its cache under `<cwd>/.gradle` from now on. A first
   `--offline` run there needs that cache filled.

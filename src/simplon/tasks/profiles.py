@@ -495,7 +495,8 @@ PROFILES: dict[str, Profile] = {
                     "format": ("test", "model-format"), "manifest-model": ("test", "manifest-model")},
     ),
     # si#568: a firn project with Java functions builds its own firn (firn docs/05 section 6) in
-    # `firn-builder`, which firn publishes with the same tag as `firn`. Its own profile rather than a
+    # `firn-builder`, which firn publishes beside `firn` under the same tag - FROM v0.5.0 ON: measured
+    # 2026-11-04, `firn-builder:v0.2.0` is "not found" and v0.5.0 is there (`BUILDER_SINCE` below). Its own profile rather than a
     # commented block in `firn`, because a rerun cannot see a comment and would append it again. A product
     # whose firn project is not at its root adds `cwd:` to each, as for `firn`.
     "firn-binary": Profile(
@@ -527,8 +528,27 @@ def profile(language: str, **params: str) -> Profile:
         )
         raise SystemExit(1)
     prof = PROFILES[language]
+    if language == "firn-binary" and _below(params.get("version", ""), BUILDER_SINCE):
+        log.die(f"firn publishes no firn-builder image before v{'.'.join(map(str, BUILDER_SINCE))} "
+                f"(asked for v{params.get('version')}); name that release or a later one")
+        raise SystemExit(1)
     return Profile(image=prof.image.format(**params), commands=prof.commands,
                    placements=prof.placements)
+
+
+#: The first firn release that publishes `firn-builder` (measured 2026-11-04 against ghcr.io: v0.2.0 is not
+#: found, v0.5.0 is). Whether v0.3.0 or v0.4.0 has one was not measured, so the floor is the one that is.
+BUILDER_SINCE = (0, 5, 0)
+
+
+def _below(version: str, floor: tuple[int, ...]) -> bool:
+    """True iff `version` reads as numbers and is below `floor`; a version that does not read as numbers
+    is not refused here - the registry is the judge of a tag this cannot parse."""
+    try:
+        given = tuple(int(part) for part in version.removeprefix("v").split("."))
+    except ValueError:
+        return False
+    return given < floor
 
 
 # --- the toolchains a product uses (si#525) ---------------------------------------------------------

@@ -408,3 +408,12 @@ def test_every_other_profile_still_places_everything_under_build():
     for language in ("cpp", "java", "dotnet", "python"):
         prof = profiles.profile(language, version="1")
         assert {prof.placement(name) for name in prof.commands} == {("build", n) for n in prof.commands}
+
+
+def test_the_firn_binary_profile_says_which_firn_releases_have_a_builder():
+    """Final review of si#568: firn-builder:v0.2.0 does not exist (measured: "not found"); v0.5.0 does. The
+    profile's comment claimed every tag carries one, and a scaffold at simplon's own firn pin wrote an image
+    that is not there. The profile now refuses a version without a builder, naming the first that has one."""
+    with pytest.raises(SystemExit):
+        profiles.profile("firn-binary", version="0.2.0")
+    assert profiles.profile("firn-binary", version="0.5.0").image.endswith("firn-builder:v0.5.0")

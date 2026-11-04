@@ -379,3 +379,36 @@ def test_model_binary_is_green_when_it_runs(ran, tmp_path):
 
     assert firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src") == 0
     assert len(calls) == 2
+
+
+# --- final review of si#568 ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("out,kernel_rc", [
+    (_out(written=["a.py"], kept=["a"], codes=["W301"]), 4),
+    (_out(), 1),
+])
+def test_a_kernel_verdict_is_never_named_as_firns(ran, tmp_path, capsys, out, kernel_rc):
+    """Final review: `generate` named the kernel's own 4 and 1 as "firn exited 4/1", contradicting the line
+    above it. firn said 0, so nothing of firn's is named."""
+    # arrange
+    _, answer = ran
+    answer.update(rc=0, out=out)
+    _file(tmp_path, "a.py")
+
+    # act
+    rc = firngen.generate(_Ctx())
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == kernel_rc
+    assert "firn exited" not in err and "simplon's verdict" in err
+
+
+def test_fmt_check_names_its_rc_1_as_unformatted_not_a_broken_model(ran, capsys):
+    """Final review: `fmt --check`'s ordinary red is "not formatted", measured rc 1 on v0.2.0 and v0.5.0."""
+    _, answer = ran
+    answer.update(rc=1, out="firn/model/x.firn\n")
+
+    assert firngen.format_check(_Ctx(), image="firn:v0.2.0") == 1
+    err = capsys.readouterr().err
+    assert "MODEL_ERROR" not in err and "not formatted" in err

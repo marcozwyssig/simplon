@@ -58,12 +58,15 @@ DOCKER_CODES: dict[int, str] = {
 }
 
 
-def name_rc(rc: int, *, who: str) -> None:
-    """One line on stderr saying what a non-zero rc means, whose it is, and nothing for 0."""
+def name_rc(rc: int, *, who: str, meanings: dict[int, str] | None = None) -> None:
+    """One line on stderr saying what a non-zero rc of FIRN'S (or docker's) means, and nothing for 0.
+    `meanings` overrides the table for one subcommand whose ordinary red has its own sense (`fmt --check`).
+    Never handed a code the kernel decided: that line is the verdict's own (final review of si#568)."""
     if rc == 0:
         return
-    if rc in FIRN_CODES:
-        print(f"{who}: firn exited {rc}, {FIRN_CODES[rc]}", file=sys.stderr)
+    meaning = (meanings or {}).get(rc) or FIRN_CODES.get(rc)
+    if meaning:
+        print(f"{who}: firn exited {rc}, {meaning}", file=sys.stderr)
     elif rc in DOCKER_CODES:
         print(f"{who}: rc {rc} is docker's, not firn's: {DOCKER_CODES[rc]}", file=sys.stderr)
     else:
@@ -83,9 +86,8 @@ def generate(ctx: typer.Context, image: str = "", cwd: str | None = None, networ
     result = _run(where, image, ["gen", "--format=json"], cwd, network, binary)
     if result is None:
         return 1
-    rc = verdict(result.rc, result.out, context.current().root / (cwd or ""))
-    name_rc(rc, who=where)
-    return rc
+    name_rc(result.rc, who=where)          # firn's own code only; a verdict of the kernel's says so itself
+    return verdict(result.rc, result.out, context.current().root / (cwd or ""))
 
 
 def validate(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None,
@@ -97,7 +99,9 @@ def validate(ctx: typer.Context, image: str = "", cwd: str | None = None, networ
 
 def format_check(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
     """Run `firn fmt --check` over the product's firn project, and pass firn's rc through, named."""
-    return _passed_through(ctx.command_path or "test:model-format", image, ["fmt", "--check"], cwd, network, "")
+    return _passed_through(ctx.command_path or "test:model-format", image, ["fmt", "--check"], cwd, network, "",
+                           meanings={1: "not formatted as `firn fmt` would write it - the files are listed above; "
+                                        "run `firn fmt` and commit the result"})
 
 
 def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
@@ -139,14 +143,14 @@ def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, ne
 
 
 def _passed_through(where: str, image: str, argv: list[str], cwd: str | None, network: str | None,
-                    binary: str) -> int:
+                    binary: str, meanings: dict[int, str] | None = None) -> int:
     """No verdict of the kernel's own (si#568 decision 2): firn's report is printed, its rc is the answer."""
     result = _run(where, image, argv, cwd, network, binary)
     if result is None:
         return 1
     if result.out.strip():
         print(result.out, end="" if result.out.endswith("\n") else "\n")
-    name_rc(result.rc, who=where)
+    name_rc(result.rc, who=where, meanings=meanings)
     return result.rc
 
 
