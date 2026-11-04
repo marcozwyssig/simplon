@@ -149,6 +149,23 @@ def is_colima_socket(path: str) -> bool:
             and parts[len(home)] == ".colima" and parts[-1] == "docker.sock")
 
 
+def lab_socket_path(*, darwin: bool, environ: Mapping[str, str] | None = None) -> str:
+    """The socket the LAB's daemon listens on, for the netctl#1031 probe and `labhost` (si#564).
+
+    The active context is asked, behind a guard on macOS: there the lab is Colima, and an endpoint that is
+    not a Colima profile socket (the `default` context, Docker Desktop, a remote daemon) is ignored, because
+    a different daemon answering would make a dead Colima read as SOCKET_ONLY and skip `colima start`. A
+    Colima endpoint of ANOTHER profile is taken - the improvement, since before only COLIMA_PROFILE or
+    `default` was tried. On Linux any context endpoint is the lab's. When docker cannot say, the order
+    before si#564 holds, and the ping that follows is the verdict."""
+    found = context_endpoint(environ)
+    endpoint = found.endpoint if found else None
+    if darwin and endpoint is not None and not (
+            endpoint.startswith("unix://") and is_colima_socket(endpoint.removeprefix("unix://"))):
+        endpoint = None
+    return docker_socket_path(darwin=darwin, environ=environ, endpoint=endpoint)
+
+
 def socket_answers(path: str, timeout: float = _PING_TIMEOUT_S) -> bool:
     """Open the docker socket and ask the daemon to /_ping. The ONE I/O seam of the probe, kept to a raw
     AF_UNIX connect on purpose: it depends on neither the docker CLI, nor a docker context, nor colima, so
@@ -235,7 +252,9 @@ class Host:
         lines = [ln.strip() for ln in ((res.err or "") + "\n" + (res.out or "")).splitlines() if ln.strip()]
         routed_cause = "" if res.ok else (
             lines[-1] if lines else f"docker on the lab host exited {res.rc} without a message")
-        path = docker_socket_path(darwin=self._darwin)
+        # The context is asked only on the socket branch (si#564): a healthy host still costs one docker
+        # call, and `socket_path` on a ROUTED probe keeps naming the socket it named before.
+        path = docker_socket_path(darwin=self._darwin) if res.ok else lab_socket_path(darwin=self._darwin)
         reach = classify_reachability(routed_ok=res.ok, socket_ok=not res.ok and socket_answers(path))
         return HostProbe(reach=reach, socket_path=path,
                          cause=probe_cause(reach, routed_cause, path))

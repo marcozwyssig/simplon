@@ -32,6 +32,7 @@ from pathlib import Path
 
 from simplon.manifest import context
 from simplon.adapters import fetch
+from simplon.adapters import host as host_mod
 from simplon.kernel import log
 from simplon.adapters import tools
 from simplon.kernel.run import Result, run
@@ -167,8 +168,13 @@ def _grant_socket_access(pfx: list) -> None:
 
     The membership is (re)established here too, so a host whose engine predates si#87 still gets it.
     """
-    sock = _socket_path()
+    sock = _chmod_target()
     if sock is None:
+        return
+    resolved = _socket_path()
+    if resolved is not None and resolved != sock:
+        log.warn(f"the active docker context names {resolved}; simplon opens up only the system socket "
+                 f"({sock}) or an explicit DOCKER_HOST, so it changes nothing on {resolved} (si#564)")
         return
     _join_docker_group(pfx)
     if not run([*pfx, "setfacl", "--modify", f"user:{os.getuid()}:rw", str(sock)]).ok:
@@ -443,12 +449,23 @@ def user_args() -> list[str]:
 
 
 def _socket_path() -> Path | None:
-    """The unix socket the docker CLI will talk to: DOCKER_HOST's unix path when set, the default
-    socket otherwise, None for a non-unix DOCKER_HOST (tcp/ssh - nothing local to inspect)."""
-    host = os.environ.get("DOCKER_HOST", "")
-    if host and not host.startswith("unix://"):
-        return None
-    return Path(host.removeprefix("unix://")) if host else Path("/var/run/docker.sock")
+    """The unix socket the docker CLI will talk to: DOCKER_HOST's unix path when set, else the active
+    context's (si#564: a rootless daemon's, say), else the default socket; None for a non-unix DOCKER_HOST
+    or context (tcp/ssh - nothing local to inspect). The one resolution is `host.docker_socket_path`."""
+    found = None if os.environ.get("DOCKER_HOST") else host_mod.context_endpoint()
+    path = host_mod.docker_socket_path(darwin=False, endpoint=found.endpoint if found else None)
+    return Path(path) if path else None
+
+
+def _chmod_target() -> Path | None:
+    """The socket `_grant_socket_access` may open up under sudo: the system daemon's socket, or the path an
+    operator named in a unix:// DOCKER_HOST. Never a socket named only by the active context (si#564) - a
+    rootless or forwarded daemon's, under a user's home or runtime dir - which nobody asked to be made
+    world-writable. None for a non-unix DOCKER_HOST."""
+    explicit = os.environ.get("DOCKER_HOST", "")
+    if explicit:
+        return Path(explicit.removeprefix("unix://")) if explicit.startswith("unix://") else None
+    return Path(host_mod.DEFAULT_SOCKET)
 
 
 def _socket_state() -> str:

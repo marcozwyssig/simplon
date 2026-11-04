@@ -287,7 +287,7 @@ def ensure_colima_vm(*, install: Callable[[], object]) -> None:
         install()
         return
     if not run(["colima", "status"]).ok:
-        if host_mod.socket_answers(host_mod.docker_socket_path(darwin=True)):
+        if host_mod.socket_answers(host_mod.lab_socket_path(darwin=True)):
             log.warn("colima reports the VM stopped, but its docker socket answers - the STATUS RECORD is "
                      "stale, not the VM (netctl#1002/#1031). Leaving the running VM alone; if commands "
                      "that tunnel through `colima ssh` refuse, restore the hop with: colima restart")

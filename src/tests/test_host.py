@@ -342,3 +342,48 @@ def test_context_endpoint_runs_in_the_environment_it_is_given(tmp_path):
     assert as_editor == host.DockerContext("default", "none")
     assert "DOCKER_CONTEXT" not in host.without_docker_overrides(shell)
     assert shell["DOCKER_HOST"] == "unix:///x.sock"          # a copy, not the caller's mapping
+
+
+def test_the_lab_ignores_a_non_colima_context_on_darwin(tmp_path):
+    # arrange: Docker Desktop is the active context; Colima is what the lab runs on
+    bindir = docker_on_path(tmp_path, context_script("desktop-linux", "unix:///Users/x/.docker/run/docker.sock"))
+
+    # act
+    path = host.lab_socket_path(darwin=True, environ={"PATH": str(bindir)})
+
+    # assert: another daemon answering must not make a dead Colima look alive
+    assert path.endswith("/.colima/default/docker.sock")
+
+
+def test_the_lab_takes_another_colima_profile_from_the_context(tmp_path):
+    work = os.path.expanduser("~/.colima/work/docker.sock")
+    bindir = docker_on_path(tmp_path, context_script("colima-work", f"unix://{work}"))
+
+    assert host.lab_socket_path(darwin=True, environ={"PATH": str(bindir)}) == work
+
+
+def test_the_lab_on_linux_takes_the_context(tmp_path):
+    bindir = docker_on_path(tmp_path, context_script("rootless", "unix:///run/user/1000/docker.sock"))
+
+    assert host.lab_socket_path(darwin=False, environ={"PATH": str(bindir)}) == "/run/user/1000/docker.sock"
+
+
+def test_the_lab_without_a_context_keeps_the_old_order(tmp_path):
+    bindir = docker_on_path(tmp_path, context_script("x", "unix:///x.sock", inspect_rc=1))
+
+    assert host.lab_socket_path(darwin=True, environ={"PATH": str(bindir)}).endswith("/.colima/default/docker.sock")
+    assert host.lab_socket_path(darwin=False, environ={"PATH": str(bindir)}) == host.DEFAULT_SOCKET
+
+
+def test_the_probe_asks_the_lab_socket_only_when_the_routed_command_failed(monkeypatch):
+    # arrange
+    asked: list[bool] = []
+    monkeypatch.setattr(host, "lab_socket_path", lambda **kw: asked.append(True) or "/nowhere.sock")
+    h = host.Host(os_name="Linux")
+    monkeypatch.setattr(h, "docker", lambda *a, **k: Result(rc=0, out="", err=""))
+
+    # act
+    h.probe()
+
+    # assert: a healthy host still costs one docker call
+    assert asked == []
