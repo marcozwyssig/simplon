@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 14 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 15 |
+| `support` | not a phase | 16 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Sixty-seven coordinates: fifty-five carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Sixty-eight coordinates: fifty-six carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -405,7 +405,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 15 tasks.**
+**In the catalogue today: 16 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -421,6 +421,7 @@ environment.
 - `support:ci-arm64`
 - `support:ci-disk-preflight`
 - `support:ci-disk-cleanup`
+- `support:docker-preflight`
 - `support:toolchain`
 
 **What a product brings itself.** Nothing, for `support:install` and `support:completion` - they are the
@@ -481,6 +482,15 @@ that run decided. They are offered rather than placed because a product on a Git
 use for either - the machine is destroyed after every job - and a generated workflow places them for the
 product automatically when its runner kind says the disk survives. That is the one place in this catalogue
 where the KIND OF MACHINE, not the manifest, decides whether a command ends up in a pipeline.
+
+`support:docker-preflight` (si#564) asks whether docker answers on this host's **active context** - the
+one `docker context inspect` names, honouring `DOCKER_HOST` and `DOCKER_CONTEXT` - instead of assuming
+`/var/run/docker.sock`, which Colima, Rancher Desktop, Podman and a rootless daemon do not use. It is red
+only when docker does not answer. With `editor: devcontainer` it also asks what VS Code's Dev Containers
+extension will see, which is docker without the terminal's `DOCKER_HOST`/`DOCKER_CONTEXT` (a VS Code
+started from the Dock inherits no shell export), and names the one user setting, `"docker.context"`, that
+the extension reads before it falls back to `default`. It runs no `sudo` and writes no editor setting.
+It is offered, not placed: only a product with an editor path or a docker it cannot assume needs it.
 
 ## The empty rib
 

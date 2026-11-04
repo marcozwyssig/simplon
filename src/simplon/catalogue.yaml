@@ -276,6 +276,17 @@ tasks:
   support:ci-disk-cleanup:
     help: "Prune build cache older than a day - the step a job runs when it is done, whatever it decided."
     unattended: true
+  # --- support: does this host's docker answer, and will the editor find it (si#564) ------------------
+  # DECLARED, NOT PLACED: a product with a VS Code Dev Containers path places it (firn does, under
+  # `support`, as a step of `deploy devcontainer`). It resolves docker from the ACTIVE CONTEXT, never by
+  # assuming /var/run/docker.sock, and with `editor: devcontainer` it names the one VS Code setting
+  # (`docker.context`) the Dev Containers extension reads before it falls back to `default` - read from
+  # the extension's code, 0.471.0, si#564's first comment. It runs no sudo and writes no editor setting.
+  support:docker-preflight:
+    help: "Check that docker answers on this host's active context, and say what an editor needs to find it."
+    unattended: true
+    params:
+      editor: { help: "`devcontainer` also checks that VS Code's Dev Containers extension will find docker.", metavar: EDITOR }
 
   # --- test: the suite runner ------------------------------------------------------------------------
   # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
