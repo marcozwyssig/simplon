@@ -264,3 +264,81 @@ def test_socket_answers_is_false_when_no_socket_exists_at_the_path(sock_dir):
 
     # act / assert: a missing socket is a refusal, never an exception
     assert host.socket_answers(sock_path, timeout=1.0) is False
+
+
+# --- the active docker context (si#564) ---------------------------------------------------------------
+
+from dockerstub import context_script, docker_on_path  # noqa: E402
+
+
+def test_docker_socket_path_takes_a_unix_endpoint_after_docker_host():
+    # act / assert: the context's endpoint wins over the fallbacks, DOCKER_HOST wins over the context
+    assert host.docker_socket_path(darwin=True, environ={}, endpoint="unix:///ctx.sock") == "/ctx.sock"
+    assert host.docker_socket_path(darwin=False, environ={}, endpoint="unix:///ctx.sock") == "/ctx.sock"
+    env = {"DOCKER_HOST": "unix:///dh.sock"}
+    assert host.docker_socket_path(darwin=True, environ=env, endpoint="unix:///ctx.sock") == "/dh.sock"
+
+
+def test_docker_socket_path_is_empty_for_a_non_unix_endpoint():
+    assert host.docker_socket_path(darwin=True, environ={}, endpoint="tcp://h:2375") == ""
+    assert host.docker_socket_path(darwin=False, environ={}, endpoint="ssh://me@h") == ""
+
+
+def test_docker_socket_path_without_endpoint_keeps_the_old_order():
+    assert host.docker_socket_path(darwin=False, environ={}, endpoint=None) == host.DEFAULT_SOCKET
+    assert host.docker_socket_path(darwin=True, environ={}, endpoint=None).endswith("/.colima/default/docker.sock")
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("~/.colima/default/docker.sock", True),
+    ("~/.colima/work/docker.sock", True),
+    (os.path.expanduser("~/.colima/default/docker.sock"), True),
+    ("/var/run/docker.sock", False),
+    ("~/.docker/run/docker.sock", False),
+    ("~/.colima/default/other.sock", False),
+    ("~/.colima/docker.sock", False),
+])
+def test_is_colima_socket(path, expected):
+    assert host.is_colima_socket(path) is expected
+
+
+def test_context_endpoint_reads_name_and_endpoint(tmp_path):
+    # arrange
+    bindir = docker_on_path(tmp_path, context_script("colima", "unix:///c.sock"))
+
+    # act
+    found = host.context_endpoint({"PATH": str(bindir)})
+
+    # assert
+    assert found == host.DockerContext("colima", "unix:///c.sock")
+
+
+@pytest.mark.parametrize("script", [
+    context_script("colima", "unix:///c.sock", inspect_rc=1),
+    'exit 0\n',                                   # answers, says nothing
+    'echo not-a-pair\n',
+])
+def test_context_endpoint_is_none_when_docker_cannot_say(tmp_path, script):
+    bindir = docker_on_path(tmp_path, script)
+
+    assert host.context_endpoint({"PATH": str(bindir)}) is None
+
+
+def test_context_endpoint_is_none_without_docker(tmp_path):
+    assert host.context_endpoint({"PATH": str(tmp_path)}) is None
+
+
+def test_context_endpoint_runs_in_the_environment_it_is_given(tmp_path):
+    # arrange: a docker that reports the DOCKER_HOST it was started with
+    bindir = docker_on_path(tmp_path, 'echo "default|${DOCKER_HOST:-none}"\n')
+    shell = {"PATH": str(bindir), "DOCKER_HOST": "unix:///x.sock", "DOCKER_CONTEXT": "colima"}
+
+    # act
+    as_shell = host.context_endpoint(shell)
+    as_editor = host.context_endpoint(host.without_docker_overrides(shell))
+
+    # assert
+    assert as_shell == host.DockerContext("default", "unix:///x.sock")
+    assert as_editor == host.DockerContext("default", "none")
+    assert "DOCKER_CONTEXT" not in host.without_docker_overrides(shell)
+    assert shell["DOCKER_HOST"] == "unix:///x.sock"          # a copy, not the caller's mapping
