@@ -86,8 +86,9 @@ def test_every_language_profile_has_a_kind():
     # arrange / act: the languages the kernel ships a toolchain for. `firn` (si#371) is a profile and not
     # a language: `firn gen` writes where the product's own `firn.toml` names a target, and firn refuses
     # a target outside its project directory (E104), so there is no `<output>/firn/` the kernel could
-    # name - a kind for it would be a directory nothing ever writes to.
-    languages = set(profiles.PROFILES) - {"firn"}
+    # name - a kind for it would be a directory nothing ever writes to. `firn-binary` (si#568) for the same
+    # reason: `firnBinary` writes `build/firn/firn` inside the firn project, where firn docs/05 puts it.
+    languages = set(profiles.PROFILES) - {"firn", "firn-binary"}
 
     # assert
     assert languages <= set(outputs.KINDS), (

@@ -145,13 +145,12 @@ ci:
       # after), and setuptools carries that mode into the wheel unchanged for package data - a root-installed
       # kernel whose catalogue only root can read. firn has no option for it, so the kernel's `build:model`
       # sets 0644 on every file firn reports; test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone`
-      # is the guard. And firn#966: an empty selector deletes a generated file with rc 0, a template error
-      # leaves one holding only its id line, so `build:model` refuses a file firn reports deleted and one it
-      # reports holding only its id line. Until
+      # is the guard. (It also refused a file firn reported deleted and one holding only its id line, until
+      # si#568: firn#966 covers both since firn v0.2.0, more accurately.) Until
       # 4b those were two steps of their own, `model-whole` and `model-mode`, each with the same list of five
       # files typed out - and one class per catalogue task would have added a line per task to both.
       #
-      # `build:model` also turns what firn only WARNS about into rc 1: a file kept because it holds a
+      # `build:model` also turns what firn only WARNS about into rc 4 (si#568): a file kept because it holds a
       # protected region no template produces any more (W301), and a region appended to the end of a file
       # (W300). A kept task file still defines its class with its old KEY (part 4 spec, decision 6).
       #
@@ -332,17 +331,14 @@ ci:
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, the manifest's own model, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, manifest-model, release-notes]
-      # `firn validate` over simplon's own pipeline model (si#371, si#410): rc passes through unchanged - 0 clean,
-      # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/, where firn.toml is.
+      # `firn validate` over simplon's own pipeline model (si#371, si#410), through the kernel's own `test:model`
+      # since si#568: firn's rc passes through unchanged and is named. Started in src/, where firn.toml is.
       model:
-        task: toolchain:run
+        task: test:model
         with:
           image: ghcr.io/marcozwyssig/firn:v0.2.0
-          workdir: /workspace
           network: none
           cwd: src
-          argv:
-          - validate
       # si#522: the manifest exported fresh and validated against the M2 the kernel ships, in a firn project
       # staged below the output root - the route every product takes, so the kernel takes it on itself.
       # `model` above stays: it also checks `architecture` and `components`, which do not ship.

@@ -405,6 +405,26 @@ tasks:
       by:      { help: "who is walking it, for the record (default: the checkout's own git identity)" }
       restart: { help: "discard an interrupted walk's recorded answers and ask every step again" }
 
+  # --- test: a product's own firn model (si#568) -------------------------------------------------------
+  # What every firn product runs over its own project besides `gen` (firn's own session, 2026-11-04):
+  # `validate` and `fmt --check`. No verdict of the kernel's own - firn's report is printed and its rc is
+  # the answer, named against firn's exit-code table (firngen.FIRN_CODES).
+  test:model:
+    help: "Validate this product's firn model; firn's exit code passes through, named."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn image" }
+      cwd:     { help: "the directory under the root where firn.toml is (a plain relative path)" }
+      network: { help: "the docker network firn runs on ('none' for no networking)" }
+      binary:  { help: "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)" }
+  test:model-format:
+    help: "Check that this product's firn model is formatted as `firn fmt` would write it."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn image" }
+      cwd:     { help: "the directory under the root where firn.toml is (a plain relative path)" }
+      network: { help: "the docker network firn runs on ('none' for no networking)" }
+
   # --- support: host and tooling upkeep ---------------------------------------------------------------
   support:nexus:
     help: "Drive the LAN Sonatype Nexus artefact proxy: up | down | status | repos | cleanup."
@@ -664,6 +684,19 @@ tasks:
       image:   { help: "the pinned firn image" }
       cwd:     { help: "the directory under the root where firn.toml is (a plain relative path)" }
       network: { help: "the docker network firn runs on ('none' for no networking)" }
+      binary:  { help: "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)" }
+
+  # THE PRODUCT'S OWN FIRN (si#568): firn with the project's Java functions, built by the product's own Gradle
+  # build in firn's `firn-builder` image (`firnBinary`, firn docs/05 section 6), then run once. The root is
+  # mounted at its own path because `lsp.args` holds absolute host paths. `build:model` and `test:model`
+  # run the result with `binary: build/firn/firn`.
+  build:model-binary:
+    help: "Build this product's own firn (its Java functions included) in firn-builder, and run it once."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn-builder image" }
+      cwd:     { help: "the directory under the root where the firn project and its build.gradle.kts are" }
+      network: { help: "the docker network the build runs on (default 'none': gradle runs --offline)" }
 
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
@@ -980,7 +1013,7 @@ tasks:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
-      language: { help: "java | cpp | dotnet | python | firn | claude | gh | brew", argument: true }
+      language: { help: "java | cpp | dotnet | python | firn | firn-binary | claude | gh | brew", argument: true }
       # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
       # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
       # parameter, so the value was accepted at load and silently discarded. A product either types it

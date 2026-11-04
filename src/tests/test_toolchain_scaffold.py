@@ -219,10 +219,9 @@ def test_firn_check_lands_under_test_and_gen_under_build(two_phases):
     assert rc == 0
     check = data["ci"]["test"]["commands"]["model"]
     gen = data["ci"]["build"]["commands"]["model"]
-    assert check == {"task": "toolchain:run",
-                     "with": {"image": "ghcr.io/marcozwyssig/firn:v0.2.0", "workdir": "/workspace",
-                              "network": "none", "argv": ["validate"]}}
-    assert gen["with"]["argv"] == ["gen"]
+    assert check == {"task": "test:model", "with": {"image": "ghcr.io/marcozwyssig/firn:v0.2.0", "network": "none"}}
+    assert gen == {"task": "build:model", "with": {"image": "ghcr.io/marcozwyssig/firn:v0.2.0", "network": "none"}}
+    assert data["ci"]["test"]["commands"]["model-format"]["task"] == "test:model-format"
     assert data["ci"]["build"]["commands"]["wheel"] == {"task": "python:wheel"}
 
 
@@ -231,7 +230,8 @@ def test_the_report_names_each_firn_command_with_its_phase(two_phases, capsys):
     toolchain.scaffold("firn", version="0.2.0")
 
     # assert
-    assert "wrote 3 command(s) - test model, build model, test manifest-model" in capsys.readouterr().out
+    assert ("wrote 4 command(s) - test model, build model, test model-format, test manifest-model"
+            in capsys.readouterr().out)
 
 
 def test_the_firn_scaffold_places_the_manifest_check(two_phases, capsys):
@@ -296,7 +296,7 @@ def test_a_kept_command_in_one_phase_does_not_stop_the_other(two_phases, capsys)
     # assert: never clobbers, and still writes what is missing
     data = yaml.safe_load(two_phases.read_text())
     assert data["ci"]["test"]["commands"]["model"] == {"task": "mine"}
-    assert data["ci"]["build"]["commands"]["model"]["with"]["argv"] == ["gen"]
+    assert data["ci"]["build"]["commands"]["model"]["task"] == "build:model"
     assert "test model" in capsys.readouterr().out
 
 
@@ -311,7 +311,7 @@ def test_a_missing_phase_group_is_refused_and_nothing_is_written(manifest, monke
         toolchain.scaffold("firn", version="0.2.0")
     assert manifest.read_text() == before
     out = capsys.readouterr().out
-    assert "ci: test: commands:" in out and "argv:" in out
+    assert "ci: test: commands:" in out and "task: test:model" in out
 
 
 # --- si#525: every toolchain is named in `toolchains:`, the host ones too --------------------------
@@ -393,3 +393,29 @@ def test_image_toolchain_without_version_is_refused(manifest, capsys):
     with pytest.raises(SystemExit):
         toolchain.scaffold("python")
     assert "python needs a version" in capsys.readouterr().err
+
+
+def test_a_product_scaffolded_before_si568_keeps_its_lines_and_gains_the_format_check(two_phases, capsys):
+    """si#568: the scaffold never overwrites, so a product with `toolchain:run` lines for firn keeps them
+    and gets only what it lacks; the written manifest still loads."""
+    # arrange: the shape `support toolchain firn` wrote before si#568
+    text = two_phases.read_text()
+    old = ("      model:\n        task: toolchain:run\n        with:\n          image: ghcr.io/marcozwyssig/firn:v0.2.0\n"
+           "          workdir: /workspace\n          network: none\n          argv:\n          - {argv}\n")
+    text = text.replace("      wheel: { task: \"python:wheel\" }\n",
+                        "      wheel: { task: \"python:wheel\" }\n" + old.format(argv="gen"))
+    text = text.replace("    commands: {}\n", "    commands:\n" + old.format(argv="validate"))
+    two_phases.write_text(text)
+    capsys.readouterr()
+
+    # act
+    rc = toolchain.scaffold("firn", version="0.2.0")
+
+    # assert
+    data = yaml.safe_load(two_phases.read_text())
+    assert rc == 0
+    assert data["ci"]["build"]["commands"]["model"]["task"] == "toolchain:run"
+    assert data["ci"]["test"]["commands"]["model"]["task"] == "toolchain:run"
+    assert data["ci"]["test"]["commands"]["model-format"]["task"] == "test:model-format"
+    out = capsys.readouterr().out
+    assert "kept your own 'test model'" in out and "test model-format" in out

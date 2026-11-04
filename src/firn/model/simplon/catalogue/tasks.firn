@@ -464,6 +464,11 @@ build_model typeOf simplon.pipeline.CatalogueTask {
   key = "build:model"
   body = "simplon.tasks.firngen:generate"
 }
+
+build_model_binary typeOf simplon.pipeline.CatalogueTask {
+  key = "build:model-binary"
+  body = "simplon.tasks.firngen:model_binary"
+}
 build_cmake_files typeOf simplon.pipeline.CatalogueTask {
   key = "build:cmake-files"
   body = "simplon.tasks.buildfiles:cmake"
@@ -499,6 +504,16 @@ support_migrate typeOf simplon.pipeline.CatalogueTask {
 test_manifest_model typeOf simplon.pipeline.CatalogueTask {
   key = "test:manifest-model"
   body = "simplon.tasks.manifestcheck:check"
+}
+
+test_model typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model"
+  body = "simplon.tasks.firngen:validate"
+}
+
+test_model_format typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model-format"
+  body = "simplon.tasks.firngen:format_check"
 }
 support_model typeOf simplon.pipeline.CatalogueTask {
   key = "support:model"

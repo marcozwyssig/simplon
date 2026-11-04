@@ -116,7 +116,7 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
                 build_root: str = "", home: str = "", name: str = "",
-                passes: tuple[str, ...] = ()) -> list[str]:
+                passes: tuple[str, ...] = (), entrypoint: str = "") -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -144,6 +144,9 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     `passes` is the manifest's `launcher: env: pass:` (si#467), and each name is written BY NAME - `-e NAME`,
     never `-e NAME=<value>` - so a secret is in no argv and no log, and a name this process does not have
     stays unset in the container. Before the manifest's `env:`, so a value a product states still wins.
+
+    `entrypoint` (si#568) is the kernel's, never the manifest's: `build:model`/`test:model` with `binary:`
+    run a product's own firn in an image whose ENTRYPOINT may be `/firn`. Empty adds nothing.
     """
     volumes: list[str] = []
     for cache in cfg.caches:
@@ -169,6 +172,7 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
             *volumes,
             *(["-e", f"HOME={home}"] if home else []),
             *[arg for passed in passes for arg in ("-e", passed)], *env,
+            *(["--entrypoint", entrypoint] if entrypoint else []),
             cfg.image, *cfg.argv, *extra]
 
 
@@ -243,7 +247,7 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
 
 def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, env: object, caches: object,
                network: str | None, cwd: str | None, extra: list[str],
-               mounts: object = None) -> tuple[list[str], str] | None:
+               mounts: object = None, entrypoint: str = "") -> tuple[list[str], str] | None:
     """The `docker run` line for one toolchain invocation and its container's name, or None when the
     output tree is not the caller's (the fault is logged). Shared by `run_toolchain` and `firngen.generate`
     (si#400 4b), which needs the same line and firn's stdout back."""
@@ -288,7 +292,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network, name=name,
-                       passes=launcherenv.declared(context.current().manifest_data()))
+                       passes=launcherenv.declared(context.current().manifest_data()), entrypoint=entrypoint)
     return line, name
 
 

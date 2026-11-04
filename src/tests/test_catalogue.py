@@ -175,7 +175,7 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # refusing what firn only warns about. `homebrew-formula` (si#536) renders a Homebrew formula from a wheel.
     # `image-file` (si#552) copies one platform's file out of an image.
     assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "fetch",
-                                              "homebrew-formula", "image", "image-file", "maven-pack", "model", "nuget-config",
+                                              "homebrew-formula", "image", "image-file", "maven-pack", "model", "model-binary", "nuget-config",
                                               "nuget-pack", "nuget-restore"]
     # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
