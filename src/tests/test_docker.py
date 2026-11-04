@@ -572,3 +572,33 @@ def test_the_system_socket_and_an_explicit_docker_host_are_still_chmodded(monkey
     # a non-unix one has nothing to chmod
     monkeypatch.setenv("DOCKER_HOST", "tcp://h:2375")
     assert docker._chmod_target() is None
+
+
+def test_socket_state_names_a_non_unix_context_not_an_empty_docker_host(monkeypatch, tmp_path):
+    """Final review of si#564: with DOCKER_HOST unset and an ssh:// context, the die blamed `DOCKER_HOST=`."""
+    _context(monkeypatch, tmp_path, "remote", "ssh://u@h")
+
+    said = docker._socket_state()
+
+    assert "ssh://u@h" in said and "DOCKER_HOST=" not in said
+
+
+def test_the_system_socket_under_another_spelling_is_still_granted(monkeypatch, tmp_path):
+    """Final review of si#564: a context naming the system socket through a symlinked directory (/var/run
+    -> /run on most Linux hosts) is the same socket, and a rootful host must not lose its grant."""
+    # arrange: <tmp>/var/run is a link to <tmp>/run, the socket lives in <tmp>/run
+    (tmp_path / "run").mkdir()
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "run").symlink_to(tmp_path / "run")
+    (tmp_path / "run" / "docker.sock").touch()
+    _context(monkeypatch, tmp_path, "default", f"unix://{tmp_path}/run/docker.sock")
+    monkeypatch.setattr(docker.host_mod, "DEFAULT_SOCKET", f"{tmp_path}/var/run/docker.sock")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_join_docker_group", lambda pfx: calls.append(["join"]))
+
+    # act
+    docker._grant_socket_access(["sudo", "-n"])
+
+    # assert
+    assert ["join"] in calls and any(argv[2:3] == ["setfacl"] for argv in calls)

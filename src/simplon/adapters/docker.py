@@ -172,7 +172,9 @@ def _grant_socket_access(pfx: list) -> None:
     if sock is None:
         return
     resolved = _socket_path()
-    if resolved is not None and resolved != sock:
+    # The same socket may be spelled two ways (/var/run is a link to /run on most Linux hosts), and a
+    # rootful host must not lose its grant over the spelling: compare where the paths really lead.
+    if resolved is not None and os.path.realpath(resolved) != os.path.realpath(sock):
         log.warn(f"the active docker context names {resolved}; simplon opens up only the system socket "
                  f"({sock}) or an explicit DOCKER_HOST, so it changes nothing on {resolved} (si#564)")
         return
@@ -473,7 +475,11 @@ def _socket_state() -> str:
     but not writable by this uid (the --group-add gap), or writable yet dead."""
     path = _socket_path()
     if path is None:
-        return f"DOCKER_HOST={os.environ.get('DOCKER_HOST', '')} (non-unix, cannot inspect)"
+        if os.environ.get("DOCKER_HOST"):
+            return f"DOCKER_HOST={os.environ['DOCKER_HOST']} (non-unix, cannot inspect)"
+        found = host_mod.context_endpoint()
+        return (f"the active docker context {found.name!r} at {found.endpoint} (non-unix, cannot inspect)"
+                if found else "no local socket (non-unix endpoint, cannot inspect)")
     if not path.exists():
         return f"{path} NOT MOUNTED"
     if not os.access(path, os.W_OK):

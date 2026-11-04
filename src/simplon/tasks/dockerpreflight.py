@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from simplon.adapters import host
@@ -31,6 +32,9 @@ from simplon.kernel.run import run
 #: The editors the `editor` parameter knows; absent means no editor check.
 EDITORS = ("devcontainer",)
 _OVERRIDES = ("DOCKER_HOST", "DOCKER_CONTEXT")
+#: `docker version` asks the daemon, and over an ssh:// context a silent host can hold it for good. A run
+#: that hangs is neither green nor red, so the question has a limit and running out of it is red.
+VERSION_TIMEOUT_S = 30.0
 
 
 def preflight(editor: str = "") -> int:
@@ -43,7 +47,12 @@ def preflight(editor: str = "") -> int:
     if shutil.which("docker") is None:
         log.error("no `docker` on PATH: install docker, or Colima on macOS (https://github.com/abiosoft/colima)")
         return 1
-    answered = run(["docker", "version", "--format", "{{.Server.Version}}"])
+    try:
+        answered = run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=VERSION_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        log.error(f"docker did not answer within {VERSION_TIMEOUT_S:g} s; check that its daemon runs and "
+                  "that `docker context ls` marks one this host can reach")
+        return 1
     if not answered.ok:
         log.error("no docker daemon answers on this host:")
         for line in (answered.err or answered.out or "").strip().splitlines():

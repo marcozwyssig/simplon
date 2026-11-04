@@ -198,3 +198,18 @@ def test_no_message_says_sudo_or_ln(tmp_path, monkeypatch, capsys, scenario):
 
     out = _out(capsys)
     assert "sudo" not in out and "ln -s" not in out
+
+
+def test_a_docker_that_hangs_is_red_with_a_verdict(tmp_path, monkeypatch, capsys):
+    """Final review of si#564: `docker version` had no time limit, and an ssh:// context to a silent host
+    hung an unattended task - a run that hangs is neither green nor red."""
+    # arrange
+    monkeypatch.setenv("PATH", str(docker_on_path(tmp_path, 'exec /bin/sleep 5\n')))
+    monkeypatch.setattr(dockerpreflight, "VERSION_TIMEOUT_S", 0.5)
+
+    # act
+    rc = dockerpreflight.preflight()
+
+    # assert
+    assert rc == 1
+    assert "did not answer within" in _out(capsys)
