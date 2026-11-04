@@ -277,6 +277,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_ciprivileges typeOf simplon.architecture.Module {
     path = "tasks.ciprivileges"
   }
+  module m_tasks_dockerpreflight typeOf simplon.architecture.Module {
+    path = "tasks.dockerpreflight"
+  }
   module m_tasks_claudemd typeOf simplon.architecture.Module {
     path = "tasks.claudemd"
   }
