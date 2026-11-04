@@ -169,6 +169,44 @@ red on either.
 - **For firn**, at its bump: `deploy preflight` and its own `docker-preflight` body give way to
   `support docker-preflight` on this coordinate, which `deploy devcontainer` keeps in its `depends_on`.
 
+### firn over a product's own project: `test:model`, `test:model-format`, the product binary (si#568)
+
+- **Three new coordinates, offered rather than placed:**
+  - `test:model` runs `firn validate --format=json`.
+  - `test:model-format` runs `firn fmt --check`.
+  - `build:model-binary` builds a product's own firn, with its Java functions, by `gradle --offline
+    firnBinary` in firn's `firn-builder` image. The product root is mounted at its own path, because
+    `lsp.args` holds absolute host paths. The build runs as the caller, with no network, and with
+    `GRADLE_USER_HOME` at `<cwd>/.gradle`. The binary is then run once with `--version`.
+- **`binary: build/firn/firn`** on `build:model` and `test:model` runs that product binary instead of the
+  image's firn, as the container's entrypoint. A missing binary is refused, naming `build:model-binary`.
+- **firn's exit code passes through and is named.** The meanings follow firn v0.5.0's table: 4 is
+  OUTPUT_NOT_CURRENT, 70 INTERNAL, and so on. docker's 125, 126 and 127 are named as docker's, and any
+  other code is named as unknown.
+- **`build:model` changes in four ways:**
+  - **It no longer refuses** a file holding only firn's id line, or a file firn reports deleted. firn
+    covers both since #966 (firn v0.2.0) and judges more accurately: an empty body is valid output, and a
+    partial deletion is a regeneration.
+  - **W300/W301 are now rc 4**, not 1. firn itself ends with rc 0 for them, so this verdict is simplon's,
+    and the line says so.
+  - **Output that is not firn's JSON report** now returns firn's own rc (a usage text on 2, a product
+    binary's registry refusal on 6). It is 1 only when firn said 0.
+- **`support toolchain firn` writes kernel coordinates now:**
+  - `build model` is `build:model`;
+  - `test model` is `test:model`;
+  - `test model-format` is new.
+
+  A product scaffolded before keeps its `toolchain:run` lines, because the scaffold never overwrites. To
+  move, replace each with `task: build:model` / `task: test:model` and keep `image`, `network` and `cwd`
+  under `with:`.
+- **`support toolchain firn-binary`** writes `build model-binary`, `build model-gen-binary` and
+  `test model-binary`, on `firn-builder` with the same tag.
+- **The Gradle cache moves.** A product that ran `firnBinary` with `GRADLE_USER_HOME` at the repo root
+  (cleon-firn's `/workspace/.gradle`) finds its cache under `<cwd>/.gradle` from now on. A first
+  `--offline` run there needs that cache filled.
+- **simplon's own `test model` is `test:model`.** Measured: firn v0.2.0's `fmt --check` names four of
+  simplon's own model files as not formatted, so simplon does not place `test model-format` yet.
+
 ### `token: app` mints a GitHub App token for one other repository (si#534)
 
 - **`token:` accepts `github`, `app` or absent.** A `token: app` leaf binds `repository: <owner>/<repo>`

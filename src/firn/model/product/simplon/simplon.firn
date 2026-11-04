@@ -104,7 +104,7 @@ simplon typeOf simplon.manifest.Product {
     }
     command model typeOf simplon.pipeline.TaskCommand {
       key = "model"
-      task = simplon.catalogue.toolchain_run
+      task = simplon.catalogue.test_model
     }
     command manifest_model typeOf simplon.pipeline.TaskCommand {
       key = "manifest-model"

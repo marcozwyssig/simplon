@@ -476,17 +476,37 @@ PROFILES: dict[str, Profile] = {
     # firn v0.2.0 renamed `check` to `validate` as a hard cut (firn#964, si#410): `check` answers rc 2,
     # "Unmatched argument". The key followed (Marco's decision): the placement names the scaffolded
     # command `test model`, so the key reaches no manifest - measured, the scaffold is byte-identical.
+    #
+    # si#568: the kernel's own firn tasks, no longer `toolchain:run` lines. This scaffold wrote those, which is
+    # why cleon-firn had five of them (measured 2026-11-04). The tasks run firn the same way - pinned image,
+    # mounted at /workspace, as the caller - and pass firn's rc through, named. A product scaffolded before
+    # keeps its lines (the scaffold never overwrites) and gains `test model-format`.
     "firn": Profile(
         image="ghcr.io/marcozwyssig/firn:v{version}",
         commands={
-            "validate": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
-            "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]},
+            "validate": {"task": "test:model", "network": "none"},
+            "gen": {"task": "build:model", "network": "none"},
+            "format": {"task": "test:model-format", "network": "none"},
             # si#522: the manifest's own model checked against the M2 the kernel ships. A catalogue task of
             # its own, so its body names the task and carries no argv: the task stages firn's project.
             "manifest-model": {"task": "test:manifest-model"},
         },
         placements={"validate": ("test", "model"), "gen": ("build", "model"),
-                    "manifest-model": ("test", "manifest-model")},
+                    "format": ("test", "model-format"), "manifest-model": ("test", "manifest-model")},
+    ),
+    # si#568: a firn project with Java functions builds its own firn (firn docs/05 section 6) in
+    # `firn-builder`, which firn publishes with the same tag as `firn`. Its own profile rather than a
+    # commented block in `firn`, because a rerun cannot see a comment and would append it again. A product
+    # whose firn project is not at its root adds `cwd:` to each, as for `firn`.
+    "firn-binary": Profile(
+        image="ghcr.io/marcozwyssig/firn-builder:v{version}",
+        commands={
+            "model-binary": {"task": "build:model-binary"},
+            "gen-binary": {"task": "build:model", "network": "none", "binary": "build/firn/firn"},
+            "validate-binary": {"task": "test:model", "network": "none", "binary": "build/firn/firn"},
+        },
+        placements={"model-binary": ("build", "model-binary"), "gen-binary": ("build", "model-gen-binary"),
+                    "validate-binary": ("test", "model-binary")},
     ),
 }
 

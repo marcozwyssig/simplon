@@ -1013,7 +1013,7 @@ tasks:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
-      language: { help: "java | cpp | dotnet | python | firn | claude | gh | brew", argument: true }
+      language: { help: "java | cpp | dotnet | python | firn | firn-binary | claude | gh | brew", argument: true }
       # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
       # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
       # parameter, so the value was accepted at load and silently discarded. A product either types it

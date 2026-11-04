@@ -36,9 +36,12 @@ def test_every_profile_declares_a_body_the_toolchain_gate_will_accept():
         for name, body in prof.commands.items():
             where = f"{language}.{name}"
             if "task" in body:
-                # si#522: a body that names its own catalogue task is that task's `with:` minus the image
+                # si#522: a body that names its own catalogue task is that task's `with:` minus the image;
+                # si#568: what else it carries must be a parameter that task declares
                 from simplon.manifest import catalogue
-                assert body["task"] in catalogue.load().tasks and set(body) == {"task"}, where
+                task = catalogue.load().tasks.get(body["task"])
+                assert task is not None, where
+                assert set(body) - {"task"} <= set(task.get("params") or {}), where
                 continue
             assert isinstance(body["argv"], list) and body["argv"], where
             assert all(isinstance(word, str) for word in body["argv"]), where
@@ -363,27 +366,41 @@ def test_the_python_unit_and_analyse_name_no_network_and_deps_keeps_one():
 
 
 def test_the_firn_profile_runs_the_pinned_firn_image_in_its_own_workspace():
-    # arrange / act: si#371 - the image's WORKDIR is /workspace and firn's docs/07 mounts there
+    # arrange / act: si#371, si#568 - the kernel's firn tasks, not `toolchain:run` lines
     prof = profiles.profile("firn", version="0.2.0")
 
     # assert: a release tag, never a moving one
     assert prof.image == "ghcr.io/marcozwyssig/firn:v0.2.0"
-    assert set(prof.commands) == {"validate", "gen", "manifest-model"}
-    assert prof.commands["manifest-model"] == {"task": "test:manifest-model"}
-    for body in (prof.commands["validate"], prof.commands["gen"]):
-        assert body["workdir"] == "/workspace"
-        assert body["network"] == "none"
+    assert prof.commands == {
+        "validate": {"task": "test:model", "network": "none"},
+        "gen": {"task": "build:model", "network": "none"},
+        "format": {"task": "test:model-format", "network": "none"},
+        "manifest-model": {"task": "test:manifest-model"},
+    }
 
 
-def test_the_firn_validate_is_a_test_and_gen_is_a_build():
+def test_the_firn_validate_and_format_are_tests_and_gen_is_a_build():
     # arrange / act
     prof = profiles.profile("firn", version="0.2.0")
 
-    # assert: the image's entrypoint is /firn, so argv is firn's own subcommand
-    assert prof.commands["validate"]["argv"] == ["validate"]
-    assert prof.commands["gen"]["argv"] == ["gen"]
+    # assert
     assert prof.placement("validate") == ("test", "model")
+    assert prof.placement("format") == ("test", "model-format")
     assert prof.placement("gen") == ("build", "model")
+
+
+def test_the_firn_binary_profile_uses_the_builder_image_of_the_same_tag():
+    # arrange / act (si#568): firn publishes firn and firn-builder with every tag
+    prof = profiles.profile("firn-binary", version="0.5.0")
+
+    # assert
+    assert prof.image == "ghcr.io/marcozwyssig/firn-builder:v0.5.0"
+    assert prof.commands["model-binary"] == {"task": "build:model-binary"}
+    assert prof.commands["gen-binary"] == {"task": "build:model", "network": "none", "binary": "build/firn/firn"}
+    assert prof.commands["validate-binary"] == {"task": "test:model", "network": "none",
+                                                "binary": "build/firn/firn"}
+    assert {prof.placement(k) for k in prof.commands} == {
+        ("build", "model-binary"), ("build", "model-gen-binary"), ("test", "model-binary")}
 
 
 def test_every_other_profile_still_places_everything_under_build():
