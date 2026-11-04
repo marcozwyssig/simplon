@@ -896,6 +896,8 @@ workflows:
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
       route - a hotfix merges first. The test report is no longer archived on this path (si#509).
     release: release all
+    # si#570: the suite's linux/arm64 e2e (si#552) runs a file under QEMU, and a hosted runner has none.
+    emulates: [linux/arm64]
     runs-on: ubuntu-latest
     jobs:
       publish:

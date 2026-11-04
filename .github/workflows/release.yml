@@ -48,6 +48,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # si#570: the workflow's `emulates:`, registered before anything in the job runs.
+      - name: Register emulation for linux/arm64
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3
+          platforms: linux/arm64
       - run: ./simplon.sh release check -- "$RELEASE_VERSION"
       - name: Cut the tag in this checkout
         run: |

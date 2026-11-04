@@ -1018,6 +1018,12 @@ What the kernel writes:
 - **One job, `release`.** It cuts the tag in the checkout, checks that `git describe` is the version, runs
   the aggregate's leaves **in the plan's own order**, and ends with a dry-run step that prints the notes.
   The order is what rule 8 already checked at load, so the workflow orders nothing itself.
+- **Emulation, when you ask for it.** `emulates: [linux/arm64]` beside `release:` makes the job's first
+  step register those platforms (buildx's `<os>/<arch>[/<variant>]` spelling) through
+  `docker/setup-qemu-action`, pinned by commit, with the kernel's own binfmt image (si#570). The job is
+  derived and takes no step of yours, so this is how a suite that runs a foreign-platform file, as a
+  `test:file` e2e does, gets an emulator on a hosted runner. A job you write yourself registers it with
+  its own step; `emulates:` anywhere but beside `release:` is refused.
 
 The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`, exactly as
 `release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest. They are
