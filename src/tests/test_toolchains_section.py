@@ -29,7 +29,7 @@ def test_unknown_name_names_the_known_ones(name):
     with pytest.raises(ValueError) as caught:
         profiles.declared_toolchains({"toolchains": [name]}, source="demo.yaml")
     assert repr(name) in str(caught.value)
-    assert "claude, cpp, dotnet, firn, gh, java, python" in str(caught.value)
+    assert "claude, cpp, dotnet, firn, firn-binary, gh, java, python" in str(caught.value)
 
 
 def test_duplicate_is_refused():
@@ -38,4 +38,5 @@ def test_duplicate_is_refused():
 
 
 def test_known_toolchains_are_the_profiles_and_the_host_tools():
-    assert profiles.known_toolchains() == ("brew", "claude", "cpp", "dotnet", "firn", "gh", "java", "python")
+    assert profiles.known_toolchains() == ("brew", "claude", "cpp", "dotnet", "firn", "firn-binary", "gh", "java",
+                                         "python")

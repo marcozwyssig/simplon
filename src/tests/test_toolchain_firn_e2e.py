@@ -23,16 +23,21 @@ from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
 FIRN = profiles.profile("firn", version="0.2.0")
+#: The `toolchain:run` bodies the firn profile wrote before si#568, which moved the profile onto the kernel's
+#: `build:model`/`test:model`. They are kept here because what this file holds - firn's codes come back
+#: through `toolchain:run` unchanged - is still the contract for every product that kept those lines.
+BODIES = {"validate": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
+          "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]}}
 OWN_MODEL = Path(__file__).resolve().parents[1] / "firn"
 
 needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to run firn in")
 
 
 def _rc(root: Path, command: str, extra: list[str] | None = None) -> int:
-    cfg = toolchain.declared({"image": FIRN.image, **FIRN.commands[command], "cwd": "src"},
+    cfg = toolchain.declared({"image": FIRN.image, **BODIES[command], "cwd": "src"},
                              where=f"firn.{command}")
     line = toolchain.docker_argv(cfg, root=root, product="firn-e2e", instance="", extra=extra or [],
-                                 network=str(FIRN.commands[command]["network"]))
+                                 network=str(BODIES[command]["network"]))
     return run(line, capture=True).rc
 
 
