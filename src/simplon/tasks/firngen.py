@@ -27,7 +27,7 @@ from pathlib import Path
 
 import typer
 
-from simplon.adapters import docker
+from simplon.adapters import docker, hostpath
 from simplon.kernel.run import Result
 from simplon.manifest import context
 from simplon.tasks import toolchain
@@ -71,6 +71,8 @@ def name_rc(rc: int, *, who: str) -> None:
 
 
 _WORKDIR = "/workspace"
+#: Where `firnBinary` leaves the product's own firn, relative to the firn project (firn docs/05 section 6).
+BINARY = "build/firn/firn"
 
 
 def generate(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None,
@@ -96,6 +98,44 @@ def validate(ctx: typer.Context, image: str = "", cwd: str | None = None, networ
 def format_check(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
     """Run `firn fmt --check` over the product's firn project, and pass firn's rc through, named."""
     return _passed_through(ctx.command_path or "test:model-format", image, ["fmt", "--check"], cwd, network, "")
+
+
+def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
+    """Build the product's own firn - firn with the project's Java functions - in the `firn-builder` image
+    (`gradle --offline firnBinary`, firn docs/05 section 6), then run it once (`--version`).
+
+    THE ROOT IS MOUNTED AT ITS OWN PATH: the build writes `build/firn/lsp.args` with absolute paths, which
+    must hold on the host too (firn docs/07 section 9). As the caller, no network by default, and
+    `GRADLE_USER_HOME` at `<cwd>/.gradle`, the path firn's own reference command uses. Gradle's rc passes
+    through; a build that is green and leaves no binary, or one that does not run, is red.
+    """
+    where = ctx.command_path or "build:model-binary"
+    same = hostpath.translate(context.current().root)
+    built = posixpath.join(same, cwd or "", BINARY)
+    got = toolchain.invocation(where, image=image, argv=["gradle", "--offline", "firnBinary"], workdir=same,
+                               env={"GRADLE_USER_HOME": posixpath.join(same, cwd or "", ".gradle")},
+                               caches=None, network=network or "none", cwd=cwd, extra=[])
+    if got is None:
+        return 1
+    result = docker.run_container(*got, capture=False)
+    if result.rc != 0:
+        print(f"{where}: gradle firnBinary exited {result.rc}; its output is above", file=sys.stderr)
+        return result.rc
+    if not (context.current().root / (cwd or "") / BINARY).is_file():
+        print(f"{where}: gradle was green and left no {BINARY} under {cwd or '.'} - nothing to run "
+              "(simplon's verdict, rc 1)", file=sys.stderr)
+        return 1
+    got = toolchain.invocation(where, image=image, argv=["--version"], workdir=same, env=None, caches=None,
+                               network=network or "none", cwd=cwd, extra=[], entrypoint=built)
+    if got is None:
+        return 1
+    smoke = docker.run_container(*got, capture=True)
+    if smoke.out.strip():
+        print(smoke.out, end="" if smoke.out.endswith("\n") else "\n")
+    if smoke.err.strip():
+        print(smoke.err, file=sys.stderr, end="")
+    name_rc(smoke.rc, who=f"{where} ({BINARY} --version)")
+    return smoke.rc
 
 
 def _passed_through(where: str, image: str, argv: list[str], cwd: str | None, network: str | None,

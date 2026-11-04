@@ -464,6 +464,11 @@ build_model typeOf simplon.pipeline.CatalogueTask {
   key = "build:model"
   body = "simplon.tasks.firngen:generate"
 }
+
+build_model_binary typeOf simplon.pipeline.CatalogueTask {
+  key = "build:model-binary"
+  body = "simplon.tasks.firngen:model_binary"
+}
 build_cmake_files typeOf simplon.pipeline.CatalogueTask {
   key = "build:cmake-files"
   body = "simplon.tasks.buildfiles:cmake"

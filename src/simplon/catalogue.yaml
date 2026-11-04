@@ -686,6 +686,18 @@ tasks:
       network: { help: "the docker network firn runs on ('none' for no networking)" }
       binary:  { help: "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)" }
 
+  # THE PRODUCT'S OWN FIRN (si#568): firn with the project's Java functions, built by the product's own Gradle
+  # build in firn's `firn-builder` image (`firnBinary`, firn docs/05 section 6), then run once. The root is
+  # mounted at its own path because `lsp.args` holds absolute host paths. `build:model` and `test:model`
+  # run the result with `binary: build/firn/firn`.
+  build:model-binary:
+    help: "Build this product's own firn (its Java functions included) in firn-builder, and run it once."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn-builder image" }
+      cwd:     { help: "the directory under the root where the firn project and its build.gradle.kts are" }
+      network: { help: "the docker network the build runs on (default 'none': gradle runs --offline)" }
+
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
   # directory and the media type, so a command declared here would die on its first line in a product

@@ -304,3 +304,78 @@ def test_validate_and_fmt_check_answer_on_simplons_own_project_with_the_real_fir
     # assert
     assert validated == 0
     assert formatted in firngen.FIRN_CODES, said
+
+
+# --- build:model-binary (si#568) ----------------------------------------------------------------------
+
+def _binary(root, cwd="src"):
+    path = root / cwd / "build" / "firn" / "firn"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("")
+    return path
+
+
+def test_model_binary_mounts_the_root_at_its_own_path(ran, tmp_path):
+    # arrange: lsp.args holds absolute host paths (firn docs/05 section 6), so inside must equal outside
+    calls, _ = ran
+    _binary(tmp_path)
+
+    # act
+    firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src")
+
+    # assert
+    assert calls[0]["workdir"] == str(tmp_path)
+    assert calls[0]["cwd"] == "src"
+
+
+def test_model_binary_runs_offline_without_network_with_gradle_home_in_the_project(ran, tmp_path):
+    calls, _ = ran
+    _binary(tmp_path)
+
+    firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src")
+
+    assert calls[0]["argv"] == ["gradle", "--offline", "firnBinary"]
+    assert calls[0]["network"] == "none"
+    assert calls[0]["env"] == {"GRADLE_USER_HOME": f"{tmp_path}/src/.gradle"}
+
+
+def test_model_binary_passes_gradles_rc_through_and_runs_nothing_after(ran, tmp_path):
+    calls, answer = ran
+    answer.update(rc=1)
+
+    assert firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src") == 1
+    assert len(calls) == 1
+
+
+def test_model_binary_is_red_when_the_binary_is_missing_after_gradle(ran, capsys):
+    calls, _ = ran
+
+    rc = firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src")
+
+    assert rc == 1 and len(calls) == 1
+    assert "build/firn/firn" in capsys.readouterr().err
+
+
+def test_model_binary_is_red_when_the_binary_does_not_run(ran, tmp_path, monkeypatch, capsys):
+    # arrange: gradle green, then the smoke run cannot execute what it built
+    calls, _ = ran
+    _binary(tmp_path)
+    rcs = iter([0, 126])
+    monkeypatch.setattr(firngen.docker, "run_container",
+                        lambda line, name, capture=True: Result(rc=next(rcs), out="", err=""))
+
+    # act
+    rc = firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src")
+
+    # assert
+    assert rc == 126
+    assert calls[1]["argv"] == ["--version"] and calls[1]["entrypoint"] == f"{tmp_path}/src/build/firn/firn"
+    assert "docker" in capsys.readouterr().err
+
+
+def test_model_binary_is_green_when_it_runs(ran, tmp_path):
+    calls, _ = ran
+    _binary(tmp_path)
+
+    assert firngen.model_binary(_Ctx(), image="firn-builder:v0.5.0", cwd="src") == 0
+    assert len(calls) == 2
