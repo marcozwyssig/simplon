@@ -21,12 +21,14 @@ kernel's own - firn said 0 - is 4 for W300/W301 ("output not current" in substan
 produced nothing or reported a file that is not there, and its line says the verdict is simplon's.
 """
 import json
+import posixpath
 import sys
 from pathlib import Path
 
 import typer
 
 from simplon.adapters import docker
+from simplon.kernel.run import Result
 from simplon.manifest import context
 from simplon.tasks import toolchain
 
@@ -68,19 +70,65 @@ def name_rc(rc: int, *, who: str) -> None:
         print(f"{who}: rc {rc} is unknown - not one of firn's codes (v0.5.0) nor docker's", file=sys.stderr)
 
 
-def generate(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
-    """Run `firn gen --format=json` in the pinned `image`, started in `cwd`, and rule on what it reports."""
+_WORKDIR = "/workspace"
+
+
+def generate(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None,
+             binary: str = "") -> int:
+    """Run `firn gen --format=json` in the pinned `image`, started in `cwd`, and rule on what it reports.
+    With `binary`, the product's own firn (built by `build:model-binary`) runs instead of the image's."""
     where = ctx.command_path or "build:model"
-    got = toolchain.invocation(where, image=image, argv=["gen", "--format=json"], workdir="/workspace",
-                               env=None, caches=None, network=network, cwd=cwd, extra=[])
-    if got is None:
+    result = _run(where, image, ["gen", "--format=json"], cwd, network, binary)
+    if result is None:
         return 1
-    result = docker.run_container(*got, capture=True)
-    if result.err.strip():
-        print(result.err, file=sys.stderr, end="")
     rc = verdict(result.rc, result.out, context.current().root / (cwd or ""))
     name_rc(rc, who=where)
     return rc
+
+
+def validate(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None,
+             binary: str = "") -> int:
+    """Run `firn validate --format=json` over the product's firn project, and pass firn's rc through, named."""
+    return _passed_through(ctx.command_path or "test:model", image, ["validate", "--format=json"], cwd,
+                           network, binary)
+
+
+def format_check(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
+    """Run `firn fmt --check` over the product's firn project, and pass firn's rc through, named."""
+    return _passed_through(ctx.command_path or "test:model-format", image, ["fmt", "--check"], cwd, network, "")
+
+
+def _passed_through(where: str, image: str, argv: list[str], cwd: str | None, network: str | None,
+                    binary: str) -> int:
+    """No verdict of the kernel's own (si#568 decision 2): firn's report is printed, its rc is the answer."""
+    result = _run(where, image, argv, cwd, network, binary)
+    if result is None:
+        return 1
+    if result.out.strip():
+        print(result.out, end="" if result.out.endswith("\n") else "\n")
+    name_rc(result.rc, who=where)
+    return result.rc
+
+
+def _run(where: str, image: str, argv: list[str], cwd: str | None, network: str | None,
+         binary: str) -> Result | None:
+    """One firn run in its container, or None when it cannot start (the reason is printed)."""
+    entrypoint = ""
+    if binary:
+        on_host = context.current().root / (cwd or "") / binary
+        if not on_host.is_file():
+            print(f"{where}: {binary} is not there under {cwd or '.'} - build the product's own firn first, with "
+                  f"a command on `build:model-binary`", file=sys.stderr)
+            return None
+        entrypoint = posixpath.join(_WORKDIR, cwd or "", binary)
+    got = toolchain.invocation(where, image=image, argv=argv, workdir=_WORKDIR, env=None, caches=None,
+                               network=network, cwd=cwd, extra=[], entrypoint=entrypoint)
+    if got is None:
+        return None
+    result = docker.run_container(*got, capture=True)
+    if result.err.strip():
+        print(result.err, file=sys.stderr, end="")
+    return result
 
 
 def verdict(rc: int, out: str, root: Path) -> int:

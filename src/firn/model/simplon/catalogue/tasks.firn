@@ -500,6 +500,16 @@ test_manifest_model typeOf simplon.pipeline.CatalogueTask {
   key = "test:manifest-model"
   body = "simplon.tasks.manifestcheck:check"
 }
+
+test_model typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model"
+  body = "simplon.tasks.firngen:validate"
+}
+
+test_model_format typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model-format"
+  body = "simplon.tasks.firngen:format_check"
+}
 support_model typeOf simplon.pipeline.CatalogueTask {
   key = "support:model"
   body = "simplon.tasks.manifestmodel:model"

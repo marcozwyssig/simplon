@@ -600,3 +600,17 @@ def test_the_python_route_keeps_the_manifest_rules(tmp_path, mounts, says):
     # assert: a refusal where the manifest would refuse, and never a directory outside the tree
     assert (says in fault) if says else fault == ""
     assert not (tmp_path.parent / "tmp").exists() and not (tmp_path / "tmp").exists()
+
+
+def test_an_entrypoint_goes_before_the_image_and_nothing_moves_without_one():
+    """si#568: `binary:` runs a product's own firn in an image whose ENTRYPOINT is /firn, so the kernel sets
+    `--entrypoint`. It is kernel-internal - no manifest key reaches it - and an empty one changes nothing."""
+    # act
+    plain = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    with_ep = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[],
+                                    entrypoint="/work/x/firn")
+
+    # assert
+    image = plain.index(_cfg().image)
+    assert with_ep[:image] + with_ep[image + 2:] == plain[:image] + plain[image:]
+    assert with_ep[image:image + 3] == ["--entrypoint", "/work/x/firn", _cfg().image]

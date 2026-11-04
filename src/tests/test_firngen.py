@@ -211,3 +211,96 @@ def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path):
     # assert
     assert rc == 0                                         # firn alone calls it fine
     assert firngen.verdict(rc, out, project) == 4          # build:model does not: output not current (si#568)
+
+
+# --- test:model, test:model-format and `binary:` (si#568) ---------------------------------------------
+
+from simplon.kernel.run import Result  # noqa: E402
+from simplon.manifest import context as context_mod  # noqa: E402
+from simplon.manifest.context import ProductContext  # noqa: E402
+
+
+class _Ctx:
+    command_path = "test model"
+
+
+@pytest.fixture
+def ran(tmp_path, monkeypatch):
+    """Record what each firn task hands docker, and answer with the rc/out the test sets."""
+    monkeypatch.setattr(context_mod, "_current", ProductContext("sample", tmp_path, tmp_path / "sample.yaml"))
+    calls: list[dict] = []
+    answer = {"rc": 0, "out": "[]"}
+
+    def invocation(where, **kw):
+        calls.append(kw)
+        return (["docker", "run", kw.get("image", "")], "c")
+
+    monkeypatch.setattr(firngen.toolchain, "invocation", invocation)
+    monkeypatch.setattr(firngen.docker, "run_container",
+                        lambda line, name, capture=True: Result(rc=answer["rc"], out=answer["out"], err=""))
+    return calls, answer
+
+
+def test_validate_passes_firns_rc_through_and_names_it(ran, capsys):
+    calls, answer = ran
+    answer.update(rc=1, out='[{"code": "E200"}]')
+
+    rc = firngen.validate(_Ctx(), image="firn:v0.2.0")
+
+    assert rc == 1
+    assert calls[0]["argv"] == ["validate", "--format=json"]
+    assert "MODEL_ERROR" in capsys.readouterr().err
+
+
+def test_format_check_runs_fmt_check(ran):
+    calls, _ = ran
+
+    assert firngen.format_check(_Ctx(), image="firn:v0.2.0") == 0
+    assert calls[0]["argv"] == ["fmt", "--check"]
+
+
+def test_binary_runs_the_project_binary_as_entrypoint(ran, tmp_path):
+    # arrange
+    calls, answer = ran
+    binary = tmp_path / "src" / "build" / "firn" / "firn"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("")
+    answer.update(out=json.dumps({"diagnostics": [], "files": {"written": ["a.py"]}}))
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+
+    # act
+    firngen.generate(_Ctx(), image="firn-builder:v0.5.0", cwd="src", binary="build/firn/firn")
+
+    # assert
+    assert calls[0]["entrypoint"] == "/workspace/src/build/firn/firn"
+    assert calls[0]["argv"] == ["gen", "--format=json"]
+
+
+@pytest.mark.parametrize("task", ["generate", "validate"])
+def test_a_missing_binary_is_refused_naming_build_model_binary(ran, capsys, task):
+    calls, _ = ran
+
+    rc = getattr(firngen, task)(_Ctx(), image="firn-builder:v0.5.0", cwd="src", binary="build/firn/firn")
+
+    assert rc == 1 and calls == []
+    assert "build:model-binary" in capsys.readouterr().err
+
+
+@needs_docker
+def test_validate_and_fmt_check_answer_on_simplons_own_project_with_the_real_firn(tmp_path):
+    """The real firn image the suite pins, over simplon's own firn project (the copy the rename test makes):
+    `validate --format=json` is 0, and `fmt --check` answers with an rc firn defines - what it is on this
+    project is measured here, not assumed."""
+    # arrange
+    from firnrun import firn_rc
+    project = tmp_path / "src"
+    shutil.copytree(SRC / "firn", project / "firn")
+    shutil.copy(SRC / "firn.toml", project / "firn.toml")
+
+    # act
+    validated, _ = firn_rc(tmp_path, "validate", "--format=json", cwd="src")
+    formatted, said = firn_rc(tmp_path, "fmt", "--check", cwd="src")
+
+    # assert
+    assert validated == 0
+    assert formatted in firngen.FIRN_CODES, said
