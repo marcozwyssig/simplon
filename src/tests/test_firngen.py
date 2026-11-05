@@ -138,8 +138,9 @@ def test_name_rc_says_nothing_for_0(capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_the_table_is_firns_v0_5_0():
-    assert set(firngen.FIRN_CODES) == {0, 1, 2, 3, 4, 5, 6, 70}
+def test_the_table_is_firns_v0_6_0():
+    # ExitCode.java at firn v0.6.0 (read 2026-11-05): 0-7 and 70; LSP_UNEXPECTED_EXIT reuses 1.
+    assert set(firngen.FIRN_CODES) == {0, 1, 2, 3, 4, 5, 6, 7, 70}
     assert set(firngen.DOCKER_CODES) == {125, 126, 127}
 
 
@@ -412,3 +413,42 @@ def test_fmt_check_names_its_rc_1_as_unformatted_not_a_broken_model(ran, capsys)
     assert firngen.format_check(_Ctx(), image="firn:v0.2.0") == 1
     err = capsys.readouterr().err
     assert "MODEL_ERROR" not in err and "not formatted" in err
+
+
+# --- si#575: the first binary of a product, under firn v0.6.0 (firn#1196, ADR 0105) ---------------------
+
+def test_model_binary_with_bootstrap_passes_the_property_gradle_reads(ran, tmp_path):
+    calls, _ = ran
+    _binary(tmp_path)
+
+    firngen.model_binary(_Ctx(), image="firn-builder:v0.6.0", cwd="src", bootstrap="True")
+
+    assert calls[0]["argv"] == ["gradle", "--offline", "-Pfirn.bootstrap=true", "firnBinary"]
+
+
+@pytest.mark.parametrize("value", ["", "false", "FALSE"])
+def test_model_binary_without_bootstrap_never_passes_the_property(ran, tmp_path, value):
+    calls, _ = ran
+    _binary(tmp_path)
+
+    firngen.model_binary(_Ctx(), image="firn-builder:v0.6.0", cwd="src", bootstrap=value)
+
+    assert calls[0]["argv"] == ["gradle", "--offline", "firnBinary"]
+
+
+def test_a_bootstrap_that_is_not_true_or_false_is_refused_before_docker(ran, tmp_path):
+    calls, _ = ran
+    _binary(tmp_path)
+
+    with pytest.raises(ValueError, match="bootstrap must be 'true'"):
+        firngen.model_binary(_Ctx(), image="firn-builder:v0.6.0", cwd="src", bootstrap="yes")
+    assert calls == []
+
+
+def test_rc_7_is_named_as_firns_binary_bootstrap(capsys):
+    """Measured by cleon-firn on 0.37.0: `build model` under firn v0.6.0 exits 7, named "unknown"."""
+    firngen.name_rc(7, who="build:model")
+
+    err = capsys.readouterr().err
+    assert "BINARY_BOOTSTRAP" in err
+    assert "unknown" not in err
