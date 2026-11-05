@@ -37,9 +37,9 @@ REFUSED = ("W300", "W301")
 #: The kernel's own verdict for them: firn's OUTPUT_NOT_CURRENT, which is what they are in substance.
 KEPT_RC = 4
 
-#: firn's exit codes, as `ExitCode.java` names them in firn v0.5.0 (unchanged on firn main, 2026-11-04).
+#: firn's exit codes, as `ExitCode.java` names them in firn v0.6.0 (7 is new there, firn#1196, ADR 0105).
 #: firn's `--help` lists none (measured on v0.2.0), so the table cannot be read from the image; a firn
-#: release that adds a code (firn#1196 will add 7) is named "unknown" here until the table follows.
+#: release that adds a code is named "unknown" here until the table follows.
 FIRN_CODES: dict[int, str] = {
     0: "OK",
     1: "MODEL_ERROR - the model or a template is wrong; firn's diagnostics above say where",
@@ -48,6 +48,9 @@ FIRN_CODES: dict[int, str] = {
     4: "OUTPUT_NOT_CURRENT - firn kept a file it would have rewritten (W303/W304/E316); see above",
     5: "RESOURCE_EXHAUSTED - firn ran out of a resource (memory, stack)",
     6: "DUPLICATE_REGISTRY_KEY - a product binary refused two functions under one key",
+    7: ("BINARY_BOOTSTRAP - the model's only errors are E181 in the project's own files: its templates call "
+        "Java functions only the product's own firn holds; build it with build:model-binary, `bootstrap: true` "
+        "for the first build, and run this with `binary:`"),
     70: "INTERNAL - firn's own fault; report it to firn",
 }
 #: docker's own codes for a container that never ran the command.
@@ -70,7 +73,7 @@ def name_rc(rc: int, *, who: str, meanings: dict[int, str] | None = None) -> Non
     elif rc in DOCKER_CODES:
         print(f"{who}: rc {rc} is docker's, not firn's: {DOCKER_CODES[rc]}", file=sys.stderr)
     else:
-        print(f"{who}: rc {rc} is unknown - not one of firn's codes (v0.5.0) nor docker's", file=sys.stderr)
+        print(f"{who}: rc {rc} is unknown - not one of firn's codes (v0.6.0) nor docker's", file=sys.stderr)
 
 
 _WORKDIR = "/workspace"
@@ -104,7 +107,14 @@ def format_check(ctx: typer.Context, image: str = "", cwd: str | None = None, ne
                                         "run `firn fmt` and commit the result"})
 
 
-def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None) -> int:
+#: si#575: the Gradle property a product's own build script reads to go on past firn's rc 7 (firn v0.6.0, ADR
+#: 0105). It is the script's, not firn's, so `firnBinary` itself still ends 0 or 1.
+BOOTSTRAP_PROPERTY = "-Pfirn.bootstrap=true"
+BOOTSTRAP = {"": False, "false": False, "true": True}
+
+
+def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, network: str | None = None,
+                 bootstrap: str = "") -> int:
     """Build the product's own firn - firn with the project's Java functions - in the `firn-builder` image
     (`gradle --offline firnBinary`, firn docs/05 section 6), then run it once (`--version`).
 
@@ -114,9 +124,15 @@ def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, ne
     through; a build that is green and leaves no binary, or one that does not run, is red.
     """
     where = ctx.command_path or "build:model-binary"
+    # case-blind, like `online`: workflowgen renders `with: {bootstrap: true}` as `--bootstrap True`
+    if bootstrap.strip().lower() not in BOOTSTRAP:
+        raise ValueError(f"bootstrap must be 'true' (a product's first binary, firn v0.6.0 on) or 'false', got "
+                         f"{bootstrap!r}")
+    first = BOOTSTRAP[bootstrap.strip().lower()]
     same = hostpath.translate(context.current().root)
     built = posixpath.join(same, cwd or "", BINARY)
-    got = toolchain.invocation(where, image=image, argv=["gradle", "--offline", "firnBinary"], workdir=same,
+    got = toolchain.invocation(where, image=image, argv=["gradle", "--offline", *([BOOTSTRAP_PROPERTY] if first else []), "firnBinary"],
+                               workdir=same,
                                env={"GRADLE_USER_HOME": posixpath.join(same, cwd or "", ".gradle")},
                                caches=None, network=network or "none", cwd=cwd, extra=[])
     if got is None:

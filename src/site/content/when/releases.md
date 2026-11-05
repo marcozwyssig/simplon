@@ -23,6 +23,29 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.38.0
+
+**What a product has to do:** nothing. One task takes a new optional parameter, and a firn exit code that
+was named "unknown" now has its name.
+
+### A product's first firn binary, under firn v0.6.0 (si#575)
+
+- **`build:model-binary` takes `bootstrap`** (`true` or `false`, case-blind, default false). True adds
+  `-Pfirn.bootstrap=true` to `gradle --offline firnBinary`. That property is read by the product's own
+  build script, which since firn v0.6.0 (firn#1196, ADR 0105) goes on past firn's rc 7 only when it is set.
+  Pass it for the first build of a product's binary, never for the publishing one. It is never inferred,
+  and any other value is refused when the task runs. Found by cleon-firn on 0.37.0, from reading the code.
+- **firn's rc 7 is named BINARY_BOOTSTRAP**, with the way out: the table follows firn v0.6.0's
+  `ExitCode.java`. Measured by cleon-firn: `build model` under firn v0.6.0 exited 7 and was called
+  "unknown". It stays red in `build:model` and `test:model`, because the kernel's own `firn gen` is not
+  the bootstrap build.
+
+### Also in this release
+
+- **#573** pins `deploy/image/image.pin` to the v0.37.0 kernel image. The release run stopped at the
+  Homebrew tap (si#574: the App's secrets were never set), so the image was published by hand from a
+  clone at the tag, and the 0.37.0 website and formula did not ship.
+
 ## 0.37.0
 
 **What a product has to do:** nothing is removed, and a product on 0.36.0 moves both simplon pins

@@ -697,6 +697,7 @@ tasks:
       image:   { help: "the pinned firn-builder image" }
       cwd:     { help: "the directory under the root where the firn project and its build.gradle.kts are" }
       network: { help: "the docker network the build runs on (default 'none': gradle runs --offline)" }
+      bootstrap: { help: "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false (the default) for every other build" }
 
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
