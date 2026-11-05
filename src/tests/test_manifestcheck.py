@@ -49,12 +49,25 @@ def test_stage_writes_the_two_projects(tmp_path):
     # assert
     assert reason == ""
     assert (tmp_path / "s" / "firn.toml").read_text() == (
-        'name = "demo-manifest-check"\nmodel = ["model"]\n\n[dependencies]\nsimplon = { path = "m2" }\n')
+        'name = "demo-manifest-check"\nmodel = ["model"]\n\n[dependencies]\nsimplon-m2 = { path = "m2" }\n')
     assert (tmp_path / "s" / "m2" / "firn.toml").read_text() == (
         'name = "simplon-m2"\nversion = "0.36.0"\nmodel = ["model"]\n')
     assert (tmp_path / "s" / "model" / "demo.firn").read_text() == "package product.demo\n"
     for package in task.M2_PACKAGES:
         assert list((tmp_path / "s" / "m2" / "model" / "simplon" / package).glob("*.firn")), package
+
+
+def test_the_dependency_key_is_the_name_the_m2_project_gives(tmp_path):
+    """si#565: since firn v0.5.0 a dependency's key must be the `name` in its own firn.toml, or firn
+    refuses the project with E183 and exits 3 before validating a statement (measured on cleon-firn#20)."""
+    import tomllib
+
+    task.stage(tmp_path / "s", "demo", "package product.demo\n", task.m2_source(), "0.36.0")
+
+    check = tomllib.loads((tmp_path / "s" / "firn.toml").read_text())
+    m2 = tomllib.loads((tmp_path / "s" / "m2" / "firn.toml").read_text())
+    assert list(check["dependencies"]) == [m2["name"]]
+    assert check["dependencies"][m2["name"]] == {"path": "m2"}
 
 
 def test_a_leftover_file_does_not_survive_staging(tmp_path):

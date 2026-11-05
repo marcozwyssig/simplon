@@ -257,6 +257,11 @@ red on either.
 
 ### Also in this release
 
+- **`test:manifest-model` runs under firn v0.5.0 (si#565).** The check project named its dependency
+  `simplon`, and the staged M2 project is called `simplon-m2`. Since v0.5.0 firn refuses that with E183 and
+  exits 3 before validating a statement (seen on cleon-firn#20). The key is now the M2 project's name.
+  Measured on simplon's own manifest: the old key is rc 3 under v0.5.0 and rc 0 under v0.2.0, the new one
+  rc 0 under both, and rc 1 under v0.5.0 with a broken line appended.
 - **`support git prune-branches --remote` reaches a merged branch that exists only on origin
   (si#555).** Before, origin was cleaned only beside a local `git branch -D`, so a branch deleted
   locally after its merge stayed on origin. Only proven-merged branches go; `--unmerged` does not reach

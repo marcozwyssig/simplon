@@ -46,6 +46,11 @@ def m2_source() -> Traversable:
     return checkout if checkout.is_dir() else shipped
 
 
+#: The staged M2 project's `name`, and so the check project's dependency key: since firn v0.5.0 a key that
+#: is not the dependency's own name is refused with E183 before a statement is validated (si#565).
+M2_PROJECT = "simplon-m2"
+
+
 def stage(directory: Path, name: str, text: str, m2: Traversable, version: str) -> str:
     """Rebuild `directory` as the check project; "" when it is staged, else the reason."""
     missing = [package for package in M2_PACKAGES if not (m2 / package).is_dir()]
@@ -57,12 +62,12 @@ def stage(directory: Path, name: str, text: str, m2: Traversable, version: str) 
             shutil.rmtree(directory)
         (directory / "model").mkdir(parents=True)
         (directory / "firn.toml").write_text(
-            f'name = "{name}-manifest-check"\nmodel = ["model"]\n\n[dependencies]\nsimplon = {{ path = "m2" }}\n',
+            f'name = "{name}-manifest-check"\nmodel = ["model"]\n\n[dependencies]\n{M2_PROJECT} = {{ path = "m2" }}\n',
             encoding="utf-8")
         (directory / "model" / f"{name}.firn").write_text(text, encoding="utf-8")
         (directory / "m2").mkdir()
         (directory / "m2" / "firn.toml").write_text(
-            f'name = "simplon-m2"\nversion = "{version}"\nmodel = ["model"]\n', encoding="utf-8")
+            f'name = "{M2_PROJECT}"\nversion = "{version}"\nmodel = ["model"]\n', encoding="utf-8")
         for package in M2_PACKAGES:
             with as_file(m2 / package) as source:
                 shutil.copytree(source, directory / "m2" / "model" / "simplon" / package)
