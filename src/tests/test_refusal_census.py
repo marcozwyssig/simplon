@@ -1000,6 +1000,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_release_key", "and the derived job is named"): DIAGNOSIS,
     ("workflowgen", "_release_key", "is the dispatch input's"): DIAGNOSIS,
     ("workflowgen", "_release_key", "one workflow is a rollout or a release"): DIAGNOSIS,
+    # si#570: beside no `release:` the key reaches GitHub, which refuses the workflow; a value that is not
+    # a list of platforms reaches setup-qemu-action and fails there or registers nothing.
+    ("workflowgen", "_emulates", "is read only beside"): DIAGNOSIS,
+    ("workflowgen", "_emulates", "is a non-empty list of platforms"): DIAGNOSIS,
     ("workflowgen", "_release_extras", "is a mapping of scope -> level"): DIAGNOSIS,
     # An EXPRESSION rule, not a diagnosis (final review of si#490): a release with no tag, no GitHub
     # Release and no package push would have worked with `contents: read` - the spec lets an aggregate

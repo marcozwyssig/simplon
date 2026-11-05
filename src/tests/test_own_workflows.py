@@ -287,3 +287,17 @@ def test_the_hosted_suite_job_can_run_linux_arm64_before_the_suite():
     assert len(step["uses"].split("@", 1)[1]) == 40, "pinned by commit sha"
     assert step["with"]["image"] == BINFMT_IMAGE
     assert "arm64" in step["with"]["platforms"]
+
+
+def test_the_release_job_can_run_linux_arm64_before_the_suite():
+    """si#570: the v0.37.0 dry run went red on si#552's linux/arm64 e2e in the derived release job
+    ("Exec format error" on ubuntu-latest). The release workflow's `emulates:` registers it first."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["release"]["steps"]
+    qemu = [i for i, step in enumerate(steps) if step.get("uses", "").startswith("docker/setup-qemu-action@")]
+    suite = next(i for i, step in enumerate(steps) if step.get("run", "").endswith("test suite"))
+
+    assert len(qemu) == 1 and qemu[0] < suite
+    assert steps[qemu[0]]["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64"}

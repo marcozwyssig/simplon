@@ -80,6 +80,11 @@ red on either.
 - simplon proves both on an image of its own: a static and a dynamic file, built for both platforms, the
   arm64 one run under QEMU, and the `tag` path read from a local `registry:2`
   (`src/tests/test_imagefile_e2e.py`).
+- **`emulates:` beside a workflow's `release:` registers emulation in the derived release job (si#570).**
+  The first 0.37.0 dry run went red on that arm64 run: the release job is derived, runs on a hosted
+  runner with no emulator, and took no step of the product's. `emulates: [linux/arm64]` makes its first
+  step `docker/setup-qemu-action`, pinned by commit, with the kernel's binfmt image; simplon's own release
+  declares it. Anywhere but beside `release:` the key is refused.
 
 ### `test:image` is bounded and takes an environment (si#554)
 

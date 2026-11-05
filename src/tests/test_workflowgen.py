@@ -2641,3 +2641,44 @@ def test_a_release_job_on_a_self_hosted_runner_keeps_the_runners_disk_steps():
                                                              "runner: { kind: self-hosted-debian, labels: ghr-8 }"))
     job = text[text.index("\n  release:"):text.index("\n  announce:")]
     assert "si#327" in job
+
+
+# --- si#570: `emulates:` - the derived release job registers emulation before anything runs ------------
+
+def test_a_release_that_emulates_registers_those_platforms_first():
+    """The v0.37.0 dry run went red on a linux/arm64 e2e in the derived job's `test suite`: "Exec format
+    error" on ubuntu-latest, and the derived job took no product step that could register an emulator."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    steps = _release_steps(_release_text(workflows=_RELEASE_WORKFLOWS.replace(
+        "    release: release all\n", "    release: release all\n    emulates: [linux/arm64, linux/arm/v7]\n")))
+    first = next(i for i, step in enumerate(steps) if "uses" in step or "run" in step
+                 if not str(step.get("uses", "")).startswith("actions/checkout@"))
+    step = steps[first]
+    assert step["uses"] == workflowgen.QEMU_ACTION
+    assert len(step["uses"].split("@", 1)[1]) == 40, "pinned by commit sha"
+    assert step["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64,linux/arm/v7"}
+    assert [s for s in steps if s.get("uses") == workflowgen.QEMU_ACTION] == [step]
+
+
+def test_a_release_that_emulates_nothing_registers_nothing():
+    steps = _release_steps(_release_text())
+    assert not [s for s in steps if str(s.get("uses", "")).startswith("docker/setup-qemu-action@")]
+
+
+def test_emulates_without_a_release_is_refused():
+    """Diagnosis: a job the product writes carries the step itself, and GitHub would refuse the key."""
+    with pytest.raises(ValueError, match=re.escape("`emulates:` is read only beside `release:`")):
+        workflowgen.parse(_section("""
+        workflows:
+          ci:
+            on: [push]
+            emulates: [linux/arm64]
+            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
+        """))
+
+
+@pytest.mark.parametrize("value", ["linux/arm64", "[]", "[arm64]", "[linux/]", "[3]"])
+def test_emulates_is_a_list_of_platforms(value):
+    with pytest.raises(ValueError, match=re.escape("`emulates:` is a non-empty list of platforms")):
+        _release_parsed(f"emulates: {value}\n")

@@ -103,6 +103,12 @@ DOWNLOAD_ACTION = "actions/download-artifact@v4"
 #: `run:` line.
 APP_TOKEN_ACTION = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
 APP_TOKEN_VERSION = "v3.2.0"
+
+#: si#570: the action a release's `emulates:` registers its platforms with, pinned by SHA like the app
+#: token's. It is the one simplon's own CI used for si#552 (#557); the image it runs is the kernel's own
+#: binfmt pin, `labhost.BINFMT_IMAGE`, so `support ci-arm64` and the workflow cannot drift apart.
+QEMU_ACTION = "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1"
+EMULATES_KEY = "emulates"
 APP_TOKEN_ENV = "GH_APP_TOKEN"
 
 #: The one file that crosses, in the runner's temp directory, never in the product's tree.
@@ -260,6 +266,8 @@ class Workflow:
     extras: Mapping[str, object] = field(default_factory=dict)
     #: si#490: the release aggregate's `<group> <name>`, when this workflow is its dispatch release.
     release: str = ""
+    #: si#570: the platforms the derived release job registers emulation for before anything runs.
+    emulates: tuple[str, ...] = ()
 
     @property
     def generated(self) -> bool:
@@ -355,6 +363,7 @@ def _workflow(key: str, body: object) -> Workflow:
         raise ValueError(f"{where}: `handwritten:` must say why this file is not generated, not be empty")
 
     release = _release_key(body, where)
+    emulates = _emulates(body, where, release)
     trigger = _declared_trigger(body, where) if not release else _RELEASE_TRIGGER
     if trigger is None:
         raise ValueError(
@@ -383,7 +392,8 @@ def _workflow(key: str, body: object) -> Workflow:
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
-                    extras=_release_extras(body, where) if release else _workflow_extras(body))
+                    extras=_release_extras(body, where) if release else _workflow_extras(body),
+                    emulates=emulates)
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
@@ -449,6 +459,28 @@ def _release_key(body: Mapping[object, object], where: str) -> str:
             f"{where}: sets {RELEASE_ENV} in `env:`, and {RELEASE_ENV} is the dispatch input's - the job "
             f"sets it from `inputs.version`, and a second value would be shadowed with nobody told")
     return " ".join(value.split())
+
+
+def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[str, ...]:
+    """The platforms `emulates:` names, in buildx's `<os>/<arch>[/<variant>]` spelling, or ().
+
+    A release job is derived and takes no product step, so a suite that runs a foreign-platform file (si#552)
+    had no way to get an emulator there (si#570). Both refusals are DIAGNOSES: beside no `release:` the key
+    would reach GitHub, which refuses it, and a job the product writes carries the step itself; a value
+    that is not a list of platforms would reach `setup-qemu-action` and fail there, or register nothing."""
+    value = body.get(EMULATES_KEY)
+    if value is None:
+        return ()
+    if not release:
+        raise ValueError(
+            f"{where}: `{EMULATES_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
+            f"a job you write registers emulation itself, with a `uses: {QEMU_ACTION}` step")
+    if (not isinstance(value, list) or not value
+            or not all(isinstance(p, str) and len(p.split("/")) in (2, 3) and all(p.split("/")) for p in value)):
+        raise ValueError(
+            f"{where}: `{EMULATES_KEY}:` is a non-empty list of platforms as buildx spells them "
+            f"(e.g. `[linux/arm64]`), got '{value}'")
+    return tuple(value)
 
 
 def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
@@ -531,7 +563,7 @@ def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
     return tuple(stages)
 
 
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, "runs-on", "runs_on", runners.KEY, True})
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, EMULATES_KEY, "runs-on", "runs_on", runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
@@ -1119,6 +1151,12 @@ def _release(workflow: "Workflow", manifest: Manifest,
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
     steps[lifted:lifted] = cut
+    if workflow.emulates:
+        from simplon.adapters.labhost import BINFMT_IMAGE
+        steps.insert(0, Step(
+            verbatim={"name": f"Register emulation for {', '.join(workflow.emulates)}", "uses": QEMU_ACTION,
+                      "with": {"image": BINFMT_IMAGE, "platforms": ",".join(workflow.emulates)}},
+            note=f"si#570: the workflow's `{EMULATES_KEY}:`, registered before anything in the job runs."))
     tail = (f'echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"\n'
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
