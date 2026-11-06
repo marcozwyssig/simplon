@@ -38,6 +38,24 @@ it is the one section held only to existing.
 - A defect keeps its traceback, as before, including a product `cli.py` that does not hand
   `assemble()` the step context its aggregates need.
 
+### A product's marketplace replaces the default of the same name (si#581)
+
+- **A marketplace a product declares under a default's name replaces that default** in the effective
+  set, in the default's place. Measured by firn on 0.38.0 against the real `claude` CLI: pinning
+  token-optimizer with `ref: v5.13.17` kept the ref-less default as well, so `claude` registered the
+  unpinned one first and then refused the pinned one ("its source doesn't match its
+  extraKnownMarketplaces entry"), and `support install` ended FAILED.
+- **A marketplace this machine registered from another repo or ref is a failure, not "present".** The
+  plugin step matched marketplaces by name only, so a machine that had token-optimizer before the pin
+  read as complete and never applied it. It now compares repo and ref with what
+  `claude plugin marketplace list --json` reports. On a mismatch it adds nothing and installs none of
+  that marketplace's plugins, and it names the way out:
+  `claude plugin marketplace remove <name>` (its plugins go with it), then run it again. It does not
+  remove the marketplace itself, because that removes plugins too. The dry run reports the same, rc 1.
+- Measured against claude 2.1.318 in scratch homes: on a fresh home only the pinned marketplace is
+  registered; on a home with the unpinned one, the mismatch is named, and after the named removal
+  a rerun registers it pinned.
+
 ### Also in this release
 
 - **#584** pins `deploy/image/image.pin` to the v0.39.0 kernel image, again published by hand
