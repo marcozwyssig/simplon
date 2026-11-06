@@ -71,6 +71,7 @@ ci:
       loose:   {{ task: strict, help: "Nothing pinned at all." }}
       framed:  {{ task: framed, help: "A body whose default is a typer declaration." }}
       typo:    {{ task: toolchain, with: {{ rc: 0, tagg: "unit" }}, help: "A `with:` key with a typo in it." }}
+      mistyped: {{ task: toolchain, with: {{ rc: 0, tag: true }}, help: "A `with:` value YAML typed as a bool." }}
       all:     {{ depends_on: ["compile"], help: "Plans other commands, runs none of its own." }}
   test:
     commands:
@@ -480,3 +481,19 @@ def test_a_with_key_that_names_no_parameter_is_refused_the_way_the_cli_refuses_i
     assert "'build typo' pins tagg" in said, said
     assert "it takes: marker, rc, tag" in said, f"the refusal does not say what the body takes: {said}"
     assert not test_impls.CALLS, "the body ran with a key it does not take"
+
+
+def test_a_with_value_whose_type_the_body_does_not_take_is_refused_before_it_runs(monkeypatch, tmp_path):
+    # arrange: `tag: true` for `tag: str` - si#578, measured by cleon-firn as a traceback in the body
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build mistyped", results="clear")
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: the command, the key, both types and the way out; and the body never ran
+    said = str(refused.value)
+    assert "'build mistyped'" in said and "tag: True" in said, said
+    assert "a bool" in said and "takes a str" in said and "quote it" in said, said
+    assert not test_impls.CALLS, "the body ran with a value of the wrong type"

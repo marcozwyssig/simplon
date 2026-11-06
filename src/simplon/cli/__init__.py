@@ -224,6 +224,7 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
     if unknown:
         raise ValueError(f"{where}: `with:`/`params:` name parameter(s) the impl does not take: "
                          f"{', '.join(unknown)}")
+    signatures.check_pinned_types(params, pinned, where=where, impl=spec.impl)
 
     sig = inspect.signature(fn)
     keep = [p for p in sig.parameters.values()

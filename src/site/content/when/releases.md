@@ -23,6 +23,28 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.39.0
+
+**What a product has to do:** nothing, unless it pins a `with:` value of a type its body does not
+take. No reachable manifest does today. If one does, the loader names the key and the quoted form.
+
+### A `with:` value is checked against the body's type (si#578)
+
+- **A pinned value whose type contradicts the body parameter's annotation is refused**, naming the
+  command, the key, both types and the way out. Measured by cleon-firn on 0.38.0: `with: { bootstrap: true }`
+  on `build:model-binary` reached `bootstrap: str` as a bool and failed in the body as a traceback.
+  Nothing between the manifest and the body converts a `with:` value, so the check now runs wherever the
+  key is checked: at load, when the CLI is assembled, and when a gate runs a command.
+- **Only scalar annotations are ruled on** (`str`, `bool`, `int`, `float`, `str | None`). An unannotated
+  parameter or a wider type is passed on as before.
+- The same report confirmed si#575 on a real binary: with `bootstrap: "true"`, cleon-firn's first
+  `firnBinary` built in 70 s and its binary validated the product's model.
+
+### Also in this release
+
+- **#577** pins `deploy/image/image.pin` to the v0.38.0 kernel image. As for 0.37.0, the release run
+  stopped at the Homebrew tap (si#574), and the image was published by hand from a clone at the tag.
+
 ## 0.38.0
 
 **What a product has to do:** nothing. One task takes a new optional parameter, and a firn exit code that

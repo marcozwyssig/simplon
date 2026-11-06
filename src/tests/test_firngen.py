@@ -452,3 +452,22 @@ def test_rc_7_is_named_as_firns_binary_bootstrap(capsys):
     err = capsys.readouterr().err
     assert "BINARY_BOOTSTRAP" in err
     assert "unknown" not in err
+
+
+def test_an_unquoted_bootstrap_true_is_refused_at_load_and_the_quoted_one_loads():
+    # arrange: si#578 - cleon-firn on 0.38.0 wrote `with: { bootstrap: true }` and got a traceback from
+    # `.strip()` on a bool. The real catalogue's build:model-binary, the real loader.
+    from simplon.manifest import catalogue
+    from simplon.manifest import load as manifest
+    text = """
+ci:
+  build:
+    commands:
+      binary: { task: "build:model-binary", with: { bootstrap: %s } }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match=r'`build binary` pins bootstrap: True, a bool, .* quote it in the '
+                                         r'manifest: `bootstrap: "true"`'):
+        manifest.load(text % "true", catalogue=catalogue.load(), validate_with=True)
+    manifest.load(text % '"true"', catalogue=catalogue.load(), validate_with=True)
