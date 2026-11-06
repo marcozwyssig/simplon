@@ -1108,6 +1108,8 @@ def _validate_param_bindings(commands: dict[str, dict[str, Command]]) -> None:
                 raise ValueError(
                     f"`{group} {name}` binds key(s) {', '.join(unknown)} that are not parameters "
                     f"of {spec.impl} (it takes: {', '.join(sorted(params)) or 'none'})")
+            signatures.check_pinned_types(signatures.bindable(body), spec.with_ or {},
+                                          where=f"`{group} {name}`", impl=spec.impl)
 
 
 def resolve_impl(spec: TaskCommand) -> Callable[..., object]:

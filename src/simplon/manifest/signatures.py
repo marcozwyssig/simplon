@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import keyword
-from typing import Callable, NamedTuple
+from typing import Callable, Mapping, NamedTuple
 
 # Parameter names a body uses for the CLI context (a `typer.Context`). Recognised BY NAME rather than
 # by position: the kernel's own command bodies do not all take one (simplon.tasks.vcs:push takes
@@ -55,6 +55,65 @@ _COMPOSITES = {
     "Optional[str]": "str | None",
     "typing.Optional[str]": "str | None",
 }
+
+
+# The scalar annotations a pinned `with:` value is checked against (si#578), by their source spelling: a
+# body under `from __future__ import annotations` hands `inspect.signature` a string, the others the type
+# itself, and `str | None` both as `types.UnionType` and as text. Anything else - a list, an unannotated
+# parameter, a type nobody spelt here - is not checked: a refusal that guesses is worse than none.
+_SCALAR = {"str": "str", "bool": "bool", "int": "int", "float": "float",
+           "str | None": "str | None", "Optional[str]": "str | None", "typing.Optional[str]": "str | None"}
+_ARTICLE = {"bool": "a bool", "int": "an int", "float": "a float", "str": "a str", "NoneType": "a null"}
+
+
+def _scalar(annotation: object) -> str | None:
+    """The `_SCALAR` spelling of an annotation, or None when it is not one this check rules on."""
+    if isinstance(annotation, str):
+        return _SCALAR.get(annotation.strip())
+    if isinstance(annotation, type):
+        return _SCALAR.get(annotation.__name__)
+    return _SCALAR.get(repr(annotation))     # `str | None` and `typing.Optional[str]` as objects
+
+
+def _fits(value: object, want: str) -> bool:
+    if want == "str | None":
+        return value is None or isinstance(value, str)
+    if want == "str":
+        return isinstance(value, str)
+    if want == "bool":
+        return isinstance(value, bool)
+    if want == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool)       # float
+
+
+def check_pinned_types(params: list[Parameter], pinned: Mapping[str, object], *, where: str,
+                       impl: str) -> None:
+    """Refuse a pinned `with:` value whose type contradicts the body parameter's scalar annotation (si#578).
+
+    A DIAGNOSIS. Nothing between the manifest and the body converts a value: PyYAML types an unquoted
+    `true` as a bool, and `with: { bootstrap: true }` reached `bootstrap: str` as Python True and died in
+    `.strip()` as a traceback naming neither the command nor the key. Every seam that checks a `with:` KEY
+    calls this too, so the same manifest line gets the same answer wherever it is run.
+    """
+    by_name = {p.name: p for p in params}
+    wrong = []
+    for name, value in pinned.items():
+        want = _scalar(by_name[name].annotation) if name in by_name else None
+        if want is None or _fits(value, want):
+            continue
+        got = _ARTICLE.get(type(value).__name__, f"a {type(value).__name__}")
+        if want.startswith("str"):
+            text = str(value).lower() if isinstance(value, bool) else str(value)
+            way_out = f'quote it in the manifest: `{name}: "{text}"`'
+        elif want == "bool":
+            way_out = "write true or false unquoted"
+        else:
+            way_out = "write the number unquoted"
+        wrong.append(f"{name}: {value!r}, {got}, but {impl} takes {_ARTICLE[want.split(' ')[0]]} there - "
+                     f"{way_out}")
+    if wrong:
+        raise ValueError(f"{where} pins {'; '.join(wrong)}")
 
 
 def takes_context(body: Callable[..., object]) -> bool:

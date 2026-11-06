@@ -1684,3 +1684,38 @@ ci:
     # assert
     assert mf.spec_for("build", "all").passes == ("tag",)
     assert isinstance(mf.spec_for("build", "jar"), command.TaskCommand)   # a leaf passes nothing (si#400 4d)
+
+
+@pytest.mark.parametrize("value, said", [("true", "a bool"), ("7", "an int")])
+def test_a_with_value_whose_type_contradicts_the_body_is_rejected(value, said):
+    # arrange: si#578 - `pinned_rc(rc: int = 0, tag: str = "", ...)`; an unquoted YAML scalar for `tag`
+    text = f"""
+tasks:
+  toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run." }}
+
+ci:
+  build:
+    commands:
+      unit: {{ task: "toolchain", with: {{ tag: {value} }} }}
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match=rf"`build unit` pins tag: .*{said}.*takes a str.*quote it"):
+        manifest.load(text, validate_with=True)
+
+
+@pytest.mark.parametrize("pins", ['tag: "true"', "rc: 3", 'tag: "x", rc: 0, marker: ""'])
+def test_a_with_value_of_the_type_the_body_takes_loads(pins):
+    # arrange: the refusal must not catch the forms that work
+    text = f"""
+tasks:
+  toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run." }}
+
+ci:
+  build:
+    commands:
+      unit: {{ task: "toolchain", with: {{ {pins} }} }}
+"""
+
+    # act / assert
+    manifest.load(text, validate_with=True)

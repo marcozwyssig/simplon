@@ -1260,3 +1260,25 @@ def test_the_kernel_step_factories_append_a_leafs_arguments_to_its_argv():
     # leaf-to-step pairing still holds
     assert outcome.output.strip() == "cut -- v1"
     assert step.command == "release.cut"
+
+
+def test_a_with_value_of_the_wrong_type_is_refused_before_the_body_runs():
+    # arrange: cleon-firn on 0.38.0 - `with: { bootstrap: true }` reached firngen.model_binary's
+    # `bootstrap: str` as Python True and died in `.strip()` with a traceback. A YAML bool for a str
+    # parameter is a diagnosis at assembly, naming the key, the type and the quoted form.
+    def pin(site: str) -> int:
+        return 0
+
+    text = _PRESENTED_MANIFEST.replace('with: { site: "be" }', 'with: { site: true }')
+    mod = types.ModuleType("pres_impls")
+    mod.commit = lambda message="", dry_run=False: 0
+    mod.pin = pin
+    sys.modules["pres_impls"] = mod
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+        # act / assert
+        with pytest.raises(ValueError, match=r"site: True.*a bool.*takes a str.*quote it"):
+            cli.assemble(app, manifest.load(text), product="demo")
+    finally:
+        sys.modules.pop("pres_impls", None)

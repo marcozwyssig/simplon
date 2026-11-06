@@ -124,7 +124,8 @@ def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, ne
     through; a build that is green and leaves no binary, or one that does not run, is red.
     """
     where = ctx.command_path or "build:model-binary"
-    # case-blind, like `online`: workflowgen renders `with: {bootstrap: true}` as `--bootstrap True`
+    # case-blind, like `online`: workflowgen renders a step's `params: {bootstrap: true}` as `--bootstrap True`.
+    # A `with:` pin arrives as written, so an unquoted YAML bool is refused before this (si#578).
     if bootstrap.strip().lower() not in BOOTSTRAP:
         raise ValueError(f"bootstrap must be 'true' (a product's first binary, firn v0.6.0 on) or 'false', got "
                          f"{bootstrap!r}")

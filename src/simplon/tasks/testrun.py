@@ -652,6 +652,7 @@ def _command(path: str, where: str) -> Callable[[], int]:
         raise ValueError(f"{where}: '{path}' pins {', '.join(unknown)} with `with:`, which "
                          f"{spec.impl} does not take (it takes: "
                          f"{', '.join(sorted(p.name for p in bindable)) or 'none'})")
+    signatures.check_pinned_types(bindable, pinned, where=f"{where}: '{path}'", impl=spec.impl)
     # A `typer.Option(...)` DEFAULT IS NOT A VALUE, and that is the second half of "minus the command
     # line". Typer resolves such a default into the value behind it; a direct call does not, so an
     # unpinned parameter declared that way would reach the body as an `OptionInfo` OBJECT - a wrong value

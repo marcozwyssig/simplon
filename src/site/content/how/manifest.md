@@ -118,6 +118,11 @@ ci:
 A pinned parameter is removed from the generated signature and supplied at call time, so it is absent
 from the command line entirely: `myctl test unit --name system` is not a command.
 
+A pinned value keeps the type YAML gave it, and nothing converts it on the way to the body. Where the
+body declares a parameter `str`, `bool`, `int` or `float`, a value of another type is refused when the
+manifest is loaded, before any command runs. The usual case is an unquoted `true` or a number for a `str`
+parameter: `with: { bootstrap: true }` is refused, and `with: { bootstrap: "true" }` loads (si#578).
+
 `params:` is the other half, and it is strictly about **presentation**: help text, the short flag, the
 metavar, the order the declarations render in. The signature - name, type, default - is read off the
 body. Declaring the type in YAML as well would state it twice and let the two drift, which is the exact

@@ -625,6 +625,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         EXPRESSION,
     ("load", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
+    # si#578. A pinned `with:` value whose type contradicts the body parameter's scalar annotation:
+    # `bootstrap: true` for `bootstrap: str` died in `.strip()` as a traceback (cleon-firn, measured on
+    # 0.38.0). Counted as diagnosis because the annotation is the body's own declared contract. The honest
+    # edge: a body that only formats the value would have worked with the wrong type. Measured before
+    # shipping: over the nine reachable manifests, 0 of the 196 pins whose body imports here were refused.
+    ("signatures", "check_pinned_types", "pins"): DIAGNOSIS,
     ("task", "resolve_ref", "cannot import module"): DIAGNOSIS,
     ("task", "resolve_ref", "has no attribute"): DIAGNOSIS,
     # si#400 4c: a reference that resolves to neither a Task class nor a callable has no body to run

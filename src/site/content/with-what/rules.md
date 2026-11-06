@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 257 | nothing - the declaration had no working meaning |
+| diagnosis | 258 | nothing - the declaration had no working meaning |
 | expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **300** | |
+| **all load-time refusals** | **301** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
@@ -113,6 +113,12 @@ not declare is refused at load by the port's rule, not first when `deploy up` ru
 si#419 added one diagnosis: a `parallel: true` aggregate may not run a consumer beside the producer of
 what it consumes, because a fan starts its branches at once and the consumer may read the artifact before
 it is written. No live manifest says `parallel:`, so it refuses none of them.
+
+si#578 added one diagnosis: a pinned `with:` value whose type contradicts the scalar annotation of the
+body's parameter, such as an unquoted `bootstrap: true` for a `str`. Nothing converts a `with:` value, so
+it reached the body as a bool and failed there as a traceback. The same check runs when the CLI is
+assembled and when a gate runs a command, so one manifest line gets one answer. Over the nine reachable
+manifests it refuses none of the pins whose body imports here.
 
 si#433 added one diagnosis: `passes:` on a leaf. A leaf plans no other command, so it has nothing to
 pass a value to. Whether a leaf takes what its aggregate passes is a question about the leaf's body, so it
