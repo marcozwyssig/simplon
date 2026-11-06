@@ -32,7 +32,11 @@ if args[:2] == ["plugin", "list"]:
         time.sleep(30)
     print(json.dumps([{{"id": i, "scope": "user"}} for i in installed]))
 elif args[:3] == ["plugin", "marketplace", "list"]:
-    print(json.dumps([{{"name": "claude-plugins-official"}}, {{"name": "alexgreensh-token-optimizer"}}]))
+    # The shape the real CLI answers in (measured 2026-11-06, claude 2.1.318): `ref` only when pinned.
+    markets = os.environ.get("FAKE_MARKETS")
+    print(markets or json.dumps([
+        {{"name": "claude-plugins-official", "source": "github", "repo": "anthropics/claude-plugins-official"}},
+        {{"name": "alexgreensh-token-optimizer", "source": "github", "repo": "alexgreensh/token-optimizer"}}]))
 elif args[:2] == ["plugin", "install"]:
     if args[2] == os.environ.get("FAKE_FAIL"):
         sys.exit(1)
@@ -50,7 +54,7 @@ def machine(tmp_path, monkeypatch):
     fake.write_text(_FAKE.format(python=sys.executable))
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bin_dir))
-    for variable in ("CI", "GITHUB_ACTIONS", "FAKE_FAIL", "FAKE_HANG"):
+    for variable in ("CI", "GITHUB_ACTIONS", "FAKE_FAIL", "FAKE_HANG", "FAKE_MARKETS"):
         monkeypatch.delenv(variable, raising=False)
     box = types.SimpleNamespace(data={"toolchains": ["claude"]}, bin=bin_dir)
     ctx = types.SimpleNamespace(manifest_data=lambda: box.data, manifest_path=tmp_path / "demo.yaml")
@@ -233,3 +237,41 @@ def test_a_claude_section_without_the_claude_toolchain_is_a_diagnosis_not_off():
     # act / assert: additions nothing reads, reported as "off", would be the recurring defect
     with pytest.raises(ValueError, match="'claude:' section, but 'claude' is not in 'toolchains:'"):
         claudeplugins.effective(data)
+
+
+def test_a_marketplace_registered_unpinned_is_failed_when_the_manifest_pins_it(machine, monkeypatch):
+    # arrange: si#581 - the machine registered token-optimizer before the product pinned it. Matching by
+    # name alone read that as "nothing missing" and the pin was never applied.
+    machine.data = {"toolchains": ["claude"], "claude": {"marketplaces": {
+        "alexgreensh-token-optimizer": {"source": "github", "repo": "alexgreensh/token-optimizer",
+                                        "ref": "v5.13.17"}}}}
+    machine.install_all(claudeplugins.BASE_PLUGINS[:-1])
+    _lines(monkeypatch)
+
+    # act
+    outcome = claudeplugins.step(env=machine.env())
+
+    # assert: FAILED, naming both sources and the way out; nothing re-added, its plugin not installed
+    assert outcome.state is claudeplugins.State.FAILED
+    assert "alexgreensh/token-optimizer" in outcome.detail and "#v5.13.17" in outcome.detail
+    assert "claude plugin marketplace remove alexgreensh-token-optimizer" in outcome.detail
+    assert not [a for a in machine.argv() if a.startswith(("plugin marketplace add", "plugin install"))]
+
+
+def test_a_marketplace_registered_at_the_pinned_ref_is_nothing_missing(machine, monkeypatch):
+    # arrange: the same pin, registered as pinned - the CLI lists the ref
+    machine.data = {"toolchains": ["claude"], "claude": {"marketplaces": {
+        "alexgreensh-token-optimizer": {"source": "github", "repo": "alexgreensh/token-optimizer",
+                                        "ref": "v5.13.17"}}}}
+    monkeypatch.setenv("FAKE_MARKETS", json.dumps([
+        {"name": "claude-plugins-official", "source": "github", "repo": "anthropics/claude-plugins-official"},
+        {"name": "alexgreensh-token-optimizer", "source": "github", "repo": "alexgreensh/token-optimizer",
+         "ref": "v5.13.17"}]))
+    machine.install_all(claudeplugins.BASE_PLUGINS)
+    _lines(monkeypatch)
+
+    # act
+    outcome = claudeplugins.step(env=machine.env())
+
+    # assert
+    assert outcome.state is claudeplugins.State.NOTHING_MISSING

@@ -240,12 +240,12 @@ def test_excluding_everything_is_refused():
 # --- reading what the machine already has --------------------------------------------------------------
 
 
-def test_installed_marketplace_names_reads_the_cli_json():
+def test_installed_marketplaces_reads_the_names_from_the_cli_json():
     # arrange / act
-    names = claudeplugins.installed_marketplace_names(_MARKETPLACES_JSON)
+    markets = claudeplugins.installed_marketplaces(_MARKETPLACES_JSON)
 
     # assert
-    assert names == ("alexgreensh-token-optimizer", "claude-plugins-official")
+    assert [m.name for m in markets] == ["alexgreensh-token-optimizer", "claude-plugins-official"]
 
 
 def test_installed_plugin_ids_dedups_the_same_plugin_listed_once_per_scope():
@@ -459,3 +459,55 @@ def test_a_complete_plugin_set_with_every_required_tool_present_is_still_nothing
 
     assert claudeplugins.install() == 0
     assert any(level == "ok" and "nothing to do" in msg for level, msg in lines)
+
+
+
+# --- si#581: a product's marketplace replaces the default of the same name ---------------------------
+
+
+def test_a_product_marketplace_replaces_the_default_of_the_same_name_in_its_place():
+    # arrange: firn pins token-optimizer. Keeping the ref-less default as well made `claude` add the
+    # unpinned one first and then refuse the pinned one (measured against the real CLI, si#581)
+    data = {"toolchains": ["claude"], "claude": {"marketplaces": {
+        "alexgreensh-token-optimizer": {"source": "github", "repo": "alexgreensh/token-optimizer",
+                                        "ref": "v5.13.17"}}}}
+
+    # act
+    eff = claudeplugins.effective(data)
+
+    # assert: one entry of that name, the product's, where the default stood
+    assert [(m.name, m.ref) for m in eff.markets] == [(_OFFICIAL, ""), ("alexgreensh-token-optimizer", "v5.13.17")]
+
+
+def test_installed_marketplaces_reads_repo_and_ref_from_the_cli_json():
+    # arrange: captured from claude 2.1.318 in a scratch home: `ref` is present only when pinned
+    payload = json.dumps([
+        {"name": "alexgreensh-token-optimizer", "source": "github", "repo": "alexgreensh/token-optimizer",
+         "ref": "v5.13.17", "installLocation": "/x"},
+        {"name": "claude-plugins-official", "source": "github", "repo": "anthropics/claude-plugins-official"}])
+
+    # act
+    markets = claudeplugins.installed_marketplaces(payload)
+
+    # assert
+    assert [(m.name, m.repo, m.ref) for m in markets] == [
+        ("alexgreensh-token-optimizer", "alexgreensh/token-optimizer", "v5.13.17"),
+        ("claude-plugins-official", "anthropics/claude-plugins-official", "")]
+
+
+@pytest.mark.parametrize("registered", [
+    claudeplugins.Marketplace("t", "o/t"),                 # unpinned, the manifest pins
+    claudeplugins.Marketplace("t", "o/t", "v2"),           # another ref
+    claudeplugins.Marketplace("t", "fork/t", "v1"),        # another repo
+])
+def test_plan_names_a_marketplace_registered_from_another_source_and_is_not_complete(registered):
+    # arrange
+    wanted = claudeplugins.Marketplace("t", "o/t", "v1")
+
+    # act
+    todo = claudeplugins.plan([wanted], ["p@t"], installed_markets=[registered], installed_plugins=["p@t"])
+
+    # assert: neither added again nor read as present
+    assert todo.mismatched_marketplaces == ((wanted, registered),)
+    assert todo.add_marketplaces == ()
+    assert todo.is_complete is False

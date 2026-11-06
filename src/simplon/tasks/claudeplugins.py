@@ -76,11 +76,15 @@ class Plan:
     add_marketplaces: tuple[Marketplace, ...]
     install_plugins: tuple[str, ...]
     present_plugins: tuple[str, ...]
+    #: (declared, registered) for a marketplace this machine registered from another repo or ref (si#581).
+    #: Not re-added: the CLI refuses a second source under one name, and removing the registered one is
+    #: the person's call, since every plugin installed from it goes with it.
+    mismatched_marketplaces: tuple[tuple[Marketplace, Marketplace], ...] = ()
 
     @property
     def is_complete(self) -> bool:
         """True when this machine already matches the declaration, which is what makes a rerun a no-op."""
-        return not self.add_marketplaces and not self.install_plugins
+        return not self.add_marketplaces and not self.install_plugins and not self.mismatched_marketplaces
 
 
 def _source_of(market: Marketplace) -> str:
@@ -244,7 +248,11 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
                          f"'claude' from 'toolchains:' to turn Claude support off instead")
     plugins = tuple(origin)
     used = {plugin.partition("@")[2] for plugin in plugins}
-    markets = tuple(m for m in (*DEFAULT_MARKETPLACES, *own_markets) if m.name in used)
+    # A product's entry REPLACES the default of the same name, in the default's place (si#581): keeping
+    # both made `claude` register the ref-less default first and then refuse the product's pinned one.
+    own_by_name = {m.name: m for m in own_markets}
+    merged = (*(own_by_name.pop(m.name, m) for m in DEFAULT_MARKETPLACES), *own_by_name.values())
+    markets = tuple(m for m in merged if m.name in used)
     requires: list[str] = []
     for name in (*(n for plugin in plugins for n in needs.get(plugin, ())), *required(data, source)):
         if name not in requires:
@@ -294,9 +302,12 @@ def _json_list(payload: str, what: str) -> list:
     return parsed
 
 
-def installed_marketplace_names(payload: str) -> tuple[str, ...]:
-    """The registered marketplace names from `claude plugin marketplace list --json`."""
-    return tuple(str(entry["name"]) for entry in _json_list(payload, "plugin marketplace list")
+def installed_marketplaces(payload: str) -> tuple[Marketplace, ...]:
+    """The registered marketplaces from `claude plugin marketplace list --json`, with the repo and ref each
+    was added from. Measured on claude 2.1.318: `ref` is listed only for a pinned one (si#581)."""
+    return tuple(Marketplace(name=str(entry["name"]), repo=str(entry.get("repo") or ""),
+                             ref=str(entry.get("ref") or ""))
+                 for entry in _json_list(payload, "plugin marketplace list")
                  if isinstance(entry, Mapping) and entry.get("name"))
 
 
@@ -315,17 +326,26 @@ def installed_plugin_ids(payload: str) -> tuple[str, ...]:
 
 
 def plan(markets: Iterable[Marketplace], plugins: Iterable[str],
-         installed_markets: Iterable[str], installed_plugins: Iterable[str]) -> Plan:
+         installed_markets: Iterable[Marketplace | str], installed_plugins: Iterable[str]) -> Plan:
     """What is missing: a pure set difference kept in DECLARATION order, so the output reads like the
     manifest. Idempotency falls out of this rather than being a separate guard - on a complete machine both
-    lists are empty and the command has nothing to do."""
-    have_markets = set(installed_markets)
+    lists are empty and the command has nothing to do.
+
+    A registered marketplace given as a `Marketplace` is also compared by repo and ref (si#581): one
+    registered from another source is a mismatch, not "present". A bare name is compared by name only.
+    """
+    have_markets = {m if isinstance(m, str) else m.name:
+                    None if isinstance(m, str) else m for m in installed_markets}
     have_plugins = set(installed_plugins)
     plugin_ids = tuple(plugins)
+    wanted = tuple(markets)
+    mismatched = tuple((m, have) for m in wanted
+                       if (have := have_markets.get(m.name)) is not None and (have.repo, have.ref) != (m.repo, m.ref))
     return Plan(
-        add_marketplaces=tuple(m for m in markets if m.name not in have_markets),
+        add_marketplaces=tuple(m for m in wanted if m.name not in have_markets),
         install_plugins=tuple(p for p in plugin_ids if p not in have_plugins),
         present_plugins=tuple(p for p in plugin_ids if p in have_plugins),
+        mismatched_marketplaces=mismatched,
     )
 
 
@@ -360,7 +380,7 @@ class _Failed(Exception):
     """A query that failed or hung: the step's FAILED, never an empty machine."""
 
 
-def _installed(timeout_s: float) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _installed(timeout_s: float) -> tuple[tuple[Marketplace, ...], tuple[str, ...]]:
     """Ask the `claude` CLI what is registered and installed. A failed or hung query is `_Failed`, never
     an empty machine (see `_json_list` for the same reasoning)."""
     answers = []
@@ -374,7 +394,7 @@ def _installed(timeout_s: float) -> tuple[tuple[str, ...], tuple[str, ...]]:
             raise _Failed(f"{shown} failed (rc {res.rc}): {res.err.strip() or res.out.strip()}")
         answers.append(res.out)
     try:
-        return installed_marketplace_names(answers[0]), installed_plugin_ids(answers[1])
+        return installed_marketplaces(answers[0]), installed_plugin_ids(answers[1])
     except ValueError as exc:
         raise _Failed(str(exc)) from exc
 
@@ -404,6 +424,13 @@ def _act(argv: list[str], timeout_s: float) -> str:
     except subprocess.TimeoutExpired:
         return f"`{' '.join(argv)}` did not finish within {timeout_s:g}s"
     return "" if res.ok else (res.err.strip() or res.out.strip() or f"rc {res.rc}")
+
+
+def _mismatch(declared: Marketplace, registered: Marketplace) -> str:
+    """Why a registered marketplace is not the declared one, and the way out (si#581)."""
+    return (f"marketplace {declared.name} is registered from {_source_of(registered)}, and the manifest "
+            f"declares {_source_of(declared)}; remove it with `claude plugin marketplace remove "
+            f"{declared.name}` (its plugins go with it) and run this again")
 
 
 def step(*, env: Mapping[str, str] | None = None, container: bool = False,
@@ -440,8 +467,8 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     if todo.is_complete:
         return Outcome(State.NOTHING_MISSING, count=len(eff.plugins), ready=ready)
 
-    failed: list[str] = []
-    unusable: set[str] = set()
+    failed: list[str] = [_mismatch(declared, registered) for declared, registered in todo.mismatched_marketplaces]
+    unusable: set[str] = {declared.name for declared, _ in todo.mismatched_marketplaces}
     for market in todo.add_marketplaces:
         log.info(f"registering marketplace {market.name} ({market.repo})")
         why = _act(["claude", "plugin", "marketplace", "add", _source_of(market)], install_timeout)
@@ -521,13 +548,15 @@ def install(dry_run: bool = False) -> int:
         report(Outcome(State.FAILED, str(exc)))
         return 1
     ready = _report_missing(missing(eff.requires, shutil.which))
+    for declared, registered in todo.mismatched_marketplaces:
+        log.warn(_mismatch(declared, registered))
     for market in todo.add_marketplaces:
         log.info(f"would register marketplace {market.name} ({market.repo})")
     for plugin_id in todo.install_plugins:
         log.info(f"would install {plugin_id}")
     log.ok(f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {len(todo.install_plugins)} "
            f"plugin(s) missing")
-    return 0 if ready else 1
+    return 0 if ready and not todo.mismatched_marketplaces else 1
 
 
 def _report_missing(absent: tuple[str, ...]) -> bool:
