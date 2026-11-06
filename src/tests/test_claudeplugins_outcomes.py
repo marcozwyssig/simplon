@@ -275,3 +275,17 @@ def test_a_marketplace_registered_at_the_pinned_ref_is_nothing_missing(machine, 
 
     # assert
     assert outcome.state is claudeplugins.State.NOTHING_MISSING
+
+
+
+def test_auto_install_false_does_not_stop_an_explicit_install(machine, monkeypatch):
+    # arrange: si#583 turns off the LAUNCHER's automatic step only; `support install` still installs
+    machine.data = {"toolchains": ["claude"], "claude": {"auto_install": False}}
+    _lines(monkeypatch)
+
+    # act
+    outcome = claudeplugins.step(env=machine.env())
+
+    # assert
+    assert outcome.state is claudeplugins.State.INSTALLED
+    assert outcome.count == len(claudeplugins.BASE_PLUGINS)

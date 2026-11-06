@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 258 | nothing - the declaration had no working meaning |
+| diagnosis | 259 | nothing - the declaration had no working meaning |
 | expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **301** | |
+| **all load-time refusals** | **302** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
@@ -113,6 +113,9 @@ not declare is refused at load by the port's rule, not first when `deploy up` ru
 si#419 added one diagnosis: a `parallel: true` aggregate may not run a consumer beside the producer of
 what it consumes, because a fan starts its branches at once and the consumer may read the artifact before
 it is written. No live manifest says `parallel:`, so it refuses none of them.
+
+si#583 added one diagnosis: `claude: { auto_install: }` that is not `true` or `false`. A quoted
+`"false"` is a truthy string, so read loosely it would have installed what the product said not to.
 
 si#578 added one diagnosis: a pinned `with:` value whose type contradicts the scalar annotation of the
 body's parameter, such as an unquoted `bootstrap: true` for a `str`. Nothing converts a `with:` value, so

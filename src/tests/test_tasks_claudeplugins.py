@@ -511,3 +511,27 @@ def test_plan_names_a_marketplace_registered_from_another_source_and_is_not_comp
     assert todo.mismatched_marketplaces == ((wanted, registered),)
     assert todo.add_marketplaces == ()
     assert todo.is_complete is False
+
+
+
+# --- si#583: a product can turn the launcher's automatic step off -----------------------------------
+
+
+@pytest.mark.parametrize("section, expected", [(None, True), ({}, True), ({"auto_install": True}, True),
+                                               ({"auto_install": False}, False)])
+def test_auto_install_is_on_unless_the_product_says_false(section, expected):
+    # arrange
+    data = {"toolchains": ["claude"], **({} if section is None else {"claude": section})}
+
+    # act / assert
+    assert claudeplugins.effective(data).auto_install is expected
+
+
+@pytest.mark.parametrize("value", ["false", "no", 0, None])
+def test_an_auto_install_that_is_not_a_bool_is_refused(value):
+    # arrange: a quoted "false" read as truthy would install what the product said not to
+    data = {"toolchains": ["claude"], "claude": {"auto_install": value}}
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"'claude.auto_install' is true or false, got"):
+        claudeplugins.effective(data)
