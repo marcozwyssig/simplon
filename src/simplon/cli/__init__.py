@@ -31,7 +31,8 @@ import simplon
 from simplon.manifest import bound, clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
-from simplon.manifest.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
+from simplon.manifest.context import (ENVIRONMENT_ENV, ManifestRefused, ProductContext, environment_name,
+                                      launcher)
 from simplon.manifest import launcherenv, load as manifest, results
 from simplon.model import task
 from simplon.model.command import AggregateCommand, Command, TaskCommand
@@ -222,9 +223,14 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
     known = {p.name for p in params}
     unknown = sorted((set(pinned) | set(presentation)) - known)
     if unknown:
-        raise ValueError(f"{where}: `with:`/`params:` name parameter(s) the impl does not take: "
-                         f"{', '.join(unknown)}")
-    signatures.check_pinned_types(params, pinned, where=where, impl=spec.impl)
+        raise ManifestRefused(f"{where}: `with:`/`params:` name parameter(s) the impl does not take: "
+                              f"{', '.join(unknown)}")
+    # MANIFESTREFUSED, not ValueError (si#585): assembly runs at IMPORT in every scaffolded cli.py, so only
+    # the hook `set_current` installs stands above it, and it drops the traceback for this type alone.
+    try:
+        signatures.check_pinned_types(params, pinned, where=where, impl=spec.impl)
+    except ValueError as exc:
+        raise ManifestRefused(str(exc)) from None
 
     sig = inspect.signature(fn)
     keep = [p for p in sig.parameters.values()
@@ -352,11 +358,11 @@ def receivers(mf: manifest.Manifest, group: str, name: str,
             if param.name not in out or param.name in (leaf_spec.with_ or {}):
                 continue
             if param.annotation in (bool, "bool") or isinstance(param.default, bool):
-                raise ValueError(f"{where}: passes `{param.name}`, which `{leaf.path}` takes as a flag - "
-                                 f"`passes:` hands on a value, and a flag has none to hand")
+                raise ManifestRefused(f"{where}: passes `{param.name}`, which `{leaf.path}` takes as a flag - "
+                                      f"`passes:` hands on a value, and a flag has none to hand")
             if isinstance(param.default, (typer.models.OptionInfo, typer.models.ArgumentInfo)):
-                raise ValueError(f"{where}: passes `{param.name}`, whose spelling `{leaf.path}` declares in "
-                                 f"a Typer default - declare it under the command's `params:` instead")
+                raise ManifestRefused(f"{where}: passes `{param.name}`, whose spelling `{leaf.path}` declares in "
+                                      f"a Typer default - declare it under the command's `params:` instead")
             presentation = (leaf_spec.params or {}).get(param.name)
             form = signatures.shape(param.name, required=param.required, presentation=presentation)
             positional = signatures.positional(param, presentation)
@@ -365,8 +371,8 @@ def receivers(mf: manifest.Manifest, group: str, name: str,
                                             getattr(presentation, "help", None)))
     for passed, takers in out.items():
         if not takers:
-            raise ValueError(f"{where}: passes `{passed}`, but no leaf it plans takes it unpinned - "
-                             f"planned are {', '.join(leaf.path for leaf in tree.leaves())}")
+            raise ManifestRefused(f"{where}: passes `{passed}`, but no leaf it plans takes it unpinned - "
+                                  f"planned are {', '.join(leaf.path for leaf in tree.leaves())}")
     return out
 
 

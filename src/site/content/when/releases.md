@@ -23,6 +23,26 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.40.0
+
+**What a product has to do:** nothing.
+
+### A manifest refused while the CLI is assembled reads like one refused while it loads (si#585)
+
+- **The refusals `assemble()` makes about a manifest print as their message alone, rc 1**, not at the
+  foot of a Python traceback. Measured by cleon-firn on 0.39.0: si#578's refusal of an unquoted
+  `bootstrap: true` was right, and arrived under 18 lines of traceback. Assembly runs at import in every
+  scaffolded `cli.py`, so only the hook that drops the traceback for a load refusal (si#405) stands
+  above it, and these refusals were not of that type. They now are: a `with:`/`params:` key the body
+  does not take, a `with:` value of the wrong type, and the three `passes:` refusals.
+- A defect keeps its traceback, as before, including a product `cli.py` that does not hand
+  `assemble()` the step context its aggregates need.
+
+### Also in this release
+
+- **#584** pins `deploy/image/image.pin` to the v0.39.0 kernel image, again published by hand
+  (si#574).
+
 ## 0.39.0
 
 **What a product has to do:** nothing, unless it pins a `with:` value of a type its body does not
