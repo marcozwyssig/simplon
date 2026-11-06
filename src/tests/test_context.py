@@ -263,3 +263,30 @@ def test_a_manifest_refusal_is_still_a_value_error_to_a_caller(tmp_path):
 
     # assert
     assert isinstance(caught.value, ValueError)
+
+
+_ASSEMBLE_AT_IMPORT = (
+    "import typer\n"
+    "from simplon import cli as simplon_cli\n"
+    "simplon_cli.assemble(typer.Typer(), ctx.manifest(), product='sample')")
+
+
+@pytest.mark.parametrize("pin, said", [
+    ("{ bootstrap: true }", "pins bootstrap: True, a bool"),           # si#578's type check
+    ('{ bootstrapp: "true" }', "name parameter(s) the impl does not take: bootstrapp"),
+])
+def test_a_manifest_refused_while_the_cli_is_assembled_prints_the_diagnosis_without_a_traceback(
+        tmp_path, pin, said):
+    # arrange: si#585 - cleon-firn on 0.39.0 got si#578's refusal as 18 lines of traceback, because
+    # assembly runs at import in every scaffolded cli.py and its refusals bypassed the load's hook
+    (tmp_path / "sample.yaml").write_text(
+        "ci:\n  build:\n    commands:\n"
+        f"      binary: {{ task: \"build:model-binary\", with: {pin}, help: \"b\" }}\n", encoding="utf-8")
+
+    # act
+    done = _run_a_product_import(tmp_path, _ASSEMBLE_AT_IMPORT)
+
+    # assert: the diagnosis alone, and still a failure
+    assert done.returncode == 1
+    assert "Traceback" not in done.stderr, done.stderr
+    assert said in done.stderr, done.stderr
