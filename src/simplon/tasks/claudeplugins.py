@@ -199,6 +199,9 @@ class Effective:
     plugins: tuple[str, ...]
     requires: tuple[str, ...]
     origin: Mapping[str, str]
+    #: False when the product turned the LAUNCHER's automatic step off (si#583); an explicit
+    #: `support install` or `support claude-plugins` installs regardless.
+    auto_install: bool = True
 
 
 def effective(data: Mapping[str, object], source: str = "manifest") -> Effective | None:
@@ -257,7 +260,13 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
     for name in (*(n for plugin in plugins for n in needs.get(plugin, ())), *required(data, source)):
         if name not in requires:
             requires.append(name)
-    return Effective(markets=markets, plugins=plugins, requires=tuple(requires), origin=origin)
+    auto = section.get("auto_install", True)     # present-but-empty (`auto_install:`) is None, refused
+    if not isinstance(auto, bool):
+        # A quoted "false" is a truthy string: read loosely it would install what the product said not to.
+        raise ValueError(f"{source}: '{SECTION}.auto_install' is true or false, got {auto!r} - write it "
+                         f"unquoted")
+    return Effective(markets=markets, plugins=plugins, requires=tuple(requires), origin=origin,
+                     auto_install=auto)
 
 
 def required(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:

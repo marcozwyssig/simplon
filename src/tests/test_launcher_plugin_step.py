@@ -101,3 +101,60 @@ def test_the_launchers_step_writes_to_stderr_so_a_captured_stdout_stays_clean(mo
     out, err = capfd.readouterr()
     assert out == ""
     assert "skipped" in err
+
+
+
+def _product(monkeypatch, tmp_path, claude_section):
+    import types
+    data = {"toolchains": ["claude"], **({"claude": claude_section} if claude_section is not None else {})}
+    ctx = types.SimpleNamespace(manifest_data=lambda: data, manifest_path=tmp_path / "demo.yaml")
+    monkeypatch.setattr(claudeplugins.context, "current", lambda: ctx)
+
+
+def test_auto_install_false_skips_the_launchers_step_and_says_nothing(monkeypatch, tmp_path, capfd):
+    # arrange: si#583 - firn's security review flags `./firn.sh test all` installing plugins from a
+    # third-party repository; with the key off only an explicit `support install` installs
+    _product(monkeypatch, tmp_path, {"auto_install": False})
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    monkeypatch.setattr(claudeplugins, "step", lambda: pytest.fail("the automatic step ran"))
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert: silent, as the product chose, and the variable is still consumed
+    out, err = capfd.readouterr()
+    assert out == "" and err == ""
+    assert cli.PLUGIN_STEP_ENV not in os.environ
+
+
+@pytest.mark.parametrize("section", [None, {"auto_install": True}])
+def test_auto_install_absent_or_true_keeps_the_launchers_step(monkeypatch, tmp_path, section):
+    # arrange
+    _product(monkeypatch, tmp_path, section)
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    ran = []
+    monkeypatch.setattr(claudeplugins, "step", lambda: ran.append(1) or claudeplugins.Outcome(
+        claudeplugins.State.NOTHING_MISSING))
+    monkeypatch.setattr(claudeplugins, "report", lambda outcome: None)
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert
+    assert ran == [1]
+
+
+def test_a_malformed_auto_install_still_reaches_the_step_so_its_diagnosis_is_reported(monkeypatch, tmp_path):
+    # arrange: the launcher must not read an unreadable key as "off" - that would hide the diagnosis
+    _product(monkeypatch, tmp_path, {"auto_install": "false"})
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    ran = []
+    monkeypatch.setattr(claudeplugins, "step", lambda: ran.append(1) or claudeplugins.Outcome(
+        claudeplugins.State.FAILED, "bad"))
+    monkeypatch.setattr(claudeplugins, "report", lambda outcome: None)
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert
+    assert ran == [1]

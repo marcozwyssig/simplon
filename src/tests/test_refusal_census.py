@@ -906,6 +906,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("claudeplugins", "effective", "so the effective plugin set is empty"): DIAGNOSIS,
     # A `claude:` section with no `claude` toolchain is a declaration nothing reads (final review, si#525).
     ("claudeplugins", "effective", "but 'claude' is not in"): DIAGNOSIS,
+    # si#583. `auto_install:` that is not a bool: a quoted "false" read loosely is truthy and would install
+    # what the product said not to, so it could not have produced the working product it asked for.
+    ("claudeplugins", "effective", "auto_install' is true or false"): DIAGNOSIS,
     # --- tasks/profiles.py: the `toolchains:` list (si#525) -------------------------------------------
     # An unknown name is refused rather than read as "off": a misspelt `Claude` would turn Claude support
     # off without a word. A duplicate has no second meaning, and a scalar would iterate as letters.

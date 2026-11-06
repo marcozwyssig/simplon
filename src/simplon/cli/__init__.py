@@ -630,6 +630,8 @@ def plugin_step_after_refresh() -> None:
 
     if os.environ.pop(PLUGIN_STEP_ENV, "") != "1":
         return
+    if not _auto_install():
+        return              # the product turned the automatic step off (si#583), and asked for silence
     # ON STDERR, all of it: this runs before the command a person typed, and `V=$(./<product>.sh
     # release version)` right after a deps refresh must capture the version and nothing else.
     with contextlib.redirect_stdout(sys.stderr):
@@ -640,6 +642,23 @@ def plugin_step_after_refresh() -> None:
             return
         if outcome.state is not claudeplugins.State.OFF:
             claudeplugins.report(outcome)
+
+
+def _auto_install() -> bool:
+    """False only when the product's manifest READS `claude: { auto_install: false }` (si#583).
+
+    Anything unreadable is True, so that the step runs and reports the manifest's diagnosis as FAILED,
+    as it does today. Read as False, a malformed key would silence the very line that names it.
+    """
+    from simplon.manifest import context as _context
+    from simplon.tasks import claudeplugins
+
+    try:
+        ctx = _context.current()
+        eff = claudeplugins.effective(ctx.manifest_data(), source=str(ctx.manifest_path))
+    except Exception:   # noqa: BLE001 - see the docstring: the step reports it
+        return True
+    return eff is None or eff.auto_install
 
 
 #: What a person types to ask for the headless runner; `simplon.kernel.steps.NO_TUI_ENV` is what

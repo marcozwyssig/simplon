@@ -56,6 +56,17 @@ it is the one section held only to existing.
   registered; on a home with the unpinned one, the mismatch is named, and after the named removal
   a rerun registers it pinned.
 
+### A product can turn off the launcher's automatic plugin step (si#583)
+
+- **`claude: { auto_install: false }`** stops the launcher from installing missing Claude Code plugins
+  before whatever command was typed after a deps refresh (si#525). Plugins then install only through an
+  explicit `support install` or `support claude-plugins`, which this key does not touch. Absent, or `true`,
+  nothing changes. Asked for by firn: its security review flagged `./firn.sh test all` fetching a
+  third-party marketplace on a fresh machine.
+- With the key off the launcher says nothing, because the product chose it. A value that is not `true` or
+  `false` is refused, so a quoted `"false"` cannot read as truthy. The launcher then still runs the step,
+  so the refusal is reported rather than read as "off".
+
 ### Also in this release
 
 - **#584** pins `deploy/image/image.pin` to the v0.39.0 kernel image, again published by hand
