@@ -43,6 +43,11 @@ next time it is regenerated.
 - The launcher's comment on the automatic plugin step now names `claude: { auto_install: false }`
   (si#583).
 
+### Also in this release
+
+- **#591** pins `deploy/image/image.pin` to the v0.40.0 kernel image, again published by hand
+  (si#574).
+
 ## 0.40.0
 
 **What a product has to do:** nothing.
