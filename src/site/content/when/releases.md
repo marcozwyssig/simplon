@@ -36,6 +36,11 @@ it is the one section held only to existing.
 - **The real run gives the same reason** instead of "its marketplace could not be registered", which
   stays for a marketplace whose registration actually failed.
 
+### Also in this release
+
+- **#595** pins `deploy/image/image.pin` to the v0.41.0 kernel image, again published by hand
+  (si#574).
+
 ## 0.41.0
 
 **What a product has to do:** nothing. A product's own launcher picks up the corrected comment the
