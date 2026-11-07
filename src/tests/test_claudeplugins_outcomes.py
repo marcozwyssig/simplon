@@ -359,3 +359,39 @@ def test_registering_a_pinned_marketplace_prints_its_ref(machine, monkeypatch):
     # assert
     assert ("registering marketplace alexgreensh-token-optimizer (alexgreensh/token-optimizer#v5.13.17)"
             in [msg for _, msg in lines])
+
+
+# --- si#596: a mismatched marketplace's plugins are skipped, and both runs say why ------------------------
+
+_OPTIMIZER = "token-optimizer@alexgreensh-token-optimizer"
+
+
+def test_the_dry_run_skips_the_plugins_of_a_mismatched_marketplace(machine, monkeypatch):
+    # arrange: nothing installed, the marketplace registered unpinned, the manifest pins it
+    machine.data = _PINNED
+    lines = _lines(monkeypatch)
+
+    # act
+    claudeplugins.install(dry_run=True)
+
+    # assert: the preview agrees with what step() does
+    shown = [msg for _, msg in lines]
+    assert f"would install {_OPTIMIZER}" not in shown
+    assert (f"would skip {_OPTIMIZER}: its marketplace alexgreensh-token-optimizer is registered from "
+            f"another source") in shown
+    assert any(m.startswith(f"would install {p}") for m in shown for p in claudeplugins.BASE_PLUGINS
+               if p != _OPTIMIZER)
+
+
+def test_the_run_names_a_mismatch_as_the_reason_it_skips_a_plugin(machine, monkeypatch):
+    # arrange
+    machine.data = _PINNED
+    _lines(monkeypatch)
+
+    # act
+    outcome = claudeplugins.step(env=machine.env())
+
+    # assert
+    assert (f"{_OPTIMIZER} skipped: its marketplace alexgreensh-token-optimizer is registered from another "
+            f"source") in outcome.detail
+    assert "could not be registered" not in outcome.detail

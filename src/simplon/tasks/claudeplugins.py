@@ -435,6 +435,11 @@ def _act(argv: list[str], timeout_s: float) -> str:
     return "" if res.ok else (res.err.strip() or res.out.strip() or f"rc {res.rc}")
 
 
+#: Why a plugin of a mismatched marketplace (si#581) is not installed - one wording for the run and its
+#: dry run (si#596). Not "could not be registered": it IS registered, from another source.
+_ELSEWHERE = "its marketplace {} is registered from another source"
+
+
 def _mismatch(declared: Marketplace, registered: Marketplace) -> str:
     """Why a registered marketplace is not the declared one, and the way out (si#581)."""
     return (f"marketplace {declared.name} is registered from {_source_of(registered)}, and the manifest "
@@ -477,7 +482,8 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
         return Outcome(State.NOTHING_MISSING, count=len(eff.plugins), ready=ready)
 
     failed: list[str] = [_mismatch(declared, registered) for declared, registered in todo.mismatched_marketplaces]
-    unusable: set[str] = {declared.name for declared, _ in todo.mismatched_marketplaces}
+    mismatched: set[str] = {declared.name for declared, _ in todo.mismatched_marketplaces}
+    unusable: set[str] = set()
     for market in todo.add_marketplaces:
         log.info(f"registering marketplace {market.name} ({_source_of(market)})")
         why = _act(["claude", "plugin", "marketplace", "add", _source_of(market)], install_timeout)
@@ -489,6 +495,9 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     installed = 0
     for plugin_id in todo.install_plugins:
         market_name = plugin_id.partition("@")[2]
+        if market_name in mismatched:
+            failed.append(f"{plugin_id} skipped: {_ELSEWHERE.format(market_name)}")
+            continue
         if market_name in unusable:
             failed.append(f"{plugin_id} skipped: its marketplace {market_name} could not be registered")
             continue
@@ -563,9 +572,16 @@ def install(dry_run: bool = False) -> int:
         log.warn(_mismatch(declared, registered))
     for market in todo.add_marketplaces:
         log.info(f"would register marketplace {market.name} ({_source_of(market)})")
+    mismatched = {declared.name for declared, _ in todo.mismatched_marketplaces}
+    installable = 0
     for plugin_id in todo.install_plugins:
+        market_name = plugin_id.partition("@")[2]
+        if market_name in mismatched:     # step() skips these (si#596): the preview must not promise them
+            log.info(f"would skip {plugin_id}: {_ELSEWHERE.format(market_name)}")
+            continue
         log.info(f"would install {plugin_id}")
-    verdict = (f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {len(todo.install_plugins)} "
+        installable += 1
+    verdict = (f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {installable} "
                f"plugin(s) missing")
     if ready and not todo.mismatched_marketplaces:
         log.ok(verdict)

@@ -23,6 +23,24 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.42.0
+
+**What a product has to do:** nothing.
+
+### A mismatched marketplace's plugins are skipped in the dry run too, and both runs say why (si#596)
+
+- **`support claude-plugins -n` no longer lists a plugin as "would install" when the real run skips
+  it.** Reported by firn on 0.41.0: with token-optimizer registered from another source (si#581), the
+  dry run still promised to install its plugin. It now prints `would skip <plugin>: its marketplace
+  <name> is registered from another source`, and the plugin is not counted as missing.
+- **The real run gives the same reason** instead of "its marketplace could not be registered", which
+  stays for a marketplace whose registration actually failed.
+
+### Also in this release
+
+- **#595** pins `deploy/image/image.pin` to the v0.41.0 kernel image, again published by hand
+  (si#574).
+
 ## 0.41.0
 
 **What a product has to do:** nothing. A product's own launcher picks up the corrected comment the
