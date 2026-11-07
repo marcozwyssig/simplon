@@ -479,13 +479,13 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     failed: list[str] = [_mismatch(declared, registered) for declared, registered in todo.mismatched_marketplaces]
     unusable: set[str] = {declared.name for declared, _ in todo.mismatched_marketplaces}
     for market in todo.add_marketplaces:
-        log.info(f"registering marketplace {market.name} ({market.repo})")
+        log.info(f"registering marketplace {market.name} ({_source_of(market)})")
         why = _act(["claude", "plugin", "marketplace", "add", _source_of(market)], install_timeout)
         if not why:
             log.ok(f"marketplace {market.name} registered")
         else:
             unusable.add(market.name)
-            failed.append(f"marketplace {market.name} ({market.repo}) could not be registered: {why}")
+            failed.append(f"marketplace {market.name} ({_source_of(market)}) could not be registered: {why}")
     installed = 0
     for plugin_id in todo.install_plugins:
         market_name = plugin_id.partition("@")[2]
@@ -545,6 +545,8 @@ def install(dry_run: bool = False) -> int:
     if eff is None:
         report(Outcome(State.OFF))
         return 0
+    for market in eff.markets:
+        log.info(f"marketplace {market.name} ({_source_of(market)}, {_market_origin(market)})")
     for plugin_id in eff.plugins:
         log.info(f"{plugin_id} ({eff.origin[plugin_id]})")
     reason = _skip_reason(__import__("os").environ, container=False)
@@ -560,12 +562,26 @@ def install(dry_run: bool = False) -> int:
     for declared, registered in todo.mismatched_marketplaces:
         log.warn(_mismatch(declared, registered))
     for market in todo.add_marketplaces:
-        log.info(f"would register marketplace {market.name} ({market.repo})")
+        log.info(f"would register marketplace {market.name} ({_source_of(market)})")
     for plugin_id in todo.install_plugins:
         log.info(f"would install {plugin_id}")
-    log.ok(f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {len(todo.install_plugins)} "
-           f"plugin(s) missing")
-    return 0 if ready and not todo.mismatched_marketplaces else 1
+    verdict = (f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {len(todo.install_plugins)} "
+               f"plugin(s) missing")
+    if ready and not todo.mismatched_marketplaces:
+        log.ok(verdict)
+        return 0
+    # The line a person reads last must not say green under an rc of 1 (si#592).
+    log.warn(f"{verdict}, and the run is red: see the warnings above")
+    return 1
+
+
+def _market_origin(market: Marketplace) -> str:
+    """`default`, `product`, or `product, replaces the default` when the product's entry took a default's
+    name (si#581) - the per-plugin origin cannot show that, because the plugin is still the default's."""
+    defaults = {m.name: m for m in DEFAULT_MARKETPLACES}
+    if defaults.get(market.name) == market:
+        return "default"
+    return "product, replaces the default" if market.name in defaults else "product"
 
 
 def _report_missing(absent: tuple[str, ...]) -> bool:
