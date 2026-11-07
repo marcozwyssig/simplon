@@ -49,6 +49,7 @@
 #   v0.39.0: digest sha256:d28673c6012d4a9d10b7e74dd2189e79030ef98a506a3e480c43ffa1ae026ebd
 #   v0.40.0: digest sha256:a42cbeb1e27372f3183b29cbe59c7d447315027be86b2787a892fc3fb46fccb5
 #   v0.41.0: digest sha256:1c01b070f4efd5fb262a7685315905ee07448e140043f795f91e55b22c05a6c3
+#   v0.42.0: digest sha256:6a005941430c0f8a7c6507697987b44fe11f96f11048fcf7dc3b22ac54927b9c
 #
 # THE FIRST ATTEMPT FAILED ON THE NETWORK and not on the credential - four layers were already up when
 # one timed out awaiting response headers. The second run pushed the rest and read the tag back. Noted
@@ -59,4 +60,4 @@
 # repository deliberately does not keep, so there was no route to publish at all and this file carried
 # a paragraph explaining the absence. ghcr.io needs none: `release:image` logs in with the token Actions
 # issues per run, or `gh auth token` for an operator publishing by hand.
-ghcr.io/marcozwyssig/simplon:v0.41.0
+ghcr.io/marcozwyssig/simplon:v0.42.0
