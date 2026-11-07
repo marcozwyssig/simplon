@@ -289,3 +289,73 @@ def test_auto_install_false_does_not_stop_an_explicit_install(machine, monkeypat
     # assert
     assert outcome.state is claudeplugins.State.INSTALLED
     assert outcome.count == len(claudeplugins.BASE_PLUGINS)
+
+
+# --- si#592: the dry run's verdict matches its rc, and a marketplace shows its source --------------------
+
+_PINNED = {"toolchains": ["claude"], "claude": {"marketplaces": {
+    "alexgreensh-token-optimizer": {"source": "github", "repo": "alexgreensh/token-optimizer",
+                                    "ref": "v5.13.17"}}}}
+
+
+def test_a_red_dry_run_does_not_end_on_an_ok_line(machine, monkeypatch):
+    # arrange: the home registered the marketplace unpinned, the manifest pins it (firn, 0.40.0)
+    machine.data = _PINNED
+    machine.install_all(claudeplugins.BASE_PLUGINS)
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudeplugins.install(dry_run=True)
+
+    # assert
+    assert rc == 1
+    assert lines[-1][0] == "warn"
+    assert not any(level == "ok" for level, _ in lines)
+
+
+def test_a_green_dry_run_still_ends_on_an_ok_line(machine, monkeypatch):
+    # arrange: every executable the default plugins run is on this PATH too
+    machine.install_all(claudeplugins.BASE_PLUGINS)
+    for name in ("node", "gh"):
+        (machine.bin / name).write_text("#!/bin/sh\n")
+        (machine.bin / name).chmod(0o755)
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudeplugins.install(dry_run=True)
+
+    # assert
+    assert rc == 0
+    assert lines[-1][0] == "ok"
+
+
+def test_the_dry_run_names_a_replaced_marketplace_and_its_ref(machine, monkeypatch):
+    # arrange: an empty home, so the pinned marketplace would be registered
+    machine.data = _PINNED
+    monkeypatch.setenv("FAKE_MARKETS", "[]")
+    lines = _lines(monkeypatch)
+
+    # act
+    claudeplugins.install(dry_run=True)
+
+    # assert
+    shown = [msg for _, msg in lines]
+    assert ("marketplace alexgreensh-token-optimizer (alexgreensh/token-optimizer#v5.13.17, "
+            "product, replaces the default)") in shown
+    assert "marketplace claude-plugins-official (anthropics/claude-plugins-official, default)" in shown
+    assert ("would register marketplace alexgreensh-token-optimizer "
+            "(alexgreensh/token-optimizer#v5.13.17)") in shown
+
+
+def test_registering_a_pinned_marketplace_prints_its_ref(machine, monkeypatch):
+    # arrange
+    machine.data = _PINNED
+    monkeypatch.setenv("FAKE_MARKETS", "[]")
+    lines = _lines(monkeypatch)
+
+    # act
+    claudeplugins.step(env=machine.env())
+
+    # assert
+    assert ("registering marketplace alexgreensh-token-optimizer (alexgreensh/token-optimizer#v5.13.17)"
+            in [msg for _, msg in lines])

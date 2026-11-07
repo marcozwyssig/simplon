@@ -23,6 +23,31 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.41.0
+
+**What a product has to do:** nothing. A product's own launcher picks up the corrected comment the
+next time it is regenerated.
+
+### The plugin dry run's last line agrees with its exit code, and a marketplace shows its source (si#592)
+
+- **`support claude-plugins -n` no longer ends on an OK line when it exits 1.** Reported by firn on
+  0.40.0: on a home where token-optimizer was registered unpinned and the manifest pins it, the dry run
+  named the mismatch, printed `OK dry run: 0 marketplace(s) and 0 plugin(s) missing`, and exited 1.
+  The verdict line is now a warning whenever the run is red, which also covers a required executable
+  missing from PATH (si#396).
+- **The dry run lists each marketplace with the source it is registered from and where it comes
+  from:** `default`, `product`, or `product, replaces the default` (si#581). The per-plugin origin
+  could not show a replaced marketplace, because the plugin itself is still the default's.
+- **The lines that register a marketplace, and the dry run's "would register", print the ref**
+  (`owner/repo#ref`, the source handed to `claude`), not the repo alone.
+- The launcher's comment on the automatic plugin step now names `claude: { auto_install: false }`
+  (si#583).
+
+### Also in this release
+
+- **#591** pins `deploy/image/image.pin` to the v0.40.0 kernel image, again published by hand
+  (si#574).
+
 ## 0.40.0
 
 **What a product has to do:** nothing.
