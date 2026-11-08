@@ -909,6 +909,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#583. `auto_install:` that is not a bool: a quoted "false" read loosely is truthy and would install
     # what the product said not to, so it could not have produced the working product it asked for.
     ("claudeplugins", "effective", "auto_install' is true or false"): DIAGNOSIS,
+    # si#590. A key the section does not read, at the top or in a marketplace entry. It never did anything,
+    # so it could not have done what its author meant: `auto_instal: false` left the install on, `rev:` left
+    # the marketplace unpinned. Over the nine reachable manifests it refuses none.
+    ("claudeplugins", "_refuse_unknown_keys", "declares unknown key"): DIAGNOSIS,
     # --- tasks/profiles.py: the `toolchains:` list (si#525) -------------------------------------------
     # An unknown name is refused rather than read as "off": a misspelt `Claude` would turn Claude support
     # off without a word. A duplicate has no second meaning, and a scalar would iterate as letters.

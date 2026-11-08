@@ -35,6 +35,10 @@ from simplon.kernel.run import run
 
 # The manifest section this module owns.
 SECTION = "claude"
+# The keys its readers read (si#590): `declared`, `effective` and `required` between them. Anything else is
+# refused, because a key nothing reads is a typo that silently became the default.
+CLAUDE_KEYS = ("marketplaces", "plugins", "exclude", "requires", "auto_install")
+MARKETPLACE_KEYS = ("source", "repo", "ref")
 
 # Claude Code's BUILT-IN marketplace. Its own settings schema exempts this name from needing an
 # `extraKnownMarketplaces` entry, because only the official Anthropic source can ever register under it. A
@@ -96,6 +100,15 @@ def _source_of(market: Marketplace) -> str:
     return f"{market.repo}#{market.ref}" if market.ref else market.repo
 
 
+def _refuse_unknown_keys(body: Mapping, known: tuple[str, ...], where: str, source: str) -> None:
+    """A key nothing reads could not have done what its author meant: `auto_instal: false` left the
+    automatic install on, `rev: v1` left the marketplace unpinned, and neither said so (si#590)."""
+    unknown = sorted(str(k) for k in body if k not in known)
+    if unknown:
+        raise ValueError(f"{source}: '{where}' declares unknown key `{unknown[0]}:` - it takes "
+                         f"{', '.join(known)}")
+
+
 def declared(data: Mapping[str, object],
              source: str = "manifest") -> tuple[tuple[Marketplace, ...], tuple[str, ...]]:
     """The marketplaces and plugin ids the manifest declares, validated LOUDLY.
@@ -113,6 +126,7 @@ def declared(data: Mapping[str, object],
     section, blame, _ = context.section(data, SECTION)
     if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is not a mapping")
+    _refuse_unknown_keys(section, CLAUDE_KEYS, SECTION, source)
 
     raw_markets = section.get("marketplaces") or {}
     if not isinstance(raw_markets, Mapping):
@@ -122,6 +136,7 @@ def declared(data: Mapping[str, object],
         where = f"{SECTION}.marketplaces.{name}"
         if not isinstance(body, Mapping):
             raise ValueError(f"{source}: '{where}' must be a mapping with 'source' and 'repo'")
+        _refuse_unknown_keys(body, MARKETPLACE_KEYS, where, source)
         kind = str(body.get("source", "")).strip()
         repo = str(body.get("repo", "")).strip()
         if kind != "github":
