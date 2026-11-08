@@ -535,3 +535,38 @@ def test_an_auto_install_that_is_not_a_bool_is_refused(value):
     # act / assert
     with pytest.raises(ValueError, match=r"'claude.auto_install' is true or false, got"):
         claudeplugins.effective(data)
+
+
+# --- si#590: a key the section does not read is a typo, not a default -----------------------------------
+
+
+@pytest.mark.parametrize("key", ["auto_instal", "plugin", "excludes", "require"])
+def test_an_unknown_key_in_the_section_is_refused_and_the_known_keys_are_named(key):
+    # arrange: `auto_instal: false` used to leave the automatic install ON without a word
+    data = {"toolchains": ["claude"], "claude": {key: False}}
+
+    # act / assert
+    with pytest.raises(ValueError, match=rf"'claude' declares unknown key `{key}:`.*auto_install"):
+        claudeplugins.effective(data)
+
+
+def test_an_unknown_key_in_a_marketplace_is_refused_and_the_known_keys_are_named():
+    # arrange: `rev: v1` used to fetch the default branch, unpinned, without a word
+    data = _one_market(rev="v1.2.3")
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"'claude.marketplaces.m' declares unknown key `rev:`.*ref"):
+        claudeplugins.declared(data)
+
+
+def test_every_key_the_section_reads_is_accepted():
+    # arrange: the known-key list is a second source for what the readers read, so hold it to them
+    data = {"toolchains": ["claude"],
+            "claude": {"marketplaces": {"m": {"source": "github", "repo": "o/r", "ref": "v1"}},
+                       "plugins": ["p@m"], "exclude": [], "requires": ["node"], "auto_install": False}}
+
+    # act
+    eff = claudeplugins.effective(data)
+
+    # assert
+    assert eff.auto_install is False and "p@m" in eff.plugins and "node" in eff.requires

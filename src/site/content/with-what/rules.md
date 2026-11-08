@@ -71,9 +71,14 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 259 | nothing - the declaration had no working meaning |
+| diagnosis | 260 | nothing - the declaration had no working meaning |
 | expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **302** | |
+| **all load-time refusals** | **303** | |
+
+si#590 added one diagnosis: a key the `claude:` section, or one of its marketplace entries, does not
+read. It was ignored before, so `auto_instal: false` left the automatic install on and `rev:` left a
+marketplace unpinned, and neither said so. The message names the keys the section takes. Over the nine
+reachable manifests it refuses none.
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
