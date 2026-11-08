@@ -4,6 +4,11 @@ The red case is measured behaviour (spec D): `brew audit --strict` is red on a `
 article. The green case is the whole dry run on the real 0.36.0 wheel: `build:homebrew-formula` with
 `source: local` and the real closure (Task 3's measurement), then this check with `online: false`, whose
 resource digests are compared with the real PyPI.
+
+Both run through `retry_once` (si#589): a network failure in the image arrives as an exception or as a red
+`audit_rc`, so a failed attempt is run once more in a fresh product, and only a second failure is red. The
+red case retries too: a network failure there can be red for the wrong reason, and a real "article" verdict
+is red on both attempts anyway.
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ import urllib.request
 import pytest
 
 from conftest import docker_is_usable
+from retryonce import retry_once
 from simplon.adapters import pypi
 from simplon.manifest import context
 from simplon.tasks import homebrewformula as hf
@@ -33,10 +39,15 @@ SHAPE = dict(shape="python", depends_on=["cryptography", "libsodium", "libyaml",
 
 
 @pytest.fixture
-def product(tmp_path, monkeypatch):
-    (tmp_path / "sample.yaml").write_text(MANIFEST, encoding="utf-8")
-    monkeypatch.setattr(context, "_current", context.ProductContext("sample", tmp_path, tmp_path / "sample.yaml"))
-    return tmp_path
+def product(tmp_path_factory, monkeypatch):
+    """A fresh product root per call, made the current product: a retried attempt must not find the first
+    attempt's wheel, formula or result record (si#589)."""
+    def fresh():
+        root = tmp_path_factory.mktemp("product")
+        (root / "sample.yaml").write_text(MANIFEST, encoding="utf-8")
+        monkeypatch.setattr(context, "_current", context.ProductContext("sample", root, root / "sample.yaml"))
+        return root
+    return fresh
 
 
 def _record(root):
@@ -45,48 +56,58 @@ def _record(root):
 
 @needs_docker
 def test_audit_is_red_on_a_desc_with_an_article(product, capsys):
-    # arrange: a formula whose desc is "A tool", with the placeholder URL and no resources to look up
-    wheel = make_wheel(product / "dist", summary="A tool")
-    meta = hf.wheel_meta(wheel)
-    shape = hf.shape_of("python", [], "python@3.14", {}, {"args": ["--version"], "expect": "simplon"})
-    out = product / "build" / "homebrew" / "simplon.rb"
-    out.parent.mkdir(parents=True)
-    out.write_text(hf.render(meta, hf.PLACEHOLDER + WHEEL, meta.sha256, [], shape), encoding="utf-8")
+    def attempt():
+        # arrange: a formula whose desc is "A tool", with the placeholder URL and no resources to look up
+        root = product()
+        capsys.readouterr()   # drop what a failed first attempt left in the capture
+        wheel = make_wheel(root / "dist", summary="A tool")
+        meta = hf.wheel_meta(wheel)
+        shape = hf.shape_of("python", [], "python@3.14", {}, {"args": ["--version"], "expect": "simplon"})
+        out = root / "build" / "homebrew" / "simplon.rb"
+        out.parent.mkdir(parents=True)
+        out.write_text(hf.render(meta, hf.PLACEHOLDER + WHEEL, meta.sha256, [], shape), encoding="utf-8")
 
-    # act
-    rc = homebrewtap.check(formula="formula", wheel="dist", results="checked", online="false")
+        # act
+        rc = homebrewtap.check(formula="formula", wheel="dist", results="checked", online="false")
 
-    # assert: red from audit alone - the digests are right - and the record says so
-    said = capsys.readouterr()
-    assert rc == 1, said.out + said.err
-    run = _record(product)["runs"][0]
-    assert (run["problems"], run["verdict"]) == ([], 1)
-    assert run["audit_rc"] != 0
-    assert "article" in (said.out + said.err).lower()
+        # assert: red from audit alone - the digests are right - and the record says so
+        said = capsys.readouterr()
+        assert rc == 1, said.out + said.err
+        run = _record(root)["runs"][0]
+        assert (run["problems"], run["verdict"]) == ([], 1)
+        assert run["audit_rc"] != 0
+        assert "article" in (said.out + said.err).lower()
+
+    retry_once(attempt)
 
 
 @needs_docker
 def test_the_0_36_0_dry_run_formula_is_green(product, capsys):
-    # arrange: the real wheel, rendered by build:homebrew-formula with `source: local` and the real closure
-    wheel_file = next(f for f in pypi.files("simplon", "0.36.0") if f.filename == WHEEL)
-    dist = product / "dist"
-    dist.mkdir()
-    with urllib.request.urlopen(wheel_file.url, timeout=60) as r:
-        (dist / WHEEL).write_bytes(r.read())
-    assert hashlib.sha256((dist / WHEEL).read_bytes()).hexdigest() == wheel_file.sha256
-    # the closure mounts the wheel's directory for the image's own user (uid 1000); pytest's tmp_path is 0700
-    product.chmod(0o755)
-    dist.chmod(0o755)
-    assert hf.build(wheel="dist", formula="formula", source="local", **SHAPE) == 0
+    def attempt():
+        # arrange: the real wheel, rendered by build:homebrew-formula with `source: local` and the real closure
+        root = product()
+        capsys.readouterr()   # drop what a failed first attempt left in the capture
+        wheel_file = next(f for f in pypi.files("simplon", "0.36.0") if f.filename == WHEEL)
+        dist = root / "dist"
+        dist.mkdir()
+        with urllib.request.urlopen(wheel_file.url, timeout=60) as r:
+            (dist / WHEEL).write_bytes(r.read())
+        assert hashlib.sha256((dist / WHEEL).read_bytes()).hexdigest() == wheel_file.sha256
+        # the closure mounts the wheel's directory for the image's own user (uid 1000); pytest's tmp dir is 0700
+        root.chmod(0o755)
+        dist.chmod(0o755)
+        assert hf.build(wheel="dist", formula="formula", source="local", **SHAPE) == 0
 
-    # act
-    rc = homebrewtap.check(formula="formula", wheel="dist", results="checked", online="false")
+        # act
+        rc = homebrewtap.check(formula="formula", wheel="dist", results="checked", online="false")
 
-    # assert
-    said = capsys.readouterr()
-    assert rc == 0, said.out + said.err
-    record = _record(product)
-    # the resource digests were really compared with PyPI: the rendered formula carries the closure
-    assert homebrewtap.formula_digests((product / "build" / "homebrew" / "simplon.rb").read_text())[1]
-    digest = hashlib.sha256((product / "build" / "homebrew" / "simplon.rb").read_bytes()).hexdigest()
-    assert (record["formula"], record["verdict"], record["runs"][0]["id"]) == ("simplon", 0, "sha256:" + digest)
+        # assert
+        said = capsys.readouterr()
+        assert rc == 0, said.out + said.err
+        record = _record(root)
+        # the resource digests were really compared with PyPI: the rendered formula carries the closure
+        assert homebrewtap.formula_digests((root / "build" / "homebrew" / "simplon.rb").read_text())[1]
+        digest = hashlib.sha256((root / "build" / "homebrew" / "simplon.rb").read_bytes()).hexdigest()
+        assert (record["formula"], record["verdict"], record["runs"][0]["id"]) == ("simplon", 0, "sha256:" + digest)
+
+    retry_once(attempt)
