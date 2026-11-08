@@ -47,12 +47,16 @@ elif args[:2] == ["plugin", "install"]:
 
 @pytest.fixture
 def machine(tmp_path, monkeypatch):
-    """A PATH holding only a fake `claude`, and a product context whose manifest data the test sets."""
+    """A PATH holding a fake `claude` and the executables the default plugins run (`gh`, `node`), and a
+    product context whose manifest data the test sets. A test about a missing one removes it (si#582)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake = bin_dir / "claude"
     fake.write_text(_FAKE.format(python=sys.executable))
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    for name in ("gh", "node"):
+        (bin_dir / name).write_text("#!/bin/sh\n")
+        (bin_dir / name).chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir))
     for variable in ("CI", "GITHUB_ACTIONS", "FAKE_FAIL", "FAKE_HANG", "FAKE_MARKETS"):
         monkeypatch.delenv(variable, raising=False)
@@ -395,3 +399,148 @@ def test_the_run_names_a_mismatch_as_the_reason_it_skips_a_plugin(machine, monke
     assert (f"{_OPTIMIZER} skipped: its marketplace alexgreensh-token-optimizer is registered from another "
             f"source") in outcome.detail
     assert "could not be registered" not in outcome.detail
+
+
+# --- si#582: a default or toolchain plugin whose executable is missing is skipped, and says so ----------
+
+_GITHUB = "github@claude-plugins-official"
+_SKIP_GITHUB = f"skipped {_GITHUB}: `gh` is not on PATH"
+_SKIP_OPTIMIZER = f"skipped {_OPTIMIZER}: `node` is not on PATH"
+
+
+def _without(machine, *names):
+    for name in names:
+        (machine.bin / name).unlink()
+
+
+def test_firn_without_gh_and_node_installs_the_rest_and_names_both_skips(machine, monkeypatch):
+    # arrange: firn's host, measured in si#582 - `toolchains: [claude]`, docker and python3, no gh, no node
+    _without(machine, "gh", "node")
+    lines = _lines(monkeypatch)
+
+    # act
+    outcome = claudeplugins.step(env=machine.env())
+    claudeplugins.report(outcome)
+
+    # assert: the rest is installed, the two are not, and the run says which and why
+    installs = [a for a in machine.argv() if a.startswith("plugin install")]
+    assert not any(_GITHUB in a or _OPTIMIZER in a for a in installs)
+    assert outcome.state is claudeplugins.State.INSTALLED
+    assert outcome.count == len(claudeplugins.BASE_PLUGINS) - 2
+    assert claudeplugins._rc(outcome) == 0
+    shown = [msg for _, msg in lines]
+    assert _SKIP_GITHUB in shown and _SKIP_OPTIMIZER in shown
+
+
+def test_support_install_is_green_on_firns_host(machine, monkeypatch):
+    # arrange
+    _without(machine, "gh", "node")
+    monkeypatch.setattr(hosttools.oras, "ensure_oras", lambda: None)
+    _lines(monkeypatch)
+
+    # act / assert
+    assert hosttools.install() == 0
+
+
+def test_an_executable_the_product_requires_is_still_red(machine, monkeypatch):
+    # arrange: the product SAID it needs node (`claude.requires:`), so its absence is a refusal
+    machine.data = {"toolchains": ["claude"], "claude": {"requires": ["node"]}}
+    _without(machine, "node")
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudeplugins.install()
+
+    # assert
+    assert rc == 1
+    assert any(level == "warn" and "`node` is not on PATH" in msg and "claude.requires" in msg
+               for level, msg in lines)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_product_requirement_is_red_in_both_runs_even_when_its_plugin_is_skipped(
+        machine, monkeypatch, dry_run):
+    machine.data = {"toolchains": ["claude"], "claude": {"requires": ["node"]}}
+    _without(machine, "node")
+    _lines(monkeypatch)
+
+    assert claudeplugins.install(dry_run=dry_run) == 1
+
+
+def test_the_dry_run_skips_what_the_run_skips_for_the_same_reason(machine, monkeypatch):
+    # arrange: a python product on a host with no pyright and no gh
+    machine.data = {"toolchains": ["claude", "python"]}
+    _without(machine, "gh")
+    lines = _lines(monkeypatch)
+
+    # act
+    rc_dry = claudeplugins.install(dry_run=True)
+    preview = [msg for _, msg in lines]
+    lines.clear()
+    rc_run = claudeplugins.install()
+    run = [msg for _, msg in lines]
+
+    # assert: same plugins, same reasons, "would skip" in the preview; both green
+    pyright = "pyright-lsp@claude-plugins-official"
+    assert f"would skip {pyright}: `pyright-langserver` is not on PATH" in preview
+    assert f"would skip {_GITHUB}: `gh` is not on PATH" in preview
+    assert f"skipped {pyright}: `pyright-langserver` is not on PATH" in run
+    assert _SKIP_GITHUB in run
+    assert f"would install {pyright}" not in preview and f"would install {_GITHUB}" not in preview
+    skipped_dry = sorted(m.removeprefix("would skip ").split(":")[0] for m in preview
+                         if m.startswith("would skip "))
+    skipped_run = sorted(m.removeprefix("skipped ").split(":")[0] for m in run if m.startswith("skipped "))
+    assert skipped_dry == skipped_run == sorted([pyright, _GITHUB])
+    assert rc_dry == rc_run == 0
+
+
+def test_only_skipped_plugins_left_is_green_and_never_silent_and_not_nothing_to_do(machine, monkeypatch):
+    # arrange: everything this machine can run is installed; gh is missing, github is not installed
+    _without(machine, "gh")
+    machine.install_all(p for p in claudeplugins.BASE_PLUGINS if p != _GITHUB)
+    lines = _lines(monkeypatch)
+
+    for _ in range(2):      # the skip is said on EVERY run, not once
+        lines.clear()
+
+        # act
+        rc = claudeplugins.install()
+
+        # assert: green, the skip named, and the last line is not the plain "nothing to do"
+        assert rc == 0
+        shown = [msg for _, msg in lines]
+        assert _SKIP_GITHUB in shown
+        assert "nothing to do" not in lines[-1][1]
+        assert "1 cannot run here" in lines[-1][1]
+    assert not any(a.startswith("plugin install") for a in machine.argv())
+
+
+def test_an_installed_plugin_whose_executable_is_missing_is_left_and_warned(machine, monkeypatch):
+    # arrange: github was installed while gh was there; gh has gone since
+    _without(machine, "gh")
+    machine.install_all(claudeplugins.BASE_PLUGINS)
+    lines = _lines(monkeypatch)
+
+    # act
+    rc = claudeplugins.install()
+
+    # assert: not uninstalled, not reinstalled, not "already installed", and said
+    assert rc == 0
+    assert not any(a.startswith(("plugin install", "plugin uninstall")) for a in machine.argv())
+    shown = [msg for _, msg in lines]
+    assert f"{_GITHUB} already installed" not in shown
+    assert any(level == "warn" and msg.startswith(f"{_GITHUB} is installed") and "`gh` is not on PATH" in msg
+               for level, msg in lines)
+
+
+def test_a_skipped_plugins_marketplace_is_not_registered(machine, monkeypatch):
+    # arrange: an empty home and no node - token-optimizer's marketplace serves nothing that installs
+    monkeypatch.setenv("FAKE_MARKETS", "[]")
+    _without(machine, "node")
+    _lines(monkeypatch)
+
+    # act
+    claudeplugins.step(env=machine.env())
+
+    # assert
+    assert not any("alexgreensh/token-optimizer" in a for a in machine.argv())

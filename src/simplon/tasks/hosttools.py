@@ -29,7 +29,8 @@ _GATES = (("oras", lambda: oras.ensure_oras(), oras.OrasError),)
 def _claude_plugins() -> bool:
     """The `claude` toolchain's gate (si#525): the product's effective plugin set, reported in its own
     words. OFF says nothing - a product that does not use Claude Code pays nothing, not even a line.
-    False only for FAILED (or a set this machine cannot run, si#396); SKIPPED is not a failure."""
+    False only for FAILED (or a missing executable the product's `claude.requires:` names, si#396);
+    SKIPPED is not a failure, and neither is a default plugin skipped for a missing executable (si#582)."""
     outcome = claudeplugins.step()
     if outcome.state is not claudeplugins.State.OFF:
         claudeplugins.report(outcome)

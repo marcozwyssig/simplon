@@ -27,7 +27,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from simplon.manifest import context
 from simplon.kernel import log
@@ -208,12 +208,18 @@ LANGUAGE_REQUIRES: dict[str, tuple[str, ...]] = {
 @dataclass(frozen=True)
 class Effective:
     """The plugin set a product ends up with, and for each id where it came from - `default`,
-    `toolchain <language>` or `product` - so a dry run can say which entries a product added."""
+    `toolchain <language>` or `product` - so a dry run can say which entries a product added.
+
+    TWO KINDS OF "NEEDS AN EXECUTABLE" (si#582), kept apart because they end differently. `needs` is what a
+    default or toolchain plugin runs, per plugin: the kernel chose that plugin, so a machine without its
+    executable skips that one plugin and says so, and the run stays green. `requires` is the product's own
+    `claude.requires:`: the product said it needs it, so a machine without it is red (si#396)."""
 
     markets: tuple[Marketplace, ...]
     plugins: tuple[str, ...]
     requires: tuple[str, ...]
     origin: Mapping[str, str]
+    needs: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     #: False when the product turned the LAUNCHER's automatic step off (si#583); an explicit
     #: `support install` or `support claude-plugins` installs regardless.
     auto_install: bool = True
@@ -272,7 +278,7 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
     merged = (*(own_by_name.pop(m.name, m) for m in DEFAULT_MARKETPLACES), *own_by_name.values())
     markets = tuple(m for m in merged if m.name in used)
     requires: list[str] = []
-    for name in (*(n for plugin in plugins for n in needs.get(plugin, ())), *required(data, source)):
+    for name in required(data, source):
         if name not in requires:
             requires.append(name)
     auto = section.get("auto_install", True)     # present-but-empty (`auto_install:`) is None, refused
@@ -281,7 +287,7 @@ def effective(data: Mapping[str, object], source: str = "manifest") -> Effective
         raise ValueError(f"{source}: '{SECTION}.auto_install' is true or false, got {auto!r} - write it "
                          f"unquoted")
     return Effective(markets=markets, plugins=plugins, requires=tuple(requires), origin=origin,
-                     auto_install=auto)
+                     auto_install=auto, needs={p: needs[p] for p in plugins if needs.get(p)})
 
 
 def required(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
@@ -312,6 +318,23 @@ def required(data: Mapping[str, object], source: str = "manifest") -> tuple[str,
 def missing(names: Iterable[str], which: Callable[[str], object] = shutil.which) -> tuple[str, ...]:
     """The required executables `which` cannot find, in DECLARATION order."""
     return tuple(name for name in names if not which(name))
+
+
+def unrunnable(eff: Effective, which: Callable[[str], object] = shutil.which) -> dict[str, tuple[str, ...]]:
+    """Each default or toolchain plugin whose executable `which` cannot find, with the names missing, in
+    DECLARATION order (si#582). A product's own plugin is never here: what it runs is `claude.requires:`."""
+    absent = {plugin: missing(names, which) for plugin, names in eff.needs.items()}
+    return {plugin: absent[plugin] for plugin in eff.plugins if absent.get(plugin)}
+
+
+def _not_on_path(absent: tuple[str, ...]) -> str:
+    return " and ".join(f"`{name}`" for name in absent) + (" is" if len(absent) == 1 else " are") + " not on PATH"
+
+
+def _cannot_run(plugin_id: str, absent: tuple[str, ...]) -> str:
+    """An unrunnable plugin that is ALREADY installed: left alone, because removing what a person installed
+    is their call, and said, because a plugin that cannot run fails silently inside Claude Code (si#396)."""
+    return f"{plugin_id} is installed, and {_not_on_path(absent)}: it cannot run on this machine"
 
 
 def _json_list(payload: str, what: str) -> list:
@@ -390,6 +413,9 @@ class Outcome:
     count: int = 0
     #: False when a `requires` executable is missing (si#396): a complete set this machine cannot run.
     ready: bool = True
+    #: One line per default or toolchain plugin this machine cannot run (si#582): skipped, or installed and
+    #: left. Not a failure, and never silent: `report` prints every one on every run.
+    skipped: tuple[str, ...] = ()
 
 
 #: How long one `claude ... --json` query may take before the step gives up. Measured at about 0.5 s.
@@ -455,6 +481,26 @@ def _act(argv: list[str], timeout_s: float) -> str:
 _ELSEWHERE = "its marketplace {} is registered from another source"
 
 
+def _plan_here(eff: Effective, which: Callable[[str], object],
+               timeout_s: float) -> tuple[Plan, dict[str, tuple[str, ...]], frozenset[str]]:
+    """The plan over the plugins this machine CAN run, the ones it cannot with what each lacks, and what is
+    installed (si#582). One function for the run and its dry run, so both skip the same plugins for the
+    same reason. A marketplace only skipped plugins come from is neither registered nor compared: nothing
+    would be installed from it."""
+    skip = unrunnable(eff, which)
+    have_markets, have_plugins = _installed(timeout_s)
+    runnable = tuple(p for p in eff.plugins if p not in skip)
+    used = {p.partition("@")[2] for p in runnable}
+    todo = plan((m for m in eff.markets if m.name in used), runnable, have_markets, have_plugins)
+    return todo, skip, frozenset(have_plugins)
+
+
+def _skip_lines(skip: Mapping[str, tuple[str, ...]], have: frozenset[str], verb: str) -> tuple[str, ...]:
+    """`<verb> <plugin>: `x` is not on PATH` for one not installed, `_cannot_run` for one that is."""
+    return tuple(_cannot_run(p, absent) if p in have else f"{verb} {p}: {_not_on_path(absent)}"
+                 for p, absent in skip.items())
+
+
 def _mismatch(declared: Marketplace, registered: Marketplace) -> str:
     """Why a registered marketplace is not the declared one, and the way out (si#581)."""
     return (f"marketplace {declared.name} is registered from {_source_of(registered)}, and the manifest "
@@ -486,15 +532,17 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
     reason = _skip_reason(env, container)
     if reason:
         return Outcome(State.SKIPPED, reason)
+    which = lambda name: shutil.which(name, path=env.get("PATH"))     # noqa: E731
     try:
-        todo = plan(eff.markets, eff.plugins, *_installed(timeout_s))
+        todo, skip, have = _plan_here(eff, which, timeout_s)
     except _Failed as exc:
         return Outcome(State.FAILED, str(exc))
-    ready = _report_missing(missing(eff.requires, lambda name: shutil.which(name, path=env.get("PATH"))))
+    skipped = _skip_lines(skip, have, "skipped")
+    ready = _report_missing(missing(eff.requires, which))
     for plugin_id in todo.present_plugins:
         log.info(f"{plugin_id} already installed")
     if todo.is_complete:
-        return Outcome(State.NOTHING_MISSING, count=len(eff.plugins), ready=ready)
+        return Outcome(State.NOTHING_MISSING, count=len(todo.present_plugins), ready=ready, skipped=skipped)
 
     failed: list[str] = [_mismatch(declared, registered) for declared, registered in todo.mismatched_marketplaces]
     mismatched: set[str] = {declared.name for declared, _ in todo.mismatched_marketplaces}
@@ -524,35 +572,50 @@ def step(*, env: Mapping[str, str] | None = None, container: bool = False,
         else:
             failed.append(f"{plugin_id} could not be installed: {why}")
     if failed:
-        return Outcome(State.FAILED, "; ".join(failed), count=installed, ready=ready)
-    return Outcome(State.INSTALLED, count=installed, ready=ready)
+        return Outcome(State.FAILED, "; ".join(failed), count=installed, ready=ready, skipped=skipped)
+    return Outcome(State.INSTALLED, count=installed, ready=ready, skipped=skipped)
+
+
+def _skipped_note(outcome: Outcome) -> str:
+    """The closing line's mention of the plugins this machine cannot run (si#582), so a set that is only
+    complete because some of it was skipped never reads as the plain "nothing to do"."""
+    return f"; {len(outcome.skipped)} cannot run here (see above)" if outcome.skipped else ""
 
 
 def report(outcome: Outcome) -> None:
-    """One line per state, worded so no two read alike."""
+    """One line per state, worded so no two read alike - preceded by one line per plugin this machine
+    cannot run (si#582), on every run."""
+    for line in outcome.skipped:
+        log.warn(line)
     if outcome.state is State.OFF:
         log.info("Claude support is off: 'claude' is not in toolchains:")
     elif outcome.state is State.SKIPPED:
         log.info(f"Claude Code plugins skipped: {outcome.detail}")
     elif outcome.state is State.NOTHING_MISSING:
-        if outcome.ready:
-            log.ok(f"all {outcome.count} Claude Code plugins are installed; nothing to do")
-        else:
+        if not outcome.ready:
             log.warn(f"all {outcome.count} Claude Code plugins are installed, and this machine cannot run "
-                     f"all of them")
+                     f"all of them{_skipped_note(outcome)}")
+        elif outcome.skipped:
+            log.ok(f"all {outcome.count} Claude Code plugins this machine can run are installed"
+                   f"{_skipped_note(outcome)}")
+        else:
+            log.ok(f"all {outcome.count} Claude Code plugins are installed; nothing to do")
     elif outcome.state is State.INSTALLED:
         log.ok(f"installed {outcome.count} Claude Code plugin(s); restart Claude Code to load them"
-               + ("" if outcome.ready else ", and this machine cannot run all of them"))
+               + ("" if outcome.ready else ", and this machine cannot run all of them") + _skipped_note(outcome))
     else:
         log.warn(f"Claude Code plugins: the set is INCOMPLETE - {outcome.detail}")
 
 
 def _rc(outcome: Outcome) -> int:
+    """1 for FAILED or a missing `claude.requires:` executable; a skipped default plugin is not red (si#582)."""
     return 1 if outcome.state is State.FAILED or not outcome.ready else 0
 
 
 def install(dry_run: bool = False) -> int:
-    """`support claude-plugins`: the step, reported; 1 when it FAILED or the machine cannot run the set.
+    """`support claude-plugins`: the step, reported; 1 when it FAILED or an executable the product's
+    `claude.requires:` names is missing. A default or toolchain plugin this machine cannot run is skipped
+    and named, and is not red (si#582).
 
     The dry run lists each plugin with WHERE IT COMES FROM - the default, a toolchain, or the product - so
     the person running it can see what the product added on top of simplon's default.
@@ -578,10 +641,13 @@ def install(dry_run: bool = False) -> int:
         report(Outcome(State.SKIPPED, reason))
         return 0
     try:
-        todo = plan(eff.markets, eff.plugins, *_installed(QUERY_TIMEOUT_S))
+        todo, skip, have = _plan_here(eff, shutil.which, QUERY_TIMEOUT_S)
     except _Failed as exc:
         report(Outcome(State.FAILED, str(exc)))
         return 1
+    skipped = _skip_lines(skip, have, "would skip")
+    for line in skipped:
+        log.warn(line)
     ready = _report_missing(missing(eff.requires, shutil.which))
     for declared, registered in todo.mismatched_marketplaces:
         log.warn(_mismatch(declared, registered))
@@ -597,7 +663,7 @@ def install(dry_run: bool = False) -> int:
         log.info(f"would install {plugin_id}")
         installable += 1
     verdict = (f"dry run: {len(todo.add_marketplaces)} marketplace(s) and {installable} "
-               f"plugin(s) missing")
+               f"plugin(s) missing" + (f", {len(skipped)} cannot run here (see above)" if skipped else ""))
     if ready and not todo.mismatched_marketplaces:
         log.ok(verdict)
         return 0
@@ -616,10 +682,11 @@ def _market_origin(market: Marketplace) -> str:
 
 
 def _report_missing(absent: tuple[str, ...]) -> bool:
-    """Name every required executable that is not on PATH; True when none is missing (si#396)."""
+    """Name every executable the product's `claude.requires:` names that is not on PATH; True when none is
+    missing (si#396). Only the product's own list is red here; a default plugin's is a skip (si#582)."""
     for name in absent:
-        log.warn(f"`{name}` is not on PATH, and a Claude Code plugin this product uses runs it; "
-                 f"that plugin will not work on this machine")
+        log.warn(f"`{name}` is not on PATH, and the manifest's `{SECTION}.requires:` names it as run by a "
+                 f"Claude Code plugin this product uses; that plugin will not work on this machine")
     return not absent
 
 

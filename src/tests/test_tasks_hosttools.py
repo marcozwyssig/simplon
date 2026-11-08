@@ -162,7 +162,7 @@ def test_github_plugin_requires_gh():
     eff = claudeplugins.effective({"product": "x", "toolchains": ["claude"]})
 
     # assert
-    assert eff is not None and "gh" in eff.requires
+    assert eff is not None and eff.needs[f"github@{claudeplugins.BUILTIN_MARKETPLACE}"] == ("gh",)
 
 
 def test_an_unreadable_manifest_is_reported_and_the_other_gates_still_run(gates, tmp_path):

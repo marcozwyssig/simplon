@@ -145,7 +145,10 @@ def test_claude_alone_is_the_base_set():
                            "token-optimizer@alexgreensh-token-optimizer")
     assert set(eff.origin.values()) == {"default"}
     assert {m.name for m in eff.markets} == {_OFFICIAL, "alexgreensh-token-optimizer"}
-    assert eff.requires == ("gh", "node")
+    # si#582: what a default plugin runs is kept per plugin, because a missing one skips that plugin only;
+    # `requires` is the product's own `claude.requires:`, and the default names none
+    assert eff.needs == {f"github@{_OFFICIAL}": ("gh",), "token-optimizer@alexgreensh-token-optimizer": ("node",)}
+    assert eff.requires == ()
 
 
 def test_empty_section_is_the_default():
@@ -162,7 +165,7 @@ def test_language_adds_its_set_and_requires(language, plugin, binary):
     # assert
     assert eff.plugins[-1] == f"{plugin}@{_OFFICIAL}"
     assert eff.origin[f"{plugin}@{_OFFICIAL}"] == f"toolchain {language}"
-    assert binary in eff.requires
+    assert eff.needs[f"{plugin}@{_OFFICIAL}"] == (binary,)
 
 
 def test_a_language_without_claude_brings_nothing():
@@ -182,7 +185,8 @@ def test_product_additions_and_their_marketplace():
     assert eff.plugins[-1] == "x@acme"
     assert eff.origin["x@acme"] == "product"
     assert "acme" in {m.name for m in eff.markets}
-    assert eff.requires == ("gh", "node", "acmectl")
+    assert eff.requires == ("acmectl",)
+    assert "x@acme" not in eff.needs
 
 
 def test_a_product_plugin_naming_an_undeclared_marketplace_is_still_refused():
@@ -208,7 +212,7 @@ def test_exclude_removes_and_takes_requires_with_it():
 
     # assert
     assert f"pyright-lsp@{_OFFICIAL}" not in eff.plugins
-    assert "pyright-langserver" not in eff.requires
+    assert f"pyright-lsp@{_OFFICIAL}" not in eff.needs
 
 
 def test_excluding_token_optimizer_drops_node_and_its_marketplace():
@@ -217,7 +221,7 @@ def test_excluding_token_optimizer_drops_node_and_its_marketplace():
                                    "claude": {"exclude": ["token-optimizer@alexgreensh-token-optimizer"]}})
 
     # assert: a marketplace nothing installs from is not registered
-    assert "node" not in eff.requires
+    assert "token-optimizer@alexgreensh-token-optimizer" not in eff.needs
     assert {m.name for m in eff.markets} == {_OFFICIAL}
 
 
