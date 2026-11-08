@@ -54,11 +54,12 @@ def aggregate_of(spec: CommandDecl) -> AggregateDecl | None:
 
 class PlanNode(NamedTuple):
     """One node of a command's execution plan, kept as a TREE (#1275) instead of the flat leaf tuple
-    `plan_for` returns. `name` is the bare command name, `path` its dotted `group.command` CLI identity
+    `plan_for` returns. `name` is the command's plan word - its bare name, or its group path where several
+    groups own the name (si#580) - `path` its dotted `group.command` CLI identity
     (what the TUI renders as the row), `spec` its declaration, and `children` the nodes it expands into:
     empty for a leaf, one entry per CONTRIBUTING dependency for an aggregate.
 
-    The tree is a DFS SPANNING TREE of the dependency DAG, not the DAG: `plan_tree_for` dedups by name
+    The tree is a DFS SPANNING TREE of the dependency DAG, not the DAG: `plan_tree_for` dedups by plan word
     exactly as `plan_for` does, so a diamond appears ONCE, at its first occurrence. That is what keeps the
     names `leaves()` returns identical to `plan_for`'s, and that equality is the whole point - display and
     execution cannot disagree when they come from one traversal.
@@ -85,11 +86,13 @@ class PlanNode(NamedTuple):
 
 
 class Plan(Protocol):
-    """The four questions the kernel asks a manifest: a command's declaration and its dotted CLI path by
-    name, the declaration a run starts from, and the plan tree it runs."""
+    """The five questions the kernel asks a manifest: a command's declaration, its dotted CLI path and the
+    command-line words that run it (si#580), each by plan word; the declaration a run starts from; and the
+    plan tree it runs."""
 
     def spec_by_name(self, name: str) -> CommandDecl | None: ...
     def path_by_name(self, name: str) -> str | None: ...
+    def argv_for(self, word: str) -> tuple[str, ...]: ...
     def root_spec_for(self, name: str, *, group: str | None = None) -> CommandDecl: ...
     def plan_tree_for(self, name: str, *, group: str | None = None) -> PlanNode: ...
 

@@ -222,6 +222,70 @@ def gd_assembled():
         del sys.modules["gd_impls"]
 
 
+def test_the_words_a_qualified_dependency_runs_reach_its_own_command_on_the_assembled_cli():
+    """si#580: a qualified `depends_on` entry names a command whose bare name several groups own, so it has
+    no flat alias - the step runs `Manifest.argv_for` its plan word instead. This asks the ASSEMBLED app,
+    not the manifest, whether those words run that command and not its namesake: an ordinary member, a
+    collapsed flat group's one member and a group-default namesake, each also owned by another group."""
+    from simplon.kernel import product
+
+    # arrange: every impl records the name it was registered under
+    calls: list[str] = []
+    mod = types.ModuleType("q_impls")
+    for fn_name in ("toolchain", "pin", "lint", "lint_tests", "pack", "pack_tests", "diff"):
+        def make(n):
+            def _fn():
+                calls.append(n)
+            _fn.__name__ = n
+            return _fn
+        setattr(mod, fn_name, make(fn_name))
+    text = """
+tasks:
+  toolchain: { impl: "q_impls:toolchain", help: "t" }
+  pin: { impl: "q_impls:pin", help: "p" }
+  lint: { impl: "q_impls:lint", help: "l" }
+  lint-tests: { impl: "q_impls:lint_tests", help: "lt" }
+  pack: { impl: "q_impls:pack", help: "k" }
+  pack-tests: { impl: "q_impls:pack_tests", help: "kt" }
+  diff: { impl: "q_impls:diff", help: "d" }
+ci:
+  build:
+    commands:
+      toolchain: { task: toolchain }
+      all: { help: "All.", depends_on: ["build toolchain", "lint lint", "pack pack"] }
+  lint:
+    commands:
+      lint: { task: lint }
+  pack:
+    commands:
+      pack: { task: pack }
+      diff: { task: diff }
+  test:
+    commands:
+      lint: { task: lint-tests }
+      pack: { task: pack-tests }
+support:
+  commands:
+    toolchain: { task: pin }
+"""
+    sys.modules["q_impls"] = mod
+    try:
+        mf = manifest.load(text)
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, mf, product="demo",
+                     step_context=product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", mf))
+
+        # act: run each planned leaf by the words its step would run
+        for word in mf.plan_for("all", group="build"):
+            result = CliRunner().invoke(app, list(mf.argv_for(word)))
+            assert result.exit_code == 0, (word, result.output)
+    finally:
+        del sys.modules["q_impls"]
+
+    # assert: each reached the command its group path names, never its namesake
+    assert calls == ["toolchain", "lint", "pack"]
+
+
 def test_a_group_default_group_is_registered_as_a_sub_app(gd_assembled):
     # arrange
     app, _ = gd_assembled

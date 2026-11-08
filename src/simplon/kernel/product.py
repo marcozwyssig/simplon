@@ -55,6 +55,13 @@ class StepFactoryContext:
         `group.command` path the manifest gives it, or the bare name when several groups own it (#519) and
         the manifest cannot decide. Both spellings are what `Pipeline.usable_tree` accepts.
 
+        The NAME is a plan word (si#580), and the words the step runs are `manifest.argv_for` it: a bare
+        name is its own flat CLI alias as it always was, and a qualified one (`build toolchain`, a name
+        several groups own and a `depends_on` names by its group) runs by its group path, because such a
+        name has no flat alias. A product's own factory that puts the word on the command line as ONE
+        argument reaches only the bare words, which are every word a manifest without a qualified entry
+        plans.
+
         The stamp is not decoration, which is why this factory lives HERE rather than being rewritten in
         each product: an unstamped step names its own argv, the kernel cannot verify the leaf-to-step
         pairing, and it drops the whole plan tree - taking every subtree's `stop_on_failure` with it, so a
@@ -73,7 +80,7 @@ class StepFactoryContext:
 
         def factory(cmd: str, args: Sequence[str] = ()) -> Step:
             spec = manifest.spec_by_name(cmd)
-            return argv_step(cmd, [argv0, cmd, *args], command=manifest.path_by_name(cmd) or cmd,
+            return argv_step(cmd, [argv0, *manifest.argv_for(cmd), *args], command=manifest.path_by_name(cmd) or cmd,
                              help=spec.help if spec is not None else "")
 
         return cls(product=product, step_factory=factory)
@@ -105,7 +112,7 @@ class StepFactoryContext:
         """
         def factory(cmd: str, args: Sequence[str] = ()) -> Step:
             spec = manifest.spec_by_name(cmd)
-            return argv_step(cmd, [sys.executable, "-u", "-m", module, cmd, *args],
+            return argv_step(cmd, [sys.executable, "-u", "-m", module, *manifest.argv_for(cmd), *args],
                              command=manifest.path_by_name(cmd) or cmd,
                              help=spec.help if spec is not None else "")
 

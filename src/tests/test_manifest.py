@@ -452,6 +452,143 @@ ci:
         manifest.load(text)
 
 
+# --- si#580: a dependency named by its group path ----------------------------------------------------------
+# firn's case, against the REAL catalogue: the product's `build toolchain` and the kernel-placed `support
+# toolchain` share a bare name, so a bare `depends_on: [toolchain]` cannot say which one it means.
+
+_FIRN_TOOLCHAIN = """
+product: p
+tasks:
+  t: { impl: "m:f" }
+ci:
+  build:
+    commands:
+      toolchain: { task: t, help: "Build the toolchain image." }
+      compile: { task: t, help: "Compile." }
+cd:
+  deploy:
+    commands:
+      dev: { depends_on: [%s], help: "Bring up a dev box." }
+"""
+
+
+def _firn(deps: str) -> "manifest.Manifest":
+    return manifest.load(_FIRN_TOOLCHAIN % deps, catalogue=catalogue_mod.load())
+
+
+def test_a_dependency_named_by_its_group_path_plans_that_groups_command():
+    # act
+    mf = _firn('"build toolchain"')
+
+    # assert: the plan names the build group's command, by the spelling that tells it from support's
+    assert mf.plan_for("dev", group="deploy") == ("build toolchain",)
+    assert mf.spec_by_name("build toolchain") is mf.spec_for("build", "toolchain")
+    assert mf.path_by_name("build toolchain") == "build.toolchain"
+    leaves = mf.plan_tree_for("dev", group="deploy").leaves()
+    assert [(leaf.name, leaf.path) for leaf in leaves] == [("build toolchain", "build.toolchain")]
+    assert leaves[0].spec is mf.spec_for("build", "toolchain")
+
+
+def test_firns_own_manifest_loads_with_its_toolchain_named_by_its_group_path():
+    """The frozen firn fixture as firn would write it after si#580: no rename (`realmanifests.HAND_EDITS`
+    stands one in for the rename it needed before), the dependency qualified instead."""
+    import realmanifests
+    from simplon.tasks.migrate import migrate_text
+
+    # arrange
+    raw = (realmanifests.FIXTURES / "firn.yaml").read_text(encoding="utf-8")
+    raw = raw.replace("depends_on: [preflight, toolchain, extension, devcontainer-only]",
+                      "depends_on: [preflight, build toolchain, extension, devcontainer-only]")
+    text = realmanifests.answer_release_rule("firn", migrate_text(raw).text)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue_mod.load())
+
+    # assert: the devcontainer plan builds the toolchain image, and does not rewrite the pin
+    paths = [leaf.path for leaf in mf.plan_tree_for("devcontainer", group="deploy").leaves()]
+    assert "build.toolchain" in paths and "support.toolchain" not in paths
+    assert "build toolchain" in mf.plan_for("devcontainer", group="deploy")
+
+
+def test_plan_for_and_plan_tree_for_agree_over_qualified_and_bare_spellings_of_one_command():
+    # arrange: `compile` has one owner, so `build compile` and `compile` are the SAME command - planned once,
+    # under the one spelling, by both planners
+    mf = _firn('"build toolchain", "build compile", compile')
+
+    # act
+    flat = mf.plan_for("dev", group="deploy")
+    tree = mf.plan_tree_for("dev", group="deploy")
+
+    # assert
+    assert flat == ("build toolchain", "compile")
+    assert tuple(leaf.name for leaf in tree.leaves()) == flat
+    assert mf.spec_for("deploy", "dev").depends_on == ("build toolchain", "compile", "compile")
+
+
+def test_a_qualified_dependency_naming_no_command_is_refused_with_what_the_group_holds():
+    # act / assert: a member the group does not hold
+    with pytest.raises(ValueError, match=r"command 'deploy.dev': dependency 'build nope' names no command - "
+                                         r"group 'build' holds: compile, toolchain"):
+        _firn('"build nope"')
+    # act / assert: a group the manifest does not declare
+    with pytest.raises(ValueError, match=r"command 'deploy.dev': dependency 'nogroup toolchain' names no "
+                                         r"command - the manifest has no group 'nogroup'"):
+        _firn('"nogroup toolchain"')
+
+
+def test_a_bare_ambiguous_dependency_is_still_refused_and_names_the_qualified_spellings():
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _firn("toolchain")
+    said = str(refused.value)
+    assert "command 'deploy.dev': dependency 'toolchain' is ambiguous (owned by groups ['build', 'support'])" in said
+    assert "'build toolchain'" in said and "'support toolchain'" in said
+
+
+def test_a_cycle_through_qualified_dependencies_is_refused():
+    # arrange: two `all`s, each depending on the other by its group path
+    text = """
+ci:
+  test:
+    commands:
+      all: { help: "A.", depends_on: ["deploy all"] }
+cd:
+  deploy:
+    commands:
+      all: { help: "B.", depends_on: ["test all"] }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"dependency cycle: (test all -> deploy all -> test all|"
+                                         r"deploy all -> test all -> deploy all)"):
+        manifest.load(text)
+
+
+def test_a_qualified_dependency_into_a_nested_group_is_spelt_with_every_segment():
+    # arrange: `generate` in `support.tasks` and in `build` - the path is two words, as the CLI types it
+    text = """
+tasks:
+  g: { impl: "m:g", help: "G." }
+ci:
+  build:
+    commands:
+      generate: { task: g }
+      all: { help: "All.", depends_on: ["support tasks generate"] }
+support:
+  groups:
+    tasks:
+      commands:
+        generate: { task: g }
+"""
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.plan_for("all", group="build") == ("support tasks generate",)
+    assert mf.path_by_name("support tasks generate") == "support.tasks.generate"
+
+
 def test_load_rejects_a_command_that_both_instantiates_a_task_and_plans_others():
     # arrange: the v1 lock, in the tree form's words - a command is an instance of a task XOR a plan over
     # other commands

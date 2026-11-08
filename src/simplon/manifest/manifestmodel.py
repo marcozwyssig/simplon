@@ -172,7 +172,7 @@ class _Export:
         body = [f"key = {_q(name)}"]
         if isinstance(spec, AggregateCommand):
             for dep in spec.depends_on:
-                # the kernel's own resolution: a dependency is a bare name one group owns (rule 4, #895)
+                # the kernel's own resolution: a dependency is one command's plan word (rule 4, #895, si#580)
                 path = self.manifest.path_by_name(dep)
                 if path is None:
                     raise ModelExportError(

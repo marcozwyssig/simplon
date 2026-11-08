@@ -73,6 +73,9 @@ SURFACES = {
 NOT_A_SURFACE = {
     "manifest.environments": "asks whether a token names a group, to tell an environment name from a group token - "
                     "it renders nothing",
+    "manifest.load": "asks whether a group is a collapsed flat group or a group-default namesake, to build "
+                     "the argv a qualified `depends_on` word runs by (si#580, `Manifest.argv_for`) - it "
+                     "renders nothing",
 }
 
 #: The platform's tree. Every group lives here because that is what the kernel's own catalogue does and

@@ -224,8 +224,9 @@ An aggregate runs no body and binds no port. The one output it may name is a rel
 [the release chain](../manifest/#a-release-consumes-its-test-results-and-names-one-bundle)). Such an
 aggregate states the release's members and their order, and hands them the tag it is given with
 [`passes: [tag]`](../manifest/#passes-what-an-aggregate-hands-its-leaves) (si#433). `depends_on` reaches a leaf
-by a bare name only one group owns (#519), which is why simplon's publish leaf is `push-image` and not
-`image`: `build image` and `test image` already own that name.
+by a bare name only one group owns (#519), or by its group path where several do (si#580: `release image`).
+simplon's publish leaf was named `push-image` and not `image` before the path form existed, because
+`build image` and `test image` already own that name.
 
 ## Refinement, and deliberate replacement
 

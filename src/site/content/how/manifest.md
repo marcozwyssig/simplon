@@ -281,7 +281,7 @@ that plans other commands - never both. The reason is mechanical: plan steps exe
 an impl-bearing command that also carried dependencies would re-expand them in the child and break the
 run-each-once guarantee.
 
-The plan is a post-order depth-first walk over `depends_on`, deduplicated by name, so a command reached
+The plan is a post-order depth-first walk over `depends_on`, deduplicated by command, so a command reached
 along several paths appears exactly once. **List order is execution order** among siblings, and that is
 how one step is made to run before another:
 
@@ -365,9 +365,25 @@ unpinned. The load refuses `passes:` on a leaf, because a leaf plans nothing to 
 CLI module refuses it too, because its dispatcher takes only a command name. A product with its own step
 factory gives it an `args` keyword; `run_command` refuses a factory without one before anything runs.
 
-Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
-checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and
-it should not wait until the eleventh minute of a pipeline to say so.
+Every `depends_on` entry must name one known command, and the graph must be acyclic. Both are checked at
+load, not at run: a dependency naming a command that does not exist is a manifest error, and it should not
+wait until the eleventh minute of a pipeline to say so.
+
+An entry is usually a bare command name, and a bare name works while exactly one group owns it. When
+several do - a product's `build toolchain` beside the `support toolchain` the kernel places - the bare name
+is refused as ambiguous, and the message names the way out: write the command by its group path, the way
+the command line types it (si#580).
+
+```yaml
+devcontainer:
+  depends_on: [preflight, build toolchain, extension]
+```
+
+A nested group is every segment of its path, `support tasks generate`. The spelling is the one a
+workflow step's `command:` already uses; the dotted `build.toolchain` in error messages is the kernel's
+internal path, and the colon belongs to task coordinates (`build:image`). A qualified entry naming a group
+or command that does not exist is refused at load with what the group does hold. Writing a command by its
+path where its bare name would do is allowed, and it is the same command: the plan runs it once.
 
 `hidden: true` keeps a command out of every `--help` listing while leaving it fully invocable - which is
 what a plan step named in a `depends_on` needs, since it must be a real command but need not clutter a

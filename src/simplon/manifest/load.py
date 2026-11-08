@@ -44,6 +44,17 @@ from simplon.manifest import treeform
 from simplon.kernel.plan import PlanNode
 
 
+def _qualified(group: str, name: str) -> str:
+    """Command `name` in `group` spelt by its group path (si#580): `build toolchain`, `support tasks generate`.
+
+    WHY SPACES AND NOT DOTS. Every other place a product's manifest names a command by its path spells it
+    the way the CLI types it - a workflow step's `command: support tasks generate` (`workflowgen.
+    resolve_command`) and a release workflow's `release: release all` - so a `depends_on` entry does too.
+    The dotted `build.toolchain` is the kernel's internal path (`Manifest.commands` keys, error texts), and
+    the colon is the catalogue's coordinate (`build:fetch`); a product writes neither to name a command."""
+    return f"{group.replace('.', ' ')} {name}"
+
+
 class Manifest(NamedTuple):
     """A parsed, validated product manifest, held as ONE hierarchy (#729): the command taxonomy (group ->
     its command names, and the subset of env-first groups) plus each command's spec, nested under its group.
@@ -80,22 +91,60 @@ class Manifest(NamedTuple):
         on a validated manifest."""
         return self.commands[group][name]
 
+    def _owner_of(self, word: str) -> tuple[str, str] | None:
+        """The (group, name) a plan WORD names, or None. A word is a bare command name when exactly one group
+        owns it, or the command's group path and name spelt as the CLI types them (si#580: `build toolchain`,
+        `support tasks generate`) - see `_qualified`."""
+        tokens = word.split()
+        if len(tokens) > 1:
+            group, name = ".".join(tokens[:-1]), tokens[-1]
+            return (group, name) if name in self.commands.get(group, {}) else None
+        owners = [group for group, specs in self.commands.items() if word in specs]
+        return (owners[0], word) if len(owners) == 1 else None
+
     def spec_by_name(self, name: str) -> Command | None:
-        """The spec for a command by its BARE name when exactly ONE group owns it, else None - an absent
-        name OR an ambiguous one owned by several groups (#519: `all`). This flat view resolves the bare
-        dependency names in a `depends_on` plan (simplon.kernel.product maps each planned leaf
-        through the product step factory); a caller that must disambiguate an owned-by-many name uses
-        spec_for(group, name)."""
-        owners = [group for group, specs in self.commands.items() if name in specs]
-        return self.commands[owners[0]][name] if len(owners) == 1 else None
+        """The spec for a plan word: a BARE name exactly ONE group owns, or a group-qualified one (si#580,
+        `build toolchain`) - else None: an absent name OR an ambiguous bare one owned by several groups
+        (#519: `all`). This flat view resolves the entries of a `depends_on` plan (simplon.kernel.product
+        maps each planned leaf through the product step factory); a caller that holds the group already
+        uses spec_for(group, name)."""
+        owner = self._owner_of(name)
+        return self.commands[owner[0]][owner[1]] if owner is not None else None
 
     def path_by_name(self, name: str) -> str | None:
-        """The dotted `group.command` CLI path for a BARE command name when exactly ONE group owns it,
-        else None - an absent name OR an ambiguous one owned by several groups (#519: `all`). This is
-        the exact-command identity the orchestrator renders as a step's section header (netctl#897),
-        replacing the earlier name+help label vocabulary there."""
-        owners = [group for group, specs in self.commands.items() if name in specs]
-        return f"{owners[0]}.{name}" if len(owners) == 1 else None
+        """The dotted `group.command` CLI path for a plan word (see `spec_by_name`), else None - an absent
+        name OR an ambiguous bare one owned by several groups (#519: `all`). This is the exact-command
+        identity the orchestrator renders as a step's section header (netctl#897), replacing the earlier
+        name+help label vocabulary there."""
+        owner = self._owner_of(name)
+        return f"{owner[0]}.{owner[1]}" if owner is not None else None
+
+    def word_for(self, group: str, name: str) -> str:
+        """The plan word for command `name` in `group` (si#580): its bare name while exactly one group owns
+        it - which is every plan word there was before si#580, so their plans, steps and generated workflows
+        are unchanged - else the qualified spelling that tells it from the others."""
+        owners = [owner for owner, specs in self.commands.items() if name in specs]
+        return name if len(owners) == 1 else _qualified(group, name)
+
+    def argv_for(self, word: str) -> tuple[str, ...]:
+        """The command-line words that run the command a plan word names (si#580), for a step factory.
+
+        A bare word is its own flat CLI alias, as it always was. A qualified word names a command that has
+        no flat alias - several groups own the name (`cli.assemble` registers none for it) - so it runs by
+        the CLI's spelling of its group path: `build toolchain`, `support tasks generate`. Two shapes are
+        not spelt that way, because the CLI does not register them under their group: a collapsed flat
+        group's one member is a top-level command of its own name, and a group-default namesake is its
+        group's bare token (`clitaxonomy.is_flat_command_group` / `is_group_default_command`)."""
+        owner = self._owner_of(word) if " " in word.strip() else None
+        if owner is None:
+            return (word,)
+        group, name = owner
+        taxonomy = self.taxonomy()
+        if taxonomy.is_flat_command_group(group):
+            return (name,)
+        if taxonomy.is_group_default_command(group) and name == group.rsplit(".", 1)[-1]:
+            return tuple(group.split("."))
+        return (*group.split("."), name)
 
     def root_spec_for(self, name: str, *, group: str | None = None) -> Command:
         """The spec for a plan ROOT: `name` scoped to `group` when given (the #519 `test all` vs
@@ -109,15 +158,21 @@ class Manifest(NamedTuple):
 
     def plan_for(self, name: str, *, group: str | None = None) -> tuple[str, ...]:
         """The execution plan for command `name` (#895): a post-order DFS over `depends_on`, so every
-        transitive dependency is planned BEFORE its dependant; a `done` set dedups by name, so a command
+        transitive dependency is planned BEFORE its dependant; a `done` set dedups by plan word - one word
+        per command (`word_for`), so by command - so a command
         reached along several paths (a diamond) appears exactly ONCE per top-level invocation; and a node
         is emitted only if it carries its own `impl` - an impl-less AGGREGATE contributes its leaves,
         never itself. A grey-set (DFS trail) cycle guard fails loudly, defensively: load() already
         rejects cyclic manifests, so a validated manifest never trips it here.
 
         `name` is a bare command name; `group` disambiguates a ROOT owned by several groups (#519:
-        `test all` vs `deploy all`). Dependency ENTRIES are always bare names - load() validates each as
-        known and unambiguous, so they resolve via spec_by_name without a group.
+        `test all` vs `deploy all`). Dependency ENTRIES are plan words: load() resolves each written entry
+        to one command and stores that command's `word_for` (si#580), so they resolve via spec_by_name
+        without a group, and two spellings of one command - `compile` and `build compile` - are one entry.
+        A plan names each leaf by that word too: the bare name it always was, or for a name several groups
+        own, its qualified spelling (`build toolchain`), which is what a step factory can still run. The
+        ROOT keeps the name it was given, as before si#580: no dependency's word can equal it unless that
+        dependency IS the root, and a plan that reaches its own root is a cycle load() has refused.
 
         Kept as an INDEPENDENT traversal rather than reimplemented in terms of `plan_tree_for` (e.g. via
         `PlanNode.leaves()`): it is the ORACLE the parity test checks `plan_tree_for` against, and
@@ -149,7 +204,8 @@ class Manifest(NamedTuple):
     def _path_for(self, name: str, group: str | None = None) -> str:
         """The dotted `group.command` identity of a plan node: the explicit `group` when the caller
         disambiguated the root (the #519 `test all` vs `deploy all` shape, where `path_by_name` cannot
-        decide), else the unambiguous owner, else the bare name as a last resort."""
+        decide), else the owner the plan word names (si#580: a qualified word names its own), else the
+        bare name as a last resort."""
         if group is not None:
             return f"{group}.{name}"
         return self.path_by_name(name) or name
@@ -357,7 +413,8 @@ class _ManifestModel(BaseModel):
     the former separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a
     name owned by several groups. The validation rules run here (rule 1 groups non-empty; rule 2, the
     `env_groups` subset, went with the key in the si#344 cut; rule 3 every spec has a non-empty help plus
-    impl XOR depends_on; rule 4 every `depends_on` entry names a known, unambiguous command (#895);
+    impl XOR depends_on; rule 4 every `depends_on` entry names ONE known command (#895), bare or by its
+    group path (si#580);
     rule 5 the dependency graph is acyclic (#895); rule 6 two aggregates in ONE plan agree on
     `stop_on_failure` over a dependency they both declare (netctl#1319)), each raised as a ValueError so
     `load()` surfaces the same clean message the imperative loader did."""
@@ -508,31 +565,60 @@ class _ManifestModel(BaseModel):
                 if not spec.help:
                     raise ValueError(f"command '{group}.{name}': missing help")
 
-        # rule 4 (#895): every `depends_on` entry names a KNOWN, UNAMBIGUOUS command - a dependency is a
-        # bare name, so a name owned by SEVERAL groups cannot be depended on (Manifest.plan_for could not
-        # resolve it), and a typo fails loudly here, not deep in the runner.
+        # rule 4 (#895, si#580): every `depends_on` entry names ONE known command, and is stored as that
+        # command's plan word (`Manifest.word_for`). A bare entry names the command when exactly one group
+        # owns the name; a name owned by SEVERAL groups cannot be depended on bare, and the refusal names
+        # the qualified spellings that can (si#580: firn's `build toolchain` beside the kernel-placed
+        # `support toolchain`). A qualified entry - the group path and the name, spelt as the CLI types
+        # them (`_qualified`) - names its command whoever else owns the name. A typo of either kind fails
+        # loudly here, not deep in the runner. Storing the WORD rather than what was written is what makes
+        # `compile` and `build compile` one command to the planners' dedup, the cycle walk below and every
+        # plan-entry lookup after load; on a manifest written before si#580 the word IS what was written.
         owners_by_name: dict[str, list[str]] = {}
         for group, members in self.groups.items():
             for name in members:
                 owners_by_name.setdefault(name, []).append(group)
+
+        def word_for(group: str, name: str) -> str:
+            return name if len(owners_by_name[name]) == 1 else _qualified(group, name)
+
+        path_of = {word_for(group, name): f"{group}.{name}"
+                   for group, members in self.groups.items() for name in members}
         for group, members in self.groups.items():
             for name, spec in members.items():
+                words: list[str] = []
                 for dep in spec.depends_on:
+                    tokens = dep.split()
+                    if len(tokens) > 1:
+                        owner, member = ".".join(tokens[:-1]), tokens[-1]
+                        held = self.groups.get(owner)
+                        if held is None or member not in held:
+                            where = (f"group '{owner}' holds: {', '.join(sorted(held))}" if held is not None
+                                     else f"the manifest has no group '{owner}'")
+                            raise ValueError(
+                                f"command '{group}.{name}': dependency '{dep}' names no command - {where}")
+                        words.append(word_for(owner, member))
+                        continue
                     owners = owners_by_name.get(dep, [])
                     if not owners:
                         raise ValueError(
                             f"command '{group}.{name}': dependency '{dep}' is not a command in the manifest")
                     if len(owners) > 1:
+                        spellings = " or ".join(f"'{_qualified(owner, dep)}'" for owner in sorted(owners))
                         raise ValueError(
                             f"command '{group}.{name}': dependency '{dep}' is ambiguous "
-                            f"(owned by groups {sorted(owners)})")
+                            f"(owned by groups {sorted(owners)}) - name the one you mean by its group: "
+                            f"{spellings}")
+                    words.append(dep)
+                spec.depends_on = tuple(words)
 
         # rule 5 (#895): the depends_on graph is ACYCLIC - a 3-colour DFS (white = unvisited, grey = on
-        # the current path, black = done) over the flat name graph. Only unambiguous names carry edges
-        # (rule 4), so an ambiguous name can never sit inside a cycle; its own out-edges are still walked
-        # because every dependency it names is an unambiguous node visited below.
-        deps_by_name = {name: self.groups[owners[0]][name].depends_on
-                        for name, owners in owners_by_name.items() if len(owners) == 1}
+        # the current path, black = done) over the graph of plan words. Rule 4 has just made every entry
+        # one command's word, so every command is a node under its word - an ambiguous name under each of
+        # its qualified spellings (si#580), which is what lets a cycle through `test all` -> `deploy all`
+        # be seen at all.
+        deps_by_name = {word_for(group, name): spec.depends_on
+                        for group, members in self.groups.items() for name, spec in members.items()}
         done: set[str] = set()
 
         def walk(cmd: str, trail: list[str]) -> None:
@@ -582,9 +668,9 @@ class _ManifestModel(BaseModel):
             for name, spec in members.items():
                 path = f"{group}.{name}"
                 for dep in spec.depends_on:
-                    # rule 4 has passed, so `dep` names exactly one owner and the dotted path is exact.
+                    # rule 4 has passed, so `dep` is one command's plan word and its dotted path is exact.
                     declarers.setdefault(dep, []).append((path, spec.stop_on_failure))
-                    parents_by_path.setdefault(f"{owners_by_name[dep][0]}.{dep}", set()).add(path)
+                    parents_by_path.setdefault(path_of[dep], set()).add(path)
 
         entry_points: dict[str, frozenset[str]] = {}
 
@@ -660,8 +746,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         -> spec, is the ONE membership + spec source);
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
-      - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
-        acyclic;
+      - every `depends_on` entry (#895) names ONE known command - by a bare name only one group owns, or
+        by its group path, `build toolchain` (si#580) - and the dependency graph is acyclic;
       - `keep_awake` (netctl#1238) is declared only on an AGGREGATE, because `run_command` - which runs a
         plan - is its only consumer; on a leaf it would be silently ignored;
       - `stop_on_failure` (netctl#1317) is likewise declared only on an AGGREGATE: it scopes to the
