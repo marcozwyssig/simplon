@@ -9,6 +9,8 @@ a writer of known bytes.
 """
 import hashlib
 import re
+import stat
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +38,14 @@ artifacts:
     url: https://example.org/plain.bin
     sha256: {SHA}
 """
+
+
+@pytest.fixture(autouse=True)
+def cache(tmp_path, monkeypatch):
+    """si#600: the download cache, pointed into the test's own directory so no run writes the caller's."""
+    where = tmp_path / "cache"
+    monkeypatch.setenv(fetchfile.CACHE_ENV, str(where))
+    return where
 
 
 @pytest.fixture
@@ -145,6 +155,193 @@ def test_a_version_key_the_toml_file_does_not_hold_is_refused_by_name(product, s
     # act / assert
     with pytest.raises(ValueError, match="gradle/libs.versions.toml has no key 'versions.gradle'"):
         fetchfile.fetch(name="gradle-dist")
+
+
+# --- the download cache (si#600) ----------------------------------------------------------------------
+
+def _no_network(monkeypatch):
+    """A download that fails, so a green run proves the bytes came from somewhere else."""
+    def broken(url, dest, **kwargs):
+        raise transfer.DownloadError(f"could not download {url}: the test has no network")
+    monkeypatch.setattr(transfer, "download", broken)
+
+
+def _cached(cache, body=ARCHIVE, name="plain.bin"):
+    entry = cache / SHA / name
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_bytes(body)
+    return entry
+
+
+def test_a_file_in_the_cache_is_restored_without_a_download_and_says_so(product, cache, monkeypatch, capsys):
+    # arrange
+    _cached(cache)
+    _no_network(monkeypatch)
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: green with no network, the bytes in place, nothing staged left beside them, and the line
+    # says where they came from
+    assert rc == 0
+    assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin"]
+    assert "from the download cache" in capsys.readouterr().out
+
+
+def test_a_miss_downloads_and_leaves_the_file_in_the_cache_under_its_sha256(product, served, cache, capsys):
+    # arrange
+    calls, _ = served
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: one download, the cache holds the verified bytes under <sha256>/<file name>, no partial left
+    assert rc == 0
+    assert len(calls) == 1
+    assert (cache / SHA / "plain.bin").read_bytes() == ARCHIVE
+    assert sorted(p.name for p in (cache / SHA).iterdir()) == ["plain.bin"]
+    out = capsys.readouterr().out
+    assert "fetched build/dist/plain.bin" in out
+    assert "stored in the download cache" in out
+
+
+def test_the_second_fetch_after_a_miss_needs_no_network(product, served, monkeypatch):
+    # arrange: the first run fills the cache, then the tree loses the file and the network goes away
+    assert fetchfile.fetch(name="plain") == 0
+    (product / "build/dist/plain.bin").unlink()
+    _no_network(monkeypatch)
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert
+    assert rc == 0
+    assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+
+
+def test_a_cached_file_with_the_wrong_sha256_is_refused_replaced_and_treated_as_a_miss(product, served, cache,
+                                                                                      capsys):
+    # arrange: the cache holds other bytes under the declared checksum - a torn copy, or a tampered one
+    calls, _ = served
+    entry = _cached(cache, b"not what the checksum says")
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: downloaded, the tree holds the verified bytes, the cache entry now does too, and it was said
+    assert rc == 0
+    assert len(calls) == 1
+    assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+    assert entry.read_bytes() == ARCHIVE
+    out = capsys.readouterr().out
+    assert "the download cache holds" in out
+    assert hashlib.sha256(b"not what the checksum says").hexdigest() in out
+
+
+def test_a_cache_that_cannot_be_written_is_a_warning_and_the_fetch_stays_green(product, served, tmp_path,
+                                                                               monkeypatch, capsys):
+    # arrange: the cache path is a regular file, so no directory can be made under it - unwritable for
+    # root as well, which a chmod would not be
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv(fetchfile.CACHE_ENV, str(blocker))
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: only the fetch decides rc; the cache fault is its own line, distinguishable from a clean fetch
+    assert rc == 0
+    assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+    out = capsys.readouterr().out
+    assert "cache not written:" in out
+    assert "stored in the download cache" not in out
+
+
+def test_a_cache_entry_that_cannot_be_read_is_a_miss_not_a_failure(product, served, cache, monkeypatch, capsys):
+    # arrange: the entry exists and copying it fails
+    calls, _ = served
+    _cached(cache)
+    real = fetchfile.shutil.copyfile
+
+    def failing(src, dst, *args, **kwargs):
+        if str(src).startswith(str(cache)):
+            raise PermissionError(13, "Permission denied", str(src))
+        return real(src, dst, *args, **kwargs)
+    monkeypatch.setattr(fetchfile.shutil, "copyfile", failing)
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert
+    assert rc == 0
+    assert len(calls) == 1
+    assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin"]
+    assert "could not be read" in capsys.readouterr().out
+
+
+def test_off_touches_no_cache_anywhere_and_says_the_cache_is_off(product, served, tmp_path, monkeypatch, capsys):
+    # arrange: every place the chain could otherwise resolve to is a directory this test can watch
+    monkeypatch.setenv(fetchfile.CACHE_ENV, "off")
+    monkeypatch.setenv("RUNNER_TOOL_CACHE", str(tmp_path / "runner"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert
+    assert rc == 0
+    for name in ("runner", "xdg", "home", "cache", "off"):
+        assert not (tmp_path / name).exists(), name
+    assert not (product / "off").exists()
+    out = capsys.readouterr().out
+    assert "download cache is off" in out
+
+
+def test_off_does_not_read_the_cache_either(product, cache, monkeypatch):
+    # arrange: a valid entry sits where the chain would look, and the network is gone
+    _cached(cache)
+    monkeypatch.setenv(fetchfile.CACHE_ENV, "off")
+    _no_network(monkeypatch)
+
+    # act / assert: off means off - the run downloads, and here that fails
+    assert fetchfile.fetch(name="plain") == 1
+
+
+def test_a_restored_file_has_the_same_mode_as_a_fetched_one(product, served, monkeypatch):
+    # arrange: BuildKit keys a layer on the file mode too (firn, si#600), so the two must not differ
+    assert fetchfile.fetch(name="plain") == 0
+    dest = product / "build/dist/plain.bin"
+    fetched = stat.S_IMODE(dest.stat().st_mode)
+    dest.unlink()
+    _no_network(monkeypatch)
+
+    # act
+    assert fetchfile.fetch(name="plain") == 0
+    restored = stat.S_IMODE(dest.stat().st_mode)
+
+    # assert: equal, and the mode a real download produces (mkstemp's 0600, measured)
+    assert fetched == restored == fetchfile.MODE == 0o600
+
+
+@pytest.mark.parametrize("environ,expected", [
+    ({"DELIVERY_DIST_CACHE": "/named", "RUNNER_TOOL_CACHE": "/runner", "XDG_CACHE_HOME": "/xdg", "HOME": "/h"},
+     "/named"),
+    ({"RUNNER_TOOL_CACHE": "/runner", "XDG_CACHE_HOME": "/xdg", "HOME": "/h"}, "/runner/simplon/dist"),
+    ({"XDG_CACHE_HOME": "/xdg", "HOME": "/h"}, "/xdg/simplon/dist"),
+    ({"HOME": "/h"}, "/h/.cache/simplon/dist"),
+    ({"DELIVERY_DIST_CACHE": "", "RUNNER_TOOL_CACHE": "", "XDG_CACHE_HOME": "", "HOME": "/h"},
+     "/h/.cache/simplon/dist"),
+    ({"DELIVERY_DIST_CACHE": "off", "RUNNER_TOOL_CACHE": "/runner", "HOME": "/h"}, None),
+])
+def test_the_cache_location_follows_the_decided_chain(environ, expected):
+    # act
+    found = fetchfile.cache_dir(environ)
+
+    # assert
+    assert found == (None if expected is None else Path(expected))
 
 
 # --- the declaration ----------------------------------------------------------------------------------

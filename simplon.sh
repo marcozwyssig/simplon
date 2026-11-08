@@ -239,6 +239,32 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # a name and a mail and the image has neither. Only this one file: copying a whole home directory
     # into a container is how a credential reaches a place nobody looked.
     [ -f "${HOME:-}/.gitconfig" ] && DOCKER_RUN+=(-v "$HOME/.gitconfig:/tmp/.gitconfig:ro")
+    # THE DOWNLOAD CACHE, MOUNTED BY DEFAULT (si#600). `build:fetch` keeps every verified download under
+    # `<cache>/<sha256>/<file name>`, and inside this container HOME is /tmp, so without a mount the cache
+    # would die with the container - firn measured exactly that, and CI had to wire the variable in by
+    # hand. The host side is resolved with the chain `simplon.tasks.fetchfile.cache_dir` uses, so both
+    # routes pick one directory for one caller; it is mounted at a FIXED path and the container is told
+    # that path, never the host's (DELIVERY_DIST_CACHE is therefore off the by-name loop below). A cache
+    # that cannot be mounted is one warning and `off`, never a failed run: only the fetch decides that.
+    # A colon is refused because `-v` splits on it, and the path would mount something else.
+    DIST_CACHE="${DELIVERY_DIST_CACHE:-}"
+    if [ -z "$DIST_CACHE" ]; then
+        if [ -n "${RUNNER_TOOL_CACHE:-}" ]; then DIST_CACHE="$RUNNER_TOOL_CACHE/simplon/dist"
+        else DIST_CACHE="${XDG_CACHE_HOME:-${HOME:-}/.cache}/simplon/dist"; fi
+    fi
+    if [ "$DIST_CACHE" = off ]; then
+        DOCKER_RUN+=(-e DELIVERY_DIST_CACHE=off)
+    elif [[ "$DIST_CACHE" == *:* ]]; then
+        printf '%s: the download cache %s contains a colon, which docker -v splits on; it is not mounted and the cache is off for this run.\n' \
+            "$LAUNCH_PRODUCT" "$DIST_CACHE" >&2
+        DOCKER_RUN+=(-e DELIVERY_DIST_CACHE=off)
+    elif mkdir -p "$DIST_CACHE" 2>/dev/null && DIST_CACHE="$(cd "$DIST_CACHE" && pwd)"; then
+        DOCKER_RUN+=(-v "$DIST_CACHE:/cache/dist" -e DELIVERY_DIST_CACHE=/cache/dist)
+    else
+        printf '%s: the download cache %s could not be created; it is not mounted and the cache is off for this run.\n' \
+            "$LAUNCH_PRODUCT" "$DIST_CACHE" >&2
+        DOCKER_RUN+=(-e DELIVERY_DIST_CACHE=off)
+    fi
     # WHICH VARIABLES CROSS. The venv route inherits the caller's whole environment and this one inherits
     # nothing, so the difference has to be named rather than left to be discovered. Two namespaces plus
     # the handful of variables a CI runner speaks: the kernel's own DELIVERY_*, this product's, and
@@ -256,7 +282,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     ENV_PREFIX="$(printf '%s' "$LAUNCH_PRODUCT" | tr '[:lower:]-' '[:upper:]_')"
     while read -r _name; do
         case "$_name" in
-            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
+            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|DELIVERY_DIST_CACHE|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
             DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN|GH_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
             *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_RUN+=(-e "$_name") ;; esac ;;

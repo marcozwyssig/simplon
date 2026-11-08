@@ -24,10 +24,27 @@ rc 0 and says so; a download that fails, or arrives with another checksum, is rc
 `path` - the bytes land beside it under a staging name and are renamed into place only once they match.
 A file under `path` with the wrong checksum (the previous version's archive) is replaced, and the run says
 that too.
+
+A DOWNLOAD CACHE, OUTSIDE THE TREE (si#600). The file under `path` is gone after every `clean`, every
+fresh checkout and every CI job, and each of those fetched the archive again. firn bridged it with a
+cache of its own (`FIRN_DIST_CACHE`, firn#1240); Marco decided on si#600 that the kernel carries one for
+every product, with no manifest key. It lives at `DELIVERY_DIST_CACHE` (`off` turns it off), else
+`$RUNNER_TOOL_CACHE/simplon/dist` on a CI runner, else `${XDG_CACHE_HOME:-$HOME/.cache}/simplon/dist`,
+keyed `<sha256>/<file name>` - the checksum is the key because it is the one statement about the bytes.
+A hit is copied beside `path`, verified AGAIN on the copy, and renamed into place; a miss downloads as
+before and then copies the verified file into the cache under a unique `.partial` name. EVERY CACHE
+FAULT IS A WARNING AND A MISS, never the verdict: an unreadable entry, a wrong checksum in the cache (it
+is removed and replaced), a cache that cannot be written. Only the fetch decides the exit code, and the
+four outcomes are four different lines - "from the download cache", "fetched ...; stored in the download
+cache", "fetched ...; cache not written: <reason>", "fetched ...; the download cache is off". The
+launcher mounts the host's cache into the kernel's container on the container route, at a fixed path
+it names through the same variable.
 """
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -54,6 +71,18 @@ VERSION_FROM_KEYS = ("file", "key")
 
 #: The suffix the bytes carry until their checksum is known.
 STAGING = ".unverified"
+
+#: The variable naming the download cache directory, and the value that turns the cache off (si#600).
+CACHE_ENV = "DELIVERY_DIST_CACHE"
+CACHE_OFF = "off"
+
+#: The mode every file `build:fetch` leaves under `path`, whichever way it arrived. BuildKit's layer
+#: cache key includes the file mode (firn measured it on si#600: a restored 0644 against a fetched 0600
+#: rebuilt every layer), so a restore and a download must not differ. 0600 because that is what a real
+#: download has always produced - `transfer.download` stages through `mkstemp`, which creates 0600
+#: whatever the umask (measured 2026-11-08 under umask 0022) - and it is now set on BOTH paths rather
+#: than inherited, so the equality is this module's statement and not a side effect of another one.
+MODE = 0o600
 
 
 @dataclass(frozen=True)
@@ -125,6 +154,73 @@ def version_of(spec: File, root: Path, where: str) -> str:
     return document.strip()
 
 
+def cache_dir(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The download cache directory the environment names, or None when it says `off` (si#600).
+
+    The chain is the launcher's too (`launch.sh.j2` resolves the host side with the same four names), so
+    the two cannot pick different directories for one caller.
+    """
+    env = os.environ if environ is None else environ
+    named = env.get(CACHE_ENV, "").strip()
+    if named == CACHE_OFF:
+        return None
+    if named:
+        return Path(named)
+    runner = env.get("RUNNER_TOOL_CACHE", "").strip()
+    if runner:
+        return Path(runner) / "simplon" / "dist"
+    base = env.get("XDG_CACHE_HOME", "").strip() or str(Path(env.get("HOME", "").strip() or Path.home()) / ".cache")
+    return Path(base) / "simplon" / "dist"
+
+
+def _restore(cached: Path, spec: File, dest: Path) -> bool:
+    """Put the cached copy under `path` if it is the declared file; False, with a warning, if it is not."""
+    if not cached.is_file():
+        return False
+    copy: Path | None = None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        handle, name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".cached")
+        os.close(handle)
+        copy = Path(name)
+        shutil.copyfile(cached, copy)
+        # Verified on the COPY, not on the cache: the bytes that are renamed into place are the bytes
+        # that were checked, whatever happens to the cache entry in between.
+        found = checksum.sha256_of(copy)
+        if found != spec.sha256:
+            copy.unlink(missing_ok=True)
+            log.warn(f"the download cache holds {cached} with sha256 {found}, not the declared "
+                     f"{spec.sha256}; it is removed and the file is fetched instead")
+            cached.unlink(missing_ok=True)
+            return False
+        os.chmod(copy, MODE)
+        os.replace(copy, dest)
+    except OSError as fault:
+        if copy is not None:
+            copy.unlink(missing_ok=True)
+        log.warn(f"the download cache entry {cached} could not be read ({fault}); the file is fetched instead")
+        return False
+    log.ok(f"{spec.path} restored from the download cache {cached}; sha256 verified, nothing downloaded")
+    return True
+
+
+def _store(dest: Path, cached: Path) -> str:
+    """Copy the verified file into the cache; the reason it could not be, or "" when it was."""
+    partial: Path | None = None
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        handle, name = tempfile.mkstemp(dir=cached.parent, prefix=f"{cached.name}.", suffix=".partial")
+        os.close(handle)
+        partial = Path(name)
+        shutil.copyfile(dest, partial)
+        os.replace(partial, cached)
+    except OSError as fault:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
+        return str(fault)
+    return ""
+
+
 def fetch(name: str = "") -> int:
     """Leave the file `name` declares under its `path`, with its declared sha256.
 
@@ -148,6 +244,10 @@ def fetch(name: str = "") -> int:
             return 0
         log.info(f"{spec.path} is there with another sha256 - an older download, or another file; it is "
                  f"replaced")
+    cache = cache_dir()
+    cached = cache / spec.sha256 / dest.name if cache is not None else None
+    if cached is not None and _restore(cached, spec, dest):
+        return 0
     staged = dest.with_name(dest.name + STAGING)
     try:
         transfer.download(url, staged, label=dest.name)
@@ -162,6 +262,15 @@ def fetch(name: str = "") -> int:
                   + (f"\n  the url's version {version} is read from '{spec.version_key}' in "
                      f"{spec.version_file}: a new version needs the sha256 of its own file" if version else ""))
         return 1
+    os.chmod(staged, MODE)
     os.replace(staged, dest)
-    log.ok(f"fetched {spec.path} from {url}; sha256 verified")
+    fetched = f"fetched {spec.path} from {url}; sha256 verified"
+    if cached is None:
+        log.ok(f"{fetched}; the download cache is off ({CACHE_ENV}={CACHE_OFF})")
+        return 0
+    reason = _store(dest, cached)
+    if reason:
+        log.warn(f"{fetched}; cache not written: {reason}")
+    else:
+        log.ok(f"{fetched}; stored in the download cache {cached}")
     return 0
