@@ -23,6 +23,61 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.43.0
+
+**What a product has to do:** nothing to keep working. To get the download cache on the container
+route, regenerate the launcher (`simplon init --dir . --launchers-only`). A `claude:` key the section
+does not read is now refused at load; none of the nine reachable manifests has one.
+
+### `depends_on` can name a command by its group (si#580)
+
+- **`depends_on: [build toolchain]` names the command by its group path**, spelt the way the CLI types
+  it, nested groups included (`support tasks generate`). A kernel release that places a new command
+  beside a product's own of the same name can no longer leave the product with no way to say which
+  one it means: firn's `depends_on: [toolchain]` broke when si#550 placed `support toolchain` beside its
+  `build toolchain`.
+- **A bare name keeps its meaning**, including the refusal when several groups own it; that message now
+  names the qualified spellings as the way out. Plans and step command lines of existing manifests are
+  unchanged.
+- **New diagnosis:** a qualified entry that names no command is refused at load and the message lists
+  what the group holds.
+
+### A default plugin this machine cannot run is skipped and named, not red (si#582)
+
+- **`support claude-plugins` and `support install` exit 0 when a plugin from the kernel's default or a
+  language toolchain needs an executable that is not on PATH** (`gh`, `node`, `pyright-langserver`,
+  ...). That plugin is not installed, and every run prints ``skipped <plugin>: `<name>` is not on PATH``
+  (`would skip` in the dry run). A set complete only because something was skipped never closes with
+  "nothing to do".
+- **What the product names in `claude.requires:` stays red**, because the product said it needs it.
+- An installed plugin whose executable has gone is left in place and warned about.
+
+### `build:fetch` keeps a download cache outside the product tree (si#600)
+
+- **A pinned file is fetched once per machine, not once per checkout.** Requested by firn after GitHub
+  Releases answered 504 for hours and every CI job fetching its Gradle archive failed. The cache is
+  keyed by the declared sha256 and lives at `DELIVERY_DIST_CACHE` (`off` turns it off), else
+  `$RUNNER_TOOL_CACHE/simplon/dist`, else `${XDG_CACHE_HOME:-~/.cache}/simplon/dist`. No manifest key.
+- **A hit is verified again on the copy**; a cached file with the wrong checksum is removed and fetched.
+  Every cache fault is a warning and a miss: only the fetch decides the exit code, and the run says
+  which of "from the download cache", "stored in the download cache", "cache not written" or "the
+  download cache is off" happened.
+- **The `.sh` launcher mounts the cache into the kernel's container** at `/cache/dist`. The `.cmd`
+  launcher passes `off`: Windows drive-letter mounts have not been measured.
+
+### An unknown key in the `claude:` section is refused (si#590)
+
+- **`claude: { auto_instal: false }` used to leave the automatic install on without a word**, and a
+  `rev:` in a marketplace entry left it unpinned. A key the section or a marketplace entry does not
+  read is now refused, and the message names the keys it takes.
+
+### Also in this release
+
+- **si#589:** the Homebrew e2e tests retry a failed attempt once after 30 s and are red only when both
+  fail. The retry is printed as a warning even on a green run. The test PR is #602.
+- **#598** pins `deploy/image/image.pin` to the v0.42.0 kernel image, again published by hand (si#574).
+- The pull requests are #599 (si#590), #601 (si#582), #602 (si#589), #603 (si#600) and #604 (si#580).
+
 ## 0.42.0
 
 **What a product has to do:** nothing.
