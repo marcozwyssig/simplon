@@ -603,7 +603,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # An undocumented command is a working command. The kernel requires the sentence anyway.
     ("load", "_validate_taxonomy", "missing help"): EXPRESSION,
     ("load", "_validate_taxonomy", "is not a command in the manifest"): DIAGNOSIS,
+    # si#580: a bare name several groups own has no one reading - the kernel would have to guess which
+    # command runs - so it stays diagnosis, and its message now names the qualified spellings out.
     ("load", "_validate_taxonomy", "is ambiguous (owned by groups"): DIAGNOSIS,
+    # si#580: a qualified entry (`build toolchain`) whose group or member does not exist - a typo, which
+    # names nothing that could run; the message lists what the group does hold.
+    ("load", "_validate_taxonomy", "names no command - "): DIAGNOSIS,
     ("load", "walk", "dependency cycle: "): DIAGNOSIS,
     # netctl#1319. The manifest loads and runs; what is wrong is the abort scope, which is invisible.
     ("load", "_validate_taxonomy", "disagree on stop_on_f"): EXPRESSION,

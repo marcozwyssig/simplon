@@ -1480,7 +1480,8 @@ def _expanded(job: Job, manifest: Manifest, where: str) -> list[Step]:
 
 def _leaves(manifest: Manifest, step: Step, where: str) -> "tuple[tuple[str, TaskCommand], ...]":
     """The leaf commands a step runs, with their specs: itself for a leaf, its plan for an aggregate, none for a
-    verbatim step. An aggregate's plan names each leaf by a bare name exactly one group owns (#519)."""
+    verbatim step. An aggregate's plan names each leaf by its plan word - a bare name exactly one group owns
+    (#519), or for a name several own, its group path (si#580) - and `path_by_name` resolves either."""
     if not step.command:
         return ()
     group, name = resolve_command(manifest, step.command, where=where)
@@ -1489,10 +1490,10 @@ def _leaves(manifest: Manifest, step: Step, where: str) -> "tuple[tuple[str, Tas
         return ((f"{group.replace('.', ' ')} {name}", spec),)
     out: list[tuple[str, TaskCommand]] = []
     for leaf in manifest.plan_for(name, group=group):
-        owner = next(g for g, members in manifest.commands.items() if leaf in members)
-        member = manifest.commands[owner][leaf]
+        owner, _, member_name = (manifest.path_by_name(leaf) or "").rpartition(".")
+        member = manifest.commands[owner][member_name]
         if isinstance(member, TaskCommand):
-            out.append((f"{owner.replace('.', ' ')} {leaf}", member))
+            out.append((f"{owner.replace('.', ' ')} {member_name}", member))
     return tuple(out)
 
 

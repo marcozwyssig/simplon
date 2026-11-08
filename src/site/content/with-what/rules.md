@@ -71,9 +71,15 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 260 | nothing - the declaration had no working meaning |
+| diagnosis | 261 | nothing - the declaration had no working meaning |
 | expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **303** | |
+| **all load-time refusals** | **304** | |
+
+si#580 added one diagnosis: a `depends_on` entry may now name a command by its group path, as the CLI
+types it (`build toolchain`), and one whose group or member does not exist is refused with what the group
+does hold. It refuses nothing that loaded before: an entry with a space in it was "not a command in the
+manifest" until then. A bare name several groups own is still refused, as diagnosis, and its message now
+names the qualified spellings out.
 
 si#590 added one diagnosis: a key the `claude:` section, or one of its marketplace entries, does not
 read. It was ignored before, so `auto_instal: false` left the automatic install on and `rev:` left a

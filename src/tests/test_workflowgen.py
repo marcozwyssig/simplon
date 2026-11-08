@@ -2682,3 +2682,28 @@ def test_emulates_without_a_release_is_refused():
 def test_emulates_is_a_list_of_platforms(value):
     with pytest.raises(ValueError, match=re.escape("`emulates:` is a non-empty list of platforms")):
         _release_parsed(f"emulates: {value}\n")
+
+
+def test_an_aggregate_step_lists_a_leaf_its_plan_names_by_its_group_path():
+    # arrange: si#580 - `toolchain` is owned by `build` and `support`, and `all` depends on build's by its
+    # group path, so the plan word is `build toolchain` and no member is called that
+    text = """
+tasks:
+  t: { impl: "m:t", help: "Build the toolchain image." }
+  p: { impl: "m:p", help: "Pin the toolchain." }
+ci:
+  build:
+    commands:
+      toolchain: { task: t }
+      all: { help: "All.", depends_on: ["build toolchain"] }
+support:
+  commands:
+    toolchain: { task: p }
+"""
+    mf = manifest_mod.load(text)
+
+    # act
+    leaves = workflowgen._leaves(mf, workflowgen.Step(command="build all"), "workflow 'w'")
+
+    # assert: the leaf is build's, spelt as the step that runs it would spell it
+    assert leaves == (("build toolchain", mf.spec_for("build", "toolchain")),)

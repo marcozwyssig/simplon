@@ -398,6 +398,71 @@ def test_a_dropped_plan_tree_is_warned_about_before_the_first_step_runs(monkeypa
     assert out.index("does not pair") < out.index("DISPATCHED")
 
 
+# --- si#580: a dependency named by its group path runs THAT command -----------------------------------------
+# `toolchain` is owned by `build` and `support`, so it has no flat CLI alias and the step has to reach it by
+# its group path. `lint` is a collapsed flat group's one member and `pack` a group-default namesake; each is
+# also owned by another group, so each is depended on by its path, and each is invoked by the CLI's own
+# spelling of that command rather than by the words of the path.
+
+_QUALIFIED_MANIFEST = """
+tasks:
+  t: { impl: "demo.impls:t", help: "Build the toolchain image." }
+  p: { impl: "demo.impls:p", help: "Pin the toolchain." }
+  l: { impl: "demo.impls:l", help: "Lint." }
+  k: { impl: "demo.impls:k", help: "Pack." }
+
+ci:
+  build:
+    commands:
+      toolchain: { task: t }
+  lint:
+    commands:
+      lint: { task: l }
+  pack:
+    commands:
+      pack: { task: k }
+      diff: { task: k, help: "Diff." }
+  test:
+    commands:
+      lint: { task: l, help: "Lint the tests." }
+      pack: { task: k, help: "Pack the tests." }
+support:
+  commands:
+    toolchain: { task: p }
+cd:
+  deploy:
+    commands:
+      dev: { help: "Bring up a dev box.", depends_on: ["build toolchain", "lint lint", "pack pack"] }
+"""
+
+
+@pytest.mark.parametrize("factory", ["shim", "module"])
+def test_a_qualified_dependency_runs_the_command_its_group_path_names(monkeypatch, factory):
+    # arrange: capture the pipeline and the argv each of its steps really streams
+    argvs: list[list[str]] = []
+    captured: list = []
+    monkeypatch.setattr("simplon.kernel.steps.run_stream",
+                        lambda argv, on_line: (argvs.append(list(argv)), 0)[1])
+    monkeypatch.setattr(product, "dispatch", lambda p: (captured.append(p), 0)[1])
+    monkeypatch.setattr(product.sys, "executable", "/venv/bin/python")
+    mf = manifest_load(_QUALIFIED_MANIFEST)
+    ctx = (product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", mf) if factory == "shim"
+           else product.StepFactoryContext.for_module("demo", "orchestrator", mf))
+    head = ["/repo/demo.sh"] if factory == "shim" else ["/venv/bin/python", "-u", "-m", "orchestrator"]
+
+    # act
+    product.run_command("dev", mf, ctx, group="deploy")
+    for step in captured[0].steps:
+        step.run()
+
+    # assert: each step is stamped with, described by and runs the command its group path names
+    steps = captured[0].steps
+    assert [step.command for step in steps] == ["build.toolchain", "lint.lint", "pack.pack"]
+    assert [step.help for step in steps] == ["Build the toolchain image.", "Lint.", "Pack."]
+    assert argvs == [[*head, "build", "toolchain"], [*head, "lint"], [*head, "pack"]]
+    assert captured[0].usable_tree() is not None
+
+
 # --- for_module: the steps of a plan are Python, not a second trip through the shim ------------------
 
 def test_for_module_runs_the_products_module_with_this_interpreter(monkeypatch):
