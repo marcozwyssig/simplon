@@ -56,7 +56,10 @@ def _run(root: Path, *args: str, env: dict | None = None) -> subprocess.Complete
     environ = {**os.environ,
                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                "DOCKER_LOG": str(log),
-               "DELIVERY_ROUTE": "container"}
+               "DELIVERY_ROUTE": "container",
+               # si#600: the launcher creates and mounts the download cache; the caller's stays untouched.
+               "DELIVERY_DIST_CACHE": "", "RUNNER_TOOL_CACHE": "",
+               "XDG_CACHE_HOME": str(root / "xdg-cache")}
     environ.update(env or {})
     done = subprocess.run(["bash", str(root / "democtl.sh"), *args],
                           capture_output=True, text=True, env=environ)

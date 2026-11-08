@@ -777,6 +777,18 @@ ci:
   read from.
 - **A file already there with its checksum is not fetched again**, and the run says so. A file there with
   another checksum, such as the archive of an older version, is replaced.
+- **A download cache outside the tree keeps the file across `clean`, checkouts and CI jobs** (si#600). It
+  lives at `DELIVERY_DIST_CACHE`, else `$RUNNER_TOOL_CACHE/simplon/dist` on a CI runner, else
+  `${XDG_CACHE_HOME:-~/.cache}/simplon/dist`, keyed `<sha256>/<file name>`; `DELIVERY_DIST_CACHE=off`
+  turns it off. A hit is copied beside `path:`, its sha256 checked again on the copy, and renamed into
+  place without a download. A miss downloads as before and then copies the verified file into the cache.
+  Both leave the file with mode 0600, because BuildKit's layer cache key includes the mode. A cache fault
+  (an unreadable entry, a wrong checksum in the cache, a cache that cannot be written) is a warning and a
+  miss, never the verdict, and the log says which of four things happened: restored from the download
+  cache, fetched and stored in it, fetched with the cache not written, or fetched with the cache off. On
+  the container route the launcher creates the host's cache directory and mounts it at `/cache/dist`; a
+  directory it cannot create, or a path with a colon, is one warning and the cache is off for that run.
+  The Windows launcher mounts no cache and passes `off`.
 - **`build:image` consumes the file without a `consumes:`.** The loader derives the binding from
   `contexts:`, so an aggregate that plans the image before the fetch is refused. So is an image whose
   file no command fetches. Writing `consumes: { file: ... }` on the image command is refused, because
@@ -1395,7 +1407,8 @@ What the section refuses at load, on either route:
 
 - a name that is not an environment variable name (a letter or `_`, then letters, digits and `_`);
 - a name the launcher sets on the kernel's container itself - `HOME`, `PYTHONPATH`, `PYTHONUSERBASE`,
-  `DELIVERY_ROUTE`, `DELIVERY_HOST_ROOT`, `DELIVERY_MOUNT_ROOT`, `DELIVERY_ENV_PASS` and anything in
+  `DELIVERY_ROUTE`, `DELIVERY_HOST_ROOT`, `DELIVERY_MOUNT_ROOT`, `DELIVERY_ENV_PASS`,
+  `DELIVERY_DIST_CACHE` and anything in
   `LAUNCH_*`. The list is read off the launcher templates, and forwarding your host's value over one of
   them would break the container;
 - a key other than `env:`, or under it other than `pass:`, because a key the kernel ignored would forward

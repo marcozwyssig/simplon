@@ -109,6 +109,12 @@ route needs a real checkout: a linked git worktree's `.git` is a file naming a d
 mount, so git inside the container would see no repository, and the launcher refuses rather than let the
 release-notes guard and `release tag` fail one at a time.
 
+One host directory besides the tree is mounted: the download cache `build:fetch` keeps verified files in
+(si#600). The launcher resolves it the way the kernel does (`DELIVERY_DIST_CACHE`, else
+`$RUNNER_TOOL_CACHE/simplon/dist`, else `${XDG_CACHE_HOME:-~/.cache}/simplon/dist`), creates it, mounts it
+at `/cache/dist` and tells the kernel that path. `DELIVERY_DIST_CACHE=off` mounts nothing. A directory the
+launcher cannot create is a warning on stderr and the cache is off for that run; the run itself goes on.
+
 The two routes are held to producing the same verdict, the same exit code, the same files on disk and the
 same log. There is one difference a user sees and it is this: on the container route the kernel names
 paths as the container sees them, so a log line reads `/src/build/logs/...` where the venv route writes

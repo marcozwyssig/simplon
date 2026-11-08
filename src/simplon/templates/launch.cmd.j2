@@ -168,6 +168,11 @@ rem same default LAUNCH_IMAGE_PIN carries above: a hand-moved pin has to be move
 set "DOCKER_ENV=%DOCKER_ENV% -e LAUNCH_IMAGE_PIN=/src/deploy/image/image.pin"
 set "DOCKER_ENV=%DOCKER_ENV% -e PYTHONPATH=%ORCH_IN_SRC%/src/python"
 set "DOCKER_ENV=%DOCKER_ENV% -e PYTHONUSERBASE=/src/build/container/python -e HOME=/tmp"
+rem THE DOWNLOAD CACHE IS OFF ON THIS ROUTE (si#600). The `.sh` mounts the host's cache at /cache/dist;
+rem this file does not, because a drive-letter `-v` source is the undriven gap above and there was no
+rem Windows to measure it on. Without a mount the cache would live in the container and die with it, so
+rem the kernel is told `off` - its fetch line then says the cache is off instead of claiming a store.
+set "DOCKER_ENV=%DOCKER_ENV% -e DELIVERY_DIST_CACHE=off"
 
 rem WHICH VARIABLES CROSS: the kernel's own namespace, this product's, and the handful a CI runner
 rem speaks. The venv route inherits the caller's whole environment and this one inherits nothing, so the
@@ -204,6 +209,7 @@ if /i "%~1"=="DELIVERY_ROUTE" goto :eof
 if /i "%~1"=="DELIVERY_HOST_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_MOUNT_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_ENV_PASS" goto :eof
+if /i "%~1"=="DELIVERY_DIST_CACHE" goto :eof
 if /i "%~1"=="PYTHONPATH" goto :eof
 if /i "%~1"=="PYTHONUSERBASE" goto :eof
 if /i "%~1"=="HOME" goto :eof
