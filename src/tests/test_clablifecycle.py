@@ -231,6 +231,98 @@ def test_deploy_skips_amd64_emulation_when_the_lab_has_no_x86_kind(monkeypatch):
     assert clablifecycle.deploy(host, _spec(amd64_emulation=False)) == 0
 
 
+# --- deploy: a leftover mgmt network on a stale subnet (si#607) -------------------------------------
+
+class _MgmtNetHost(_DeployHost):
+    """A deploy host whose mgmt network already exists (or not) with a scripted subnet + attached-container
+    count, answering the `network inspect` the reconcile issues before the first deploy attempt."""
+
+    def __init__(self, *, existing=None, attached=0):
+        super().__init__(fail_attempts=0)
+        self._existing = existing   # None = no such network
+        self._attached = attached
+
+    def docker(self, *args, capture=True):
+        if args[:2] == ("network", "inspect"):
+            self.docker_calls.append(args)
+            if self._existing is None:
+                return Result(rc=1, out="", err="Error: No such network: netctl-mgmt")
+            return Result(rc=0, out=f"{self._existing} |{self._attached}\n", err="")
+        return super().docker(*args, capture=capture)
+
+
+def _rendered(tmp_path, subnet="10.0.0.0/24") -> BringUpSpec:
+    topo = tmp_path / "netctl.clab.yml"
+    topo.write_text(f"name: netctl\nmgmt:\n  network: netctl-mgmt\n  ipv4-subnet: {subnet}\n")
+    return _spec(output_dir=tmp_path, topology_path=topo)
+
+
+def test_deploy_removes_a_leftover_mgmt_network_on_another_subnet_before_deploying(tmp_path):
+    # arrange: the host moved networks since the last lab - the render wants 10.0.0.0/24, the empty
+    # leftover network still sits on 10.128.0.0/24, and clab would reject every node address against it
+    host = _MgmtNetHost(existing="10.128.0.0/24", attached=0)
+    # act
+    rc = clablifecycle.deploy(host, _rendered(tmp_path))
+    # assert: the stale network is removed BEFORE the (single, successful) deploy recreates it
+    assert rc == 0
+    assert ("network", "rm", "netctl-mgmt") in host.docker_calls
+    assert host.deploy_attempts == 1
+
+
+def test_deploy_keeps_a_mgmt_network_already_on_the_rendered_subnet(tmp_path):
+    # arrange (negative): a redeploy over a live lab - same subnet, containers attached
+    host = _MgmtNetHost(existing="10.0.0.0/24", attached=42)
+    # act
+    clablifecycle.deploy(host, _rendered(tmp_path))
+    # assert: it was looked at, --reconfigure reuses it, nothing is removed
+    assert any(c[:2] == ("network", "inspect") for c in host.docker_calls)
+    assert ("network", "rm", "netctl-mgmt") not in host.docker_calls
+    assert host.deploy_attempts == 1
+
+
+def test_deploy_compares_the_mgmt_subnet_as_a_network_not_as_text(tmp_path):
+    # arrange (negative): docker reports the normalised network, the topology spells a host address in
+    # it - the same /24, so a live lab must be redeployed, not refused
+    host = _MgmtNetHost(existing="10.0.0.0/24 fd00:c71::/64", attached=42)
+    # act
+    rc = clablifecycle.deploy(host, _rendered(tmp_path, subnet="10.0.0.5/24"))
+    # assert
+    assert rc == 0
+    assert ("network", "rm", "netctl-mgmt") not in host.docker_calls
+    assert host.deploy_attempts == 1
+
+
+def test_deploy_leaves_an_absent_mgmt_network_to_clab(tmp_path):
+    # arrange (negative): a clean host, the network does not exist yet
+    host = _MgmtNetHost(existing=None)
+    # act
+    clablifecycle.deploy(host, _rendered(tmp_path))
+    # assert: it was looked for, nothing to remove, clab creates it
+    assert any(c[:2] == ("network", "inspect") for c in host.docker_calls)
+    assert ("network", "rm", "netctl-mgmt") not in host.docker_calls
+    assert host.deploy_attempts == 1
+
+
+def test_deploy_dies_naming_both_subnets_when_the_stale_mgmt_network_still_has_containers(tmp_path,
+                                                                                          monkeypatch):
+    # arrange (negative): the stale network still carries containers - removing it would cut them off,
+    # and deploying against it fails every retry, so the only honest answer is `down` first
+    host = _MgmtNetHost(existing="10.128.0.0/24", attached=3)
+
+    def boom(msg):
+        raise SystemExit(msg)
+
+    monkeypatch.setattr(clablifecycle.log, "die", boom)
+    # act
+    with pytest.raises(SystemExit) as died:
+        clablifecycle.deploy(host, _rendered(tmp_path))
+    # assert: no deploy attempt, no removal, and the message names both subnets and the way out
+    assert host.deploy_attempts == 0
+    assert ("network", "rm", "netctl-mgmt") not in host.docker_calls
+    assert "10.128.0.0/24" in str(died.value) and "10.0.0.0/24" in str(died.value)
+    assert "down" in str(died.value)
+
+
 # --- the cross-process degraded channel (the contract that must survive verbatim) -------------------
 
 def test_deploy_degradation_is_readable_by_up_verdict_across_processes(tmp_path, monkeypatch):

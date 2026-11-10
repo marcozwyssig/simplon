@@ -27,10 +27,13 @@ STAY product-side. Keeping the substrate's liveness signal purely structural is 
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from simplon.kernel import degraded, log
 from simplon.adapters import labhost, labnet
@@ -97,6 +100,50 @@ def oob_down(host: Host, bridges: tuple[str, ...] | list[str]) -> None:
         host.sh(labnet.oob_bridge_down_snippet(bridge))
 
 
+# --- the mgmt network a previous lab left behind (si#607) -------------------------------------------
+
+def _rendered_mgmt_subnet(spec: BringUpSpec) -> str | None:
+    """The `mgmt.ipv4-subnet` the rendered topology asks for, or None when there is no rendered file or it
+    names none (clab then picks its own default and there is nothing to compare against)."""
+    if not spec.topology_path.exists():
+        return None
+    topo = yaml.safe_load(spec.topology_path.read_text()) or {}
+    return (topo.get("mgmt") or {}).get("ipv4-subnet")
+
+
+def reconcile_mgmt_network(host: Host, spec: BringUpSpec) -> None:
+    """Remove a leftover mgmt network whose subnet is not the one the rendered topology asks for.
+
+    clab reuses an existing mgmt network BY NAME and rejects every node address outside its subnet, on every
+    retry. Such a leftover exists when a lab vanished without `down` (a VM restart, a killed job) and the
+    product has since rendered a different subnet - netctl derives its mgmt /24 from the host's own LAN
+    (netctl#1003/#1019), so changing networks is enough. An empty one is removed and clab recreates it; one
+    that still carries containers is not ours to cut off, so the deploy stops and says `down` first."""
+    wanted = _rendered_mgmt_subnet(spec)
+    if wanted is None:
+        return
+    res = host.docker("network", "inspect", "-f", "{{range .IPAM.Config}}{{.Subnet}} {{end}}|{{len .Containers}}",
+                      spec.mgmt_network)
+    if not res.ok:
+        return   # no such network: clab creates it
+    subnets, _, attached = (res.out or "").strip().rpartition("|")
+    try:
+        wanted_net = ipaddress.ip_network(wanted, strict=False)
+    except ValueError:
+        return   # not a CIDR clab could compare either; leave it to clab
+    if any(ipaddress.ip_network(s, strict=False) == wanted_net for s in subnets.split()):
+        return
+    have = " ".join(subnets.split()) or "no subnet"
+    if attached.strip() not in ("", "0"):
+        log.die(f"mgmt network {spec.mgmt_network} is on {have} but the rendered topology wants {wanted}, and "
+                f"{attached.strip()} container(s) are still attached; run `down` first, then deploy again")
+    log.warn(f"removing the leftover mgmt network {spec.mgmt_network} ({have}); the rendered topology wants "
+             f"{wanted} and clab would reject every node address against it")
+    if not host.docker("network", "rm", spec.mgmt_network).ok:
+        log.die(f"could not remove the leftover mgmt network {spec.mgmt_network} ({have}); remove it by hand "
+                f"(`docker network rm {spec.mgmt_network}`) or run `down`, then deploy again")
+
+
 # --- deploy (the load-bearing bring-up core, today's up_deploy) -------------------------------------
 
 def deploy(host: Host, spec: BringUpSpec) -> int:
@@ -109,6 +156,7 @@ def deploy(host: Host, spec: BringUpSpec) -> int:
     a product-derived flag) AND the host is a macOS Colima VM (the labhost functions self-gate on that); the
     substrate never names a specific x86 kind. A failed deploy is RETRIED, each attempt re-running
     `--reconfigure` under the watchdog, so a lost binfmt-flush race self-heals."""
+    reconcile_mgmt_network(host, spec)
     log.info("creating the OOB management bridges")
     oob_up(host, spec.bridges)
 
