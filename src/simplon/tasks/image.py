@@ -110,7 +110,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon.manifest import artifactsection, context, outputs
+from simplon.manifest import artifactsection, context, outputs, ports
 from simplon.model import artifactschema
 from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
@@ -366,9 +366,29 @@ def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
     # si#343: a file context is fetched, not committed, so its absence is the step that has not run yet.
     for name, path in cfg.files:
         if not (root / path).is_file():
-            missing.append(f"contexts: {name} - no file at {path}; fetch it first, `build:fetch` with "
-                           f"`with: {{ name: {name} }}`")
+            missing.append(f"contexts: {name} - no file at {path}; {run_first(name, 'build:fetch')}")
     return missing
+
+
+def run_first(artifact: str, coordinate: str) -> str:
+    """The way out for an artifact a step has not made yet, in the PRODUCT's words (si#494).
+
+    A user types `./firn.sh build gradle`; nothing on their command line is called `build:fetch`. The kernel
+    cites coordinates because it cannot know the product's words, but here the manifest says them: the
+    command that produces `artifact` is the one to run. Only when no command produces it is the coordinate
+    the answer, and then the message says that too, since it is the actual finding."""
+    ctx = context.current()
+    manifest = ctx.manifest()
+    # The group path spelt as the CLI types it (`build gradle`), not the bare flat alias `word_for` would give:
+    # `argv_for` of the qualified word is what knows a collapsed group and a group-default namesake.
+    paths = (group.replace(".", " ") + " " + name for group, name in ports.producers(manifest, artifact))
+    typed = ["`" + " ".join((context.launcher(ctx.name), *manifest.argv_for(path))) + "`" for path in paths]
+    if len(typed) == 1:
+        return f"run {typed[0]} first, which makes it"
+    if typed:
+        return f"run one of {', '.join(typed)} first - each makes it"
+    return (f"no command in {ctx.manifest_path.name} produces it: place `{coordinate}` with "
+            f"`with: {{ name: {artifact} }}` under a command, and run that")
 
 
 def resolve_tag(cfg: Image, tag: str, derived: str = "") -> str:
@@ -1380,7 +1400,7 @@ def _contexts_in_the_daemon(cfg: Image, name: str, version: str) -> bool:
         if not present_locally(context_name(dep, version)):
             log.error(f"image '{name}' is built FROM {context_name(dep, version)}, which the daemon does "
                       f"not hold.\n"
-                      f"  build it first: `build:image` with `with: {{ name: {dep_name} }}`. Without "
+                      f"  {run_first(dep_name, 'build:image')}. Without "
                       f"`platforms:` the build resolves FROM in the daemon, and docker would otherwise "
                       f"try to pull an image that was never published")
             return False

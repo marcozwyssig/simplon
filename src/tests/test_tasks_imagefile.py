@@ -222,6 +222,24 @@ def test_extract_refuses_without_a_recorded_build(product, cli, monkeypatch, cap
     assert not [c for c in cli.calls if c[:2] == ["docker", "create"]]
 
 
+def test_extract_without_a_build_names_the_product_command_that_builds_the_image(product, cli, monkeypatch,
+                                                                                  capsys):
+    # arrange: si#494 - a command builds `firn-image`, so that is the way out, in the product's words
+    (product / "demo.yaml").write_text(_MANIFEST.replace(
+        "artifacts:\n", 'ci:\n  build:\n    commands:\n      image: { task: "build:image", with: { name: firn-image } }\n'
+                        "artifacts:\n", 1), encoding="utf-8")
+    monkeypatch.setattr(image, "read_built", lambda name, ref: {})
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "run `./demo.sh build image` first, which makes it" in err
+    assert "build:image" not in err
+
+
 # --- the copy -------------------------------------------------------------------------------------------
 
 def test_extract_copies_from_the_platform_reference_and_writes_0755(product, cli, built):

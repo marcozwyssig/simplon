@@ -1841,8 +1841,10 @@ def test_a_bake_target_is_handed_the_files_directory_under_the_entrys_name(tmp_p
     assert bake["target"]["app"]["contexts"] == {"gradle-dist": str(tmp_path / "build/dist")}
 
 
-def _with_file_context(product):
-    (product / "demo.yaml").write_text(_MANIFEST + f"""\
+def _with_file_context(product, commands=""):
+    manifest = _MANIFEST.replace("artifacts:\n", f"ci:\n  build:\n    commands:\n{commands}artifacts:\n", 1) \
+        if commands else _MANIFEST
+    (product / "demo.yaml").write_text(manifest + f"""\
   tool:
     kind: image
     registry: ghcr.io/owner
@@ -1875,11 +1877,30 @@ def test_a_file_context_not_yet_fetched_is_named_before_docker_is_started(cli, _
     # act
     rc = image.build(name="tool", tag="1")
 
-    # assert: red, docker never asked, and the message says which step has not run
+    # assert: red, docker never asked, and the message says which step has not run - here no command
+    # produces the file, so that is what it says, and the coordinate is the way out
     assert rc == 1
     assert cli.argv_starting("docker", "build") == []
-    assert "contexts: gradle-dist - no file at build/dist/gradle.zip; fetch it first, `build:fetch`" \
-        in capsys.readouterr().err
+    assert ("contexts: gradle-dist - no file at build/dist/gradle.zip; no command in demo.yaml produces "
+            "it: place `build:fetch` with `with: { name: gradle-dist }` under a command, and run that"
+            in capsys.readouterr().err)
+
+
+def test_a_file_context_not_yet_fetched_names_the_product_command_that_fetches_it(cli, _no_provenance,
+                                                                                  _product, capsys):
+    # arrange: si#494 - the product's own words, as firn places it (`build gradle`)
+    _with_file_context(_product, '      gradle: { task: "build:fetch", with: { name: gradle-dist } }\n'
+                                 '      tool-image: { task: "build:image", produces: { image: tool } }\n')
+
+    # act
+    rc = image.build(name="tool", tag="1")
+
+    # assert: the command a user types, not the coordinate nothing on their command line is called
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert ("contexts: gradle-dist - no file at build/dist/gradle.zip; run `./demo.sh build gradle` first, "
+            "which makes it" in err)
+    assert "build:fetch" not in err
 
 
 def test_a_broken_dependency_is_refused_as_itself_and_not_as_its_dependent():
@@ -1941,6 +1962,25 @@ def test_a_single_platform_image_built_from_another_needs_that_one_built_first(m
     assert fake.argv_starting("docker", "build") == []
     err = capsys.readouterr().err
     assert "ghcr.io/owner/demo-base:25" in err and "build:image" in err and "name: base" in err
+
+
+def test_the_dependency_not_built_yet_is_answered_with_the_product_command_that_builds_it(
+        monkeypatch, _no_provenance, _multi, capsys):
+    # arrange: si#494 - a command places `build:image` for `base`, so that command is the way out
+    manifest = (_MANIFEST + _MULTI.lstrip("\n")).replace(
+        "artifacts:\n", 'ci:\n  build:\n    commands:\n      base-image: { task: "build:image", with: { name: base } }\n'
+                        "artifacts:\n", 1)
+    (_multi / "demo.yaml").write_text(manifest, encoding="utf-8")
+    _fake(monkeypatch, verdict={("docker", "image", "inspect", "ghcr.io/owner/demo-base:25"): 1})
+
+    # act
+    rc = image.build(name="single-on-base", tag="1.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "run `./demo.sh build base-image` first, which makes it" in err
+    assert "build:image" not in err
 
 
 def test_a_single_platform_image_whose_dependency_is_built_keeps_the_plain_argv(monkeypatch,

@@ -278,7 +278,7 @@ def _built_reference(cfg: image.Image, name: str, platform: str, root: Path) -> 
     if platform not in image.read_built(name, ref) or not image.present_locally(source):
         log.error(f"this checkout has no build of image '{name}' for {platform} under {ref}, so there is "
                   f"nothing to copy out of; nothing was pulled.\n"
-                  f"  build it first: `build:image` with `with: {{ name: {name} }}`")
+                  f"  {image.run_first(name, 'build:image')}")
         return None
     return source
 
