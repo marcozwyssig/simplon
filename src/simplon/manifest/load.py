@@ -1021,8 +1021,14 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on."""
     common: dict[str, Any] = {"help": spec.help, "hidden": spec.hidden, "unattended": spec.unattended}
-    # si#492: validated on every command; only a task command carries it - an aggregate runs no
-    # `toolchain:run` line, so it passes nothing of its own and each member keeps its own list.
+    # si#492: only a task command carries `env:` - an aggregate runs no `toolchain:run` line, so it passes
+    # nothing of its own and each member keeps its own list. Written on an aggregate it would reach nothing,
+    # so it is refused (Marco, 2026-11-11).
+    if spec.depends_on and spec.env is not None:
+        raise ValueError(
+            f"aggregate '{group.replace('.', ' ')} {name}' declares `env:`, and an aggregate runs no "
+            f"`toolchain:run` line of its own, so the names would reach nothing - declare `env: {{ pass: "
+            f"[...] }}` on the member commands whose toolchain needs them")
     env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,

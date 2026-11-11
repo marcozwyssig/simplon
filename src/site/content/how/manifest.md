@@ -1405,7 +1405,8 @@ gets `-e VSCE_PAT`, on either route; a command that does not declare the name ne
 one publish needs is not handed to a gradle build or an `npm install` in the same product. The launcher's
 own hop into the kernel's container carries the union of every command's list, because the launcher is
 built before the manifest is read; that container runs simplon's own code and nothing third-party. An
-aggregate passes nothing of its own: each command it plans keeps its own list.
+aggregate passes nothing of its own: each command it plans keeps its own list, and an `env:` written on
+an aggregate is refused at load, because it would reach nothing - put it on the member commands.
 
 **Each name crosses by name, never as a value.** The value is on no command line and in no log. A name
 your shell does not export stays unset on the far side: it is not forwarded as an empty string.

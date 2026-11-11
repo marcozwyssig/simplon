@@ -308,21 +308,41 @@ def test_the_launchers_list_is_the_union_of_the_task_commands_lists(tmp_path):
     assert launcherenv.declared(doc) == ("VSCE_PAT", "SHARED", "OTHER")
 
 
-def test_an_aggregate_passes_nothing_of_its_own_and_each_member_keeps_its_list():
-    # arrange: si#492 Q3 C - the aggregate writes a list, its members x (VSCE_PAT) and y (none)
-    import yaml
-    text = _doc(env=", env: { pass: [VSCE_PAT] }", aggregate_env=", env: { pass: [AGGREGATE_ONLY] }")
+def test_each_member_of_an_aggregate_keeps_its_own_list():
+    # arrange: si#492 Q3 C - members x (VSCE_PAT) and y (none) under one aggregate
+    text = _doc(env=", env: { pass: [VSCE_PAT] }")
 
     # act
     loaded = manifest.load(text)
 
-    # assert: no member gains the aggregate's or a sibling's names, and the launcher forwards none of the
-    # aggregate's, since no `toolchain:run` line could use them
+    # assert: no member gains a sibling's names, and the aggregate carries none
     build = loaded.commands["build"]
     assert build["x"].env_pass == ("VSCE_PAT",)
     assert build["y"].env_pass == ()
     assert not hasattr(build["both"], "env_pass")
+
+
+def test_the_launchers_union_leaves_an_aggregates_env_out():
+    # arrange: the raw union is read before any load (`simplon init --launchers-only`), so it must not count
+    # what the loader refuses below
+    import yaml
+    text = _doc(env=", env: { pass: [VSCE_PAT] }", aggregate_env=", env: { pass: [AGGREGATE_ONLY] }")
+
+    # act / assert
     assert launcherenv.declared(yaml.safe_load(text)) == ("VSCE_PAT",)
+
+
+def test_an_env_on_an_aggregate_is_refused_and_points_at_the_members():
+    # arrange: si#492, decided by Marco 2026-11-11 - an aggregate runs no `toolchain:run` line, so the names
+    # would reach nothing; diagnosis
+    text = _doc(aggregate_env=", env: { pass: [VSCE_PAT] }")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        manifest.load(text)
+    said = str(caught.value)
+    assert "aggregate 'build both' declares `env:`" in said
+    assert "on the member commands" in said
 
 
 def test_names_the_launcher_already_forwards_are_accepted_quietly():

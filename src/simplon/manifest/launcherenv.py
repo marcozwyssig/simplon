@@ -31,7 +31,8 @@ gradle and `npm install` as well (firn's security review, firn#1056). Now:
 - the `toolchain:run` hop carries the names of the command being run and of no other (`running`). The
   dispatch wrappers - `cli._bound`, the generated module, a gate's call - set them around the body with
   `within`; outside a command nothing is passed. An aggregate passes nothing of its own: each member keeps
-  its own list, so one member's secret never reaches a sibling.
+  its own list, so one member's secret never reaches a sibling. An `env:` written on an aggregate would
+  reach nothing, so the loader refuses it and points at the members (`load._command`).
 
 `launcher: env: pass:` is retired, not kept as a second form (#33): a manifest that still writes it is
 refused by name with the way out. None of the eight reachable manifests wrote it (measured 2026-11-11).

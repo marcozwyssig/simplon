@@ -724,6 +724,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#344 C.3 rule 8: a release is one aggregate naming one bundle, and its tag follows every publish.
     ("load", "_command", "only an aggregate under `ci: release:` does"): EXPRESSION,
     ("load", "_command", "a release aggregate names exactly"): EXPRESSION,
+    # si#492, decided by Marco 2026-11-11. DIAGNOSIS: an aggregate runs no `toolchain:run` line, so an `env:`
+    # on it would pass its names to nothing - green at load, unset at the member that needed them. The way
+    # out is the member's own `env:`, which the refused manifest could have said and did not.
+    ("load", "_command", "declares `env:`, and an aggregate runs no"): DIAGNOSIS,
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
