@@ -292,7 +292,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network, name=name,
-                       passes=launcherenv.declared(context.current().manifest_data()), entrypoint=entrypoint)
+                       passes=launcherenv.running(), entrypoint=entrypoint)
     return line, name
 
 

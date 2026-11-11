@@ -152,9 +152,10 @@ MODULES: dict[str, tuple[str, ...]] = {
     # that is three of them. `layout.py` itself is handed the document and is therefore no more a reader
     # than `carrierspec.py` is.
     "tasks.acceptance": ("layout",),      # where the acceptance scenarios are read from
-    "tasks.toolchain": ("layout", "launcher"),   # where it runs, and which names cross by name (si#467)
-    # si#467: the container-route check that the launcher forwards what `launcher: env: pass:` declares.
-    "cli.__init__": ("launcher",),
+    "tasks.toolchain": ("layout",),       # where it runs (si#492 moved the names it passes onto the command)
+    # si#492: the container-route check reads the commands' `env: pass:` lists out of the command areas,
+    # which are the loader's keys (`COMMAND_SECTIONS`), not a data section of its own.
+    "cli.__init__": (),
     "tasks.artifact": ("artifacts",),
     "tasks.asset": ("assets",),
     "tasks.githubrelease": ("artifacts",),
@@ -205,10 +206,6 @@ SILENT_ON_ABSENCE = {
               "mistyped as `layotu:` is silent too, and only a key mistyped INSIDE a correctly spelled "
               "section is refused. Making an unrecognised top-level key loud is a rule about every "
               "section and not about this one.",
-    "launcher": "an absent `launcher:` section is the NORMAL case - no manifest in this family wrote one "
-                "before si#467, and a product that says nothing forwards into the kernel's container exactly "
-                "what it forwarded yesterday. Same cost as `layout:`: `lanucher:` is silent too, and only a "
-                "key mistyped INSIDE a correctly spelled section is refused.",
     "build": "an absent `build:` section is the NORMAL case - `build cmake-files` renders the build "
              "files from the SOURCES, and `build: targets:` only adds the dependency edges a directory "
              "cannot show. `_declared_targets` says so at its own docstring and returns an empty "
@@ -282,8 +279,6 @@ DRIVERS: dict[str, tuple[dict, object]] = {
                 env.environments),
     "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
     "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
-    "launcher": ({"launcher": {"env": {"pass": ["VSCE_PAT"]}}},
-                 lambda: launcherenv.declared(context.current().manifest_data())),
 }
 
 KEYS = tuple(sorted({key for keys in MODULES.values() for key in keys}))

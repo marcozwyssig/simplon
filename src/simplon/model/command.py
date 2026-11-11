@@ -104,6 +104,9 @@ class TaskCommand(Command):
     produces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     consumes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     ports: tuple[Port, ...] = ()
+    #: The names this command's `env: pass:` hands BY NAME to its `toolchain:run` line, and to no other
+    #: command's (si#492).
+    env_pass: tuple[str, ...] = ()
 
     def task_class(self, *, where: str) -> type[Task]:
         """The Task class this command runs, resolved now (it is not held, see `task.task_class`).

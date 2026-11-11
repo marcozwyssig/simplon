@@ -75,6 +75,12 @@ an argument.
 | expression rule | 43 | something it could otherwise have said |
 | **all load-time refusals** | **304** | |
 
+si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
+`env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus
+one that refuses a leftover `launcher:` section by name, with the way out. And an `env:` written on an
+aggregate is refused, because an aggregate runs no `toolchain:run` line and the names would reach nothing;
+the message points at the member commands. All seven are diagnosis, as the seven before them were.
+
 si#580 added one diagnosis: a `depends_on` entry may now name a command by its group path, as the CLI
 types it (`build toolchain`), and one whose group or member does not exist is refused with what the group
 does hold. It refuses nothing that loaded before: an entry with a space in it was "not a command in the

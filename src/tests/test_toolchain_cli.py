@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 from simplon import cli
 from simplon.manifest import context
 from simplon.kernel.run import Result
-from simplon.tasks import toolchain
+from simplon.tasks import taskgen, testrun, toolchain
 
 
 # A product manifest in the shape `simplon init` writes: no `instance:` section, because nothing writes
@@ -364,3 +364,68 @@ def test_a_host_toolchain_takes_no_version_on_the_command_line(product):
     # assert
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(product.read_text())["toolchains"] == ["claude"]
+
+
+# --- si#492: a command's `env: pass:` reaches its own toolchain:run line and no other -------------------
+
+_PUBLISH = """\
+      publish:
+        task: "toolchain:run"
+        env: { pass: [VSCE_PAT] }
+        with:
+          image: "alpine:3.20"
+          argv: ["true"]
+"""
+
+
+def test_a_declared_name_reaches_the_toolchain_line_of_the_command_that_declares_it(product, docker_lines):
+    # arrange
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "publish"])
+
+    # assert: by name, as two argv elements, and never with a value
+    assert result.exit_code == 0, result.output
+    line = docker_lines[0]
+    assert line[line.index("VSCE_PAT") - 1] == "-e"
+    assert not any(arg.startswith("VSCE_PAT=") for arg in line)
+
+
+def test_a_command_that_does_not_declare_the_name_never_sees_it(product, docker_lines):
+    # arrange (firn's ask on si#492): another command of the same manifest declares VSCE_PAT
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "smoke"])
+
+    # assert: the undeclared command's toolchain:run argv carries no `-e VSCE_PAT`
+    assert result.exit_code == 0, result.output
+    assert docker_lines and "VSCE_PAT" not in docker_lines[0]
+
+
+def test_a_gate_runs_the_command_with_its_own_names_and_no_other(product, docker_lines):
+    # arrange: a gate calls the command's body without the CLI's wrapper, so it sets the names itself
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    assert testrun._command("build publish", "gates.publish.command")() == 0
+    assert testrun._command("build smoke", "gates.smoke.command")() == 0
+
+    # assert
+    publish, smoke = docker_lines
+    assert publish[publish.index("VSCE_PAT") - 1] == "-e"
+    assert "VSCE_PAT" not in smoke
+
+
+def test_the_generated_module_wraps_only_the_declaring_command(product):
+    # arrange
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    text = taskgen.render(context.current().manifest(), source="demo.yaml", product="demo")
+
+    # assert
+    assert "from simplon.manifest import launcherenv as _launcherenv" in text
+    assert text.count("_launcherenv.within(") == 1
+    assert "_launcherenv.within(('VSCE_PAT',)" in text

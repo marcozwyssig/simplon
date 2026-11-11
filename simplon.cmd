@@ -25,8 +25,8 @@ rem The PUBLISHED KERNEL IMAGE this checkout runs on the container route (si#200
 rem line a shell can read before any Python exists. A checkout with no such file, or one whose
 rem file carries no reference, has no container route.
 set "LAUNCH_IMAGE_PIN=%LAUNCH_ROOT%\deploy\image\image.pin"
-rem THE NAMES THIS PRODUCT'S MANIFEST PASSES THROUGH, `launcher: env: pass:` (si#467), written here by
-rem `simplon init` because this file reads no YAML. The container route forwards each one BY NAME (`-e NAME`,
+rem THE NAMES THIS PRODUCT'S COMMANDS PASS THROUGH, the union of their `env: pass:` lists (si#467, si#492),
+rem written here by `simplon init` because this file reads no YAML. The container route forwards each one BY NAME (`-e NAME`,
 rem never a value) and only when it is defined here, so a name unset here stays unset there. The kernel
 rem compares this list with the manifest on that route; after editing the list, re-render with
 rem `simplon init --dir . --launchers-only`.

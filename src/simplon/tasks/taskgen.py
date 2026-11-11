@@ -160,6 +160,7 @@ def render(manifest: Manifest, *, source: str, product: str,
     has_aggregate = False
     uses_results = False
     uses_bound = False
+    uses_env_pass = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -197,6 +198,10 @@ def render(manifest: Manifest, *, source: str, product: str,
                 if evidence:
                     uses_results = True
                     wrapped = f"_results.guarded({evidence!r}, lambda: {wrapped})"
+                # si#492: this command's `env: pass:` reaches its own `toolchain:run` line and no other's.
+                if spec.env_pass:
+                    uses_env_pass = True
+                    wrapped = f"_launcherenv.within({spec.env_pass!r}, lambda: {wrapped})"
                 # si#553: the names bound to a list port (no `param`) reach the body through `bound.names`;
                 # outside `guarded`, so the body sees both.
                 listed = bound.of(spec)
@@ -303,7 +308,8 @@ def render(manifest: Manifest, *, source: str, product: str,
                      for name in manifest.groups.get(group, ()))
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
                                                 tasks=tasks, body=body, covered=covered,
-                                                has_aggregate=has_aggregate, uses_results=uses_results, uses_bound=uses_bound)
+                                                has_aggregate=has_aggregate, uses_results=uses_results, uses_bound=uses_bound,
+                                                uses_env_pass=uses_env_pass)
 
 
 def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:

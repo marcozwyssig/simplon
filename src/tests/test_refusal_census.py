@@ -480,27 +480,33 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     misspelling here at all.
     #   - what would the fix cost a product that violated it? One key renamed, in the file the refusal
     #     names, before anything has run.
-    # --- launcherenv.py (si#467) ---------------------------------------------------------------------
-    # Seven, all diagnosis, and the sorting question is worth answering out loud for the two unknown-key
-    # refusals because `layout:`'s look the same and are billed as expression. Here the refused manifest
-    # could NOT have produced a working product: `launcher: { env: { pas: [VSCE_PAT] } }` declares the
-    # section precisely because a command needs the variable on the container route, and ignoring the key
-    # forwards nothing - the command then fails, there, with no word about why. `layout:`'s typo leaves a
-    # product that builds the wrong tree and still works; this one leaves a product that does not.
+    # --- launcherenv.py (si#467, moved onto the command by si#492) ----------------------------------
+    # Six, all diagnosis. si#467's seven checked a top-level `launcher:` section; si#492 moved the list onto
+    # the command (`env: { pass: [...] }`), so the section's own two shape checks went and the command's
+    # `env:` took the other five. The sorting question is worth answering out loud for the unknown-key
+    # refusal because `layout:`'s looks the same and is billed as expression. Here the refused manifest
+    # could NOT have produced a working product: `env: { pas: [VSCE_PAT] }` is written precisely because the
+    # command needs the variable on the container route, and ignoring the key forwards nothing - the command
+    # then fails, there, with no word about why. `layout:`'s typo leaves a product that builds the wrong tree
+    # and still works; this one leaves a product that does not.
     #
-    # The rest: a section, `env:` or `pass:` of the wrong shape declares nothing; a name that is not an
-    # environment variable name cannot even be written into the launcher's space-separated list; and a
-    # name the launcher sets on the kernel's container itself - read off the two templates, `LAUNCH_*` with
-    # them - would put the host's `HOME` or `PYTHONPATH` over the container's and break it. That last one
-    # Marco classified a diagnosis on 2026-10-16 (si#467). A name the launcher already forwards is accepted, so there
-    # is no expression rule here at all.
-    ("launcherenv", "declared", "section must be a mapping with"): DIAGNOSIS,
-    ("launcherenv", "declared", "it takes `env:`"): DIAGNOSIS,
-    ("launcherenv", "declared", "env' must be a mapping with"): DIAGNOSIS,
-    ("launcherenv", "declared", "it takes `pass:`"): DIAGNOSIS,
-    ("launcherenv", "declared", "must be a list of variable names"): DIAGNOSIS,
-    ("launcherenv", "declared", "which is not an environment"): DIAGNOSIS,
-    ("launcherenv", "declared", "which the launcher sets on the"): DIAGNOSIS,
+    # The rest: an `env:` or `pass:` of the wrong shape declares nothing; a name that is not an environment
+    # variable name cannot even be written into the launcher's space-separated list; and a name the launcher
+    # sets on the kernel's container itself - read off the two templates, `LAUNCH_*` with them - would put
+    # the host's `HOME` or `PYTHONPATH` over the container's and break it. That one Marco classified a
+    # diagnosis on 2026-10-16 (si#467). A name the launcher already forwards is accepted, so there is no
+    # expression rule here at all.
+    #
+    # `check_retired` is si#344's reasoning for a cut form: `_ManifestModel` ignores an unknown top-level key,
+    # so a leftover `launcher:` section would load and forward nothing - green at load and unset at the
+    # first command that needed the name. None of the eight reachable manifests writes it (measured
+    # 2026-11-11), so it refuses nothing a product meant.
+    ("launcherenv", "check_retired", "section is gone (si#492)"): DIAGNOSIS,
+    ("launcherenv", "of_command", "must be a mapping with"): DIAGNOSIS,
+    ("launcherenv", "of_command", "it takes `{PASS}:`"): DIAGNOSIS,
+    ("launcherenv", "of_command", "must be a list of variable names"): DIAGNOSIS,
+    ("launcherenv", "of_command", "which is not an environment"): DIAGNOSIS,
+    ("launcherenv", "of_command", "which the launcher sets on the"): DIAGNOSIS,
 
     ("layout", "declared", "must be a mapping of"): DIAGNOSIS,
     ("layout", "declared", "does not take"): EXPRESSION,
@@ -718,6 +724,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#344 C.3 rule 8: a release is one aggregate naming one bundle, and its tag follows every publish.
     ("load", "_command", "only an aggregate under `ci: release:` does"): EXPRESSION,
     ("load", "_command", "a release aggregate names exactly"): EXPRESSION,
+    # si#492, decided by Marco 2026-11-11. DIAGNOSIS: an aggregate runs no `toolchain:run` line, so an `env:`
+    # on it would pass its names to nothing - green at load, unset at the member that needed them. The way
+    # out is the member's own `env:`, which the refused manifest could have said and did not.
+    ("load", "_command", "declares `env:`, and an aggregate runs no"): DIAGNOSIS,
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
@@ -1978,7 +1988,7 @@ def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
     or `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
     nothing and the emptiness below proves nothing.
     """
-    cut = {"groups", "env_groups", "default", "environments", "site", "import", "images"}
+    cut = {"groups", "env_groups", "default", "environments", "site", "import", "images", "launcher"}
     dropped = {read.key for read in _document_reads()} - sections_read()
 
     # EXACTLY, not "at least": a rule that also dropped a real section would pass a subset check

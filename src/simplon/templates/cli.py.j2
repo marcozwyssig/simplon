@@ -11,6 +11,9 @@ import typer
 {% if uses_bound %}
 from simplon.manifest import bound as _bound
 {% endif %}
+{% if uses_env_pass %}
+from simplon.manifest import launcherenv as _launcherenv
+{% endif %}
 {% if uses_results %}
 from simplon.manifest import results as _results
 {% endif %}

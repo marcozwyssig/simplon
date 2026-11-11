@@ -333,6 +333,8 @@ class _CommandSpecModel(BaseModel):
     task: str = ""
     produces: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     consumes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    # si#492: raw, validated in `_command` by `launcherenv.of_command`, where the command's path is known.
+    env: object = None
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -848,10 +850,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
     artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
                           manifest_path or "the manifest")
-    # si#467: `launcher: env: pass:` is read by the launchers' renderer, by the container-route check and by
-    # `toolchain:run` - each after the load - so a broken section is refused HERE, on either route, before a
-    # command that never touches a container could run past it.
-    launcherenv.declared(data, manifest_path or "the manifest")
+    # si#492: `launcher: env: pass:` is retired for a command's own `env: pass:` (checked in `_command`); a
+    # leftover section is refused HERE, on either route, with the way out.
+    launcherenv.check_retired(data, manifest_path or "the manifest")
     # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
     # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
     # way - help, env_first, nested groups - so the older one is simply a tree with no commands placed in
@@ -1020,6 +1021,15 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on."""
     common: dict[str, Any] = {"help": spec.help, "hidden": spec.hidden, "unattended": spec.unattended}
+    # si#492: only a task command carries `env:` - an aggregate runs no `toolchain:run` line, so it passes
+    # nothing of its own and each member keeps its own list. Written on an aggregate it would reach nothing,
+    # so it is refused (Marco, 2026-11-11).
+    if spec.depends_on and spec.env is not None:
+        raise ValueError(
+            f"aggregate '{group.replace('.', ' ')} {name}' declares `env:`, and an aggregate runs no "
+            f"`toolchain:run` line of its own, so the names would reach nothing - declare `env: {{ pass: "
+            f"[...] }}` on the member commands whose toolchain needs them")
+    env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1042,7 +1052,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
-                publishes=spec.publishes, token=spec.token,
+                publishes=spec.publishes, token=spec.token, env_pass=env_pass,
                 task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,

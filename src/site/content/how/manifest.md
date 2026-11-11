@@ -508,7 +508,6 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
-| `launcher:` | the launchers' renderer (`simplon init`), the container-route check, `toolchain:run` | `env: pass:`, the variable names forwarded by name into the kernel's container and onto every toolchain line |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
@@ -531,10 +530,6 @@ refuses the same way, naming the key it looked for. The ones that say nothing sa
   same thing, on purpose - two live manifests have one, and the next section is about them.
 - **`env_var:`** - a product that selects its environment by token and `default:` alone has no such
   variable, and a listing must still work on a manifest that has not adopted the key.
-- **`launcher:`** - an absent section is what every product in this family has. It arrived with si#467,
-  and a product that says nothing forwards into the kernel's container exactly what it forwarded before.
-  Same cost as `layout:`: `lanucher:` is silent too, and only a key mistyped *inside* a correctly spelled
-  `launcher:` is refused.
 - **`layout:`** - an absent section is what every product in this family has. It arrived with si#250 and
   its defaults are exactly what the kernel assumed before it existed, so a manifest that says nothing
   runs the line it ran yesterday. The cost is stated rather than left to be found: `layotu:` is silent
@@ -1387,21 +1382,33 @@ existed - so a manifest that says nothing runs the line it ran yesterday. The co
 left to be found: a section name mistyped as `layotu:` is silent, and only a key mistyped *inside* a
 correctly spelled `layout:` is refused.
 
-### `launcher:` - the variables that cross into the kernel's container
+### A command's `env: pass:` - the variables that cross to its toolchain
 
 On the container route the launcher forwards a fixed set of variables into the kernel's container and
 nothing else: `DELIVERY_*`, `CI`, `NO_COLOR`, `TERM`, `TZ`, `GITHUB_TOKEN`, `GH_TOKEN` and your product's own
 `<PRODUCT>_*`. That is deliberate - forwarding the whole environment is how a secret reaches a place
-nobody looked - and it leaves out a tool that reads its secret under its own fixed name. Name those here:
+nobody looked - and it leaves out a tool that reads its secret under its own fixed name. Name those on
+the command that needs them (si#492):
 
 ```yaml
-launcher:
-  env:
-    pass: [VSCE_PAT]
+ci:
+  release:
+    commands:
+      publish-extension:
+        task: "toolchain:run"
+        env: { pass: [VSCE_PAT] }
+        with: { image: ..., argv: [...] }
 ```
 
-**Each name crosses by name, never as a value.** The kernel's container line gets `-e VSCE_PAT`, and so
-does every `toolchain:run` line, on either route. The value is on no command line and in no log. A name
+**Each name reaches that command's toolchain and no other command's.** The command's `toolchain:run` line
+gets `-e VSCE_PAT`, on either route; a command that does not declare the name never sees it, so a token
+one publish needs is not handed to a gradle build or an `npm install` in the same product. The launcher's
+own hop into the kernel's container carries the union of every command's list, because the launcher is
+built before the manifest is read; that container runs simplon's own code and nothing third-party. An
+aggregate passes nothing of its own: each command it plans keeps its own list, and an `env:` written on
+an aggregate is refused at load, because it would reach nothing - put it on the member commands.
+
+**Each name crosses by name, never as a value.** The value is on no command line and in no log. A name
 your shell does not export stays unset on the far side: it is not forwarded as an empty string.
 
 **The launcher carries its own copy, so re-render it after editing the list.** The launcher is bash and
@@ -1414,12 +1421,12 @@ simplon init --dir . --launchers-only
 ```
 
 A launcher you forgot to re-render is **refused, not silent**. The launcher also exports the list it was
-rendered with (`DELIVERY_ENV_PASS`), and on the container route the kernel compares that with this
-section. It refuses the run, naming the variables the launcher does not forward or still forwards, and
+rendered with (`DELIVERY_ENV_PASS`), and on the container route the kernel compares that with the union
+of the commands' lists. It refuses the run, naming the variables the launcher does not forward or still forwards, and
 the command above. Without that check a missing variable would look exactly like one your host never
 set. The venv route has no container and inherits your whole environment, so nothing is compared there.
 
-What the section refuses at load, on either route:
+What a command's `env:` refuses at load, on either route:
 
 - a name that is not an environment variable name (a letter or `_`, then letters, digits and `_`);
 - a name the launcher sets on the kernel's container itself - `HOME`, `PYTHONPATH`, `PYTHONUSERBASE`,
@@ -1427,8 +1434,11 @@ What the section refuses at load, on either route:
   `DELIVERY_DIST_CACHE` and anything in
   `LAUNCH_*`. The list is read off the launcher templates, and forwarding your host's value over one of
   them would break the container;
-- a key other than `env:`, or under it other than `pass:`, because a key the kernel ignored would forward
-  nothing.
+- a key under `env:` other than `pass:`, because a key the kernel ignored would forward nothing.
+
+**`launcher: env: pass:` is gone.** si#467's manifest-wide section handed its names to every
+`toolchain:run` container; a manifest that still writes it is refused at load, naming the command-level
+form and the re-render above as the way out.
 
 A name the launcher already forwards (`GH_TOKEN`, `<PRODUCT>_*`, a `DELIVERY_*` it does not set itself) is
 accepted, and changes nothing.

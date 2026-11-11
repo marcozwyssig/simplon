@@ -160,7 +160,7 @@ def test_no_token_and_no_gh_is_unanswered_with_a_message(monkeypatch):
     assert "GITHUB_TOKEN" in str(refused.value)
 
 
-def test_the_refusal_names_the_launcher_pass_for_the_container_route(monkeypatch):
+def test_the_refusal_names_the_commands_env_pass_for_the_container_route(monkeypatch):
     # arrange: an Enterprise origin, and the container route forwards neither GITHUB_* variable
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     monkeypatch.delenv("GITHUB_API_URL", raising=False)
@@ -168,7 +168,7 @@ def test_the_refusal_names_the_launcher_pass_for_the_container_route(monkeypatch
     # act / assert
     with pytest.raises(github.Unanswered) as refused:
         github.where("git@ghe.example:o/n.git")
-    assert "launcher: env: pass: [GITHUB_REPOSITORY, GITHUB_API_URL]" in str(refused.value)
+    assert "`env: { pass: [GITHUB_REPOSITORY, GITHUB_API_URL] }` on the command that asks" in str(refused.value)
 
 
 def test_other_asks_for_the_named_repository(standin):
