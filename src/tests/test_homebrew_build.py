@@ -187,7 +187,9 @@ def test_a_formula_path_not_named_for_the_wheel_is_refused_before_the_closure(pr
 
 @pytest.mark.parametrize("source", ["", "pip", "PyPI"])
 def test_an_empty_source_is_refused(product, pypi, source):
-    with pytest.raises(ValueError, match="source"):
+    # a TaskRefused, so the launcher prints it as its message alone (si#544)
+    from simplon.manifest.context import TaskRefused
+    with pytest.raises(TaskRefused, match="source"):
         _build(source=source)
 
 

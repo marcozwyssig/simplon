@@ -65,13 +65,15 @@ their requirements file and their `PYTHONPATH` from that single variable, so the
 piece and nothing needs a hand-edit. The Python package stays `orchestrator` under any layout - it is an
 identifier resolved on `PYTHONPATH`, not a location.
 
-Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
-does not survive one.
+Pass the same flag on a later `--force` run. `--force` writes the files that are missing and leaves the
+ones that are exactly as the scaffold writes them. If any existing file differs, a hand-edited launcher
+included, it refuses, names each one and writes nothing (si#506).
 
 ## Taking the launchers of a new kernel
 
-A kernel release can change the launchers, and `--force` would also rewrite your manifest, `cli.py` and
-`requirements.txt`. To take only the launchers, run this at the product root after the pin is bumped:
+A kernel release can change the launchers. `--force` does not take them: once your manifest, `cli.py` or
+`requirements.txt` has grown, they differ from the scaffold, and `--force` refuses (si#506). To take only
+the launchers, run this at the product root after the pin is bumped:
 
 ```sh
 simplon init --dir . --launchers-only
@@ -81,7 +83,7 @@ It rewrites `<product>.sh` and `<product>.cmd` and touches nothing else (si#407)
 off the `LAUNCH_ORCH_DIR=` line of the existing `<product>.sh`, so a product on a layout other than the
 default needs no `--orch-dir`. Passing one that contradicts the line is refused, and so is a launcher
 that carries no such line. Each file is reported as `unchanged`, `replaced` or `written`. A hand edit to
-a launcher is lost, as with `--force`.
+a launcher is lost.
 
 It also reads `<product>.yaml` for the one thing the launchers carry from it: the union of the variable
 names its commands list under `env: pass:`, which the container route forwards by name (si#467, si#492, see

@@ -85,6 +85,7 @@ def test_a_repository_the_token_cannot_see_is_unanswered_not_absent(standin):
     with pytest.raises(github.Unanswered) as refused:
         github.repository()
     assert githubstandin.REPO in str(refused.value)
+    assert "so no release question can be answered" in str(refused.value)
 
 
 def test_a_404_on_the_tag_lookup_is_absent(standin):
@@ -207,9 +208,10 @@ def test_other_maps_404_to_unanswered(standin):
     with pytest.raises(github.Unanswered) as why:
         github.other("o/missing", "t")
 
-    # assert
+    # assert: no release question is asked of another repository (si#544)
     assert "404" in str(why.value)
     assert "o/missing" in str(why.value)
+    assert "release question" not in str(why.value)
 
 
 def _draft(standin):

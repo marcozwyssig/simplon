@@ -66,6 +66,16 @@ class ManifestRefused(ValueError):
     """
 
 
+class TaskRefused(ValueError):
+    """A task body refused to run: the message is the whole diagnosis (si#544).
+
+    Modelled on `ManifestRefused`, and a ValueError still for the same reason: every caller and test that
+    catches a body's refusal keeps catching it. `simplon.cli.main` prints it as its message alone with rc 1.
+    A plain ValueError keeps its traceback, because that is also what a real bug raises (`int('x')`), so a
+    refusal moves to this type one raise site at a time, the measured ones first.
+    """
+
+
 def _print_a_refusal_without_its_traceback(previous):
     """An excepthook that prints an uncaught `ManifestRefused` as its message alone and hands every other
     exception to `previous`, so a defect keeps its traceback. Python still exits 1 after the hook: a

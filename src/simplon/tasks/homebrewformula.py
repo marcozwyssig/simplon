@@ -192,8 +192,8 @@ def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "",
     # run's.
     out.unlink(missing_ok=True)
     if source not in SOURCES:
-        raise ValueError(f"source must be 'pypi' (a real run, after the upload) or 'local' (a dry run), got "
-                         f"{source!r}; bind it with `params:` on each of the two steps")
+        raise context.TaskRefused(f"source must be 'pypi' (a real run, after the upload) or 'local' (a dry run), "
+                                  f"got {source!r}; bind it with `params:` on each of the two steps")
     form = shape_of(shape, depends_on, python, {} if env is None else env, test)
     wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)
     path = the_wheel(wheel_dir)

@@ -101,7 +101,7 @@ def repository(origin: str = "") -> Repository:
         # a PackageError - found by si#486's final review as a traceback where a sentence belongs.
         raise Unanswered(f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). "
                          f"Export GITHUB_TOKEN; in GitHub Actions, pass `secrets.GITHUB_TOKEN` in the step's `env:`") from None
-    return _asked(name, api, token, "(GITHUB_TOKEN, else `gh auth token`)")
+    return _asked(name, api, token, "(GITHUB_TOKEN, else `gh auth token`)", "so no release question can be answered")
 
 
 def other(name: str, token: str) -> Repository:
@@ -112,11 +112,12 @@ def other(name: str, token: str) -> Repository:
         raise Unanswered(f"no token for {name}: none was given, so GitHub was not asked. Export the token "
                          f"that can see {name}")
     api = os.environ.get("GITHUB_API_URL", "").strip().rstrip("/") or "https://api.github.com"
-    return _asked(name, api, token, "(the one given)")
+    return _asked(name, api, token, "(the one given)", "so nothing in it can be read or written")
 
 
-def _asked(name: str, api: str, token: str, seen_by: str) -> Repository:
-    """The one place a client is built and the repository asked for; `seen_by` names the token in a 404."""
+def _asked(name: str, api: str, token: str, seen_by: str, then: str) -> Repository:
+    """The one place a client is built and the repository asked for; `seen_by` names the token in a 404 and
+    `then` says what that 404 stops, which only the caller knows (si#544)."""
     client = Github(auth=Auth.Token(token), base_url=api, timeout=TIMEOUT_S, retry=None, per_page=PER_PAGE,
                     lazy=False)
     try:
@@ -126,8 +127,7 @@ def _asked(name: str, api: str, token: str, seen_by: str) -> Repository:
     except UnknownObjectException:
         raise Unanswered(
             f"{api} answers 404 for the repository {name}: it does not exist there, or the token "
-            f"{seen_by} cannot see it - so no release question can be "
-            f"answered") from None
+            f"{seen_by} cannot see it - {then}") from None
     except GithubException as refused:
         raise Unanswered(f"{api} refused the repository {name}: {said(refused)}") from None
     except requests.exceptions.RequestException as unreachable:
