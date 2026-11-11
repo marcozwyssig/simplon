@@ -332,6 +332,17 @@ def _bound(spec: Command | None, side: str) -> Mapping[str, tuple[str, ...]]:
     return spec.produces if side == "produces" else spec.consumes
 
 
+def producers(manifest: "Manifest", artifact: str) -> tuple[tuple[str, str], ...]:
+    """(group, name) of each command that produces `artifact`, in manifest order (si#494).
+
+    The reverse lookup a refusal needs to name the PRODUCT's command rather than the catalogue coordinate it
+    places: `with: { name: X }` is already read as the binding (`treeform._resolve_one`), so a `build:fetch`
+    pinned to `gradle-dist` and one written `produces: { file: gradle-dist }` both answer here."""
+    return tuple((group, name) for group, members in manifest.commands.items()
+                 for name, spec in members.items()
+                 if any(artifact in names for names in _bound(spec, "produces").values()))
+
+
 def _check_plan(manifest: "Manifest", aggregate: str, tree: PlanNode) -> None:
     """Rule 1 per plan (decided 2026-10-14) and rule 5: one producer of an artifact in a plan, planned
     before every consumer of it there - and not beside it in a fan (si#419), which `depends_on` order

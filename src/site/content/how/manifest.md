@@ -742,8 +742,20 @@ restart, register the handlers persistently instead - the distribution's `qemu-u
 `binfmt-support` or systemd-binfmt), which re-registers them at boot. After either, `docker buildx rm
 simplon` lets the builder be created again so it sees them.
 
-It does not refuse, because a Dockerfile that cross-compiles (`FROM --platform=$BUILDPLATFORM`) needs no
-emulator at all. buildx itself is required: the static docker CLI simplon can bootstrap carries no
+The warning alone does not stop the build, and the build may pass: BuildKit can emulate its `RUN`s on its
+own. Running the image on that platform is what then fails, with `exec format error` (firn measured that
+46 minutes into a release). A Dockerfile that cross-compiles (`FROM --platform=$BUILDPLATFORM`) needs no
+emulator to build at all, so a build is not refused for the builder's list alone.
+
+**An image your tests run on a platform is refused before the build when this host cannot run it**
+(si#546). simplon reads that from the manifest: a `test:image` command that consumes the image with
+`platform: <p>` runs it on `<p>`, and one without `platform:` runs it on every declared platform. For each
+such platform being built, other than the daemon's own, simplon runs a small pinned image with
+`docker run --platform <p>` first. If that answers `exec format error`, the build is refused in seconds,
+naming the test commands and the command that registers the emulator. If the probe fails for another
+reason (no network for its pull, say), there is no verdict: simplon says so and builds.
+
+buildx itself is required: the static docker CLI simplon can bootstrap carries no
 plugins, so install `docker-buildx-plugin`, or use `docker/setup-buildx-action` in a workflow.
 
 A **GitHub-hosted runner** is set up fresh for every job, so the generated workflow's job needs its own
