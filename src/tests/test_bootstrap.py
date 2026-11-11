@@ -195,16 +195,56 @@ def test_write_refuses_to_clobber_an_existing_tree_without_force(tmp_path):
     assert (tmp_path / "fooctl.yaml").read_text(encoding="utf-8") == "# hand-edited, do not lose\n"
 
 
-def test_write_force_overwrites_an_existing_tree(tmp_path):
+def test_write_force_refuses_every_file_that_differs_and_writes_nothing(tmp_path):
+    """si#506: `--force` replaced a grown product's manifest and cli.py with the scaffold and reported
+    success. A file that differs from what the scaffold would write is now named, and nothing is written."""
     # arrange
     bootstrap.write("fooctl", tmp_path)
-    (tmp_path / "fooctl.yaml").write_text("# stale\n", encoding="utf-8")
+    (tmp_path / "fooctl.yaml").write_text("# grown\n", encoding="utf-8")
+    cli = tmp_path / bootstrap.pkg_dir_for(bootstrap.DEFAULT_ORCH_DIR) / "cli.py"
+    cli.write_text(cli.read_text(encoding="utf-8") + "def mine(): pass\n", encoding="utf-8")
+    (tmp_path / "fooctl.cmd").unlink()
 
-    # act: force re-renders every file
+    # act
+    with pytest.raises(FileExistsError) as refused:
+        bootstrap.write("fooctl", tmp_path, force=True)
+
+    # assert: both named, the way out named, and nothing touched - not even the missing launcher
+    said = str(refused.value)
+    assert "fooctl.yaml" in said and f"{bootstrap.pkg_dir_for(bootstrap.DEFAULT_ORCH_DIR)}/cli.py" in said
+    assert "--launchers-only" in said
+    assert (tmp_path / "fooctl.yaml").read_text(encoding="utf-8") == "# grown\n"
+    assert cli.read_text(encoding="utf-8").endswith("def mine(): pass\n")
+    assert not (tmp_path / "fooctl.cmd").exists()
+
+
+def test_write_force_restores_a_missing_file_over_an_unchanged_tree(tmp_path):
+    """What `--force` still does: write what is missing next to files that are as the scaffold wrote them."""
+    # arrange
+    bootstrap.write("fooctl", tmp_path)
+    (tmp_path / "fooctl.cmd").unlink()
+
+    # act
     bootstrap.write("fooctl", tmp_path, force=True)
 
-    # assert: the manifest is back to the rendered starter
+    # assert
+    assert (tmp_path / "fooctl.cmd").is_file()
     assert "product: fooctl" in (tmp_path / "fooctl.yaml").read_text(encoding="utf-8")
+
+
+def test_init_force_over_a_grown_product_is_rc_2_naming_the_file(tmp_path, capsys):
+    # arrange
+    bootstrap.write("fooctl", tmp_path)
+    (tmp_path / "fooctl.yaml").write_text("# grown\n", encoding="utf-8")
+
+    # act
+    rc = bootstrap.main(["init", "fooctl", "--dir", str(tmp_path), "--force"])
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "fooctl.yaml" in err and "--launchers-only" in err
+    assert (tmp_path / "fooctl.yaml").read_text(encoding="utf-8") == "# grown\n"
 
 
 @pytest.mark.parametrize("bad", ["Fooctl", "1ctl", "foo_ctl", "foo ctl", "", "-foo", "foo/ctl"])

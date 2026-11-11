@@ -1063,8 +1063,8 @@ def apply_ignore_block(path: Path, block: str) -> bool:
     stale is never refreshed, which is the correct trade for a file the product owns - the current list
     is published on `how/getting-started.md`.
 
-    `--force` does not reach this, deliberately. Forcing a re-scaffold is how somebody refreshes a
-    launcher they hand-edited; it must not be how they discover their ignore rules are gone.
+    `--force` does not reach this, deliberately. A forced re-scaffold must not be how somebody discovers
+    their ignore rules are gone.
 
     RAISES ValueError when the existing file cannot be read as text - a directory under that name, a
     `.gitignore` some editor saved as UTF-16, a permission the caller does not have. That is a real
@@ -1101,7 +1101,8 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAU
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
     scaffold must never silently clobber a hand-edited manifest or shim - raising FileExistsError listing the
-    conflicts.
+    conflicts. Even with ``force`` it refuses every existing file whose content differs from the scaffold,
+    and writes nothing (si#506): ``force`` writes what is missing next to files the scaffold wrote as they are.
 
     Line endings come from `newline_for`, so what is written is decided by the host the file will RUN on and
     not by the one it was scaffolded on (si#57)."""
@@ -1119,7 +1120,18 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAU
     if existing and not force:
         raise FileExistsError(
             f"simplon.cli.bootstrap: refusing to overwrite existing files under {target}: {existing}; "
-            f"pass force=True (--force) to overwrite")
+            f"pass force=True (--force) to write the missing ones next to them")
+    # si#506: `--force` once re-rendered all of them, a grown product's manifest and cli.py included, and
+    # reported success. A file that differs from what the scaffold would write is the product's now.
+    differ = [rel for rel in existing
+              if not (target / rel).is_file()
+              or (target / rel).read_bytes() != files[rel].replace("\n", newline_for(rel)).encode("utf-8")]
+    if differ:
+        raise FileExistsError(
+            f"simplon init --force: refusing, nothing was written. These files under {target} differ from the "
+            f"scaffold this kernel writes, so they are the product's and --force would replace them: "
+            f"{', '.join(differ)}. For a new kernel release, `simplon init --dir . --launchers-only` re-renders "
+            f"only the two launchers; to re-scaffold one of these files, move it aside first")
 
     written: list[Path] = []
     for rel, content in files.items():
@@ -1330,10 +1342,12 @@ def main(argv: list[str] | None = None) -> int:
                         help=("where the orchestrator block goes, relative to the target: it holds .venv, "
                               "requirements.txt and src/python/ (default: %(default)s, which is where "
                               "every product puts it). A product that owns its repository root passes "
-                              "'orchestrator'. Pass it again on a later re-run: --force overwrites the "
-                              "shim, so hand-editing the generated one does not survive."))
+                              "'orchestrator'. Pass it again on a later --force re-run; --launchers-only "
+                              "reads it from the existing launcher."))
     parser.add_argument("--force", action="store_true",
-                        help="overwrite existing files instead of refusing")
+                        help=("write the missing files next to existing ones instead of refusing; an existing "
+                              "file that differs from the scaffold is still refused and named (si#506) - "
+                              "for a new kernel release, use --launchers-only"))
     parser.add_argument("--launchers-only", dest="launchers_only", action="store_true",
                         help=("re-render ONLY <product>.sh and <product>.cmd, for a new kernel release, and "
                               "touch nothing else (si#407). Overwrites them without --force, so a hand edit "

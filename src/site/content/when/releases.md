@@ -1279,9 +1279,18 @@ written with `groups:`, so a product that upgrades without doing them does not s
    Read the diff before committing it. Comments, flow style and key order survive. The command writes
    nothing unless the result parses to the same data and every original line is accounted for. A second
    run answers `already in the ci/cd form - nothing to migrate`.
-2. **Re-render the launcher** (`simplon init --force`). It now exports `LAUNCH_ORCH_DIR` and
+2. **Re-render the launcher, and nothing else.** From 0.33.0 on, run `simplon init --dir . --launchers-only`
+   (si#407). Before that, scaffold into an empty directory and copy the two launchers over yours, as the
+   0.31.0 notes describe. Do not run `simplon init --force` in the checkout. Up to si#506 it also rewrote
+   the manifest, `cli.py` and `requirements.txt` to the empty scaffold and reported success. It now
+   refuses any file that differs from the scaffold. The new launcher exports `LAUNCH_ORCH_DIR` and
    `LAUNCH_IMAGE_PIN`, so the refusal a not-yet-migrated manifest gets prints a command that can be
    copied as it stands, with the real paths instead of `<orch-dir>` and `<kernel image>`.
+
+**Migrate, bump the pin and fix the import paths in one commit** (65 modules moved in 0.31.0, si#399, and
+the old paths are gone in 0.33.0). A kernel from before this cut does not refuse a migrated manifest: measured on 0.22.0, the
+migrated manifest loaded, and `./<product>.sh help` printed only the usage line and the Options panel, with
+rc 0 and no command. Nothing in either step's output shows it.
 
 The command line does not change: `./<product>.sh build image` is still `build image`.
 
@@ -1290,8 +1299,9 @@ The command line does not change: `./<product>.sh build image` is still `build i
 The manifest's `groups:` is replaced by three top-level areas: `ci:` (build, test, release), `cd:`
 (deploy, monitor, and the environment matrix: `default:` and `environments:` move under it) and
 `support:`. `ci` and `cd` are levels in the tree that the command line does not show, so every command
-keeps its name. The documentation site's top-level `site:` is now `website:`, and its location is
-`cd: site:`.
+keeps its name. The documentation site's top-level `site:` is renamed `website:` and stays top-level.
+Where the site is deployed is a separate key, `site:`, and that is what stands under `cd:`.
+`website:` does not move under `cd:`.
 
 `env_groups:` is deleted (si#43's rule with it). Everything under `cd:` takes an environment and nothing
 under `ci:` does, so the structure says what the key used to.
