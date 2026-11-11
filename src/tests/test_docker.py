@@ -482,6 +482,7 @@ def test_a_finished_run_keeps_its_rc_and_removes_nothing(monkeypatch):
     # arrange
     fake, seen = _recording_run()
     monkeypatch.setattr(docker, "run", fake)
+    monkeypatch.setattr(docker, "_daemon_reachable", lambda: True)
 
     # act
     result = docker.run_container(["docker", "run", "--name", "c1", "img"], "c1")
@@ -489,6 +490,70 @@ def test_a_finished_run_keeps_its_rc_and_removes_nothing(monkeypatch):
     # assert: the client's own rc, and no `docker rm` for a container `--rm` already took away
     assert result.rc == 7
     assert seen == [["docker", "run", "--name", "c1", "img"]]
+
+
+def test_a_green_run_never_probes_the_daemon(monkeypatch):
+    # arrange: the probe is for a red rc only; a green run costs no second docker call
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: Result(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_daemon_reachable", lambda: _boom("probed"))
+
+    # act
+    result = docker.run_container(["docker", "run", "img"], "c1")
+
+    # assert
+    assert result.rc == 0
+
+
+def test_a_red_run_with_no_daemon_dies_with_the_gates_own_diagnosis(monkeypatch, capsys):
+    # arrange (si#625): the client could not reach the daemon, so its rc 1 is not the tool's. The die is
+    # `ensure_docker`'s, word for word: the one message that names the socket gap.
+    from simplon.kernel.run import Result
+    said = "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock\n"
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: Result(rc=1, out="", err=said))
+    monkeypatch.setattr(docker, "_daemon_reachable", lambda: False)
+    monkeypatch.setattr(docker, "_socket_state", lambda: "SOCKET-STATE")
+    monkeypatch.setattr(docker.log, "die", _boom)
+
+    # act
+    with pytest.raises(SystemExit) as died:
+        docker.run_container(["docker", "run", "img"], "c1", capture=True)
+
+    # assert: the gate's message, and what the client said is not swallowed
+    assert str(died.value) == docker.unreachable()
+    assert "no daemon is reachable (socket: SOCKET-STATE)" in str(died.value)
+    assert said in capsys.readouterr().err
+
+
+def test_a_red_run_with_a_reachable_daemon_is_the_tools_rc(monkeypatch):
+    # arrange: the daemon answers, so the container ran and rc 1 is the tool's own
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: Result(rc=1, out="{}", err=""))
+    monkeypatch.setattr(docker, "_daemon_reachable", lambda: True)
+
+    # act
+    result = docker.run_container(["docker", "run", "img"], "c1", capture=True)
+
+    # assert
+    assert (result.rc, result.out) == (1, "{}")
+
+
+@pytest.mark.skipif(docker.shutil.which("docker") is None, reason="no docker client on PATH")
+def test_the_real_client_against_a_missing_socket_is_not_a_tool_exit(monkeypatch, tmp_path, capsys):
+    """Measured on docker 29.9.3 (si#625): a client that cannot reach the daemon exits 1, not 125 - 125 is
+    what it says when the daemon answers with an error - so the rc alone cannot tell it from a tool's 1. A
+    STAGED failure against the real client: the socket does not exist, nothing else is faked."""
+    # arrange
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path / 'no.sock'}")
+
+    # act
+    with pytest.raises(SystemExit) as died:
+        docker.run_container(["docker", "run", "--rm", "alpine:3.20", "true"], "c1", capture=True)
+
+    # assert
+    err = capsys.readouterr().err
+    assert died.value.code == 1
+    assert f"no daemon is reachable (socket: {tmp_path / 'no.sock'} NOT MOUNTED)" in err
 
 
 @pytest.mark.parametrize("abandoned", [KeyboardInterrupt(), RuntimeError("the pane went away")],
@@ -511,6 +576,7 @@ def test_the_sigterm_handler_is_the_runs_alone(monkeypatch):
     import signal
     fake, _ = _recording_run()
     monkeypatch.setattr(docker, "run", fake)
+    monkeypatch.setattr(docker, "_daemon_reachable", lambda: True)
     before = signal.getsignal(signal.SIGTERM)
 
     # act

@@ -7,9 +7,10 @@ from simplon.tasks import profiles, toolchain
 FIRN = profiles.profile("firn", version="0.2.0")
 
 
-def firn_rc(project: Path, *argv: str, cwd: str = "") -> tuple[int, str]:
-    """(rc, stdout) of `firn <argv>` started in `project/<cwd>`, as the caller, with no network."""
-    body = {"image": FIRN.image, "workdir": "/workspace", "argv": list(argv)}
+def firn_rc(project: Path, *argv: str, cwd: str = "", image: str = FIRN.image) -> tuple[int, str]:
+    """(rc, stdout) of `firn <argv>` started in `project/<cwd>`, as the caller, with no network. `image` is
+    the pinned firn unless a test needs a later release's report."""
+    body = {"image": image, "workdir": "/workspace", "argv": list(argv)}
     if cwd:
         body["cwd"] = cwd
     cfg = toolchain.declared(body, where="firn")

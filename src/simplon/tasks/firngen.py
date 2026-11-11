@@ -193,9 +193,9 @@ def _run(where: str, image: str, argv: list[str], cwd: str | None, network: str 
 
 
 def verdict(rc: int, out: str, root: Path) -> int:
-    """0 only when firn succeeded, reported at least one file, left nothing it only warns about, and every file
-    it reported is there and is now 0644. `root` is firn's project root, which the reported paths are
-    relative to. A non-zero rc is firn's and comes back unchanged."""
+    """0 only when firn succeeded, reported at least one file (or ran no template at all, si#594), left nothing
+    it only warns about, and every file it reported is there and is now 0644. `root` is firn's project root,
+    which the reported paths are relative to. A non-zero rc is firn's and comes back unchanged."""
     try:
         report = json.loads(out)
         diagnostics, files = report["diagnostics"], report["files"]
@@ -205,6 +205,8 @@ def verdict(rc: int, out: str, root: Path) -> int:
         return rc or 1
     for d in diagnostics:
         print(f"firn {d.get('code')}: {d.get('message')}", file=sys.stderr)
+    for w in report.get("warnings") or []:      # firn v0.10.0 on: W101-W105 here, no longer on stderr (si#594)
+        print(f"firn {w.get('sentence')} ({w.get('where')})", file=sys.stderr)
     if rc != 0:
         return rc
     bad = 0
@@ -220,8 +222,17 @@ def verdict(rc: int, out: str, root: Path) -> int:
         bad = KEPT_RC
     produced = [*files.get("written", []), *files.get("unchanged", []), *files.get("upToDate", [])]
     if not produced:
+        # si#594: `run.templates` (firn v0.9.0 on) counts the templates the run's targets select. 0 is a project
+        # with nothing to generate; a missing count (older firn) is not a zero, so that run stays refused.
+        templates = (report.get("run") or {}).get("templates")
+        if templates == 0:
+            print("build:model: firn ran no template - the project selects none, so there is nothing to generate "
+                  "(firn said 0)", file=sys.stderr)
+            return bad
+        unknown = ("" if templates is not None else "; this firn does not say how many templates it ran (v0.9.0 "
+                   "on does), so a project with none cannot be told from one whose templates wrote nothing")
         print("build:model: firn reported no file at all - nothing was generated, which is not done "
-              "(simplon's verdict, rc 1: firn said 0)", file=sys.stderr)
+              f"(simplon's verdict, rc 1: firn said 0){unknown}", file=sys.stderr)
         return 1
     for name in produced:
         path = root / name
