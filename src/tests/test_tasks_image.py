@@ -2244,6 +2244,113 @@ def test_a_platform_the_builder_cannot_run_is_warned_about_with_the_command_that
     assert "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64" in said
 
 
+# --- si#546: an image a test runs on a platform the host cannot run is refused before the build -----------
+
+_ARM64_PROBE = ("docker", "run", "--rm", "--platform", "linux/arm64")
+_EXEC_FORMAT = "[FATAL tini (6)] exec true failed: Exec format error"
+
+
+def _tested(product, commands):
+    """The `_multi` manifest with `test:image` commands placed under `ci: test:`."""
+    (product / "demo.yaml").write_text((_MANIFEST + _MULTI.lstrip("\n")).replace(
+        "artifacts:\n", f"ci:\n  test:\n    commands:\n{commands}artifacts:\n", 1), encoding="utf-8")
+
+
+_ARM64_TEST = '      arm-check: { task: "test:image", consumes: { image: multi }, with: { platform: linux/arm64 } }\n'
+
+
+def test_an_image_a_test_runs_on_a_platform_this_host_cannot_run_is_refused_before_the_build(
+        monkeypatch, _no_provenance, _multi, capsys):
+    # arrange: firn's case - a test runs the arm64 image, and the host has no emulator
+    _tested(_multi, _ARM64_TEST)
+    fake = _fake(monkeypatch, verdict={_ARM64_PROBE: 1}, outputs={_ARM64_PROBE: _EXEC_FORMAT})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert: red in seconds, nothing built, and the answer names the product's command and the way out
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    assert "is run on linux/arm64 by `./demo.sh test arm-check`" in err
+    assert _EXEC_FORMAT in err
+    assert "support ci-arm64" in err
+
+
+def test_an_image_a_test_runs_on_a_platform_this_host_runs_is_built(monkeypatch, _no_provenance, _multi):
+    # arrange
+    _tested(_multi, _ARM64_TEST)
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert: asked once, with a real run, and then built
+    assert rc == 0
+    assert len(fake.argv_starting(*_ARM64_PROBE)) == 1
+    assert fake.argv_starting("docker", "buildx", "bake")
+
+
+def test_a_test_without_platform_runs_every_declared_platform_so_it_declares_arm64_too(
+        monkeypatch, _no_provenance, _multi, capsys):
+    # arrange: `test:image` without `platform:` starts every declared platform (simplon's own `test image`)
+    _tested(_multi, '      all-check: { task: "test:image", consumes: { image: multi } }\n')
+    _fake(monkeypatch, verdict={_ARM64_PROBE: 1}, outputs={_ARM64_PROBE: _EXEC_FORMAT})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "by `./demo.sh test all-check`" in capsys.readouterr().err
+
+
+def test_the_daemons_own_platform_and_a_platform_not_built_here_are_not_probed(monkeypatch, _no_provenance,
+                                                                                _multi):
+    # arrange: tests run both platforms; this build is narrowed to the native one
+    _tested(_multi, '      all-check: { task: "test:image", consumes: { image: multi } }\n')
+    fake = _fake(monkeypatch, verdict={_ARM64_PROBE: 1}, outputs={_ARM64_PROBE: _EXEC_FORMAT})
+
+    # act
+    rc = image.build(name="multi", tag="1.0", platform="linux/amd64")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "run") == []
+
+
+def test_a_probe_that_fails_for_another_reason_is_no_verdict_and_the_build_goes_on(monkeypatch,
+                                                                                   _no_provenance, _multi,
+                                                                                   capsys):
+    # arrange: the pull of the probe image failed - that says nothing about emulation
+    _tested(_multi, _ARM64_TEST)
+    fake = _fake(monkeypatch, verdict={_ARM64_PROBE: 125},
+                 outputs={_ARM64_PROBE: "docker: Error response from daemon: Get https://registry-1.docker.io"})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert: built, and the warning says there was no verdict rather than claiming one
+    out = capsys.readouterr()
+    assert rc == 0
+    assert fake.argv_starting("docker", "buildx", "bake")
+    assert "could not ask whether this host runs linux/arm64" in out.out + out.err
+
+
+def test_the_builder_warning_says_the_build_may_pass_and_the_run_fails(monkeypatch, _no_provenance, _multi,
+                                                                        capsys):
+    # arrange: si#546 part 2 - the measured order of events, not the expected one
+    _fake(monkeypatch, outputs={("docker", "buildx", "ls"): _BUILDER_AMD64_ONLY})
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert "The build may still pass" in said and "exec format error" in said
+
+
 def test_a_failed_bake_names_the_emulation_command_when_a_platform_was_not_runnable(monkeypatch,
                                                                                  _no_provenance, _multi,
                                                                                  capsys):

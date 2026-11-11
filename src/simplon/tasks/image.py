@@ -112,6 +112,7 @@ from pathlib import Path
 
 from simplon.manifest import artifactsection, context, outputs, ports
 from simplon.model import artifactschema
+from simplon.model.command import TaskCommand
 from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import log
@@ -378,17 +379,45 @@ def run_first(artifact: str, coordinate: str) -> str:
     command that produces `artifact` is the one to run. Only when no command produces it is the coordinate
     the answer, and then the message says that too, since it is the actual finding."""
     ctx = context.current()
-    manifest = ctx.manifest()
-    # The group path spelt as the CLI types it (`build gradle`), not the bare flat alias `word_for` would give:
-    # `argv_for` of the qualified word is what knows a collapsed group and a group-default namesake.
-    paths = (group.replace(".", " ") + " " + name for group, name in ports.producers(manifest, artifact))
-    typed = ["`" + " ".join((context.launcher(ctx.name), *manifest.argv_for(path))) + "`" for path in paths]
+    typed = _typed(ports.producers(ctx.manifest(), artifact))
     if len(typed) == 1:
         return f"run {typed[0]} first, which makes it"
     if typed:
         return f"run one of {', '.join(typed)} first - each makes it"
     return (f"no command in {ctx.manifest_path.name} produces it: place `{coordinate}` with "
             f"`with: {{ name: {artifact} }}` under a command, and run that")
+
+
+def _typed(commands: Iterable[tuple[str, str]]) -> list[str]:
+    """Each (group, name) as the user types it, backquoted: `./firn.sh build gradle`.
+
+    The group path spelt as the CLI types it, not the bare flat alias `word_for` would give: `argv_for` of
+    the qualified word is what knows a collapsed group and a group-default namesake."""
+    ctx = context.current()
+    manifest = ctx.manifest()
+    return ["`" + " ".join((context.launcher(ctx.name),
+                            *manifest.argv_for(group.replace(".", " ") + " " + name))) + "`"
+            for group, name in commands]
+
+
+def run_platforms(name: str, declared: Sequence[str]) -> dict[str, list[tuple[str, str]]]:
+    """{platform: the `test:image` commands that run image `name` there}, read off the manifest (si#546).
+
+    THE DECLARATION IS DERIVED, NOT WRITTEN (Marco, 2026-11-11, option B). A `test:image` command that
+    consumes the image says the product will RUN it - and on which platform: its `platform:`, or, without
+    one, every declared platform, because that is what `smoke` then starts (`platform` is "default every
+    declared one"). A new image key would be a second source for what these commands already say.
+    Reopens when a product runs an emulated image outside `test:image`."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for group, members in context.current().manifest().commands.items():
+        for command, spec in members.items():
+            if not (isinstance(spec, TaskCommand) and spec.task == "test:image"
+                    and name in spec.consumes.get("image", ())):
+                continue
+            pinned = spec.with_.get("platform")
+            for platform in ((str(pinned),) if pinned else declared):
+                out.setdefault(platform, []).append((group, command))
+    return out
 
 
 def resolve_tag(cfg: Image, tag: str, derived: str = "") -> str:
@@ -657,6 +686,8 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
         return 1
     docker.ensure_docker()
     if cfg.platforms:
+        if not _runnable_where_it_is_run(cfg, name, (platform,) if platform else cfg.platforms):
+            return 1
         return _build_platforms(cfg, name, tag, root, platform)
     args = build_arguments(cfg, root)
     if not _contexts_in_the_daemon(cfg, name, args.get(VERSION_ARG, "")):
@@ -1095,13 +1126,17 @@ def _push(cfg: Image, name: str, root: Path, ref: str, derived: Mapping[str, str
 # registry. An index re-tagged with only amd64 was read back as missing linux/arm64 - the tag-only probe
 # answers rc 0 for that same reference.
 #
-# EMULATION IS WARNED ABOUT, NEVER REGISTERED, NEVER REFUSED. Registering binfmt handlers is a privileged
-# `docker run` that changes the host KERNEL for every process on it until reboot - on a shared self-hosted
-# runner that is a decision for whoever owns the machine, of the same kind as `support:ci-disk-hygiene`,
-# which this catalogue also leaves to a person. Refusing up front would be an expression rule with no
-# measured cause: a Dockerfile that cross-compiles with `FROM --platform=$BUILDPLATFORM` needs no emulator
-# at all and would be refused for nothing. So the builder's own platform list is read, a platform it cannot
-# run is named with the one command that registers it, and a failed build repeats that command.
+# EMULATION IS WARNED ABOUT AND NEVER REGISTERED - AND REFUSED ONLY WHERE THE PRODUCT RUNS THE IMAGE.
+# Registering binfmt handlers is a privileged `docker run` that changes the host KERNEL for every process on
+# it until reboot - on a shared self-hosted runner that is a decision for whoever owns the machine, of the
+# same kind as `support:ci-disk-hygiene`, which this catalogue also leaves to a person. A blanket refusal
+# would be an expression rule with no measured cause: a Dockerfile that cross-compiles with
+# `FROM --platform=$BUILDPLATFORM` needs no emulator at all and would be refused for nothing. So the
+# builder's own platform list is read, a platform it cannot run is named with the one command that
+# registers it, and a failed build repeats that command.
+# si#546 measured the cause the blanket refusal lacked: firn's arm64 bake PASSED without a registration and
+# the first run of the image failed 46 minutes later. So an image a `test:image` command runs on a platform
+# (`run_platforms`) is probed with a real run before the build, and refused when the host cannot run it.
 # For arm64 that command is `support:ci-arm64` (si#358): the same person, the same root, but a recipe that
 # survives a reboot on a VM and an LXC alike instead of a paragraph each runner owner re-derives.
 
@@ -1376,11 +1411,79 @@ def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
         return True, []
     unrunnable = missing_platforms(platforms, runnable)
     if unrunnable:
+        # si#546: what was measured, not what was expected. firn v0.3.0's arm64 bake passed on a runner with
+        # no registration (firn#1124) - BuildKit emulated the RUNs itself - and the first `docker run` of the
+        # image failed 46 minutes later.
         log.warn(f"builder '{BUILDER}' cannot run {', '.join(unrunnable)} (it can run "
-                 f"{', '.join(sorted(runnable))}). A Dockerfile that RUNs anything in those stages needs "
-                 f"an emulator; one that cross-compiles does not. To register one:\n"
+                 f"{', '.join(sorted(runnable))}). The build may still pass - BuildKit can emulate its RUNs "
+                 f"on its own - but running the image on {', '.join(unrunnable)} (`docker run --platform`, a "
+                 f"`test:image` command) then fails with `exec format error`. A Dockerfile that "
+                 f"cross-compiles needs no emulator to build. To register one:\n"
                  f"    {_emulation_command(unrunnable)}")
     return True, unrunnable
+
+
+#: Seconds the run probe may take (si#546): a pull of `imagefile.FILE_TEST_IMAGE` for the platform, then `true`.
+PROBE_TIMEOUT = 300
+
+
+def host_runs(platform: str) -> tuple[bool | None, str]:
+    """Whether this daemon can RUN `platform`: (True, ""), (False, what it said), or (None, why there is no
+    verdict) (si#546).
+
+    A real `docker run --platform` of a small pinned image, and not `/proc/sys/fs/binfmt_misc`: on cai-2
+    (an LXC) that directory is not visible while arm64 runs fine (measured 2026-11-11), so a file check
+    would refuse a host that works. Nor the builder's platform list: firn#1124 shows the builder and a
+    plain `docker run` can disagree.
+
+    Only `exec format error` - the answer firn measured - is read as "cannot". Anything else (no network
+    for the pull, a daemon error) is a failed probe, and a failed probe is not a verdict."""
+    from simplon.tasks import imagefile    # imagefile imports this module; its pin is the one used here
+
+    name, lifecycle_flags = docker.lifecycle()
+    argv = ["docker", "run", "--rm", "--platform", platform, *lifecycle_flags, imagefile.FILE_TEST_IMAGE, "true"]
+    try:
+        with docker.stopped_on_interrupt(name):
+            result = run(argv, timeout=PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, f"no answer within {PROBE_TIMEOUT} s"
+    if result.ok:
+        return True, ""
+    said = (result.err or result.out).strip()
+    # Case-blind, and the one line: with `--init` it is tini that says it, after the pull's progress -
+    # `[FATAL tini (6)] exec true failed: Exec format error` (measured, linux/s390x on cai-2, 2026-11-11).
+    line = next((each for each in said.splitlines() if "exec format error" in each.lower()), "")
+    return (False, line.strip()) if line else (None, f"rc {result.rc}: {said}")
+
+
+def _runnable_where_it_is_run(cfg: Image, name: str, chosen: Sequence[str]) -> bool:
+    """For an image a `test:image` command runs on a platform being built here: the host can run that
+    platform, or a refusal BEFORE the build (si#546).
+
+    A run-time DIAGNOSIS, not an expression rule: the manifest already says the image will be run there,
+    and without this the answer arrives as `exec format error` at the first run, after the whole build -
+    46 minutes for firn's arm64. An image no test runs on a platform keeps the warning alone, so a
+    Dockerfile that only cross-compiles (si#353) is not refused. The daemon's own platform is not probed."""
+    native = _native_platform()
+    runs = run_platforms(name, cfg.platforms)
+    for platform in chosen:
+        if platform not in runs or not missing_platforms([platform], [native] if native else []):
+            continue
+        verdict, said = host_runs(platform)
+        if verdict is None:
+            log.warn(f"could not ask whether this host runs {platform} ({said}); building anyway - "
+                     f"{', '.join(_typed(runs[platform]))} will answer it")
+        elif not verdict:
+            log.error(f"image '{name}' is run on {platform} by {', '.join(_typed(runs[platform]))}, and this "
+                      f"host cannot run {platform}: `docker run --platform {platform}` answered\n"
+                      f"    {said}\n"
+                      f"  The build could still pass - BuildKit emulates on its own - and those commands would "
+                      f"then fail the same way, after the whole build. Register an emulator first (a "
+                      f"privileged act on the whole host, which is why simplon does not do it for you):\n"
+                      f"    {_emulation_command([platform])}\n"
+                      f"  or build the other platforms alone with `platform:`")
+            return False
+    return True
 
 
 def _native_platform() -> str:
