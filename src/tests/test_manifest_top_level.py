@@ -79,7 +79,7 @@ import yaml
 
 from simplon.model import carrierspec
 from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
-from simplon.adapters import labegress, labinstance, nexusproxy, tracker
+from simplon.adapters import gh, labegress, labinstance, nexusproxy, tracker
 from simplon.tasks import workflowgen
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated,
                            releasenotes,
@@ -165,7 +165,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.buildfiles": ("build",),
     "tasks.claudeplugins": ("claude", "toolchains"),   # si#525: toolchains through profiles.declared_toolchains
     "tasks.claudemd": ("claude", "toolchains"),   # si#525: through claudeplugins.effective
-    "tasks.hosttools": ("toolchains",),   # si#526: which host gates (brew, gh) support install asks
+    # si#526: which host gates (brew, gh) support install asks; si#630: the gh extensions, through
+    # `gh.declared_extensions`
+    "tasks.hosttools": ("toolchains", "gh"),
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.fetchfile": ("artifacts",),   # a `kind: file` entry (si#343)
@@ -199,6 +201,11 @@ SILENT_ON_ABSENCE = {
                   "`toolchain: [claude]` (singular) is silent too, and Claude support stays off - which "
                   "`support claude-plugins` then says in so many words ('claude' is not in toolchains:). An "
                   "unknown NAME inside a correctly spelled list is refused (si#525).",
+    "gh": "an absent `gh:` section is the NORMAL case since si#630: a product that needs no gh extension "
+          "declares none, and `support install` installs none and says nothing beyond the gh gate (Marco, "
+          "2026-11-11). WHAT THAT COSTS: `hg:` is silent too, and the extensions are not installed - "
+          "which the first `gh <extension>` the product runs then says. A key mistyped INSIDE a correctly "
+          "spelled section is refused, and so is the section without the `gh` toolchain (si#630).",
     "layout": "an absent `layout:` section is the NORMAL case and is what every product in this family "
               "has - the section arrived with si#250 and its defaults are exactly what the kernel "
               "assumed before it existed, so a manifest that says nothing runs the line it ran "
@@ -242,6 +249,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
                lambda: claudeplugins.effective(context.current().manifest_data())),
     "toolchains": ({"toolchains": ["claude"]},
                    lambda: claudeplugins.effective(context.current().manifest_data())),
+    "gh": ({"toolchains": ["gh"], "gh": {"extensions": ["github/gh-stack"]}},
+           lambda: gh.declared_extensions(context.current().manifest_data(), ("gh",))),
     "nexus": ({"nexus": {"proxy_repositories": []}},
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     "workflows": ({"workflows": {"ci": {}}},

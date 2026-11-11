@@ -936,6 +936,19 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("profiles", "declared_toolchains", "is not a toolchain the kernel supports"): DIAGNOSIS,
     ("claudeplugins", "required", "is not an executable name"): DIAGNOSIS,
 
+    # --- adapters/gh.py: the `gh:` section, the extensions `support install` installs (si#630) ---------
+    # A `gh:` section without the `gh` toolchain is a declaration nothing reads, the `claude:` case again.
+    ("gh", "declared_extensions", "but 'gh' is not in 'toolchains:'"): DIAGNOSIS,
+    # A scalar section or list would iterate as letters; an unknown key (`extension:`) installs nothing
+    # without a word, so neither could have produced what its author meant.
+    ("gh", "declared_extensions", "must be a mapping with 'extensions:'"): DIAGNOSIS,
+    ("gh", "declared_extensions", "declares unknown key(s)"): DIAGNOSIS,
+    ("gh", "declared_extensions", "must be a list of 'owner/repo'"): DIAGNOSIS,
+    # An entry gh could not resolve to a repository, and a repository named twice (two pins would re-pin
+    # each other on every run).
+    ("gh", "declared_extensions", "is not 'owner/repo' or"): DIAGNOSIS,
+    ("gh", "declared_extensions", "names '{extension.repo}' twice"): DIAGNOSIS,
+
     # --- tasks/docs.py: the docToolchain image tag ----------------------------------------------------
     ("docs", "_version", "pin the docToolchain image tag"): DIAGNOSIS,
 

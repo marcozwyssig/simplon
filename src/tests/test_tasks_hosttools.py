@@ -3,6 +3,7 @@ tooling the kernel itself cannot work without. Nothing here installs anything: e
 monkeypatched, so the suite proves what the command DECIDES and reports. AAA throughout.
 """
 import pytest
+import yaml
 
 from simplon.manifest import context
 from simplon.adapters import oras
@@ -176,3 +177,127 @@ def test_an_unreadable_manifest_is_reported_and_the_other_gates_still_run(gates,
     # assert
     assert rc == 1
     assert order == ["oras"]
+
+
+# --- si#630: the gh extensions a product declares ---------------------------------------------------------
+
+from simplon.adapters import hostinstall  # noqa: E402
+
+
+def _declare_extensions(tmp_path, toolchains, extensions):
+    (tmp_path / "sample.yaml").write_text(yaml.safe_dump(
+        {"product": "sample", "toolchains": list(toolchains), "gh": {"extensions": list(extensions)}}),
+        encoding="utf-8")
+
+
+@pytest.fixture
+def extensions(gates, monkeypatch):
+    """The gh gate's recorder plus a recorder for `gh.ensure_extensions`, answering `answers["ext"]`."""
+    order, answers = gates
+    asked = []
+
+    def ensure_extensions(declared):
+        order.append("gh extensions")
+        asked.extend(str(e) for e in declared)
+        return [(e, answers.get("ext", Outcome(State.INSTALLED))) for e in declared]
+    monkeypatch.setattr(gh, "ensure_extensions", ensure_extensions)
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: True)
+    return order, answers, asked
+
+
+def test_declared_extensions_are_installed_after_the_gh_gate(extensions, tmp_path, capsys):
+    # arrange
+    order, _, asked = extensions
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack@v0.3.0", "dlvhdr/gh-dash"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert: each one reported in its own line
+    assert rc == 0
+    assert order == ["oras", "gh", "gh extensions"]
+    assert asked == ["github/gh-stack@v0.3.0", "dlvhdr/gh-dash"]
+    out = capsys.readouterr()
+    assert "gh extension github/gh-stack@v0.3.0 installed" in out.out + out.err
+    assert "gh extension dlvhdr/gh-dash installed" in out.out + out.err
+
+
+def test_a_failed_extension_fails_the_command(extensions, tmp_path, capsys):
+    # arrange
+    _, answers, _ = extensions
+    answers["ext"] = Outcome(State.FAILED, "gh extension install exited 1")
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 1
+    out = capsys.readouterr()
+    assert "gh extension github/gh-stack: install failed: gh extension install exited 1" in out.out + out.err
+
+
+@pytest.mark.parametrize("state, rc_expected", [(State.SKIPPED, 0), (State.FAILED, 1), (State.NO_ROUTE, 1)])
+def test_extensions_are_skipped_and_said_so_when_the_gate_left_no_gh(extensions, tmp_path, capsys, state,
+                                                                      rc_expected):
+    # arrange
+    _, answers, asked = extensions
+    answers["gh"] = Outcome(state, "why")
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert: the gate's own outcome decides the rc, and the skip is a line, not a silence
+    assert rc == rc_expected
+    assert asked == []
+    out = capsys.readouterr()
+    assert f"gh extensions skipped: the gh gate left no gh that runs here ({state.value})" in out.out + out.err
+
+
+def test_extensions_are_skipped_when_an_installed_gh_does_not_run_here(extensions, tmp_path, monkeypatch,
+                                                                       capsys):
+    # arrange: winget's INSTALLED "open a new shell" - gh is there, but not for this process
+    _, answers, asked = extensions
+    answers["gh"] = Outcome(State.INSTALLED, "open a new shell so PATH picks gh up")
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: False)
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 0 and asked == []
+    out = capsys.readouterr()
+    assert "gh extensions skipped" in out.out + out.err
+
+
+def test_no_gh_section_says_nothing_about_extensions(extensions, tmp_path, capsys):
+    # arrange
+    order, _, _ = extensions
+    _declare(tmp_path, "gh")
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 0
+    assert "gh extensions" not in order
+    out = capsys.readouterr()
+    assert "extension" not in out.out + out.err
+
+
+def test_a_gh_section_without_the_gh_toolchain_is_reported_and_the_other_gates_still_run(extensions, tmp_path,
+                                                                                         capsys):
+    # arrange
+    order, _, asked = extensions
+    _declare_extensions(tmp_path, ["brew"], ["github/gh-stack"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 1
+    assert order == ["brew", "oras"] and asked == []
+    out = capsys.readouterr()
+    assert "but 'gh' is not in 'toolchains:'" in out.out + out.err

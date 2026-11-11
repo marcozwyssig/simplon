@@ -506,6 +506,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
+| `gh:` | `support:install` | optional, and only with `gh` in `toolchains:` (si#630): `extensions:`, the gh extensions this product's workflow needs, each `owner/repo` or `owner/repo@<version>`. `support install` installs each after gh itself, `--pin`ned when a version is given, the latest release once when none is; a second run installs nothing. One listed at another version than its pin is removed and installed at the pin, because `gh extension install --pin` over an install changes nothing and exits 0. Each says present, installed, re-pinned or failed, every one is attempted, and a failed one fails the command. When the gh gate left no gh that runs (skipped, failed), the run says the extensions were skipped. An absent section installs none and says nothing |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
