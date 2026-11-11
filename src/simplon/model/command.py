@@ -95,7 +95,7 @@ class TaskCommand(Command):
     passthrough_args: bool = False
     #: si#490: inherited from the task like `unattended` - `publishes` puts a derived release's dry run
     #: past this leaf, `token: github` puts the run's GITHUB_TOKEN in its step's `env:` and no other step's
-    #: (the checkout's persisted credential is si#507's). si#534: `token: app` mints a GitHub App token for
+    #: (and the release job's checkout persists none, si#507). si#534: `token: app` mints a GitHub App token for
     #: the one repository this leaf's `repository` names instead.
     publishes: bool = False
     token: str = ""

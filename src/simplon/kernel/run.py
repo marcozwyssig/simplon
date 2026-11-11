@@ -43,7 +43,7 @@ import re
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 #: How long the reader waits for a line to FINISH before handing over what it already has.
 #:
@@ -109,14 +109,15 @@ class Result:
 
 def run(argv: list[str], *, check: bool = False, capture: bool = True,
         timeout: float | None = None, input_text: str | None = None,
-        cwd: str | None = None) -> Result:
+        cwd: str | None = None, env: Mapping[str, str] | None = None) -> Result:
     """Run `argv` (a list, never a shell string) and return a Result with the real rc.
 
     capture=True returns stdout/stderr as text; capture=False streams them to the terminal (used by the
     interactive flows). check=True raises CalledProcessError on a non-zero rc (use sparingly - the point
     of this wrapper is to inspect rc explicitly, not to let it explode). input_text, when given, is fed to
     the process's stdin (e.g. `tee`-ing a script into the VM). cwd runs the process from that directory
-    (e.g. pytest from the test dir so conftest.py is importable).
+    (e.g. pytest from the test dir so conftest.py is importable). env, when given, is ADDED to this
+    process's environment for the child alone (si#507: a credential one git call needs and no other).
     """
     proc = subprocess.run(
         argv,
@@ -126,6 +127,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
         check=check,
         input=input_text,
         cwd=cwd,
+        env={**os.environ, **env} if env else None,
     )
     return Result(
         rc=proc.returncode,

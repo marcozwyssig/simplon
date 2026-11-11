@@ -21,6 +21,7 @@ WHAT IS DELIBERATELY NOT TESTED: that a tag actually deploys. That takes a real 
 repository whose Pages source is set, and nothing here can stand in for it. What can be held is
 everything that would make such a run do the wrong thing quietly.
 """
+import itertools
 import tomllib
 
 import pytest
@@ -423,6 +424,35 @@ def test_the_release_check_runs_before_anything_is_cut(workflow):
 
     # assert
     assert check < cut
+
+
+def test_in_the_release_job_only_a_token_github_step_can_reach_the_token(workflow, product):
+    """si#507: the release job's token can write, so the checkout leaves none in `.git/config`, and the
+    token is in the `env:` of exactly the steps whose leaf declares `token: github`. A build or test step
+    has no route to it, and `release tag` - which pushes - is one of the steps that does."""
+    # arrange
+    job = workflow["jobs"]["release"]
+    checkout = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout@"))
+
+    # act
+    seen, wanted = [], []
+    for step in job["steps"]:
+        run = str(step.get("run", ""))
+        handed = "GITHUB_TOKEN" in (step.get("env") or {})
+        if run.startswith("./simplon.sh "):
+            words = list(itertools.takewhile(lambda w: not w.startswith(("-", '"')), run.split()[1:]))
+            declares = product.commands[".".join(words[:-1])][words[-1]].token == "github"
+            seen.append((run, handed))
+            wanted.append((run, declares))
+        else:
+            seen.append((step.get("name") or step.get("uses"), handed))
+            wanted.append((step.get("name") or step.get("uses"), False))
+
+    # assert
+    assert checkout["with"].get("persist-credentials") is False
+    assert "GITHUB_TOKEN" not in (job.get("env") or {})
+    assert seen == wanted
+    assert ('./simplon.sh release tag -- "$RELEASE_VERSION"', True) in seen
 
 
 #: The step a real run takes instead of the cut: the tag the release job pushed must be here, at HEAD.

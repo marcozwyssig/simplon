@@ -148,6 +148,10 @@ that derives a version from one gets a wrong answer SILENTLY instead of an error
 by the generator rather than declared per job, so a workflow written later inherits the
 rule instead of somebody having to remember it."""
 
+#: si#507, said where the flag stands, because a reader of the file asks why this job alone carries it.
+NO_PERSIST_NOTE = """si#507: the job's token can write, so it is not left in .git/config for every
+step to read. A `token: github` step gets it in its own `env:` and hands it to git itself."""
+
 _HEADER = ("GENERATED from {source} by `{product} support workflows`. Do not edit.",
            "",
            "The steps below are the product's own commands, resolved against {source}'s command tree, so",
@@ -230,6 +234,10 @@ class Job:
     checkout: bool = True
     note: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
+    #: si#507: whether the checkout leaves the job's token in `.git/config` (actions/checkout's default).
+    #: False for the derived release job, whose token can write, so a build or test step cannot read it
+    #: there; its `token: github` leaves authenticate themselves (`gitops.remote_auth`).
+    persist_credentials: bool = True
     #: si#327: the KIND, kept and not only its consequences. Until now a job carried what the kind had
     #: already been resolved into - `runs_on`, the note, the env folded into `extras` - and threw the kind
     #: itself away. That was enough while every consequence was a value; it is not enough for one that is
@@ -1162,6 +1170,7 @@ def _release(workflow: "Workflow", manifest: Manifest,
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
                                 "run": tail}))
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
+                persist_credentials=False,
                 extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 
@@ -1556,6 +1565,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         lines.append(f"      - uses: {CHECKOUT_ACTION}")
         lines.append("        with:")
         lines.append(f"          fetch-depth: {FETCH_DEPTH}")
+        if not job.persist_credentials:
+            lines += _comment(NO_PERSIST_NOTE, "          ")
+            lines.append("          persist-credentials: false")
     if job.python:
         lines.append(f"      - uses: {SETUP_PYTHON_ACTION}")
         lines.append("        with:")

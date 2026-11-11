@@ -26,10 +26,18 @@ from conftest import ROOT
 #: A new `release:` task is in neither set until somebody says which it is - that is the point.
 PUBLISH_READS = frozenset({"release:notes", "release:github-unpublished", "release:check"})
 
+#: si#507: the gitops calls that talk to origin, read off gitops' own source - each `def` whose body passes
+#: `remote=True` - so a call that starts doing so joins the population without an edit here.
+_REMOTE_GIT = sorted(match.group(1) for match in re.finditer(
+    r"^def (\w+)\(.*?(?=^def |\Z)", (ROOT / "src" / "simplon" / "tasks" / "gitops.py").read_text(), re.M | re.S)
+    if "remote=True)" in match.group(0))
+
 #: How a body authenticates to GitHub, read off its module's source: the packages adapter, the Releases
-#: adapter (directly or through `githubrelease`), or the `gh` CLI, which reads GITHUB_TOKEN too.
+#: adapter (directly or through `githubrelease`), the `gh` CLI, which reads GITHUB_TOKEN too, or a gitops
+#: call to origin, which hands git the token itself since the release job's checkout persists none (si#507).
 _AUTHENTICATES = re.compile(r"githubpackages|from simplon\.adapters import[^\n]*\bgithub\b|githubrelease"
-                            r"|\[\"gh\",")
+                            r"|\[\"gh\","
+                            rf"|gitops\.(?:{'|'.join(_REMOTE_GIT)})\(")
 
 #: How a body authenticates with the GitHub App token a `token: app` step is handed (si#534): it reads the
 #: variable by its name. Such a body may import the `github` adapter too (`adapters.repofile` does, one hop
