@@ -8,6 +8,7 @@ only a real call shows what wins.
 AAA; the name states the behaviour under test.
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from simplon.cli import bootstrap
 from simplon.manifest.context import TaskRefused
 
 PKG = bootstrap.pkg_dir_for(bootstrap.DEFAULT_ORCH_DIR)
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 SAID = "the refusal is the whole diagnosis - bind `source` to go on"
 
 
@@ -42,8 +44,12 @@ def _run(root: Path, *argv: str) -> subprocess.CompletedProcess:
     env = dict(os.environ, PYTHONSAFEPATH="1", COLUMNS="100",
                PYTHONPATH=os.pathsep.join([str(Path(simplon.__file__).resolve().parents[1]),
                                            str(root / bootstrap.DEFAULT_ORCH_DIR / "src" / "python")]))
-    return subprocess.run([sys.executable, "-m", "orchestrator", *argv], env=env, capture_output=True,
-                          text=True, cwd=root, timeout=120)
+    ran = subprocess.run([sys.executable, "-m", "orchestrator", *argv], env=env, capture_output=True,
+                         text=True, cwd=root, timeout=120)
+    # A runner that sets FORCE_COLOR (GitHub-hosted does) makes rich colour the traceback, splitting
+    # "int('x')" with escape codes; the assertions are about the text, so they read it without them.
+    ran.stdout, ran.stderr = ANSI.sub("", ran.stdout), ANSI.sub("", ran.stderr)
+    return ran
 
 
 def test_a_task_refusal_is_its_message_alone_with_rc_1(product):
