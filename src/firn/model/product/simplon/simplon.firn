@@ -207,6 +207,10 @@ simplon typeOf simplon.manifest.Product {
       key = "ci-disk-cleanup"
       task = simplon.catalogue.support_ci_disk_cleanup
     }
+    command ci_docker_preflight typeOf simplon.pipeline.TaskCommand {
+      key = "ci-docker-preflight"
+      task = simplon.catalogue.support_ci_docker_preflight
+    }
     group git typeOf simplon.pipeline.Group {
       key = "git"
       area = simplon.pipeline.Area.support

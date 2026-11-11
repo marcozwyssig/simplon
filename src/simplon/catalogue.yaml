@@ -276,6 +276,15 @@ tasks:
   support:ci-disk-cleanup:
     help: "Prune build cache older than a day - the step a job runs when it is done, whatever it decided."
     unattended: true
+  # --- support: can the kernel start a container from where it uses docker (si#623) ------------------
+  # The in-job half beside `ci-disk-preflight`, and the first step of a self-hosted job when placed. It
+  # RUNS a pinned container rather than asking `docker version`: on ghr-8 on 2026-11-11 a runner update
+  # left the socket refusing the kernel while the disk preflight stayed green, and thirty steps went red
+  # on symptoms. A refusal names the uid and groups, the socket's uid, gid and mode, the `--group-add`
+  # gids, and the way out.
+  support:ci-docker-preflight:
+    help: "Refuse to start a job when docker cannot run a container from where the kernel uses it."
+    unattended: true
   # --- support: does this host's docker answer, and will the editor find it (si#564) ------------------
   # DECLARED, NOT PLACED: a product with a VS Code Dev Containers path places it (firn does, under
   # `support`, as a step of `deploy devcontainer`). It resolves docker from the ACTIVE CONTEXT, never by

@@ -49,6 +49,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - run: ./simplon.sh support ci-docker-preflight
       # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-debian runner is
       # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
       # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every

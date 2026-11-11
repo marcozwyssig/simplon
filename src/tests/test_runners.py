@@ -301,6 +301,18 @@ def test_the_disk_coordinates_resolve_to_the_impls_the_table_names():
             f"would run something else")
 
 
+def test_the_docker_probe_coordinate_resolves_to_the_body_that_runs_a_container():
+    # arrange: si#623 - the workflow step must run the probe that starts a container, not the developer
+    # preflight beside it that only asks `docker version`
+    from simplon.manifest import catalogue as catalogue_mod
+    from simplon.model.artifactschema import BODIES
+    coordinate, impl = runners.DOCKER_PREFLIGHT
+
+    # act / assert
+    assert catalogue_mod.load().tasks[coordinate]["impl"] == impl
+    assert BODIES[coordinate] == "simplon.tasks.dockerpreflight:ci_preflight"
+
+
 def test_a_thrown_away_machine_is_not_asked_to_look_after_its_disk():
     # arrange / act / assert: the distinction the whole feature turns on. A GitHub-hosted runner is
     # destroyed after the job, so two steps guarding its disk would be two steps for nothing.

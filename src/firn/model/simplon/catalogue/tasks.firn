@@ -392,6 +392,10 @@ support_ci_disk_cleanup typeOf simplon.pipeline.CatalogueTask {
   key = "support:ci-disk-cleanup"
   body = "simplon.tasks.cidisk:cleanup"
 }
+support_ci_docker_preflight typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-docker-preflight"
+  body = "simplon.tasks.dockerpreflight:ci_preflight"
+}
 test_gate typeOf simplon.pipeline.CatalogueTask {
   key = "test:gate"
   body = "simplon.tasks.testrun:gate"

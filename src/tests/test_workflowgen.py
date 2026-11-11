@@ -2010,6 +2010,57 @@ def test_the_note_about_the_disk_steps_says_which_machine_it_is_about(disk_manif
     assert "disk" in text.lower()
 
 
+# --- si#623: the docker probe, the first step of a self-hosted job -------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def docker_manifest():
+    """A product that placed the disk coordinates and the docker probe."""
+    return manifest_mod.load(_WITH_DISK_COMMANDS + '    ci-docker-preflight: { task: "support:ci-docker-preflight" }\n',
+                             catalogue=catalogue_mod.load())
+
+
+def test_a_self_hosted_job_probes_docker_before_anything_else(docker_manifest):
+    # arrange / act
+    doc = yaml.safe_load(_render(docker_manifest, _SELF_HOSTED))
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert: FIRST, ahead of the disk preflight - on ghr-8 that one was green while docker was refused
+    assert runs[:3] == ["./sample.sh support ci-docker-preflight", "./sample.sh support ci-disk-preflight",
+                        "./sample.sh test all"]
+
+
+def test_a_github_hosted_job_gets_no_docker_probe(docker_manifest):
+    # arrange: a machine this account does not operate and that no runner update of ours can break
+    doc = yaml.safe_load(_render(docker_manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runner: github-ubuntu
+            steps:
+              - command: test all
+    """))
+
+    # act
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert
+    assert runs == ["./sample.sh test all"]
+
+
+def test_a_product_without_the_probe_keeps_its_disk_steps_and_is_told(disk_manifest):
+    # arrange / act: the probe is a separate placement, so a product that placed only the disk pair loses
+    # nothing at the kernel bump - and is told, in the file, what it is not getting
+    text = _render(disk_manifest, _SELF_HOSTED)
+    runs = [s.get("run") for s in yaml.safe_load(text)["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert
+    assert runs[0] == "./sample.sh support ci-disk-preflight"
+    assert 'ci-docker-preflight: { task: "support:ci-docker-preflight" }' in text
+
+
 # --- a manifest step's params: (si#368) ------------------------------------------------------------------
 
 

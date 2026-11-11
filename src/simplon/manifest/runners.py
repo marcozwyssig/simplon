@@ -124,6 +124,10 @@ TABLE: Mapping[str, Runner] = {
 #: two cannot drift. `test_runners.py` holds what still can: that each coordinate exists and runs a disk body.
 PREFLIGHT = ("support:ci-disk-preflight", class_ref("support:ci-disk-preflight"))
 CLEANUP = ("support:ci-disk-cleanup", class_ref("support:ci-disk-cleanup"))
+#: The docker probe that goes before both (si#623), placed and looked up the same way and on the same
+#: machines: the one that survives a job is the one this account updates, and a runner update is what
+#: broke docker access on ghr-8 on 2026-11-11.
+DOCKER_PREFLIGHT = ("support:ci-docker-preflight", class_ref("support:ci-docker-preflight"))
 
 
 #: The kind a job gets when it names none, which is what every product's workflows meant before this
