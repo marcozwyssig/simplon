@@ -31,8 +31,8 @@ import simplon
 from simplon.manifest import bound, clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
-from simplon.manifest.context import (ENVIRONMENT_ENV, ManifestRefused, ProductContext, environment_name,
-                                      launcher)
+from simplon.manifest.context import (ENVIRONMENT_ENV, ManifestRefused, ProductContext, TaskRefused,
+                                      environment_name, launcher)
 from simplon.manifest import launcherenv, load as manifest, results
 from simplon.model import task
 from simplon.model.command import AggregateCommand, Command, TaskCommand
@@ -814,4 +814,20 @@ def main(*, app: typer.Typer, context: ProductContext,
     # launcher's own PYTHONPATH already exported. The product IS driven through its launcher, so that is
     # the name; it comes off `simplon.manifest.context.launcher`, the same spelling the generated workflows call
     # and the generated completion registers on.
-    app(prog_name=launcher(context.name))
+    run_app(app, prog_name=launcher(context.name))
+
+
+def run_app(app: typer.Typer, *, prog_name: str) -> None:
+    """Hand control to Typer, with a task body's refusal printed as its message alone (si#544).
+
+    Typer installs its own excepthook whenever the app is called, so the hook `set_current` installs for
+    `ManifestRefused` is gone by the time a body runs: the refusal is caught here instead, and the exit is 1,
+    never "nothing to do". Every other exception keeps Typer's traceback, a genuine bug's above all, but
+    without the locals of each frame, which printed every parameter value of the run.
+    """
+    app.pretty_exceptions_show_locals = False
+    try:
+        app(prog_name=prog_name)
+    except TaskRefused as refused:
+        sys.stderr.write(f"{refused}\n")
+        raise SystemExit(1) from None
