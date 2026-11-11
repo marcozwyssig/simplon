@@ -246,6 +246,31 @@ def test_a_failed_list_is_not_an_empty_one():
     assert fake.calls == [["gh", "extension", "list"]]
 
 
+def test_a_gh_that_is_not_logged_in_skips_every_extension_and_names_the_way_out():
+    # arrange: measured, `gh extension list` with no token exits 4 ("gh auth login")
+    fake = FakeGh(list_rc=4)
+    declared = (gh.Extension("github/gh-stack", "v0.3.0"), gh.Extension("dlvhdr/gh-dash"))
+
+    # act
+    outcomes = gh.ensure_extensions(declared, runner=fake)
+
+    # assert: skipped, not failed and not present - and nothing installed on the strength of no answer
+    assert [o.state for _, o in outcomes] == [State.SKIPPED, State.SKIPPED]
+    assert all("gh auth login" in o.detail for _, o in outcomes)
+    assert fake.calls == [["gh", "extension", "list"]]
+
+
+def test_an_install_that_fails_with_a_token_is_still_failed():
+    # arrange: the list answered (gh is logged in), the install did not
+    fake = FakeGh(answers={("extension", "install"): Result(4, "", "HTTP 401: Bad credentials\n")})
+
+    # act
+    [(_, outcome)] = gh.ensure_extensions(STACK_PINNED, runner=fake)
+
+    # assert: only the probe's rc 4 means "not logged in"
+    assert outcome.state is State.FAILED
+
+
 def test_a_hanging_install_is_failed_not_waited_on():
     # arrange
     fake = FakeGh(answers={("extension", "install"): subprocess.TimeoutExpired(["gh"], 600)})

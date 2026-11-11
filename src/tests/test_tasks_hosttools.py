@@ -301,3 +301,23 @@ def test_a_gh_section_without_the_gh_toolchain_is_reported_and_the_other_gates_s
     assert order == ["brew", "oras"] and asked == []
     out = capsys.readouterr()
     assert "but 'gh' is not in 'toolchains:'" in out.out + out.err
+
+
+def test_a_gh_that_is_not_logged_in_skips_the_extensions_without_failing_the_command(gates, tmp_path,
+                                                                                      monkeypatch, capsys):
+    # arrange: the real ensure_extensions, over a gh whose list answers rc 4 (measured: no token)
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: True)
+    monkeypatch.setattr(gh, "run", lambda argv, timeout=None, **kw: Result(4, "", "gh auth login\n"))
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack@v0.3.0"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "gh extension github/gh-stack@v0.3.0 skipped:" in out.out + out.err
+    assert "gh auth login" in out.out + out.err
+
+
+from simplon.kernel.run import Result  # noqa: E402

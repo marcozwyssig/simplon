@@ -52,8 +52,12 @@ matching and is re-pinned on every run, visibly. A precompiled extension (gh-sta
 release tag; a pin that is a full commit sha matches the listed prefix.
 
 AND A gh WITH NO TOKEN CANNOT LIST: `gh extension list` exits 4 ("To get started with GitHub CLI, please run:
-gh auth login"), measured the same day. Every declared extension is then FAILED in gh's own words, because a
-failed probe is not an empty list; logging in is `vcs auth-scopes`'s, not this gate's. Against the real gh
+gh auth login"), measured the same day; `gh auth status` exits 1, the code every other failure has, so rc 4
+of the list is the probe. Every declared extension is then SKIPPED with `gh auth login` as the way out and
+the command does not fail for it (Marco, 2026-11-11): the machine is provisioned, the person has not logged
+in. It is neither "nothing to do" (nothing was installed) nor FAILED, and an install that fails after the
+list answered is still FAILED. Measured as well, and why this is a decision rather than a necessity: with no
+token, `gh extension install github/gh-stack` itself exited 0 and installed; only the list refuses. Against the real gh
 with a token, `ensure_extensions` for gh-stack went INSTALLED at v0.2.1, PRESENT, re-pinned to v0.3.0, and
 FAILED for v9.9.9 with "it is not installed now".
 """
@@ -193,6 +197,13 @@ _ENTRY = re.compile(r"(?P<repo>[A-Za-z0-9-]+/[A-Za-z0-9._-]+)(?:@(?P<pin>\S+))?"
 #: The time limit of `gh extension list`; an install or a remove gets the install limit.
 LIST_TIMEOUT_S = 60
 
+#: gh's exit code for "authentication required", which `gh extension list` returns with no token (measured,
+#: see the module docstring). `gh auth status` was measured too and is not the probe: it exits 1, the same
+#: code as any other failure, so it cannot tell "not logged in" from "broken".
+NOT_LOGGED_IN_RC = 4
+NOT_LOGGED_IN = ("gh is not logged in (gh extension list exited 4); run `gh auth login`, then run this "
+                 "command again")
+
 
 @dataclass(frozen=True)
 class Extension:
@@ -255,6 +266,9 @@ def _installed(listing: str) -> dict[str, str]:
 def _at_pin(listed: str, pin: str) -> bool:
     """True when the listed version is the pin: the tag itself, or the commit prefix a git extension pinned
     to a full sha is listed at (measured, see the module docstring)."""
+    # KNOWN LIMIT, KEPT (Marco, 2026-11-11): a script (git) extension pinned to a TAG is listed at a commit
+    # prefix, so the tag never matches here and the extension is re-pinned on every run, visibly. Pinning the
+    # full commit sha avoids it; binary extensions (gh-stack) are listed at their tag and are unaffected.
     return listed == pin or (re.fullmatch(r"[0-9a-f]{7,}", listed) is not None and pin.startswith(listed))
 
 
@@ -273,16 +287,23 @@ def _gh(runner: Callable[..., object], argv: list[str], timeout_s: float) -> str
 
 
 def ensure_extensions(extensions: tuple[Extension, ...], *,
-                      runner: Callable[..., object] = run) -> list[tuple[Extension, Outcome]]:
-    """Each declared extension PRESENT, INSTALLED, or FAILED with why; every one attempted.
+                      runner: Callable[..., object] | None = None) -> list[tuple[Extension, Outcome]]:
+    """Each declared extension PRESENT, INSTALLED, SKIPPED (gh is not logged in) or FAILED with why; every
+    one attempted.
 
-    `runner` is `simplon.kernel.run.run`'s shape; tests pass a fake. Assumes a gh that runs: the caller asks
-    only after the gate left one."""
+    `runner` is `simplon.kernel.run.run`'s shape (resolved when called, so a test can substitute it); tests
+    pass a fake. Assumes a gh that runs: the caller asks only after the gate left one."""
     if not extensions:
         return []
+    runner = runner or run
     timeout_s = hostinstall.INSTALL_TIMEOUT_S
     try:
         listing = runner(["gh", "extension", "list"], timeout=LIST_TIMEOUT_S)
+        if listing.rc == NOT_LOGGED_IN_RC:
+            # Neither "nothing installed" nor a failure (Marco, 2026-11-11): the machine is provisioned, the
+            # person has not logged in yet. Only the PROBE's rc 4 means this; an install that fails later,
+            # with a token, is still FAILED.
+            return [(extension, Outcome(State.SKIPPED, NOT_LOGGED_IN)) for extension in extensions]
         listed_ok = listing.rc == 0
         why = "" if listed_ok else f"gh extension list exited {listing.rc}: {(listing.err or '').strip()}"
     except (OSError, subprocess.TimeoutExpired) as exc:
