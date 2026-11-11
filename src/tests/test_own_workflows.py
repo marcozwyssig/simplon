@@ -48,9 +48,11 @@ def _loaded():
 
 
 def _report():
-    return workflowgen.check(_declared(), ROOT, manifest=_loaded(), product=PRODUCT,
-                             source=MANIFEST.name,
-                             artifacts=artifactsection.declared(yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))))
+    """Every input from MANIFEST, none from the registered ProductContext: which context an earlier test left
+    registered must not decide this gate (it did, for #620's first push)."""
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    return workflowgen.check(_declared(), ROOT, manifest=_loaded(), product=PRODUCT, source=MANIFEST.name,
+                             artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
 
 
 # --- the gate ------------------------------------------------------------------------------------------
