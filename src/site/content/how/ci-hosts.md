@@ -137,3 +137,62 @@ used, and exits non-zero so that whatever already watches failed units is the al
 deliberately **not** a simplon command and deliberately does **not** prune: a threshold that pages somebody
 depends on who is on call, and a script that quietly repaired the symptom would hide a runner that fills up
 every day from the person who needs to know it does.
+
+## Refuse to start, and alert, when the runner cannot run a container
+
+On 2026-11-11 a runner update on ghr-8 left the runner's user unable to use the docker socket. The runner
+kept taking jobs, and each one went red about thirty steps in, on symptoms. `deploy/ci-hosts/` carries the
+host-side check for it (si#624). It runs **on the runner machine**, not on the Proxmox host, because the
+question is what the runner's own user may do with that machine's socket. It is green only when a container
+ran: `docker run --rm --network none` of the kernel's pinned busybox. A daemon that answers `docker version`
+can still refuse the caller.
+
+Two ways in, one script:
+
+- **`runner-docker-check.conf`**, a drop-in for the runner's unit. Its `ExecStartPre=` runs the script with
+  `--self` as the unit's `User=`, with the groups the runner is about to start with, so the unit refuses to
+  start and `systemctl status` says why.
+- **`runner-docker-check.timer`**, every 15 minutes, because the runner updates itself without restarting
+  through systemd and `ExecStartPre=` never sees what an update changed. As root, it reads the credentials
+  of every running `actions.runner.*` unit's main process from `/proc/<pid>/status` - the groups the
+  process has now, not what `/etc/group` says, since a group is inherited at process start - and runs the
+  container with exactly those. A failed `runner-docker-check.service` is the alert, as with
+  `runner-disk-alert`. No running runner unit is also a failure: nothing was checked, and that is not a
+  healthy machine.
+
+A refusal prints docker's own line, who was checked (uid, gid, groups), the socket's owner, group and mode,
+and the way out: the socket's group for the runner's user and a restart of the runner, or `SocketMode=0660`
+for a socket no group can write.
+
+Install, on the runner machine, as root:
+
+```bash
+install -m 0755 deploy/ci-hosts/runner-docker-check.sh /usr/local/sbin/
+unit=$(systemctl list-units --type=service --no-legend --plain 'actions.runner.*' | awk '{ print $1 }')
+mkdir -p "/etc/systemd/system/$unit.d"
+install -m 0644 deploy/ci-hosts/runner-docker-check.conf "/etc/systemd/system/$unit.d/"
+install -m 0644 deploy/ci-hosts/runner-docker-check.service deploy/ci-hosts/runner-docker-check.timer \
+    /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now runner-docker-check.timer
+```
+
+`unit` must name exactly one unit; on a machine with several runners, install the drop-in once per unit.
+
+Verify:
+
+```bash
+systemctl cat "$unit" | grep ExecStartPre      # the drop-in is read
+systemctl restart "$unit"; systemctl status "$unit"    # active, and the journal shows `ok ... ran a container`
+systemctl start runner-docker-check.service; systemctl status runner-docker-check.service
+systemctl list-timers runner-docker-check.timer
+```
+
+To see it red without touching the runner, run the check as a user without the socket's group:
+
+```bash
+setpriv --reuid 65534 --regid 65534 --clear-groups /usr/local/sbin/runner-docker-check.sh --self; echo rc=$?
+```
+
+It prints `ALERT ... could not run a container`, docker's `permission denied`, the socket line and the way
+out, and `rc=1`.
