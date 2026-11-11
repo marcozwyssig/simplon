@@ -1424,6 +1424,33 @@ To get them, place both coordinates in the command tree and regenerate:
 Until then a build on this machine can die of a full disk with nothing in the log about a disk."""
 
 
+#: What the file says above the docker probe (si#623), for `DISK_NOTE`'s reason.
+DOCKER_NOTE = """si#623: can the kernel start a container from where it uses docker - inside the kernel
+container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+`--group-add` gids and the way out."""
+
+#: What the file says INSTEAD when the product has not placed the probe - `DISK_UNPLACED`'s reason.
+DOCKER_UNPLACED = """si#623: a {kind} runner is updated by this account, and an update can take docker
+access away; this job would start with a probe that runs a container - except that this product has not
+placed the command. To get it, place the coordinate and regenerate:
+
+    ci-docker-preflight: {{ task: "{coordinate}" }}"""
+
+
+def _docker_step(job: Job, manifest: Manifest) -> "tuple[Step | None, str]":
+    """`(the probe, the note for the file)` for one job: on the machines the disk steps go to, and on no other."""
+    runner = job.runner
+    if runner is None or not runner.disk_persists:
+        return None, ""
+    placed = _placed(manifest, runners.DOCKER_PREFLIGHT[1])
+    if not placed:
+        return None, DOCKER_UNPLACED.format(kind=runner.kind, coordinate=runners.DOCKER_PREFLIGHT[0])
+    return Step(command=placed, note=DOCKER_NOTE), ""
+
+
 def _placed(manifest: Manifest, impl: str) -> str:
     """The command path a product placed `impl` at (`support ci-disk-preflight`), or "" if nowhere.
 
@@ -1572,6 +1599,13 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         steps.insert(0, preflight)
     if cleanup is not None:
         steps.append(cleanup)
+    # si#623: the docker probe before even the disk preflight, and placed on its own, so a product that
+    # placed only the disk pair keeps it.
+    probe, probe_unplaced = _docker_step(job, manifest)
+    if probe_unplaced:
+        lines += _comment(probe_unplaced, "      ")
+    if probe is not None:
+        steps.insert(0, probe)
 
     for index, step in enumerate(steps):
         lines += _comment(step.note, "      ")

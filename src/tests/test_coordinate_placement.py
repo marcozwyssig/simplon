@@ -482,7 +482,8 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
     is no net change) and `support:claude-md`; since si#522 simplon places `test:manifest-model` on itself;
     since si#537 simplon places `build:homebrew-formula`, `test:homebrew-formula` and `release:homebrew-tap`
     on itself; since si#550 the catalogue places `support:toolchain`; since si#487 simplon places
-    `release:check` on itself; since si#568 simplon's own `test model` runs `test:model` (17 + 13 = 30)."""
+    `release:check` on itself; since si#568 simplon's own `test model` runs `test:model`; since si#623 simplon places
+    `support:ci-docker-preflight` on itself (17 + 14 = 31)."""
     # arrange
     calls = []
     original = treeform.check_coordinate_placement
@@ -497,4 +498,4 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
         manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
 
     # assert
-    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 13]
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 14]

@@ -116,6 +116,27 @@ The preflight stands **after** the checkout, and that is a limit rather than a p
 product's own commands, and a command needs the checkout it lives in. A checkout is cheap; what the
 preflight buys is every step after it.
 
+### Can the kernel run a container at all (si#623)
+
+```bash
+./<product>.sh support ci-docker-preflight   # first, before the disk preflight
+```
+
+It runs the kernel's pinned busybox with `docker run --rm` from where the kernel uses docker: inside the
+kernel container through the mounted socket on the container route, on the host on the venv route. Green
+only when that container ran; `docker version` answering is not enough, because a daemon can answer and
+still refuse the caller. On 2026-11-11 a runner update on ghr-8 left every docker call refused with
+`permission denied ... /var/run/docker.sock` while the disk preflight stayed green.
+
+A refusal prints docker's own line, then the facts it is diagnosed from: the uid, gid and groups the kernel
+runs as, the socket's uid, gid and mode, the gids `--group-add` handed the kernel container (or `none` on
+the venv route), and the way out - the docker group and a runner restart for a host runner, `0660` for a
+socket no group can write, the launcher's `--group-add` for a container that did not get the socket's gid.
+
+A generated workflow places it on the same jobs as the disk pair, as their first step, when the product has
+placed `support:ci-docker-preflight`; otherwise the file says what to place. It is placed on its own, so a
+product that placed only the disk pair keeps both of those.
+
 ## Verifying it
 
 ```bash

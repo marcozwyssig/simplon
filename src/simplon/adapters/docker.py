@@ -492,6 +492,61 @@ def _socket_state() -> str:
     return f"{path} mounted and writable, but the daemon did not answer"
 
 
+def socket_access_report() -> list[str]:
+    """The facts a refused docker socket is diagnosed from, one per line, the way out last (si#623).
+
+    Who this process is (uid, gid, groups), what the socket is (uid, gid, mode), which gids the kernel
+    container was handed with `--group-add`, and the cure. Measured on ghr-8 on 2026-11-11: after a runner
+    update the daemon answered `permission denied` and nothing said which of these four had moved, so the
+    run spent thirty steps on symptoms.
+
+    THE GROUP-ADD GIDS ARE READ, NOT REPEATED. Inside the kernel container (`DELIVERY_ROUTE=inside`) the
+    launcher ran it with `--user uid:gid --group-add <socket gid>`, so every supplementary group that is not
+    the primary one is what `--group-add` actually left - the fact, rather than the launcher's intention.
+    On the host route nothing was group-added, and the line says so instead of staying silent.
+    """
+    uid, gid = os.getuid(), os.getgid()
+    groups = sorted({gid, *os.getgroups()})
+    lines = [f"this process: {_user_name(uid)} uid {uid}, gid {gid}, groups {', '.join(map(str, groups))}"]
+    inside = os.environ.get("DELIVERY_ROUTE") == "inside"
+    added = [g for g in groups if g != gid]
+    lines.append(f"--group-add: {', '.join(map(str, added)) or 'none'} (the kernel container's supplementary "
+                 "groups)" if inside else
+                 "--group-add: none - the kernel runs on the host (venv route), as the runner's own user")
+    path = _socket_path()
+    if path is None or not path.exists():
+        lines.append(f"way out: the socket is {_socket_state()}")
+        return lines
+    found = path.stat()
+    mode = found.st_mode & 0o7777
+    lines.append(f"socket: {path} uid {found.st_uid}, gid {found.st_gid}, mode {mode:04o}")
+    if uid in (0, found.st_uid) or os.access(path, os.W_OK):
+        lines.append(f"way out: the ids allow this process to write the socket ({_socket_state()}); look at "
+                     "the daemon (`journalctl -u docker`) and at anything between this process and it")
+    elif mode & 0o060 != 0o060:
+        lines.append(f"way out: the socket's mode {mode:04o} gives its group no read-write, so no group "
+                     "membership and no --group-add can reach it; restore 0660 (`SocketMode=` of "
+                     "docker.socket) and restart docker")
+    elif found.st_gid not in groups:
+        where = ("the launcher stats the host's socket and passes its gid, so the socket mounted here is not "
+                 "the one it saw, or its gid changed since" if inside else
+                 "put the runner's user in that group")
+        lines.append(f"way out: the socket's gid {found.st_gid} is not among this process's groups - {where}; "
+                     f"{_socket_state()}")
+    else:
+        lines.append(f"way out: uid, groups and mode allow access, yet the socket refuses; {_socket_state()}")
+    return lines
+
+
+def _user_name(uid: int) -> str:
+    """The account name for `uid`, or a placeholder: the kernel image has no passwd entry for a runner."""
+    import pwd
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return "(no passwd entry here)"
+
+
 #: The label every container the kernel starts through `run_container` carries, valued with the product.
 #: A NAME finds one container; this finds every one a product left behind (si#409).
 RUN_LABEL = "simplon.run"
