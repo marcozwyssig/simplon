@@ -920,13 +920,17 @@ tasks:
   # `workflows: release:` names (held there at load), and the derived job runs it before the cut. It refuses
   # a version not spelled vX.Y.Z (fixed, no manifest key), a run started from another ref, an origin that
   # cannot be fetched or asked, a commit origin's default branch does not carry, another version tag at HEAD,
-  # and a tag origin carries at another commit. It asks GitHub nothing: whether a release is published is
-  # `release:github-unpublished`'s question.
+  # and a tag origin carries at another commit. It asks GitHub's API nothing: whether a release is published
+  # is `release:github-unpublished`'s question.
   #
   # OFFERED, not placed: a product without the dispatch flow has no use for a fixed vX.Y.Z.
+  #
+  # `token: github` because it fetches and asks origin, and the release job's checkout persists no
+  # credential (si#507): in a private repository git would otherwise be refused. `release:tag` likewise.
   release:check:
     help: "Refuse a dispatch release before anything is cut: the vX.Y.Z spelling, started from the default branch, origin fetched and carrying HEAD, no other version tag at HEAD, the tag free or at this commit on origin."
     unattended: true
+    token: github
     params:
       tag: { help: "the version exactly as its tag will be (e.g. v1.4.0)", metavar: "TAG" }
 
@@ -945,6 +949,7 @@ tasks:
     help: "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`)."
     unattended: true
     publishes: true
+    token: github
     params:
       tag: { help: "the tag to cut, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
 

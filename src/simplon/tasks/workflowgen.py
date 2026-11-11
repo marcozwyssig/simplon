@@ -148,6 +148,10 @@ that derives a version from one gets a wrong answer SILENTLY instead of an error
 by the generator rather than declared per job, so a workflow written later inherits the
 rule instead of somebody having to remember it."""
 
+#: si#507, said where the flag stands, because a reader of the file asks why this job alone carries it.
+NO_PERSIST_NOTE = """si#507: the job's token can write, so it is not left in .git/config for every
+step to read. A `token: github` step gets it in its own `env:` and hands it to git itself."""
+
 _HEADER = ("GENERATED from {source} by `{product} support workflows`. Do not edit.",
            "",
            "The steps below are the product's own commands, resolved against {source}'s command tree, so",
@@ -230,6 +234,10 @@ class Job:
     checkout: bool = True
     note: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
+    #: si#507: whether the checkout leaves the job's token in `.git/config` (actions/checkout's default).
+    #: False for the derived release job, whose token can write, so a build or test step cannot read it
+    #: there; its `token: github` leaves authenticate themselves (`gitops.remote_auth`).
+    persist_credentials: bool = True
     #: si#327: the KIND, kept and not only its consequences. Until now a job carried what the kind had
     #: already been resolved into - `runs_on`, the note, the env folded into `extras` - and threw the kind
     #: itself away. That was enough while every consequence was a value; it is not enough for one that is
@@ -1091,7 +1099,7 @@ def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: i
 
 
 def _release(workflow: "Workflow", manifest: Manifest,
-             artifacts: "Mapping[str, artifactsection.Declared]") -> "tuple[Job, ...]":
+             artifacts: "Mapping[str, artifactsection.Declared]", reports: "str | None" = None) -> "tuple[Job, ...]":
     """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
 
     NOTHING HERE ORDERS ANYTHING. `plan_for` returns the leaves in an order rule 8 accepted at load
@@ -1161,8 +1169,57 @@ def _release(workflow: "Workflow", manifest: Manifest,
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
                                 "run": tail}))
+    archive, unarchived = _release_archive(manifest, reports)
+    steps.extend(archive)
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
+                persist_credentials=False, note=unarchived,
                 extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
+
+
+#: si#509: what the release job's archive is called as a run artifact; ci.yml's own archive uses the same.
+RELEASE_ARCHIVE = "allure-report"
+#: The task whose leaf renders it.
+REPORT_TASK = "test:report"
+
+RELEASE_ARCHIVE_NOTE = """si#509 (si#248): the test results of THIS run, the one that gated the release, archived
+whether it went green or red. Kernel-owned: every derived release job ends with these two steps."""
+
+
+def _release_archive(manifest: Manifest, reports: "str | None" = None) -> "tuple[tuple[Step, ...], str]":
+    """si#509: the release job's own test archive - the product's `test:report` leaf, then the upload - and
+    the job note that says why there is none.
+
+    `if: always()` on both, for ci.yml's reason: a job stops at its first red step, and an archive that
+    exists only for the green runs is missing from every run somebody needs it for. The upload says
+    `if-no-files-found: error`, so "no archive" is never green. A product that places no `test:report`
+    leaf has nothing to render one with, and its job says so instead of uploading nothing.
+
+    `reports` is the manifest's `suites: reports:` directory. A caller that has the manifest's data passes
+    it, as it passes `artifacts`; the registered ProductContext is read only when nobody did, and only
+    when there is a report leaf to archive - so rendering stays independent of whichever context the
+    process last registered.
+    """
+    leaves = [(group, name) for group, members in manifest.commands.items()
+              for name, spec in members.items() if isinstance(spec, TaskCommand) and spec.task == REPORT_TASK]
+    if not leaves:
+        return (), textwrap.fill(
+            f"si#509: no command instantiates `{REPORT_TASK}`, so this job archives no test results. Place it "
+            f"(`report: {{ task: \"{REPORT_TASK}\" }}` under `test`) and the job archives them.", width=95)
+    if reports is None:
+        reports = report_dir(context.current().manifest_data())
+    group, name = leaves[0]
+    path = f"{reports.rstrip('/')}/*.html"
+    return (Step(command=f"{group.replace('.', ' ')} {name}", modifiers={"if": "always()"},
+                 note=RELEASE_ARCHIVE_NOTE),
+            Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
+                           "with": {"name": RELEASE_ARCHIVE, "path": path, "if-no-files-found": "error",
+                                    "retention-days": 90}})), ""
+
+
+def report_dir(data: Mapping[str, object]) -> str:
+    """The `suites: reports:` directory of a manifest's raw data - what `render`'s `reports=` takes."""
+    from simplon.tasks import testrun  # lazy: the archive is the only reason a workflow needs the test kernel
+    return testrun.declared(data).reports
 
 
 def _rollout_note(stage: "Stage", env: object) -> str:
@@ -1345,7 +1402,7 @@ def launcher(product: str) -> str:
 
 def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
            environments: "Mapping[str, object] | None" = None,
-           artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> str:
+           artifacts: "Mapping[str, artifactsection.Declared] | None" = None, reports: "str | None" = None) -> str:
     """One workflow's text. Deterministic: same manifest, same bytes.
 
     Written as TEXT rather than dumped as a document, for the reason the module docstring measures: a
@@ -1373,7 +1430,7 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     lines.append("jobs:")
     if workflow.release and artifacts is None:
         artifacts = artifactsection.declared(context.current().manifest_data())
-    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}), *workflow.jobs)
+    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")
@@ -1583,6 +1640,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         lines.append(f"      - uses: {CHECKOUT_ACTION}")
         lines.append("        with:")
         lines.append(f"          fetch-depth: {FETCH_DEPTH}")
+        if not job.persist_credentials:
+            lines += _comment(NO_PERSIST_NOTE, "          ")
+            lines.append("          persist-credentials: false")
     if job.python:
         lines.append(f"      - uses: {SETUP_PYTHON_ACTION}")
         lines.append("        with:")
@@ -1783,7 +1843,8 @@ def trigger_of(doc: Mapping[object, object]) -> object:
 
 
 def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
-          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> tuple[str, ...]:
+          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None,
+          reports: "str | None" = None) -> tuple[str, ...]:
     """Render every generated workflow under `root`. Returns the paths whose bytes CHANGED.
 
     A hand-written entry is skipped rather than touched: the manifest declared it somebody's own, and a
@@ -1793,7 +1854,8 @@ def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
     for workflow in workflows:
         if not workflow.generated:
             continue
-        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts)
+        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts,
+                      reports=reports)
         target = root / workflow.path
         if target.exists() and target.read_text(encoding="utf-8") == text:
             continue
@@ -1804,7 +1866,8 @@ def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
 
 
 def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
-          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> Report:
+          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None,
+          reports: "str | None" = None) -> Report:
     """What disagrees, split four ways - see `Report`.
 
     A MISSING target is drift, not an error, for the same reason it is in `simplon.tasks.taskgen`: a fresh
@@ -1820,7 +1883,8 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
         if not workflow.generated:
             (handwritten if (root / workflow.path).exists() else absent).append(workflow.path)
             continue
-        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts)
+        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts,
+                      reports=reports)
         target = root / workflow.path
         current = target.read_text(encoding="utf-8") if target.exists() else ""
         if current == text:

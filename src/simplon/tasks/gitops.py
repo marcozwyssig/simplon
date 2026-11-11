@@ -30,6 +30,8 @@ The git wrappers run `git -C <ROOT>`; a consuming product points ROOT at its rep
 """
 from __future__ import annotations
 
+import base64
+import os
 import re
 import shutil
 from pathlib import Path
@@ -47,8 +49,38 @@ def configure(root: Path | str) -> None:
     ROOT = Path(root)
 
 
-def _git(args: list[str], *, capture: bool = True):
+def _git(args: list[str], *, capture: bool = True, remote: bool = False):
+    """`remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does."""
+    auth = remote_auth() if remote else {}
+    if auth:
+        return run(["git", "-C", str(ROOT), *args], capture=capture, env=auth)
     return run(["git", "-C", str(ROOT), *args], capture=capture)
+
+
+def remote_auth() -> dict[str, str]:
+    """si#507: the run's GITHUB_TOKEN as an `http.<server>/.extraheader` for ONE git call; `{}` without one.
+
+    A generated release job checks out with `persist-credentials: false`, so `.git/config` holds no token
+    for the build and test steps to read, and a task that talks to origin authenticates itself, the way
+    actions/checkout would have: `AUTHORIZATION: basic base64(x-access-token:<token>)`, scoped to the
+    server's URL (`GITHUB_SERVER_URL`, github.com when unset). Through git's `GIT_CONFIG_*` environment
+    (git 2.31) rather than `git -c`, so the token is in the child's environment and not in its argv,
+    which any process on the machine can list. Without GITHUB_TOKEN this adds nothing, and git uses
+    whatever credential the person or the checkout already gave it - a missing token is not faked.
+
+    The empty value first is git's documented reset of the multi-valued key: a checkout that DID persist
+    its credential would otherwise send two `Authorization` headers, its own and this one.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return {}
+    server = os.environ.get("GITHUB_SERVER_URL", "") or "https://github.com"
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    key = f"http.{server.rstrip('/')}/.extraheader"
+    at = int(os.environ.get("GIT_CONFIG_COUNT", "0") or "0")
+    return {"GIT_CONFIG_COUNT": str(at + 2),
+            f"GIT_CONFIG_KEY_{at}": key, f"GIT_CONFIG_VALUE_{at}": "",
+            f"GIT_CONFIG_KEY_{at + 1}": key, f"GIT_CONFIG_VALUE_{at + 1}": f"AUTHORIZATION: basic {basic}"}
 
 
 def _require(tool: str) -> None:
@@ -467,7 +499,7 @@ def remote_default_branch() -> str | None:
     Not `default_branch()`, whose `origin/HEAD` a checkout made the way actions/checkout makes one does not
     have (measured on git 2.47 by the final review of si#487): there it falls back to `main`, and a product
     whose default branch is `master` would be told to start its release from a branch it does not have."""
-    result = _git(["ls-remote", "--symref", "origin", "HEAD"])
+    result = _git(["ls-remote", "--symref", "origin", "HEAD"], remote=True)
     if not result.ok:
         return None
     for line in (result.out or "").splitlines():
@@ -500,7 +532,7 @@ def fetch_branches() -> bool:
     an off-main commit through (a false green, the thing being guarded against). A failure to reach the
     remote is therefore reported and survivable, not fatal.
     """
-    return _git(["fetch", "--quiet", "--no-tags", "origin"]).ok
+    return _git(["fetch", "--quiet", "--no-tags", "origin"], remote=True).ok
 
 
 def create_tag(name: str) -> bool:
@@ -527,7 +559,7 @@ def push_tag(name: str) -> Result:
     what git said and read WHY it said it - a rejection because the number is taken needs different
     advice from a rejection because the network is down, and one message for both would say nothing.
     """
-    return _git(["push", "origin", f"refs/tags/{name}"])
+    return _git(["push", "origin", f"refs/tags/{name}"], remote=True)
 
 
 def remote_tag_commit(name: str) -> str | None:
@@ -551,7 +583,7 @@ def remote_tag_commit(name: str) -> str | None:
     The peeled `^{}` line wins where there is one: an annotated tag's own line carries the tag OBJECT's
     id, and comparing that with a commit would report a mismatch for a tag that is perfectly correct.
     """
-    result = _git(["ls-remote", "--tags", "origin", f"refs/tags/{name}"])
+    result = _git(["ls-remote", "--tags", "origin", f"refs/tags/{name}"], remote=True)
     if not result.ok:
         return None
     found = ""

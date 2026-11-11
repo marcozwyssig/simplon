@@ -70,7 +70,7 @@ def test_the_toolchain_mount_is_the_host_path_when_there_is_one(tmp_path, monkey
     monkeypatch.setenv(hostpath.HOST_ROOT_ENV, "/home/marco/proj")
     monkeypatch.setenv(hostpath.MOUNT_ROOT_ENV, "/src")
     from simplon.manifest import context
-    context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
+    monkeypatch.setattr(context, "_current", context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
     cfg = toolchain.Toolchain(image="python:3.12-slim", argv=["pytest"],
                               caches=[toolchain.Cache(volume="pip-cache", path="/cache")])
 
@@ -87,7 +87,7 @@ def test_the_toolchain_mount_is_unchanged_on_the_venv_route(tmp_path, monkeypatc
     monkeypatch.delenv(hostpath.HOST_ROOT_ENV, raising=False)
     monkeypatch.delenv(hostpath.MOUNT_ROOT_ENV, raising=False)
     from simplon.manifest import context
-    context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
+    monkeypatch.setattr(context, "_current", context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
     cfg = toolchain.Toolchain(image="python:3.12-slim", argv=["pytest"])
 
     # act
@@ -112,7 +112,7 @@ def test_the_mermaid_scratch_is_inside_the_tree_so_it_can_be_mounted_from_a_cont
     from simplon.tasks import site
     monkeypatch.setenv(hostpath.HOST_ROOT_ENV, "/home/marco/proj")
     monkeypatch.setenv(hostpath.MOUNT_ROOT_ENV, str(tmp_path))
-    context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
+    monkeypatch.setattr(context, "_current", context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
     page = tmp_path / "website" / "content" / "p.md"
     page.parent.mkdir(parents=True)
     page.write_text("# a page\n\n```mermaid\nflowchart TD\n  a-->b\n```\n", encoding="utf-8")
