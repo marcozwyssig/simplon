@@ -198,6 +198,12 @@ def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "",
     wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)
     path = the_wheel(wheel_dir)
     meta = wheel_meta(path)
+    # si#543: brew reads the `+` of a local version in the url's file name as a space and aborts its audit
+    # with a backtrace. A tag gives a clean version, and a release never builds any other.
+    if "+" in meta.version:
+        raise ValueError(f"{meta.filename} carries the local version {meta.version}, and brew reads its `+` as "
+                         f"a space and refuses the formula; build the wheel on a tagged commit, so its version "
+                         f"is the tag's")
     # the rule test:homebrew-formula enforces, asked before the closure run it would otherwise waste
     wanted = re.sub(r"[-_.]+", "-", meta.name).lower()
     if out.stem != wanted:
