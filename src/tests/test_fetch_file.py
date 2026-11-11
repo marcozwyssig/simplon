@@ -8,6 +8,8 @@ AAA; the name states the behaviour under test. Nothing touches the network: `fet
 a writer of known bytes.
 """
 import hashlib
+import io
+import os
 import re
 import stat
 from pathlib import Path
@@ -90,10 +92,11 @@ def test_a_declared_file_is_fetched_from_the_url_its_version_writes_and_stored_u
 
 
 def test_a_file_already_there_with_its_checksum_is_not_fetched_again_and_says_so(product, served, capsys):
-    # arrange
+    # arrange: fetched once, so the file is there with its checksum and the url it was verified against
     calls, _ = served
-    (product / "build/dist").mkdir(parents=True)
-    (product / "build/dist/plain.bin").write_bytes(ARCHIVE)
+    assert fetchfile.fetch(name="plain") == 0
+    calls.clear()
+    capsys.readouterr()
 
     # act
     rc = fetchfile.fetch(name="plain")
@@ -102,6 +105,23 @@ def test_a_file_already_there_with_its_checksum_is_not_fetched_again_and_says_so
     assert rc == 0
     assert calls == []
     assert "nothing to fetch" in capsys.readouterr().out
+
+
+def test_a_file_with_its_checksum_and_no_recorded_url_is_fetched_again(product, served, capsys):
+    # arrange (si#493): the bytes match, and nothing says which url they were verified against - a file an
+    # earlier kernel left, or one put there by hand
+    calls, _ = served
+    (product / "build/dist").mkdir(parents=True)
+    (product / "build/dist/plain.bin").write_bytes(ARCHIVE)
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: an absent record is no match - the url is fetched, and the record is written for next time
+    assert rc == 0
+    assert calls == ["https://example.org/plain.bin"]
+    assert "no recorded url" in capsys.readouterr().out
+    assert (product / "build/dist/plain.bin.url").read_text(encoding="utf-8") == "https://example.org/plain.bin\n"
 
 
 def test_a_download_with_another_checksum_fails_and_stores_nothing(product, served, capsys):
@@ -132,6 +152,66 @@ def test_a_stale_file_under_the_path_is_replaced_by_the_verified_one(product, se
     # assert
     assert rc == 0
     assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
+
+
+def _move_the_version(product, to="9.8.0"):
+    (product / "gradle" / "libs.versions.toml").write_text(f'[versions]\ngradle = "{to}"\n', encoding="utf-8")
+
+
+def test_a_moved_version_with_the_old_sha256_fails_closed_over_the_old_archive_in_the_tree(product, served,
+                                                                                          capsys):
+    # arrange (si#493): the old archive is fetched and stored, then the version moves and the sha256 does
+    # not - the new url serves the new version's bytes, which the old sha256 does not describe
+    calls, state = served
+    assert fetchfile.fetch(name="gradle-dist") == 0
+    _move_the_version(product)
+    state["body"] = b"gradle 9.8.0, as served"
+
+    # act
+    rc = fetchfile.fetch(name="gradle-dist")
+
+    # assert: red rather than "nothing to fetch", the moved url was asked, and the message names both
+    assert rc == 1
+    assert calls[-1] == "https://services.gradle.org/distributions/gradle-9.8.0-bin.zip"
+    err = capsys.readouterr().err
+    assert "9.8.0" in err
+    assert SHA in err
+
+
+def test_a_moved_version_with_the_old_sha256_fails_closed_over_the_old_archive_in_the_cache(product, served,
+                                                                                           capsys):
+    # arrange (si#493): as above, after a `clean` - the tree is empty, the cache holds the old archive
+    # under the declared sha256
+    calls, state = served
+    assert fetchfile.fetch(name="gradle-dist") == 0
+    (product / "build/dist/gradle.zip").unlink()
+    _move_the_version(product)
+    state["body"] = b"gradle 9.8.0, as served"
+
+    # act
+    rc = fetchfile.fetch(name="gradle-dist")
+
+    # assert
+    assert rc == 1
+    assert calls[-1] == "https://services.gradle.org/distributions/gradle-9.8.0-bin.zip"
+    err = capsys.readouterr().err
+    assert "9.8.0" in err
+    assert SHA in err
+
+
+def test_a_moved_url_that_serves_the_same_bytes_is_fetched_again_and_stays_green(product, served):
+    # arrange (si#493): a mirror move - another url, the same archive, so the checksum still holds
+    calls, _ = served
+    assert fetchfile.fetch(name="gradle-dist") == 0
+    _move_the_version(product)
+
+    # act
+    rc = fetchfile.fetch(name="gradle-dist")
+
+    # assert: the checksum is the judge, so the moved url is fetched and accepted
+    assert rc == 0
+    assert calls == ["https://services.gradle.org/distributions/gradle-9.7.1-bin.zip",
+                     "https://services.gradle.org/distributions/gradle-9.8.0-bin.zip"]
 
 
 def test_a_failed_download_is_red_and_names_the_file(product, monkeypatch, capsys):
@@ -166,10 +246,12 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(transfer, "download", broken)
 
 
-def _cached(cache, body=ARCHIVE, name="plain.bin"):
+def _cached(cache, body=ARCHIVE, name="plain.bin", url="https://example.org/plain.bin"):
     entry = cache / SHA / name
     entry.parent.mkdir(parents=True, exist_ok=True)
     entry.write_bytes(body)
+    if url:
+        entry.with_name(name + fetchfile.SOURCE).write_text(f"{url}\n", encoding="utf-8")
     return entry
 
 
@@ -185,8 +267,23 @@ def test_a_file_in_the_cache_is_restored_without_a_download_and_says_so(product,
     # says where they came from
     assert rc == 0
     assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
-    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin"]
+    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin", "plain.bin.url"]
     assert "from the download cache" in capsys.readouterr().out
+
+
+def test_a_cache_entry_with_no_recorded_url_is_a_miss(product, served, cache, capsys):
+    # arrange (si#493): an entry an earlier kernel stored, with no record of the url it came from
+    calls, _ = served
+    _cached(cache, url="")
+
+    # act
+    rc = fetchfile.fetch(name="plain")
+
+    # assert: downloaded, and the entry now carries the record
+    assert rc == 0
+    assert calls == ["https://example.org/plain.bin"]
+    assert "no recorded url" in capsys.readouterr().out
+    assert (cache / SHA / "plain.bin.url").read_text(encoding="utf-8") == "https://example.org/plain.bin\n"
 
 
 def test_a_miss_downloads_and_leaves_the_file_in_the_cache_under_its_sha256(product, served, cache, capsys):
@@ -200,7 +297,7 @@ def test_a_miss_downloads_and_leaves_the_file_in_the_cache_under_its_sha256(prod
     assert rc == 0
     assert len(calls) == 1
     assert (cache / SHA / "plain.bin").read_bytes() == ARCHIVE
-    assert sorted(p.name for p in (cache / SHA).iterdir()) == ["plain.bin"]
+    assert sorted(p.name for p in (cache / SHA).iterdir()) == ["plain.bin", "plain.bin.url"]
     out = capsys.readouterr().out
     assert "fetched build/dist/plain.bin" in out
     assert "stored in the download cache" in out
@@ -277,7 +374,7 @@ def test_a_cache_entry_that_cannot_be_read_is_a_miss_not_a_failure(product, serv
     assert rc == 0
     assert len(calls) == 1
     assert (product / "build/dist/plain.bin").read_bytes() == ARCHIVE
-    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin"]
+    assert sorted(p.name for p in (product / "build/dist").iterdir()) == ["plain.bin", "plain.bin.url"]
     assert "could not be read" in capsys.readouterr().out
 
 
@@ -310,20 +407,33 @@ def test_off_does_not_read_the_cache_either(product, cache, monkeypatch):
     assert fetchfile.fetch(name="plain") == 1
 
 
-def test_a_restored_file_has_the_same_mode_as_a_fetched_one(product, served, monkeypatch):
-    # arrange: BuildKit keys a layer on the file mode too (firn, si#600), so the two must not differ
-    assert fetchfile.fetch(name="plain") == 0
+def test_a_restored_file_a_fetched_file_and_a_plain_open_have_the_same_mode(product, monkeypatch):
+    # arrange: BuildKit keys a layer on the file mode too (firn, si#600), so a restore and a download must
+    # not differ - and si#497 decided both take the mode a plain open() gives, under a known umask. The
+    # download is the REAL `transfer.download`, staging and rename included; only the wire is replaced.
+    class Wire(io.BytesIO):
+        url = "https://example.org/plain.bin"
+        status = 200
+        headers = {"Content-Length": str(len(ARCHIVE))}
+
+    monkeypatch.setattr(transfer, "_respond", lambda *args: Wire(ARCHIVE))
     dest = product / "build/dist/plain.bin"
-    fetched = stat.S_IMODE(dest.stat().st_mode)
-    dest.unlink()
-    _no_network(monkeypatch)
+    old = os.umask(0o022)
+    try:
+        (product / "plain").write_bytes(b"")
+        assert fetchfile.fetch(name="plain") == 0
+        fetched = stat.S_IMODE(dest.stat().st_mode)
+        dest.unlink()
+        _no_network(monkeypatch)
 
-    # act
-    assert fetchfile.fetch(name="plain") == 0
-    restored = stat.S_IMODE(dest.stat().st_mode)
+        # act
+        assert fetchfile.fetch(name="plain") == 0
+        restored = stat.S_IMODE(dest.stat().st_mode)
+    finally:
+        os.umask(old)
 
-    # assert: equal, and the mode a real download produces (mkstemp's 0600, measured)
-    assert fetched == restored == fetchfile.MODE == 0o600
+    # assert: one mode, and it is open()'s
+    assert fetched == restored == stat.S_IMODE((product / "plain").stat().st_mode) == 0o644
 
 
 @pytest.mark.parametrize("environ,expected", [

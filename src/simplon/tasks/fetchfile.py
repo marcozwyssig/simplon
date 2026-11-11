@@ -19,8 +19,20 @@ and `{version}` in the url is replaced by that value. The sha256 cannot follow a
 statement about one particular archive - so a moved version with an old sha256 fails closed, and the message
 names both, rather than downloading something nobody checked.
 
-"NOTHING TO DO" AND "FAILED" ARE TWO ANSWERS. A file that is already there with the declared checksum is
-rc 0 and says so; a download that fails, or arrives with another checksum, is rc 1 and leaves NOTHING under
+THE URL IS PART OF "ALREADY THERE" (si#493). The sha256 alone cannot see a moved version: the old archive
+still matches the old sha256 while the url now names another file, and this module answered "nothing to
+fetch" and built the old archive under the new version. So every file this task leaves - under `path` and
+in the download cache - carries a record beside it, `<file>.url`, naming the url its bytes were verified
+against, and a file counts as there only when its sha256 AND its record match the declaration. Otherwise
+the url is fetched and the checksum rules on what it serves now: a moved version with an old sha256 fails
+there, and a mirror move serving the same bytes passes. A file with no record (one an earlier kernel left,
+or one put there by hand) is not a match - it costs one download, where trusting it is the defect.
+BuildKit's layer key does not see the record: a `--build-context` directory gaining `gradle.zip.url` beside
+a bind-mounted `gradle.zip` left the layer CACHED (measured 2026-11-11, buildx 0.38.1), and changing the
+archive itself rebuilt it.
+
+"NOTHING TO DO" AND "FAILED" ARE TWO ANSWERS. A file that is already there with the declared checksum and
+url is rc 0 and says so; a download that fails, or arrives with another checksum, is rc 1 and leaves NOTHING under
 `path` - the bytes land beside it under a staging name and are renamed into place only once they match.
 A file under `path` with the wrong checksum (the previous version's archive) is replaced, and the run says
 that too.
@@ -72,17 +84,13 @@ VERSION_FROM_KEYS = ("file", "key")
 #: The suffix the bytes carry until their checksum is known.
 STAGING = ".unverified"
 
+#: The suffix of the record beside a fetched file and beside a cache entry: the url its bytes were
+#: verified against (si#493).
+SOURCE = ".url"
+
 #: The variable naming the download cache directory, and the value that turns the cache off (si#600).
 CACHE_ENV = "DELIVERY_DIST_CACHE"
 CACHE_OFF = "off"
-
-#: The mode every file `build:fetch` leaves under `path`, whichever way it arrived. BuildKit's layer
-#: cache key includes the file mode (firn measured it on si#600: a restored 0644 against a fetched 0600
-#: rebuilt every layer), so a restore and a download must not differ. 0600 because that is what a real
-#: download has always produced - `transfer.download` stages through `mkstemp`, which creates 0600
-#: whatever the umask (measured 2026-11-08 under umask 0022) - and it is now set on BOTH paths rather
-#: than inherited, so the equality is this module's statement and not a side effect of another one.
-MODE = 0o600
 
 
 @dataclass(frozen=True)
@@ -173,16 +181,41 @@ def cache_dir(environ: Mapping[str, str] | None = None) -> Path | None:
     return Path(base) / "simplon" / "dist"
 
 
-def _restore(cached: Path, spec: File, dest: Path) -> bool:
-    """Put the cached copy under `path` if it is the declared file; False, with a warning, if it is not."""
+def _source(path: Path) -> Path:
+    """Where the url `path`'s bytes were verified against is recorded (si#493)."""
+    return path.with_name(path.name + SOURCE)
+
+
+def _fetched_from(path: Path) -> str:
+    """The url recorded beside `path`, or "" when there is no readable record - which matches no url."""
+    try:
+        return _source(path).read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def _record(path: Path, url: str) -> None:
+    _source(path).write_text(f"{url}\n", encoding="utf-8")
+
+
+def _restore(cached: Path, spec: File, dest: Path, url: str) -> bool:
+    """Put the cached copy under `path` if it is the declared file; False, with a warning, if it is not.
+    A cache entry recorded for another url, or for none, is a miss and no fault (si#493)."""
     if not cached.is_file():
+        return False
+    recorded = _fetched_from(cached)
+    if recorded != url:
+        log.info(f"the download cache holds {cached} for {recorded or 'no recorded url'}, not {url}; the url "
+                 f"is fetched so the checksum rules on what it serves now")
         return False
     copy: Path | None = None
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        handle, name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".cached")
+        # The mode a plain `open()` gives, as `transfer.download` gives a fetched file (si#497): BuildKit's
+        # layer cache key includes the file mode (firn, si#600), so a restore and a download must not
+        # differ, and neither may be 0600 - another uid sharing the checkout builds the image from it.
+        handle, copy = transfer.unique_file(dest.parent, f"{dest.name}.", ".cached")
         os.close(handle)
-        copy = Path(name)
         shutil.copyfile(cached, copy)
         # Verified on the COPY, not on the cache: the bytes that are renamed into place are the bytes
         # that were checked, whatever happens to the cache entry in between.
@@ -193,8 +226,8 @@ def _restore(cached: Path, spec: File, dest: Path) -> bool:
                      f"{spec.sha256}; it is removed and the file is fetched instead")
             cached.unlink(missing_ok=True)
             return False
-        os.chmod(copy, MODE)
         os.replace(copy, dest)
+        _record(dest, url)
     except OSError as fault:
         if copy is not None:
             copy.unlink(missing_ok=True)
@@ -204,7 +237,7 @@ def _restore(cached: Path, spec: File, dest: Path) -> bool:
     return True
 
 
-def _store(dest: Path, cached: Path) -> str:
+def _store(dest: Path, cached: Path, url: str) -> str:
     """Copy the verified file into the cache; the reason it could not be, or "" when it was."""
     partial: Path | None = None
     try:
@@ -214,6 +247,7 @@ def _store(dest: Path, cached: Path) -> str:
         partial = Path(name)
         shutil.copyfile(dest, partial)
         os.replace(partial, cached)
+        _record(cached, url)
     except OSError as fault:
         if partial is not None:
             partial.unlink(missing_ok=True)
@@ -239,14 +273,20 @@ def fetch(name: str = "") -> int:
     url = spec.url.replace(VERSION, version) if version else spec.url
     dest = root / spec.path
     if dest.is_file():
-        if checksum.sha256_of(dest) == spec.sha256:
-            log.ok(f"{spec.path} is already there with the declared sha256; nothing to fetch")
+        recorded = _fetched_from(dest)
+        if checksum.sha256_of(dest) != spec.sha256:
+            log.info(f"{spec.path} is there with another sha256 - an older download, or another file; it is "
+                     f"replaced")
+        elif recorded == url:
+            log.ok(f"{spec.path} is already there with the declared sha256 from {url}; nothing to fetch")
             return 0
-        log.info(f"{spec.path} is there with another sha256 - an older download, or another file; it is "
-                 f"replaced")
+        else:
+            log.info(f"{spec.path} has the declared sha256 and was verified against "
+                     f"{recorded or 'no recorded url'}, not {url}; the url is fetched so the checksum rules on "
+                     f"what it serves now")
     cache = cache_dir()
     cached = cache / spec.sha256 / dest.name if cache is not None else None
-    if cached is not None and _restore(cached, spec, dest):
+    if cached is not None and _restore(cached, spec, dest, url):
         return 0
     staged = dest.with_name(dest.name + STAGING)
     try:
@@ -262,13 +302,13 @@ def fetch(name: str = "") -> int:
                   + (f"\n  the url's version {version} is read from '{spec.version_key}' in "
                      f"{spec.version_file}: a new version needs the sha256 of its own file" if version else ""))
         return 1
-    os.chmod(staged, MODE)
     os.replace(staged, dest)
+    _record(dest, url)
     fetched = f"fetched {spec.path} from {url}; sha256 verified"
     if cached is None:
         log.ok(f"{fetched}; the download cache is off ({CACHE_ENV}={CACHE_OFF})")
         return 0
-    reason = _store(dest, cached)
+    reason = _store(dest, cached, url)
     if reason:
         log.warn(f"{fetched}; cache not written: {reason}")
     else:
