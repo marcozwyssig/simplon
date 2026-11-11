@@ -561,3 +561,29 @@ ci:
                                          r'manifest: `bootstrap: "true"`'):
         manifest.load(text % "true", catalogue=catalogue.load(), validate_with=True)
     manifest.load(text % '"true"', catalogue=catalogue.load(), validate_with=True)
+
+
+# --- si#625: the docker client's own failure is not firn's MODEL_ERROR ---------------------------------
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker client on PATH")
+@pytest.mark.parametrize("task", [firngen.generate, firngen.validate, firngen.format_check],
+                         ids=["build:model", "test:model", "test:model-format"])
+def test_a_client_that_cannot_reach_the_daemon_is_not_named_as_firns_exit(tmp_path, monkeypatch, capsys, task):
+    """CI run 42979640016 (ghr-8): the socket was not reachable, the client exited 1, and `build:model` said
+    "firn exited 1, MODEL_ERROR". firn never ran. STAGED with the real toolchain line and the real client: the
+    socket does not exist, nothing else is faked."""
+    # arrange
+    (tmp_path / "sample.yaml").write_text("product: sample\n")
+    (tmp_path / "m").mkdir()
+    monkeypatch.setattr(context_mod, "_current", ProductContext("sample", tmp_path, tmp_path / "sample.yaml"))
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path / 'no.sock'}")
+
+    # act
+    with pytest.raises(SystemExit) as died:
+        task(_Ctx(), image=FIRN_WITH_COUNT, cwd="m")
+
+    # assert: the gate's socket diagnosis, and nothing of firn's
+    err = capsys.readouterr().err
+    assert died.value.code == 1
+    assert "no daemon is reachable" in err and "NOT MOUNTED" in err
+    assert "firn exited" not in err and "MODEL_ERROR" not in err

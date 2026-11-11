@@ -23,6 +23,7 @@ import platform
 import re
 import shutil
 import signal
+import sys
 import tarfile
 import threading
 import uuid
@@ -222,8 +223,14 @@ def ensure_docker() -> None:
             _grant_socket_access(pfx)
         if _daemon_reachable():
             return
+    log.die(unreachable())
+
+
+def unreachable() -> str:
+    """The daemon-unreachable diagnosis, naming the exact socket gap: `ensure_docker`'s die, and
+    `run_container`'s when the client could not reach the daemon (si#625)."""
     name = context.current().name
-    log.die(f"docker CLI present but no daemon is reachable (socket: {_socket_state()}). Install the "
+    return (f"docker CLI present but no daemon is reachable (socket: {_socket_state()}). Install the "
             f"engine (./{name}.sh install / get.docker.com, or give the runner user NOPASSWD sudo so "
             f"{name} can), or on a container runner mount the host socket: "
             "-v /var/run/docker.sock:/var/run/docker.sock (plus --group-add its gid)")
@@ -565,9 +572,22 @@ def lifecycle(product: str | None = None, instance: str = "") -> tuple[str, list
 
 def run_container(argv: list[str], name: str, *, capture: bool = False) -> Result:
     """`run(argv)` for a `docker run` line whose container is called `name`, inside
-    `stopped_on_interrupt(name)` - see that for why (si#409). Returns the real Result."""
+    `stopped_on_interrupt(name)` - see that for why (si#409). Returns the real Result.
+
+    A RED RC IS ONLY THE TOOL'S IF THE DAEMON ANSWERED (si#625). A client that cannot reach the daemon
+    exits 1, not 125 - measured on docker 29.9.3 against a socket the uid may not open and against one that
+    is not there; 125 is what it says when the daemon answers with an error. So rc 1 alone cannot tell "the
+    container never started" from a tool's own 1, and `build:model` named it firn's MODEL_ERROR (CI run
+    42979640016). The rc does not carry the difference, so the daemon is asked: one `docker version` after
+    a red run, none after a green one, and an unreachable daemon dies with `ensure_docker`'s diagnosis
+    instead of handing the caller an rc that is not the tool's. What the client said is printed first."""
     with stopped_on_interrupt(name):
-        return run(argv, capture=capture)
+        result = run(argv, capture=capture)
+    if result.rc != 0 and not _daemon_reachable():
+        if result.err:
+            print(result.err, file=sys.stderr, end="")
+        log.die(unreachable())
+    return result
 
 
 @contextmanager
