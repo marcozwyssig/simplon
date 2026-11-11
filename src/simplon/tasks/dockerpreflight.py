@@ -25,9 +25,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from simplon.adapters import host
+from simplon.adapters import docker, host
 from simplon.kernel import log
 from simplon.kernel.run import run
+from simplon.tasks import imagefile
 
 #: The editors the `editor` parameter knows; absent means no editor check.
 EDITORS = ("devcontainer",)
@@ -71,6 +72,44 @@ def preflight(editor: str = "") -> int:
     if not editor:
         return 0
     return _devcontainer(terminal)
+
+
+#: What the CI probe starts (si#623): the kernel's own pinned busybox, which `test:file` already pulls, so a
+#: runner holds one small image for both and the probe adds no second pin to keep current.
+PROBE_IMAGE = imagefile.FILE_TEST_IMAGE
+#: The probe may have to pull PROBE_IMAGE first. Bounded, because a run that hangs is no verdict.
+PROBE_TIMEOUT_S = 120.0
+
+
+def ci_preflight() -> int:
+    """`support:ci-docker-preflight` (si#623): run a container from where the kernel uses docker - inside the
+    kernel container through the mounted socket, or on the host - and on a refusal name the facts.
+
+    PRESENCE IS NOT CAPABILITY. `docker version` answers on a socket the caller may still not be allowed to
+    start a container through, and `ci-disk-preflight` was green on ghr-8 on 2026-11-11 while every docker
+    call after it was refused. So green comes from a container that ran, and nothing less.
+    """
+    if shutil.which("docker") is None:
+        log.error("no `docker` on PATH, so no job step here can start a container")
+        return 1
+    argv = ["docker", "run", "--rm", "--network", "none", PROBE_IMAGE, "true"]
+    try:
+        result = run(argv, timeout=PROBE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        log.error(f"`docker run {PROBE_IMAGE}` did not finish within {PROBE_TIMEOUT_S:g} s; the daemon or the "
+                  "registry is not answering")
+        return 1
+    where = ("inside the kernel container" if os.environ.get("DELIVERY_ROUTE") == "inside"
+             else "on this host")
+    if result.ok:
+        log.ok(f"docker ran a container {where} ({PROBE_IMAGE})")
+        return 0
+    log.error(f"docker could not run a container {where} (`{' '.join(argv)}`, rc {result.rc}):")
+    for line in (result.err or result.out or "").strip().splitlines():
+        log.error(f"    {line}")
+    for line in docker.socket_access_report():
+        log.error(f"  {line}")
+    return 1
 
 
 def _devcontainer(terminal: host.DockerContext) -> int:

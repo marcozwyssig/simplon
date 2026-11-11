@@ -459,6 +459,8 @@ support:
     ci-arm64: { task: "support:ci-arm64" }
     ci-disk-preflight: { task: "support:ci-disk-preflight" }
     ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+    # si#623, load-bearing for the same reason: the generated `ci.yml` starts the self-hosted job with it.
+    ci-docker-preflight: { task: "support:ci-docker-preflight" }
 
 # The documentation website's data (#2). Five values since si#344 B1. `source:` was ABSENT from si#183 on,
 # so this manifest was the first consumer of the kernel's `docs/site` default; it names `src/site` now,
