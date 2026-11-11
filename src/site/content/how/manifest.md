@@ -791,8 +791,12 @@ ci:
 - **The sha256 belongs to one file.** When the version moves, the download arrives with another
   checksum. Nothing is stored, and the run is red and names both the checksum and where the version was
   read from.
-- **A file already there with its checksum is not fetched again**, and the run says so. A file there with
-  another checksum, such as the archive of an older version, is replaced.
+- **A file already there with its checksum, fetched from the url the manifest names now, is not fetched
+  again**, and the run says so. A file there with another checksum, such as the archive of an older
+  version, is replaced. The url is part of the match (si#493): each fetched file and each cache entry
+  carries a record beside it, `<file>.url`, and a file whose record names another url, or no url, is
+  fetched again so the checksum rules on what the url serves now. A moved version with the old sha256 is
+  therefore red even when the old archive is still there.
 - **A download cache outside the tree keeps the file across `clean`, checkouts and CI jobs** (si#600). It
   lives at `DELIVERY_DIST_CACHE`, else `$RUNNER_TOOL_CACHE/simplon/dist` on a CI runner, else
   `${XDG_CACHE_HOME:-~/.cache}/simplon/dist`, keyed `<sha256>/<file name>`; `DELIVERY_DIST_CACHE=off`
