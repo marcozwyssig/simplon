@@ -1,0 +1,9 @@
+[Unit]
+Description=Check that every running CI runner can run a container (si#624)
+Documentation=https://marcozwyssig.github.io/simplon/how/ci-hosts/
+
+[Service]
+Type=oneshot
+# As root, on the runner machine: the script reads each runner's credentials from /proc and runs the
+# container with exactly those. Adjust the path to wherever this repository's copy sits.
+ExecStart=/usr/local/sbin/runner-docker-check.sh
