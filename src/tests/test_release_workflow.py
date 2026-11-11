@@ -610,13 +610,22 @@ def test_no_script_reads_an_input_or_the_ref_name(workflow):
         assert "GITHUB_REF_NAME" not in run
 
 
-def test_the_release_path_carries_no_test_archive_yet(workflow):
-    """A stated loss, not an oversight (si#491 decision 6). si#248 archived the Allure report on the release
-    path. The suite now runs inside the derived `release` job, which carries no `uses:` step, so there is
-    nowhere to upload it from; ci.yml keeps its archive. si#509 is the kernel question - when it lands,
-    this test is the one to turn around."""
-    uses = [str(value) for key, value in _walk(workflow) if key == "uses"]
-    assert not [u for u in uses if u.startswith("actions/upload-artifact")]
+def test_the_release_job_archives_the_tests_that_gated_it(workflow):
+    """si#509 turned this around (si#491 decision 6 had stated the loss). The suite runs inside the derived
+    `release` job, and the job now ends with the kernel's archive: `test report` and the upload, both under
+    `if: always()`, so a red release run carries its report too - the archive si#248 asked for, from the
+    run that gated the release rather than from ci.yml's run of the same commit."""
+    # arrange
+    steps = workflow["jobs"]["release"]["steps"]
+
+    # act
+    report, upload = steps[-2:]
+
+    # assert
+    assert report == {"if": "always()", "run": "./simplon.sh test report"}
+    assert upload["uses"].startswith("actions/upload-artifact@") and upload["if"] == "always()"
+    assert upload["with"]["path"] == "tests/reports/*.html"
+    assert upload["with"]["if-no-files-found"] == "error"
 
 
 def test_the_release_tests_the_image_between_building_and_publishing_it():

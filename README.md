@@ -224,8 +224,8 @@ failed job. Never cut a second tag for the same release.
 are both published by the release run. A merged documentation fix appears when
 the next release is cut, and not before.
 
-The release run no longer archives its test report; `ci.yml` still archives
-the report for the same commit (si#509).
+The release run archives the test report of the run that gated it, green or
+red, as its `allure-report` artifact (si#509).
 
 The full story, including what the guard deliberately does not check, is on the
 site: <https://marcozwyssig.github.io/simplon/how/releasing/>.

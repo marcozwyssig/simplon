@@ -2504,6 +2504,46 @@ def test_the_version_goes_to_the_leaves_that_take_it_unpinned():
     assert "RELEASE_VERSION" not in steps["build build-image"]["run"]  # pinned with `with:`
 
 
+#: si#509: the fixture product with a `test:report` leaf and the `suites:` section it reads, its reports
+#: directory moved off the layout's default so the upload path is seen to come from the manifest.
+_REPORTING_PRODUCT = (_RELEASE_PRODUCT
+                      .replace("                    with: { tag: \"\" } }\n",
+                               "                    with: { tag: \"\" } }\n"
+                               "      report: { task: \"test:report\" }\n")
+                      + "suites:\n  reports: build/reports\n  gates:\n    - { name: unit, command: test test-image,"
+                        " results: clear }\n")
+
+
+def test_every_derived_release_job_ends_with_the_kernels_archive(tmp_path, monkeypatch):
+    """si#509 option B (Marco, 2026-11-11): the product's `test:report` leaf and the upload, last, both
+    under `if: always()`, the upload's path read from the manifest's `suites: reports:`."""
+    # arrange
+    from simplon.manifest import context
+    (tmp_path / "app.yaml").write_text(_REPORTING_PRODUCT, encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext("app", tmp_path, tmp_path / "app.yaml"))
+
+    # act
+    report, upload = _release_steps(_release_text(_REPORTING_PRODUCT))[-2:]
+
+    # assert
+    assert report == {"if": "always()", "run": "./app.sh test report"}
+    assert upload == {"uses": workflowgen.UPLOAD_ACTION, "if": "always()",
+                      "with": {"name": "allure-report", "path": "build/reports/*.html",
+                               "if-no-files-found": "error", "retention-days": 90}}
+
+
+def test_a_product_with_no_report_leaf_is_told_its_release_archives_nothing():
+    """No `test:report` leaf, nothing to render an archive with: no upload of nothing, and the job's comment
+    says why and how to get one."""
+    # act
+    text = _release_text()
+
+    # assert
+    assert workflowgen.UPLOAD_ACTION not in text
+    assert "no command instantiates `test:report`, so this job archives no test results" in " ".join(
+        line.strip("# ") for line in text.splitlines())
+
+
 def test_without_a_notes_leaf_the_tail_prints_only_its_line():
     product = (_RELEASE_PRODUCT.replace("[check, unpublished, notes, draft,", "[check, unpublished,")
                .replace('      draft: { task: "release:github-draft", consumes: { release-notes: app-notes } }\n', "")

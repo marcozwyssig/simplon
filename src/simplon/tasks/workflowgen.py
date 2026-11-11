@@ -1169,9 +1169,45 @@ def _release(workflow: "Workflow", manifest: Manifest,
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
                                 "run": tail}))
+    archive, unarchived = _release_archive(manifest)
+    steps.extend(archive)
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
-                persist_credentials=False,
+                persist_credentials=False, note=unarchived,
                 extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
+
+
+#: si#509: what the release job's archive is called as a run artifact; ci.yml's own archive uses the same.
+RELEASE_ARCHIVE = "allure-report"
+#: The task whose leaf renders it.
+REPORT_TASK = "test:report"
+
+RELEASE_ARCHIVE_NOTE = """si#509 (si#248): the test results of THIS run, the one that gated the release, archived
+whether it went green or red. Kernel-owned: every derived release job ends with these two steps."""
+
+
+def _release_archive(manifest: Manifest) -> "tuple[tuple[Step, ...], str]":
+    """si#509: the release job's own test archive - the product's `test:report` leaf, then the upload - and
+    the job note that says why there is none.
+
+    `if: always()` on both, for ci.yml's reason: a job stops at its first red step, and an archive that
+    exists only for the green runs is missing from every run somebody needs it for. The upload says
+    `if-no-files-found: error`, so "no archive" is never green. A product that places no `test:report`
+    leaf has nothing to render one with, and its job says so instead of uploading nothing.
+    """
+    reports = [(group, name) for group, members in manifest.commands.items()
+               for name, spec in members.items() if isinstance(spec, TaskCommand) and spec.task == REPORT_TASK]
+    if not reports:
+        return (), textwrap.fill(
+            f"si#509: no command instantiates `{REPORT_TASK}`, so this job archives no test results. Place it "
+            f"(`report: {{ task: \"{REPORT_TASK}\" }}` under `test`) and the job archives them.", width=95)
+    from simplon.tasks import testrun  # lazy: the archive is the only reason a workflow needs the test kernel
+    group, name = reports[0]
+    path = f"{testrun.declared(context.current().manifest_data()).reports.rstrip('/')}/*.html"
+    return (Step(command=f"{group.replace('.', ' ')} {name}", modifiers={"if": "always()"},
+                 note=RELEASE_ARCHIVE_NOTE),
+            Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
+                           "with": {"name": RELEASE_ARCHIVE, "path": path, "if-no-files-found": "error",
+                                    "retention-days": 90}})), ""
 
 
 def _rollout_note(stage: "Stage", env: object) -> str:

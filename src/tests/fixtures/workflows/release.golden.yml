@@ -26,6 +26,8 @@ concurrency:
 
 jobs:
 
+  # si#509: no command instantiates `test:report`, so this job archives no test results. Place it
+  # (`report: { task: "test:report" }` under `test`) and the job archives them.
   release:
     runs-on: ubuntu-latest
     env:
