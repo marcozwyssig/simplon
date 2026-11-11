@@ -1,10 +1,13 @@
-"""`launcher: env: pass:` - a declared list of variables forwarded BY NAME into the kernel's container (si#467).
+"""A command's `env: pass:` - variables forwarded BY NAME into the kernel's container (si#467), and from there
+to that command's `toolchain:run` line only (si#492).
 
 Asked by firn (firn#1041): `release publish-extension` needs `VSCE_PAT`, the name `vsce` reads, and the
 container route forwarded a fixed list that did not carry it. Decided by Marco 2026-10-16 (si#467 comment
 6224039695): the list is declared in the manifest, rendered into both launchers by `simplon init`, forwarded
 by name only, exported back as `DELIVERY_ENV_PASS` so the kernel can refuse a stale launcher, and forwarded
-by name on `toolchain:run` lines too.
+by name on `toolchain:run` lines too. si#492 (Marco, 2026-11-11) moved the list onto the command: the launcher
+forwards the UNION of every command's list, and `launcher: env: pass:` is refused by name. That the names
+reach only the declaring command's `toolchain:run` line is driven through the CLI in `test_toolchain_cli.py`.
 
 DRIVEN WHERE IT CAN BE: the `.sh` launcher is run against a fake `docker` that records its argv (the harness
 of `test_launch_container.py`), so "never a value" is asserted on the line a shell really assembled, not on
@@ -26,14 +29,23 @@ from test_launch_container import _product, _run
 
 SECRET = "s3cret-value-that-must-not-appear"
 
-_DECLARES = "launcher:\n  env:\n    pass: [VSCE_PAT, NOT_SET_ANYWHERE]\n"
+def _declare(root, build="", check=""):
+    """The scaffold's `build` and `check` commands, each with the `env: pass:` list given (none when empty)."""
+    path = root / "democtl.yaml"
+    text = path.read_text(encoding="utf-8")
+    for command, names in (("build", build), ("check", check)):
+        if names:
+            anchor = f"{command}: {{ task: {command} }}"
+            assert text.count(anchor) == 1, anchor
+            text = text.replace(anchor, f"{command}: {{ task: {command}, env: {{ pass: [{names}] }} }}")
+    path.write_text(text, encoding="utf-8")
 
 
 def _declaring(tmp_path):
-    """A scaffolded product whose manifest passes VSCE_PAT and a name nobody sets, launchers re-rendered."""
+    """A scaffolded product whose `build` passes VSCE_PAT and whose `check` passes a name nobody sets, so the
+    launcher forwards the union of two commands' lists; launchers re-rendered."""
     root = _product(tmp_path)
-    path = root / "democtl.yaml"
-    path.write_text(path.read_text(encoding="utf-8") + "\n" + _DECLARES, encoding="utf-8")
+    _declare(root, build="VSCE_PAT", check="NOT_SET_ANYWHERE")
     assert bootstrap.main(["init", "democtl", "--dir", str(root), "--launchers-only"]) == 0
     return root
 
@@ -124,9 +136,7 @@ def test_the_batch_launcher_forwards_the_list_by_name_and_exports_it(tmp_path):
 def test_a_broken_section_stops_launchers_only_with_the_loaders_sentence(tmp_path, capsys):
     # arrange
     root = _product(tmp_path)
-    path = root / "democtl.yaml"
-    path.write_text(path.read_text(encoding="utf-8") + "\nlauncher:\n  env:\n    pass: [HOME]\n",
-                    encoding="utf-8")
+    _declare(root, build="HOME")
     before = (root / "democtl.sh").read_text(encoding="utf-8")
 
     # act
@@ -244,32 +254,80 @@ def test_a_toolchain_line_without_passes_is_unchanged():
             == toolchain.docker_argv(cfg, root=ROOT, product="democtl", instance="", extra=[], passes=()))
 
 
-# --- the loader: what the section may say -------------------------------------------------------------
+# --- the loader: what a command's `env:` may say ---------------------------------------------------------
 
-_BASE = "product: democtl\nci:\n  build:\n    commands:\n      x: { impl: 'm:f', help: x }\n"
+_BASE = """\
+product: democtl
+tasks:
+  x: { impl: "m:f", help: x }
+ci:
+  build:
+    commands:
+      x: { task: x{env} }
+      y: { task: x }
+      both: { help: both, depends_on: [x, y]{aggregate_env} }
+"""
 
 
-@pytest.mark.parametrize(("section", "said"), [
-    ("launcher: [VSCE_PAT]", "the 'launcher' section must be a mapping"),
-    ("launcher: { envs: {} }", "the 'launcher' section does not take envs"),
-    ("launcher: { env: [VSCE_PAT] }", "'launcher: env' must be a mapping"),
-    ("launcher: { env: { pas: [VSCE_PAT] } }", "'launcher: env' does not take pas"),
-    ("launcher: { env: { pass: VSCE_PAT } }", "'launcher: env: pass' must be a list of variable names"),
-    ("launcher: { env: { pass: [VSCE-PAT] } }", "names 'VSCE-PAT', which is not an environment variable name"),
-    ("launcher: { env: { pass: [PYTHONPATH] } }", "names PYTHONPATH, which the launcher sets"),
-    ("launcher: { env: { pass: [LAUNCH_ANYTHING] } }", "names LAUNCH_ANYTHING, which the launcher sets"),
-    ("launcher: { env: { pass: [DELIVERY_ROUTE] } }", "names DELIVERY_ROUTE, which the launcher sets"),
+def _doc(env="", aggregate_env=""):
+    return _BASE.replace("{env}", env).replace("{aggregate_env}", aggregate_env)
+
+
+@pytest.mark.parametrize(("env", "said"), [
+    (", env: [VSCE_PAT]", "command 'build x': `env:` must be a mapping"),
+    (", env: { pas: [VSCE_PAT] }", "command 'build x': `env:` does not take pas"),
+    (", env: { pass: VSCE_PAT }", "command 'build x': `env: pass:` must be a list of variable names"),
+    (", env: { pass: [VSCE-PAT] }", "names 'VSCE-PAT', which is not an environment variable name"),
+    (", env: { pass: [PYTHONPATH] }", "names PYTHONPATH, which the launcher sets"),
+    (", env: { pass: [LAUNCH_ANYTHING] }", "names LAUNCH_ANYTHING, which the launcher sets"),
+    (", env: { pass: [DELIVERY_ROUTE] }", "names DELIVERY_ROUTE, which the launcher sets"),
 ])
-def test_the_loader_refuses_a_section_that_would_forward_nothing_or_break_the_container(section, said):
+def test_the_loader_refuses_an_env_that_would_forward_nothing_or_break_the_container(env, said):
     # act / assert
     with pytest.raises(ValueError, match=None) as caught:
-        manifest.load(_BASE + section + "\n")
+        manifest.load(_doc(env=env))
     assert said in str(caught.value)
+
+
+def test_the_retired_launcher_section_is_refused_with_the_way_out():
+    # act / assert: si#492 - one form, not two (#33); the old one fails loudly rather than forwarding
+    with pytest.raises(ValueError) as caught:
+        manifest.load(_doc() + "launcher:\n  env:\n    pass: [VSCE_PAT]\n")
+    said = str(caught.value)
+    assert "the 'launcher' section is gone (si#492)" in said
+    assert "`env: { pass: [NAME, ...] }` on each command" in said
+
+
+def test_the_launchers_list_is_the_union_of_the_task_commands_lists(tmp_path):
+    # arrange: two commands, one name shared
+    import yaml
+    doc = yaml.safe_load(_doc(env=", env: { pass: [VSCE_PAT, SHARED] }").replace(
+        "y: { task: x }", "y: { task: x, env: { pass: [SHARED, OTHER] } }"))
+
+    # act / assert: in the order written, each name once
+    assert launcherenv.declared(doc) == ("VSCE_PAT", "SHARED", "OTHER")
+
+
+def test_an_aggregate_passes_nothing_of_its_own_and_each_member_keeps_its_list():
+    # arrange: si#492 Q3 C - the aggregate writes a list, its members x (VSCE_PAT) and y (none)
+    import yaml
+    text = _doc(env=", env: { pass: [VSCE_PAT] }", aggregate_env=", env: { pass: [AGGREGATE_ONLY] }")
+
+    # act
+    loaded = manifest.load(text)
+
+    # assert: no member gains the aggregate's or a sibling's names, and the launcher forwards none of the
+    # aggregate's, since no `toolchain:run` line could use them
+    build = loaded.commands["build"]
+    assert build["x"].env_pass == ("VSCE_PAT",)
+    assert build["y"].env_pass == ()
+    assert not hasattr(build["both"], "env_pass")
+    assert launcherenv.declared(yaml.safe_load(text)) == ("VSCE_PAT",)
 
 
 def test_names_the_launcher_already_forwards_are_accepted_quietly():
     # act
-    names = launcherenv.declared({"launcher": {"env": {"pass": ["GH_TOKEN", "DEMOCTL_X", "DELIVERY_OTHER"]}}})
+    names = launcherenv.of_command({"pass": ["GH_TOKEN", "DEMOCTL_X", "DELIVERY_OTHER"]}, "build x")
 
     # assert
     assert names == ("GH_TOKEN", "DEMOCTL_X", "DELIVERY_OTHER")

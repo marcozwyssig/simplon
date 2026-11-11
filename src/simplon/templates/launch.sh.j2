@@ -38,8 +38,8 @@ LAUNCH_IMAGE_PIN="$ROOT/deploy/image/image.pin"
 # form the kernel no longer loads is told the migration's two commands, and those are written in terms of
 # where THIS checkout keeps its orchestrator and which image it pins. The kernel only reads them.
 export LAUNCH_ORCH_DIR LAUNCH_IMAGE_PIN
-# THE NAMES THIS PRODUCT'S MANIFEST PASSES THROUGH, `launcher: env: pass:` (si#467), written here by
-# `simplon init` because this file reads no YAML. The container route forwards each one into the kernel's
+# THE NAMES THIS PRODUCT'S COMMANDS PASS THROUGH, the union of their `env: pass:` lists (si#467, si#492),
+# written here by `simplon init` because this file reads no YAML. The container route forwards each one into the kernel's
 # container BY NAME (`-e NAME`, never a value) and only when this shell exports it, so a name unset here
 # stays unset there. The kernel compares this list with the manifest on that route and refuses when they
 # differ: after editing the list, re-render with `simplon init --dir . --launchers-only`.
@@ -271,7 +271,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # CI/NO_COLOR/TERM/TZ/GITHUB_TOKEN/GH_TOKEN. Anything else stays on the host on purpose - PATH and
     # HOME from the host mean nothing in the image, and forwarding an unbounded environment is how a
     # secret travels somewhere nobody meant it to. A name a third-party tool reads under its own fixed
-    # spelling (`VSCE_PAT`) crosses only when the manifest declares it, through LAUNCH_ENV_PASS above.
+    # spelling (`VSCE_PAT`) crosses only when a command declares it, through LAUNCH_ENV_PASS above.
     #
     # GH_TOKEN JOINS THAT LIST IN si#225, and leaving it off would have been the quieter half of the same
     # bug. si#206 drove its broken-tracker proof with GH_TOKEN, which is the variable `gh` reads FIRST;

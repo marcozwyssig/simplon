@@ -577,7 +577,7 @@ def _render_launcher(name: str, template: str, orch_dir: str, env_pass: tuple[st
     So `{{ orch_dir }}` and `{{ product_env_prefix }}` are substituted there
     too, for the same reason `{{ orch_dir_win }}` already was.
 
-    `env_pass` is the manifest's `launcher: env: pass:` (si#467), as space-separated NAMES: both
+    `env_pass` is the union of the commands' `env: pass:` lists (si#467, si#492), as space-separated NAMES: both
     launchers read no YAML, so the list is written into them, and each name is forwarded by name only.
     Validated by `launcherenv.declared` before it gets here, so nothing in it needs quoting.
 
@@ -1167,7 +1167,7 @@ def launcher_orch_dir(name: str, target: Path, asked: str | None) -> str:
 
 
 def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
-    """The names `<product>.yaml` at `target` passes through (`launcher: env: pass:`, si#467), for the
+    """The names `<product>.yaml` at `target` passes through (its commands' `env: pass:`, si#492), for the
     launchers `--launchers-only` renders. The manifest is READ, never written. One that is not there yields
     no names - the scaffold writes it beside the launchers, so a checkout without it has nothing to say - and
     one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
@@ -1192,7 +1192,7 @@ def write_launchers(name: str, target: Path, orch_dir: str) -> dict[str, str]:
     """Write ONLY the two launchers (si#407) and say, per file, what happened: `unchanged`, `replaced` or
     `written`. Overwrites without `force` - re-rendering them is the whole request - and touches nothing
     else, the manifest, `cli.py` and `requirements.txt` above all, which is what `--force` costs today.
-    The manifest's `launcher: env: pass:` is read and rendered into both (si#467)."""
+    The union of the commands' `env: pass:` lists is read and rendered into both (si#467, si#492)."""
     product = validate_product_name(name)
     files = render(product, orch_dir=orch_dir, env_pass=launcher_env_pass(product, target))
     shim = shim_relpath(product)

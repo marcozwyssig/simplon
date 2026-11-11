@@ -75,7 +75,7 @@ from simplon.model.task import mangle
 #: is the Product resource's own key, and no reader of the kernel's reads it as a section.
 KERNEL_SECTIONS: tuple[str, ...] = (
     "artifacts", "assets", "build", "carriers", "cd", "ci", "claude", "deploy", "doctoolchain_version",
-    "env_var", "generate", "generated", "instance", "lab_egress", "launcher", "layout", "nexus", "output",
+    "env_var", "generate", "generated", "instance", "lab_egress", "layout", "nexus", "output",
     "releases", "suites", "support", "tasks", "taxonomy", "toolchains", "tracker", "website",
     "workflows",
 )

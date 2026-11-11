@@ -548,7 +548,7 @@ INHERITED = ("help", "passthrough_args", "unattended", "publishes", "token")
 # a template that pinned a value, hid itself or planned other commands would not be a template.
 TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended", "publishes", "token", "input", "output")
 COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "passes", "with",
-                     "task")
+                     "task", "env")
 
 
 def check_task(name: str, spec: dict) -> None:

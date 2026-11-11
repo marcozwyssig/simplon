@@ -1,4 +1,4 @@
-"""`launcher: env: pass:` - the variables a product passes into the kernel's container by name (si#467).
+"""A command's `env: pass:` - the variables a product passes by name to ONE command's toolchain (si#467, si#492).
 
 THE GAP. On the container route the launcher forwards a fixed set into the kernel's container -
 `DELIVERY_*`, `CI`, `NO_COLOR`, `TERM`, `TZ`, `GITHUB_TOKEN`, `GH_TOKEN` and `<PRODUCT>_*` - and nothing
@@ -7,16 +7,34 @@ third-party tool that reads its secret under its own fixed name could therefore 
 `release publish-extension` needs `VSCE_PAT`, the name `vsce` reads, and ran only on the venv route
 (firn#1041).
 
-THE SHAPE, decided by Marco on 2026-10-16:
+THE SHAPE, decided by Marco on 2026-11-11 (si#492), on the command that needs the variable:
 
-    launcher:
-      env:
-        pass: [VSCE_PAT]
+    ci:
+      release:
+        commands:
+          publish-extension:
+            task: ...
+            env: { pass: [VSCE_PAT] }
 
-Each name crosses BY NAME - `-e VSCE_PAT`, never `-e VSCE_PAT=<value>` - on the kernel's container line
-and on every `toolchain:run` line, so the value is in no argv, no `docker inspect` of the command line and
-no log. A name the host does not export stays unset on the far side; docker's `-e NAME` with no value
-passes nothing for an unset name.
+Each name crosses BY NAME - `-e VSCE_PAT`, never `-e VSCE_PAT=<value>` - so the value is in no argv, no
+`docker inspect` of the command line and no log. A name the host does not export stays unset on the far
+side; docker's `-e NAME` with no value passes nothing for an unset name.
+
+TWO HOPS, AND ONLY THE SECOND IS PER COMMAND. si#467 had one manifest-wide `launcher: env: pass:`, and its
+names reached every `toolchain:run` container - so declaring `VSCE_PAT` for one publish handed the token to
+gradle and `npm install` as well (firn's security review, firn#1056). Now:
+
+- the launcher's hop into the kernel's container carries the UNION of every command's list (`declared`).
+  It has to: the launcher is bash, builds that line before any manifest is parsed, and the command that
+  needs the name runs inside that container. That container runs simplon's own code and installs nothing
+  third-party;
+- the `toolchain:run` hop carries the names of the command being run and of no other (`running`). The
+  dispatch wrappers - `cli._bound`, the generated module, a gate's call - set them around the body with
+  `within`; outside a command nothing is passed. An aggregate passes nothing of its own: each member keeps
+  its own list, so one member's secret never reaches a sibling.
+
+`launcher: env: pass:` is retired, not kept as a second form (#33): a manifest that still writes it is
+refused by name with the way out. None of the eight reachable manifests wrote it (measured 2026-11-11).
 
 WHY THE LAUNCHER CARRIES A COPY, AND WHY THE COPY IS CHECKED. The launcher is bash and builds the kernel's
 container line before any Python exists to parse this manifest with - the reason si#200 put the image pin
@@ -24,7 +42,7 @@ in a plain file. So `simplon init` renders the names into both launchers, and a 
 the list changed would forward the old list. A name missing on the far side would then look exactly like a
 name the host never set, which is the "nothing to do or failed" defect this kernel hunts. The launcher
 therefore also exports the list it was rendered with, as `DELIVERY_ENV_PASS`, and `stale_launcher` refuses
-a run on the container route whose launcher disagrees with the manifest. The venv route has no container
+a run on the container route whose launcher disagrees with the manifest's union. The venv route has no container
 and inherits the caller's whole environment, so there is nothing to compare there.
 
 THE NAMES THE LAUNCHER SETS ITSELF ARE REFUSED, and they are read off the launcher templates rather than
@@ -39,11 +57,22 @@ from __future__ import annotations
 
 import functools
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from importlib.resources import files
 
-#: The manifest section this module owns.
-SECTION = "launcher"
+from simplon.manifest import treeform
+
+#: The retired top-level section (si#467's form), refused by name since si#492. Not a `SECTION`: the kernel
+#: reads it only to refuse it.
+RETIRED = "launcher"
+
+#: The command key this module owns, and the one key under it.
+KEY = "env"
+PASS = "pass"
+
+#: The names the running command passes to its `toolchain:run` line; () outside a command.
+_running: ContextVar[tuple[str, ...]] = ContextVar("env_pass", default=())
 
 #: The variable the launcher exports the list it was rendered with through. `DELIVERY_`-prefixed, so it is
 #: the kernel's namespace; the launcher sets it explicitly and skips a host value of it.
@@ -84,52 +113,87 @@ def _kernel_owned(name: str) -> bool:
     return name in launcher_sets() or name.startswith(LAUNCHER_PREFIX)
 
 
-def declared(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
-    """The names this document passes through, in the order written, or () when it says nothing.
+def check_retired(data: Mapping[str, object], source: str = "manifest") -> None:
+    """Refuse si#467's manifest-wide `launcher:` section, which si#492 retired, with the way out."""
+    if RETIRED in data:
+        raise ValueError(f"{source}: the '{RETIRED}' section is gone (si#492): `launcher: env: pass:` handed "
+                         f"its names to every `toolchain:run` container. Declare `env: {{ pass: [NAME, ...] }}` "
+                         f"on each command whose toolchain needs a name instead - only that command's "
+                         f"`toolchain:run` line passes it - and re-render the launchers with `{FIX}`")
 
-    AN ABSENT SECTION IS THE NORMAL CASE: no manifest in this family wrote `launcher:` before si#467, and a
-    product that says nothing forwards exactly what it forwarded yesterday.
+
+def of_command(env: object, where: str) -> tuple[str, ...]:
+    """The names one command's `env:` passes, in the order written, or () when it says nothing.
+
+    `where` is the command as the CLI types it (`release publish-extension`). AN ABSENT KEY IS THE NORMAL
+    CASE: a command that says nothing passes exactly what it passed before.
     """
-    section = data.get(SECTION)
-    if section is None:
-        return ()
-    if not isinstance(section, Mapping):
-        raise ValueError(f"{source}: the '{SECTION}' section must be a mapping with `env: pass: [NAME, ...]`, "
-                         f"not {type(section).__name__}")
-    unknown = sorted(str(k) for k in section if str(k) != "env")
-    if unknown:
-        raise ValueError(f"{source}: the '{SECTION}' section does not take {', '.join(unknown)} - it takes "
-                         f"`env:`. A key it ignored would forward nothing, and the command that needed the "
-                         f"variable would fail on the container route with no word about why")
-    env = section.get("env")
     if env is None:
         return ()
+    said = f"command '{where}': `{KEY}:`"
+    said_pass = f"command '{where}': `{KEY}: {PASS}:`"
     if not isinstance(env, Mapping):
-        raise ValueError(f"{source}: '{SECTION}: env' must be a mapping with `pass: [NAME, ...]`, "
-                         f"not {type(env).__name__}")
-    unknown = sorted(str(k) for k in env if str(k) != "pass")
+        raise ValueError(f"{said} must be a mapping with `{PASS}: [NAME, ...]`, not {type(env).__name__}")
+    unknown = sorted(str(k) for k in env if str(k) != PASS)
     if unknown:
-        raise ValueError(f"{source}: '{SECTION}: env' does not take {', '.join(unknown)} - it takes `pass:`. "
-                         f"A key it ignored would forward nothing, and the command that needed the variable "
-                         f"would fail on the container route with no word about why")
-    names = env.get("pass")
+        raise ValueError(f"{said} does not take {', '.join(unknown)} - it takes `{PASS}:`. A key it ignored "
+                         f"would pass nothing, and the command that needed the variable would fail on the "
+                         f"container route with no word about why")
+    names = env.get(PASS)
     if names is None:
         return ()
     if not isinstance(names, list):
-        raise ValueError(f"{source}: '{SECTION}: env: pass' must be a list of variable names, "
-                         f"not {type(names).__name__}")
+        raise ValueError(f"{said_pass} must be a list of variable names, not {type(names).__name__}")
     out: list[str] = []
     for name in names:
         if not isinstance(name, str) or not _NAME.match(name):
-            raise ValueError(f"{source}: '{SECTION}: env: pass' names {name!r}, which is not an environment "
-                             f"variable name - a letter or `_`, then letters, digits and `_`")
+            raise ValueError(f"{said_pass} names {name!r}, which is not an environment variable name - a "
+                             f"letter or `_`, then letters, digits and `_`")
         if _kernel_owned(name):
-            raise ValueError(f"{source}: '{SECTION}: env: pass' names {name}, which the launcher sets on the "
-                             f"kernel's container itself; forwarding the host's value over it would break "
-                             f"the container. Leave it out")
+            raise ValueError(f"{said_pass} names {name}, which the launcher sets on the kernel's "
+                             f"container itself; forwarding the host's value over it would break the "
+                             f"container. Leave it out")
         if name not in out:
             out.append(name)
     return tuple(out)
+
+
+def declared(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
+    """The UNION of every task command's `env: pass:` in this document, in the order written, or () when
+    none says anything - the names the launcher forwards into the kernel's container.
+
+    Read off the raw document, because two of its readers have no loaded manifest: the launcher renderer
+    (`simplon init --launchers-only`) and the container-route check, which runs before the CLI is
+    assembled. An aggregate's list is not in it: an aggregate runs no `toolchain:run` line (si#492).
+    """
+    check_retired(data, source)
+    _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
+    out: list[str] = []
+    for group, members in flat.items():
+        for name, spec in (members or {}).items():
+            if not isinstance(spec, Mapping) or spec.get("depends_on"):
+                continue
+            parts = group.split(".")
+            where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
+            for passed in of_command(spec.get(KEY), where):
+                if passed not in out:
+                    out.append(passed)
+    return tuple(out)
+
+
+def within(names: tuple[str, ...], body: Callable[[], int]) -> int:
+    """`body()`'s rc, with `names` what `running()` answers while it runs, and reset after, even on a raise."""
+    token = _running.set(tuple(names))
+    try:
+        return body()
+    finally:
+        _running.reset(token)
+
+
+def running() -> tuple[str, ...]:
+    """The names the running command passes to its `toolchain:run` line; () outside a command, or for one
+    that declares none - both pass nothing, so one value serves both."""
+    return _running.get()
 
 
 def stale_launcher(declared_names: tuple[str, ...], environ: Mapping[str, str], launcher: str) -> str | None:
@@ -150,7 +214,7 @@ def stale_launcher(declared_names: tuple[str, ...], environ: Mapping[str, str], 
         said.append(f"does not forward {', '.join(missing)}")
     if extra:
         said.append(f"still forwards {', '.join(extra)}")
-    return (f"{launcher} was rendered for a different `launcher: env: pass:` than the manifest declares: it "
+    return (f"{launcher} was rendered for different names than the commands' `env: pass:` lists declare: it "
             f"{' and '.join(said)}. A variable it does not forward would arrive here unset, which looks "
             f"exactly like one the host never set. Re-render the launchers at the product root with "
             f"`{FIX}` and run again. (Only the container route checks this: the venv route has no "

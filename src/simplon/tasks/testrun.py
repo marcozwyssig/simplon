@@ -96,7 +96,7 @@ from typing import Callable
 
 import typer
 
-from simplon.manifest import context, layout, signatures
+from simplon.manifest import context, launcherenv, layout, signatures
 from simplon.model import task
 from simplon.kernel import log, verdict
 from simplon.adapters import pyvenv
@@ -670,7 +670,8 @@ def _command(path: str, where: str) -> Callable[[], int]:
     supplied = (GateContext(command_path=path, where=where),) if signatures.takes_context(body) else ()
 
     def call() -> int:
-        return _verdict(body(*supplied, **pinned))
+        # si#492: the command's `env: pass:` reaches its `toolchain:run` line from a gate as from the CLI.
+        return launcherenv.within(spec.env_pass, lambda: _verdict(body(*supplied, **pinned)))
 
     return call
 

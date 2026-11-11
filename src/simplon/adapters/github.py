@@ -84,7 +84,8 @@ def where(origin: str = "") -> tuple[str, str]:
             f"{'not a github.com URL' if origin else 'not set'} - a GitHub Enterprise is named by "
             f"GITHUB_API_URL, never read off a remote. The Release workflow sets both; by hand, export them. On "
             f"the container route the launcher forwards neither, so declare "
-            f"`launcher: env: pass: [GITHUB_REPOSITORY, GITHUB_API_URL]` (si#467) to carry them in")
+            f"`env: {{ pass: [GITHUB_REPOSITORY, GITHUB_API_URL] }}` on the command that asks (si#492) to "
+            f"carry them in")
     return name or located[0], api or located[1]
 
 

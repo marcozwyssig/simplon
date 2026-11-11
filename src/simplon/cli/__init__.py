@@ -262,7 +262,9 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
                 return _rc(fn(*args, **{**kwargs, **pinned}))
             snapshot = results.before(produced)
             return results.held(snapshot, _rc(fn(*args, **{**kwargs, **pinned})))
-        run = (lambda: results.guarded(evidence, body)) if evidence else body
+        guarded = (lambda: results.guarded(evidence, body)) if evidence else body
+        # si#492: this command's `env: pass:` reaches its own `toolchain:run` line and no other command's.
+        run = (lambda: launcherenv.within(spec.env_pass, guarded)) if spec.env_pass else guarded
         raise typer.Exit(code=bound.within(listed, run) if listed else run())
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
@@ -746,8 +748,8 @@ def main(*, app: typer.Typer, context: ProductContext,
     plugin_step_after_refresh()
 
     taxonomy = context.manifest().taxonomy()
-    # si#467: ON THE CONTAINER ROUTE ONLY, the launcher that started this container has to forward what the
-    # manifest's `launcher: env: pass:` declares. The launcher is bash and carries its own rendered copy of
+    # si#467/si#492: ON THE CONTAINER ROUTE ONLY, the launcher that started this container has to forward the
+    # union of the commands' `env: pass:` lists. The launcher is bash and carries its own rendered copy of
     # the list, so a launcher not re-rendered after the list changed would hand this kernel a variable
     # unset - indistinguishable from one the host never set. `DELIVERY_ROUTE=inside` is the launcher's
     # own statement that this is that route; the venv route has no container and nothing to compare.
