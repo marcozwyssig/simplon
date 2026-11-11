@@ -2491,7 +2491,9 @@ def test_a_dry_run_skips_exactly_the_publishing_leaves():
 def test_only_token_leaves_see_the_token():
     steps = _leaf_steps(_release_text())
     tokened = {name for name, step in steps.items() if "GITHUB_TOKEN" in (step.get("env") or {})}
-    assert tokened == {"release unpublished", "release draft", "release publish", "release gh-publish"}
+    # si#507: `check` and `tag` talk to origin with git, and the release checkout persists no credential.
+    assert tokened == {"release check", "release unpublished", "release draft", "release tag", "release publish",
+                       "release gh-publish"}
     assert "GITHUB_TOKEN" not in yaml.safe_load(_release_text())["jobs"]["release"]["env"]
 
 
