@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 261 | nothing - the declaration had no working meaning |
+| diagnosis | 267 | nothing - the declaration had no working meaning |
 | expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **304** | |
+| **all load-time refusals** | **310** | |
 
 si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
 `env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus

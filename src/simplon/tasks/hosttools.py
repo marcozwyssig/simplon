@@ -47,17 +47,47 @@ def _declared() -> tuple[str, ...] | None:
         return None
 
 
-def _host_gate(name: str, declared: tuple[str, ...], ensure: Callable[[], hostinstall.Outcome]) -> bool:
+def _extensions(declared: tuple[str, ...]) -> tuple[gh.Extension, ...] | None:
+    """The product's `gh: extensions:` (si#630), or None (already reported) when the section is broken."""
+    try:
+        ctx = context.current()
+        return gh.declared_extensions(ctx.manifest_data(), declared, source=str(ctx.manifest_path))
+    except (ValueError, RuntimeError) as exc:  # RuntimeError: an unreadable manifest (context.py)
+        log.error(str(exc))
+        return None
+
+
+def _host_gate(name: str, declared: tuple[str, ...],
+               ensure: Callable[[], hostinstall.Outcome]) -> hostinstall.Outcome:
     """One host toolchain's gate (si#526): asked only when `name` is declared, reported in its own words.
-    False only for NO_ROUTE and FAILED; SKIPPED is not a failure."""
+    `hostinstall.rc` of it is 1 only for NO_ROUTE and FAILED; SKIPPED is not a failure."""
     outcome = ensure() if name in declared else hostinstall.Outcome(hostinstall.State.OFF)
     hostinstall.report(name, outcome)
-    return hostinstall.rc(outcome) == 0
+    return outcome
+
+
+def _gh_extensions(extensions: tuple[gh.Extension, ...], gate: hostinstall.Outcome) -> bool:
+    """The declared gh extensions (si#630), each reported in its own words; nothing said when none is
+    declared. Asked only when the gh gate left a gh that runs here. The skip is said, not swallowed, and it
+    fails nothing of its own: a gate that failed has already failed the command, and a skipped gate (CI, the
+    container route) is not a failure. False when any extension FAILED."""
+    if not extensions:
+        return True
+    usable = gate.state in (hostinstall.State.PRESENT, hostinstall.State.INSTALLED) and hostinstall.runs("gh")
+    if not usable:
+        log.info(f"gh extensions skipped: the gh gate left no gh that runs here ({gate.state.value}); not "
+                 f"installed: {', '.join(str(extension) for extension in extensions)}")
+        return True
+    ok = True
+    for extension, outcome in gh.ensure_extensions(extensions):
+        hostinstall.report(f"gh extension {extension}", outcome)
+        ok = ok and hostinstall.rc(outcome) == 0
+    return ok
 
 
 def install() -> int:
     """Provision the host tooling the delivery kernel needs: Homebrew and gh when `toolchains:` names them,
-    oras always, and the plugins of the `claude` toolchain; idempotent.
+    the gh extensions `gh:` declares, oras always, and the plugins of the `claude` toolchain; idempotent.
 
     Homebrew goes first, so that oras and gh can install through it. Every gate is attempted even when an
     earlier one failed - a setup command that stops at the first problem hides the second one until the
@@ -68,7 +98,11 @@ def install() -> int:
     if declared is None:
         failed.append("toolchains")
         declared = ()
-    if not _host_gate("brew", declared, lambda: brew.ensure()):
+    extensions = _extensions(declared)
+    if extensions is None:
+        failed.append("gh extensions")
+        extensions = ()
+    if hostinstall.rc(_host_gate("brew", declared, lambda: brew.ensure())):
         failed.append("brew")
     for name, gate, failure_type in _GATES:
         try:
@@ -77,8 +111,11 @@ def install() -> int:
         except failure_type as failure:
             log.warn(f"{name}: {failure}")
             failed.append(name)
-    if not _host_gate("gh", declared, lambda: gh.ensure()):
+    gh_gate = _host_gate("gh", declared, lambda: gh.ensure())
+    if hostinstall.rc(gh_gate):
         failed.append("gh")
+    if not _gh_extensions(extensions, gh_gate):
+        failed.append("gh extensions")
     if not _claude_plugins():
         failed.append("claude")
     return 1 if failed else 0

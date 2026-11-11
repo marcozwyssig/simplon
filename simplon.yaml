@@ -11,6 +11,11 @@ toolchains:
   - claude
   - gh
 
+# The gh extensions `support install` installs after gh itself (si#630): stacked PRs need gh-stack.
+gh:
+  extensions:
+    - github/gh-stack@v0.3.0
+
 # Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
 # `ci:` or `support:` is an instance of one. These three are one-off callables rather than reusable
 # templates - no other product will ever place `orchestrator.cli:build_wheel` - and they are declared
