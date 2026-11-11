@@ -802,7 +802,8 @@ ci:
   `${XDG_CACHE_HOME:-~/.cache}/simplon/dist`, keyed `<sha256>/<file name>`; `DELIVERY_DIST_CACHE=off`
   turns it off. A hit is copied beside `path:`, its sha256 checked again on the copy, and renamed into
   place without a download. A miss downloads as before and then copies the verified file into the cache.
-  Both leave the file with mode 0600, because BuildKit's layer cache key includes the mode. A cache fault
+  Both leave the file with the mode a plain `open()` gives it under the caller's umask (typically
+  0644), as every fetched file gets, because BuildKit's layer cache key includes the mode. A cache fault
   (an unreadable entry, a wrong checksum in the cache, a cache that cannot be written) is a warning and a
   miss, never the verdict, and the log says which of four things happened: restored from the download
   cache, fetched and stored in it, fetched with the cache not written, or fetched with the cache off. On

@@ -8,6 +8,8 @@ AAA; the name states the behaviour under test. Nothing touches the network: `fet
 a writer of known bytes.
 """
 import hashlib
+import io
+import os
 import re
 import stat
 from pathlib import Path
@@ -405,20 +407,33 @@ def test_off_does_not_read_the_cache_either(product, cache, monkeypatch):
     assert fetchfile.fetch(name="plain") == 1
 
 
-def test_a_restored_file_has_the_same_mode_as_a_fetched_one(product, served, monkeypatch):
-    # arrange: BuildKit keys a layer on the file mode too (firn, si#600), so the two must not differ
-    assert fetchfile.fetch(name="plain") == 0
+def test_a_restored_file_a_fetched_file_and_a_plain_open_have_the_same_mode(product, monkeypatch):
+    # arrange: BuildKit keys a layer on the file mode too (firn, si#600), so a restore and a download must
+    # not differ - and si#497 decided both take the mode a plain open() gives, under a known umask. The
+    # download is the REAL `transfer.download`, staging and rename included; only the wire is replaced.
+    class Wire(io.BytesIO):
+        url = "https://example.org/plain.bin"
+        status = 200
+        headers = {"Content-Length": str(len(ARCHIVE))}
+
+    monkeypatch.setattr(transfer, "_respond", lambda *args: Wire(ARCHIVE))
     dest = product / "build/dist/plain.bin"
-    fetched = stat.S_IMODE(dest.stat().st_mode)
-    dest.unlink()
-    _no_network(monkeypatch)
+    old = os.umask(0o022)
+    try:
+        (product / "plain").write_bytes(b"")
+        assert fetchfile.fetch(name="plain") == 0
+        fetched = stat.S_IMODE(dest.stat().st_mode)
+        dest.unlink()
+        _no_network(monkeypatch)
 
-    # act
-    assert fetchfile.fetch(name="plain") == 0
-    restored = stat.S_IMODE(dest.stat().st_mode)
+        # act
+        assert fetchfile.fetch(name="plain") == 0
+        restored = stat.S_IMODE(dest.stat().st_mode)
+    finally:
+        os.umask(old)
 
-    # assert: equal, and the mode a real download produces (mkstemp's 0600, measured)
-    assert fetched == restored == fetchfile.MODE == 0o600
+    # assert: one mode, and it is open()'s
+    assert fetched == restored == stat.S_IMODE((product / "plain").stat().st_mode) == 0o644
 
 
 @pytest.mark.parametrize("environ,expected", [

@@ -52,6 +52,7 @@ from __future__ import annotations
 import http.client
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -525,11 +526,31 @@ def _served_total(response: http.client.HTTPResponse, offset: int) -> int | None
     return None if announced is None else offset + announced
 
 
+def unique_file(directory: Path, prefix: str, suffix: str) -> tuple[int, Path]:
+    """A new file under a name nobody else holds, opened, with the mode a plain `open()` gives it (si#497).
+
+    `mkstemp`'s uniqueness - `O_CREAT | O_EXCL` under a random name - without `mkstemp`'s mode, which is
+    0600 whatever the umask. The file is asked for at 0o666 and the umask takes its bits off, exactly as
+    for `open(path, "w")`. That is the reason this is not `mkstemp` plus a `chmod`: reading the umask
+    means setting it, `os.umask` is process-wide, and `kernel.steps` runs parallel branches as threads in
+    this process, so a branch creating a file in that window would get the wrong mode.
+    """
+    for _ in range(tempfile.TMP_MAX):
+        path = directory / f"{prefix}{secrets.token_hex(8)}{suffix}"
+        try:
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o666), path
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"no unused name {prefix}*{suffix} in {directory} after {tempfile.TMP_MAX} tries")
+
+
 def _staging(dest: Path, resume: bool) -> tuple[Path, IO[bytes] | None, Path | None]:
     """Where the bytes land before they are the file, and the trade between the two answers.
 
-    WITHOUT `resume`: a unique `mkstemp` name, so two runs downloading the same destination cannot land
-    on one another. That is si#142's answer and it stays the default.
+    WITHOUT `resume`: a unique name (`unique_file`), so two runs downloading the same destination cannot
+    land on one another. That is si#142's answer and it stays the default. The mode is the umask's either
+    way (si#497): this path once took `mkstemp`'s 0600, so a file's mode depended on whether `resume` was
+    asked for.
 
     WITH `resume`: `<dest>.part`, derived rather than random, because a name the next run cannot predict
     is a name the next run cannot resume. The cost is the uniqueness: two processes resuming the same
@@ -540,13 +561,13 @@ def _staging(dest: Path, resume: bool) -> tuple[Path, IO[bytes] | None, Path | N
     if resume:
         return (dest.parent / f"{dest.name}{_PART_SUFFIX}", None,
                 dest.parent / f"{dest.name}{_SOURCE_SUFFIX}")
-    # The descriptor is opened here and not at the point of writing, because `mkstemp` hands back a
+    # The descriptor is opened here and not at the point of writing, because `unique_file` hands back a
     # descriptor to the file it created and nothing else may open that name in between. The caller
     # closes it on every path out, including the ones that never write a byte into it.
-    handle, temporary = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".part")
-    # `r+b` rather than `wb` only so that `_sink` has one kind of stream to position; the file `mkstemp`
-    # just created is empty either way, and this path never resumes.
-    return Path(temporary), os.fdopen(handle, "r+b"), None
+    handle, temporary = unique_file(dest.parent, f"{dest.name}.", ".part")
+    # `r+b` rather than `wb` only so that `_sink` has one kind of stream to position; the file just
+    # created is empty either way, and this path never resumes.
+    return temporary, os.fdopen(handle, "r+b"), None
 
 
 def _sink(part: Path, opened: IO[bytes] | None, offset: int) -> IO[bytes]:

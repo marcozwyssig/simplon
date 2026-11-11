@@ -1272,3 +1272,31 @@ def test_the_separator_reaches_the_top_unit_only_here_too():
     assert fetch.human_bytes(999_999) == "1,000.0 KB", "which the decimal one has at its own boundary"
     assert fetch.human_bytes_binary(1_073_741_824) == "1.0 GiB"
     assert fetch.human_bytes_binary(1_099_511_627_776) == "1,024.0 GiB"
+
+
+# --- the mode a fetched file gets (si#497) ------------------------------------------------------------
+
+
+@contextmanager
+def _umask(mask):
+    old = os.umask(mask)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
+def test_a_fetched_file_has_the_mode_a_plain_open_gives_with_or_without_resume(base, tmp_path):
+    """firn measured 0600 from `download` without `resume` (`mkstemp`) and the umask's mode with it, so
+    one adapter gave two modes and another uid sharing the checkout could not read the first."""
+    # arrange: a known umask, under which mkstemp's 0600 and open()'s 0644 differ
+    with _umask(0o022):
+        (tmp_path / "plain").write_bytes(b"")
+        # act
+        with _capture(tty=False):
+            fetch.download(f"{base}/whole", tmp_path / "staged.bin")
+            fetch.download(f"{base}/whole", tmp_path / "resumed.bin", resume=True)
+
+    # assert
+    modes = {name: (tmp_path / name).stat().st_mode & 0o777 for name in ("plain", "staged.bin", "resumed.bin")}
+    assert modes == {"plain": 0o644, "staged.bin": 0o644, "resumed.bin": 0o644}

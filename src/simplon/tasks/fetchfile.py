@@ -92,14 +92,6 @@ SOURCE = ".url"
 CACHE_ENV = "DELIVERY_DIST_CACHE"
 CACHE_OFF = "off"
 
-#: The mode every file `build:fetch` leaves under `path`, whichever way it arrived. BuildKit's layer
-#: cache key includes the file mode (firn measured it on si#600: a restored 0644 against a fetched 0600
-#: rebuilt every layer), so a restore and a download must not differ. 0600 because that is what a real
-#: download has always produced - `transfer.download` stages through `mkstemp`, which creates 0600
-#: whatever the umask (measured 2026-11-08 under umask 0022) - and it is now set on BOTH paths rather
-#: than inherited, so the equality is this module's statement and not a side effect of another one.
-MODE = 0o600
-
 
 @dataclass(frozen=True)
 class File:
@@ -219,9 +211,11 @@ def _restore(cached: Path, spec: File, dest: Path, url: str) -> bool:
     copy: Path | None = None
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        handle, name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".cached")
+        # The mode a plain `open()` gives, as `transfer.download` gives a fetched file (si#497): BuildKit's
+        # layer cache key includes the file mode (firn, si#600), so a restore and a download must not
+        # differ, and neither may be 0600 - another uid sharing the checkout builds the image from it.
+        handle, copy = transfer.unique_file(dest.parent, f"{dest.name}.", ".cached")
         os.close(handle)
-        copy = Path(name)
         shutil.copyfile(cached, copy)
         # Verified on the COPY, not on the cache: the bytes that are renamed into place are the bytes
         # that were checked, whatever happens to the cache entry in between.
@@ -232,7 +226,6 @@ def _restore(cached: Path, spec: File, dest: Path, url: str) -> bool:
                      f"{spec.sha256}; it is removed and the file is fetched instead")
             cached.unlink(missing_ok=True)
             return False
-        os.chmod(copy, MODE)
         os.replace(copy, dest)
         _record(dest, url)
     except OSError as fault:
@@ -309,7 +302,6 @@ def fetch(name: str = "") -> int:
                   + (f"\n  the url's version {version} is read from '{spec.version_key}' in "
                      f"{spec.version_file}: a new version needs the sha256 of its own file" if version else ""))
         return 1
-    os.chmod(staged, MODE)
     os.replace(staged, dest)
     _record(dest, url)
     fetched = f"fetched {spec.path} from {url}; sha256 verified"
