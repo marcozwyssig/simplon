@@ -1,0 +1,11 @@
+[Unit]
+Description=Every 15 minutes: can the CI runner still run a container (runner-docker-check.service)
+
+[Timer]
+# The runner updates itself without restarting through systemd, so ExecStartPre= does not see what an
+# update changed. Every 15 minutes: an update that takes docker away is reported within a quarter hour.
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target
