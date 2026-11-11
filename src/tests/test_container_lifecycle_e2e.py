@@ -68,6 +68,19 @@ def _left_by(product: str) -> list[str]:
     return out.split()
 
 
+def _exited(child: subprocess.Popen[str]) -> str:
+    """Why a child exited before its container ran, in the daemon's own words (si#503).
+
+    Measured on cai-2 (daemon log 2026-09-12 to 2026-11-11): every container create the daemon refused was
+    one of this file's or test_launch_container_lifecycle_e2e's, each `NotFound: parent snapshot
+    sha256:08bc4e53... does not exist` - alpine:3.20's only layer. No test removes that image,
+    and the log shows no re-pull of it between the refusals. The client then exits rc 125. Without the child's stderr in the failure, that one event read as
+    two verdicts: "exited before its container ran" here, and "never started" in the smoke test.
+    Read only once the child has exited, so no orphaned client can hold the pipe open."""
+    _, err = child.communicate(timeout=10)
+    return f"the child exited rc {child.returncode} before its container ever ran:\n{err.strip()}"
+
+
 def _start(product: str, root: Path) -> tuple[subprocess.Popen[str], str]:
     """The child and the container name it chose, returned only once that container is running.
 
@@ -77,7 +90,7 @@ def _start(product: str, root: Path) -> tuple[subprocess.Popen[str], str]:
     src = str(Path(simplon.__file__).resolve().parents[1])
     child = subprocess.Popen([sys.executable, "-c", CHILD, product, str(root), IMAGE, SLEEP],
                              env={**os.environ, "PYTHONPATH": src},
-                             stdout=subprocess.PIPE, text=True)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     assert child.stdout is not None
     name = child.stdout.readline().strip()
     deadline = time.monotonic() + 120          # a cold image pull is the only slow part
@@ -87,7 +100,7 @@ def _start(product: str, root: Path) -> tuple[subprocess.Popen[str], str]:
             time.sleep(1.0)                    # firn's cancel came seconds in, not at the first instant
             return child, name
         if child.poll() is not None:
-            pytest.fail(f"the child exited rc {child.returncode} before its container ever ran")
+            pytest.fail(_exited(child))
         time.sleep(0.2)
     child.kill()
     pytest.fail("the container never started")
@@ -182,12 +195,19 @@ def test_a_cancelled_smoke_run_leaves_no_container_behind(product, tmp_path, sig
     # arrange: the child is the same as `_start`'s except for what it runs
     src = str(Path(simplon.__file__).resolve().parents[1])
     child = subprocess.Popen([sys.executable, "-c", SITE_CHILD, product, str(tmp_path), IMAGE, SLEEP],
-                             env={**os.environ, "PYTHONPATH": src}, stdout=subprocess.PIPE, text=True)
+                             env={**os.environ, "PYTHONPATH": src}, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
     assert child.stdout is not None
     child.stdout.readline()
     deadline = time.monotonic() + 120
+    # Two conditions, two verdicts (si#503): one `assert a and b` reported a child that had already exited
+    # as "never started", which read as a daemon too slow when it was a daemon that refused.
     while not _left_by(product):
-        assert time.monotonic() < deadline and child.poll() is None, "the smoke container never started"
+        if child.poll() is not None:
+            pytest.fail(_exited(child))
+        if time.monotonic() >= deadline:
+            child.kill()
+            pytest.fail("the smoke container never started within 120 s, and the child is still waiting")
         time.sleep(0.2)
     time.sleep(1.0)
 
