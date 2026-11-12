@@ -185,6 +185,24 @@ def test_a_formula_path_not_named_for_the_wheel_is_refused_before_the_closure(pr
     assert measured == []
 
 
+@pytest.mark.parametrize("source", ["local", "pypi"])
+def test_a_wheel_with_a_local_version_is_refused_before_the_closure(product, pypi, monkeypatch, source):
+    """si#543: brew reads the `+` of a local version in the url's file name as a space and aborts the audit
+    with a Ruby backtrace (measured 2026-11-11 on 0.43.0.post1.dev4+gc817a4dff: `invalid attribute for
+    formula ... version ("0.43.0.post1.dev4 gc817a4dff")`). The build says so first, and names the way out."""
+    root, _ = product
+    for old in (root / "dist").iterdir():
+        old.unlink()
+    make_wheel(root / "dist", version="0.36.1.dev3+g1234abc")
+    measured: list = []
+    monkeypatch.setattr(homebrewclosure, "measure", lambda *a: measured.append(a) or CLOSURE)
+
+    with pytest.raises(ValueError, match=r"0\.36\.1\.dev3\+g1234abc.*local.*tagged commit"):
+        _build(source=source)
+    assert measured == []
+    assert not (root / "build" / "homebrew" / "simplon.rb").exists()
+
+
 @pytest.mark.parametrize("source", ["", "pip", "PyPI"])
 def test_an_empty_source_is_refused(product, pypi, source):
     # a TaskRefused, so the launcher prints it as its message alone (si#544)
