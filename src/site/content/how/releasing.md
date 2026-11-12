@@ -234,12 +234,20 @@ to ship it is to cut a release.
 
 **The Homebrew formula follows PyPI, and only after it.** `brew install marcozwyssig/tap/simplon` installs
 the kernel on macOS and Linux from the tap `marcozwyssig/homebrew-tap`. The `publish` job runs, in this
-order: build the wheel, upload it to PyPI (`skip-existing: true`), `./simplon.sh build homebrew-formula`,
-`./simplon.sh test homebrew-formula`, and `./simplon.sh release homebrew-tap`. The formula is generated, and
+order: build the wheel, upload it to PyPI (`skip-existing: true`), `./simplon.sh build homebrew-formula`
+and `./simplon.sh test homebrew-formula`. The `homebrew-tap` job waits for `publish`, receives the formula
+and its test result from it, and runs `./simplon.sh release homebrew-tap`. The formula is generated, and
 its URL and sha256 are PyPI's, so the tap has to come after the upload: a formula must never name a URL
 that is not live. The flags differ by kind of run. A real run builds with `--source pypi` and tests with
-`--online true`. A dry run builds with `--source local` and tests with `--online false`, and it stops
-before `release homebrew-tap`.
+`--online true`. A dry run builds with `--source local` and tests with `--online false`, and its
+`homebrew-tap` job receives the formula and skips `release homebrew-tap`.
+
+**A failed tap holds back nothing but itself** (si#638). The tap is a job of its own, and neither `docs`
+nor `image` waits for it: they wait for `publish`, which ends once the formula is tested. Until v0.43.0
+the commit ran inside `publish`, so a missing App secret (si#574) turned `publish` red after the PyPI
+upload and skipped the site and the image with it. A red `homebrew-tap` job is finished like any other
+failed publish: fix the cause and rerun that job. Its hand-off from `publish` is kept for a day; a rerun
+after that finds nothing to download, and the way out is the one by hand below.
 
 A dry run therefore carries the placeholder URL `https://pypi.invalid/dry-run/<wheel>` in the formula, and
 the test is `brew audit --strict` and `brew style` only. Nothing goes to PyPI or the tap. The build (for the
@@ -360,8 +368,8 @@ $ ./myctl.sh release tag v1.4.0        # the release
 
 In a product that ships a Homebrew formula, the tasks `build:homebrew-formula`, `test:homebrew-formula`
 and `release:homebrew-tap` follow the tag, in that order and after the PyPI upload. Nothing derives these
-steps: the product's own publish job places them, under whatever command words its manifest gives them
-(simplon's are above). They run in the release workflow, not from a checkout: the last one needs the App
+steps: the product's own jobs place them, under whatever command words its manifest gives them
+(simplon's are above, the tap in a job of its own). They run in the release workflow, not from a checkout: the last one needs the App
 token.
 
 Notice what is not on that list: editing a version number. There is nowhere to edit one.
