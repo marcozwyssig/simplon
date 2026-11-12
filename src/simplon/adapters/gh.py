@@ -77,7 +77,7 @@ from typing import Callable, Mapping
 from simplon.adapters import fetch, hostinstall
 from simplon.adapters.hostinstall import Outcome, State, machine_skip_reason, privileged, runs
 from simplon.kernel import log
-from simplon.kernel.run import run
+from simplon.kernel.run import Result, run
 
 KEYRING_URL = "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
 KEYRING_SHA256 = "6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b"
@@ -272,7 +272,7 @@ def _at_pin(listed: str, pin: str) -> bool:
     return listed == pin or (re.fullmatch(r"[0-9a-f]{7,}", listed) is not None and pin.startswith(listed))
 
 
-def _gh(runner: Callable[..., object], argv: list[str], timeout_s: float) -> str:
+def _gh(runner: Callable[..., Result], argv: list[str], timeout_s: float) -> str:
     """Run one gh command; "" on success, else why, with gh's own last words."""
     try:
         result = runner(["gh", *argv], timeout=timeout_s)
@@ -287,7 +287,7 @@ def _gh(runner: Callable[..., object], argv: list[str], timeout_s: float) -> str
 
 
 def ensure_extensions(extensions: tuple[Extension, ...], *,
-                      runner: Callable[..., object] | None = None) -> list[tuple[Extension, Outcome]]:
+                      runner: Callable[..., Result] | None = None) -> list[tuple[Extension, Outcome]]:
     """Each declared extension PRESENT, INSTALLED, SKIPPED (gh is not logged in) or FAILED with why; every
     one attempted.
 
