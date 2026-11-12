@@ -158,12 +158,17 @@ def _ci_steps() -> list[str]:
     return [step.command for step in job.steps if step.command]
 
 
-def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
-    """si#267's own claim, held against the only manifest this repository can measure.
+def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_test_leaves():
+    """What `derive` makes of the only manifest this repository can measure: every unattended leaf of
+    `build` and `test`, in the manifest's order. It holds WHICH steps, not that each would run bare.
 
-    The ticket asks for a generator that produces a WORKING file rather than a template with holes, and
-    the cheapest way for that claim to be false is for the derivation to emit something that cannot run.
-    Every command below was run by hand on this machine before this test was written - the four this
+    si#267 asked for a generator that produces a working file rather than a template with holes, and this
+    test once claimed exactly that. It stopped being true with si#537 (below), and si#542 decided to accept
+    it rather than teach `derive` a required parameter: no reachable manifest uses `derive:`, and the two
+    leaves' signatures default to `""`, so nothing `derive` can read says that `""` refuses (Marco,
+    2026-11-11). That reopens when a manifest uses `derive:` and a derived leaf refuses its empty default.
+
+    Every other command below was run by hand on this machine before it was added here - the four this
     repository's CI does not run included - and all four exit 0 and leave the tree clean.
 
     si#371 added `build model` and `test model`, firn's `gen` and `check` over `src/firn/`. Both were run
@@ -187,8 +192,8 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
     si#522 added `test manifest-model`, which validates the manifest's fresh export against the shipped M2.
     Run on 2026-10-24: it exits 0 and writes only `build/manifest-check/`, under the ignored `build/`.
 
-    si#537 added `build homebrew-formula` and `test homebrew-formula`, and THEY ARE THE EXCEPTION TO THIS
-    TEST'S CLAIM, measured rather than hidden. Each takes a parameter with no default (`source`, `online`)
+    si#537 added `build homebrew-formula` and `test homebrew-formula`, and THEY DO NOT RUN BARE, measured
+    rather than hidden. Each takes a parameter with no default (`source`, `online`)
     that release.yml binds per step under the dry-run switch, and a derived step passes none: run bare on
     2026-10-24, each exits 1 at once with "source must be 'pypi' ... or 'local' ..., got ''" (and the
     same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
