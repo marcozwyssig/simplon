@@ -382,12 +382,16 @@ def test_the_pin_moves_only_after_the_publish_and_only_through_a_pull_request():
     # act
     published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
     pinned = next(i for i, r in enumerate(runs) if "deploy/image/repin.sh" in r)
-    pushes = [line.strip() for line in runs[pinned].splitlines() if line.strip().startswith("git push")]
+    pushed = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-pin"))
+    asked = next(i for i, r in enumerate(runs) if "gh pr create --base main" in r)
+    raw_pushes = [line.strip() for r in runs for line in r.splitlines() if line.strip().startswith("git push")]
 
-    # assert: after the read-back, on its own branch, and handed to a person as a pull request
-    assert published < pinned
-    assert pushes == ['git push --quiet --force origin "$branch"']
-    assert "gh pr create --base main" in runs[pinned]
+    # assert: after the read-back, on its own branch, and handed to a person as a pull request. si#622: the
+    # push is `release push-pin`, which brings the token itself, and no step pushes with plain git.
+    assert published < pinned < pushed < asked
+    assert runs[pushed] == './simplon.sh release push-pin --tag "$RELEASE_VERSION"'
+    assert 'branch="pin/kernel-image-${RELEASE_VERSION}"' in runs[pinned]  # the branch push-pin names
+    assert raw_pushes == []
 
 
 def _repin(tmp_path, *args):
@@ -438,11 +442,11 @@ def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_star
     workflow. `workflow_dispatch` is the exception, so ci.yml has to accept it and the job has to use it."""
     # arrange
     job = _release_jobs()["image"]
-    script = next(step["run"] for step in job["steps"] if "deploy/image/repin.sh" in step.get("run", ""))
+    runs = [step.get("run", "") for step in job["steps"]]
 
     # act
-    pushed = script.index('git push --quiet --force origin "$branch"')
-    dispatched = script.find('gh workflow run ci.yml --ref "$branch"')
+    pushed = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-pin"))
+    dispatched = next(i for i, r in enumerate(runs) if 'gh workflow run ci.yml --ref "$PIN_BRANCH"' in r)
 
     # assert: dispatched on the pushed branch, by a job allowed to, into a workflow that accepts it
     assert dispatched > pushed

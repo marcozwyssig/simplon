@@ -114,6 +114,26 @@ def test_both_workflows_are_generated():
     assert generated == [".github/workflows/ci.yml", ".github/workflows/release.yml"]
 
 
+def test_no_checkout_in_this_repository_leaves_the_job_token_in_git_config():
+    """si#622 on the real files: every actions/checkout in every job of both workflows says
+    `persist-credentials: false`, so no build or test step can read the job's token out of `.git/config`.
+    The pin branch the `image` job pushes goes through `release push-pin`, which hands git the token."""
+    # Arrange
+    checkouts = []
+    for name in ("ci.yml", "release.yml"):
+        jobs = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))["jobs"]
+        checkouts += [(name, job, step) for job, spec in jobs.items() for step in spec["steps"]
+                      if str(step.get("uses", "")).startswith("actions/checkout")]
+
+    # Act
+    persisting = [f"{name}:{job}" for name, job, step in checkouts
+                  if (step.get("with") or {}).get("persist-credentials") is not False]
+
+    # Assert
+    assert checkouts, "no checkout found, so this ruled on nothing"
+    assert persisting == []
+
+
 def test_the_generated_workflow_carries_the_prose_it_was_written_with():
     """The comments that used to be hand-written in ci.yml are still in ci.yml.
 

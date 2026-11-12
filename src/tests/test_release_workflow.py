@@ -22,6 +22,7 @@ repository whose Pages source is set, and nothing here can stand in for it. What
 everything that would make such a run do the wrong thing quietly.
 """
 import itertools
+import re
 import tomllib
 
 import pytest
@@ -381,7 +382,7 @@ def _publishing(step) -> bool:
     uses, run = str(step.get("uses", "")), str(step.get("run", ""))
     return (uses.startswith(("pypa/gh-action-pypi-publish", "actions/deploy-pages"))
             or any(word in run for word in ("release push-image", "release homebrew-tap", "git push",
-                                            "gh pr create")))
+                                            "release push-pin", "gh pr create")))
 
 
 #: si#537: what a real run passes the formula steps. They read the version from PyPI, which a dry run never
@@ -392,6 +393,12 @@ REHEARSES_LOCALLY = ("--source local", "--online false")
 
 def _reads_pypi(step) -> bool:
     return any(flag in str(step.get("run", "")) for flag in READS_PYPI)
+
+
+def _reads_the_published_image(step) -> bool:
+    """si#622's split of the pin: the step that reads the published image's digest back from the registry
+    and commits the pin, which a dry run never published, so it is a real-run step that publishes nothing."""
+    return "docker buildx imagetools inspect" in str(step.get("run", ""))
 
 
 def _mints_a_token(step) -> bool:
@@ -516,9 +523,11 @@ def test_a_dry_run_publishes_nothing(workflow):
     guard turns this red. And the guard is on exactly those steps - a rehearsal still builds and checks."""
     for name in PRODUCT_JOBS:
         for step in workflow["jobs"][name]["steps"]:
-            guarded = step.get("if") == "${{ !inputs.dry_run }}"
+            # A condition that ANDs more onto `!inputs.dry_run` is guarded too (si#622: the pin's push and its
+            # pull request run only when there is a commit to push).
+            guarded = re.fullmatch(r"\$\{\{ !inputs\.dry_run( && [^}]+)? \}\}", step.get("if", "")) is not None
             expected = (_publishing(step) or _reads_pypi(step) or _mints_a_token(step)
-                        or step.get("name") == TAG_REQUIRED)
+                        or _reads_the_published_image(step) or step.get("name") == TAG_REQUIRED)
             assert guarded == expected, f"{name}: {step.get('uses') or step.get('run', '')[:60]!r}"
 
 

@@ -1077,10 +1077,13 @@ declared on the task, so a catalogue task brings its own and a task of your own 
 
 - **`publishes: true`:** the task's act cannot be taken back, so a dry run skips its step;
 - **`token: github`:** the task authenticates to GitHub, so its step's `env:`, and no other step's,
-  carries the run's `GITHUB_TOKEN`. The release job's checkout says `persist-credentials: false`, so the
-  token is not left in `.git/config` for a build or test step to read either (si#507). `release:check` and
-  `release:tag` declare `token: github` for that reason: they fetch from and push to origin, and hand git
-  the token themselves. A secret of your own goes in the workflow's `env:`, which every step of the job sees.
+  carries the run's `GITHUB_TOKEN`. Every generated checkout says `persist-credentials: false`, so the
+  token is not left in `.git/config` for a build or test step to read either (si#507 for the release job,
+  si#622 for every job). `release:check` and `release:tag` declare `token: github` for that reason: they
+  fetch from and push to origin, and hand git the token themselves. A step of your own that runs
+  `git push`, or `git fetch` against a private repository, has no credential in a generated job: make it
+  a task that declares `token: github` and talks to origin through `simplon.tasks.gitops`, or say
+  `checkout: false` and write the job's checkout yourself. A secret of your own goes in the workflow's `env:`, which every step of the job sees.
 - **`token: app`** (si#534): the task writes to one repository the run's own token cannot reach, such as
   a Homebrew tap. The leaf binds it as `with: { repository: <owner>/<repo> }`, and the generator puts an
   `actions/create-github-app-token` step (pinned, v3.2.0) directly before the leaf's step, in the derived
@@ -1252,8 +1255,9 @@ it; say `name:` if you want different words.
 
 Two things are the kernel's, and both are settings you should not have to remember. The checkout is
 emitted with `fetch-depth: 0`, because `actions/checkout` defaults to a shallow clone that carries no
-tags - so anything deriving a version from one gets a wrong answer *silently* rather than an error; and
-`python:` becomes a `setup-python` step, or nothing at all if you declare none. A job that wants neither
+tags - so anything deriving a version from one gets a wrong answer *silently* rather than an error - and
+with `persist-credentials: false`, so the job's token is not left in `.git/config` for every step to
+read (si#622); and `python:` becomes a `setup-python` step, or nothing at all if you declare none. A job that wants neither
 says `checkout: false` and writes its own.
 
 **Your comments survive.** `note:` may sit on the workflow, on a job or on a step, and is written out as

@@ -60,7 +60,7 @@ def _git(args: list[str], *, capture: bool = True, remote: bool = False):
 def remote_auth() -> dict[str, str]:
     """si#507: the run's GITHUB_TOKEN as an `http.<server>/.extraheader` for ONE git call; `{}` without one.
 
-    A generated release job checks out with `persist-credentials: false`, so `.git/config` holds no token
+    Every generated job checks out with `persist-credentials: false` (si#622), so `.git/config` holds no token
     for the build and test steps to read, and a task that talks to origin authenticates itself, the way
     actions/checkout would have: `AUTHORIZATION: basic base64(x-access-token:<token>)`, scoped to the
     server's URL (`GITHUB_SERVER_URL`, github.com when unset). Through git's `GIT_CONFIG_*` environment
@@ -560,6 +560,17 @@ def push_tag(name: str) -> Result:
     advice from a rejection because the network is down, and one message for both would say nothing.
     """
     return _git(["push", "origin", f"refs/tags/{name}"], remote=True)
+
+
+def push_branch(name: str, *, force: bool = False) -> Result:
+    """`git push [--force] origin refs/heads/<name>` - ONE branch, named, authenticated by `remote_auth()`.
+
+    si#622: a generated checkout persists no credential, so a job that pushes a branch it made (simplon's
+    `image` job pushes its pin branch) hands git the token itself, the way `push_tag` does. Named in full
+    (`refs/heads/`) so a tag of the same name cannot be what is pushed. Captured, like `push_tag`, so the
+    caller shows what git said.
+    """
+    return _git(["push", *(["--force"] if force else []), "origin", f"refs/heads/{name}"], remote=True)
 
 
 def remote_tag_commit(name: str) -> str | None:

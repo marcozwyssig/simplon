@@ -319,6 +319,21 @@ def test_every_job_gets_the_full_history_without_asking_for_it(manifest):
     assert checkout["with"]["fetch-depth"] == 0
 
 
+def test_every_job_checks_out_without_leaving_the_token_in_git_config(manifest):
+    """si#622: actions/checkout persists the job's token in `.git/config` unless told not to, and there
+    every step of the job, build and tests included, can read it. si#507 turned it off for the derived
+    release job; every generated checkout now does, and says why where the flag stands."""
+    # Arrange / Act
+    text = _render(manifest, _MINIMAL)
+    doc = yaml.safe_load(text)
+
+    # Assert
+    checkout = doc["jobs"]["build"]["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout")
+    assert checkout["with"]["persist-credentials"] is False
+    assert "# si#622: the job's token is not left in .git/config" in text
+
+
 def test_the_reason_for_the_full_history_is_written_into_the_file(manifest):
     """The setting moved into the generator; its justification had to move with it.
 

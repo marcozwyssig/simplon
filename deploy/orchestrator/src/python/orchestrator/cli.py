@@ -29,6 +29,7 @@ import typer
 
 from simplon import cli as simplon_cli
 from simplon.kernel.product import StepFactoryContext
+from simplon.tasks import gitops
 
 from . import environments
 from . import paths
@@ -189,6 +190,35 @@ def region_guard(file: str | None = None) -> int:
     print(f"region-guard: {file}: {where} lie outside the protected region, and firn would delete them. "
           f"Move them inside the protected region (above '{_END}'), then run it again.", file=sys.stderr)
     return 1
+
+
+#: The release a pin branch is named after; `release push-pin` pushes `pin/kernel-image-<tag>` and nothing else.
+PIN_TAG = re.compile(r"v\d+\.\d+\.\d+")
+
+
+def push_pin(tag: str = "") -> int:
+    """Force-push the kernel-image pin branch of release `tag` to origin with the run's GITHUB_TOKEN (si#622).
+
+    release.yml's `image` job commits the pin on `pin/kernel-image-<tag>`, made from origin/main. No
+    generated checkout keeps the job's token in `.git/config`, so the push brings its own through
+    `gitops.push_branch` (`gitops.remote_auth`, for that one git call). Force, because a rerun of the job
+    remakes the branch from origin/main. The branch is named HERE, from the tag, so the one force-push in
+    this repository cannot be pointed at a branch somebody works on.
+    """
+    if not PIN_TAG.fullmatch(tag):
+        print(f"push-pin: '{tag}' is not a release tag vX.Y.Z, so nothing is pushed", file=sys.stderr)
+        return 2
+    branch = f"pin/kernel-image-{tag}"
+    gitops.configure(ROOT)
+    pushed = gitops.push_branch(branch, force=True)
+    for stream in (pushed.out, pushed.err):
+        if stream.strip():
+            print(stream.rstrip(), flush=True)
+    if not pushed.ok:
+        print(f"push-pin: git could not push {branch} to origin (rc {pushed.rc}); what git said is above",
+              file=sys.stderr)
+        return 1
+    return 0
 
 
 # The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each
