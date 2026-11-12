@@ -420,8 +420,10 @@ ci:
       # keeps no token, so the push hands git the run's own. A person who repins by hand can use it too.
       push-pin: { task: push-pin }
       # The tested formula, committed to the tap as Formula/simplon.rb (si#537) with a GitHub App's token, which
-      # release.yml mints in the step before it (si#534). It runs in the `publish` job AFTER the PyPI upload,
-      # so the formula never names a URL that is not live, and for that reason it is not a member of `all`.
+      # release.yml mints in the step before it (si#534). It runs in release.yml's `homebrew-tap` job, after the
+      # `publish` job that uploads to PyPI (si#638: a job of its own, so a failed tap skips neither the site nor
+      # the image), so the formula never names a URL that is not live, and for that reason it is not a member
+      # of `all`.
       homebrew-tap:
         task: "release:homebrew-tap"
         consumes:
@@ -433,7 +435,7 @@ ci:
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release: the release check, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders, audits and commits the Homebrew formula: the tap follows PyPI, so the formula never names a URL that is not live."
+        help: "The release: the release check, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders and audits the Homebrew formula and the homebrew-tap job commits it: the tap follows PyPI, so the formula never names a URL that is not live."
 
 support:
   commands:
@@ -996,8 +998,8 @@ workflows:
               skip-existing: true
           # si#537: the Homebrew formula, after PyPI so its URL is live. Each of the first two runs twice under
           # the switch: a dry run renders and audits the local wheel (`--strict` only, the URL a placeholder),
-          # a real run reads the URL and sha256 PyPI now serves and audits online. The tap commit is real-run
-          # only; its token step is derived (si#534).
+          # a real run reads the URL and sha256 PyPI now serves and audits online. The tap commit is the
+          # `homebrew-tap` job's below (si#638), and the kernel hands it the formula and its test result.
           - command: build homebrew-formula
             params: { source: local }
             if: ${{ inputs.dry_run }}
@@ -1010,6 +1012,21 @@ workflows:
           - command: test homebrew-formula
             params: { online: "true" }
             if: ${{ !inputs.dry_run }}
+      homebrew-tap:
+        note: |
+          The tap commit, in a job of its own after `publish` (si#638). It needs the formula and its
+          test result, which `publish` renders and checks after the PyPI upload and the kernel hands over
+          (si#344 C.4), and the App token it mints from two secrets. Nothing else in this run needs the tap:
+          while it sat in `publish`, a missing App secret (si#574) turned `publish` red after PyPI and
+          skipped `docs` and `image` with it (run 42514180931, v0.43.0). Here it fails red and alone. No tag
+          steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
+          still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
+          written with the App's, and the workflow's `contents: write` is the release job's, not this one's.
+        runs-on: ubuntu-latest
+        python: "3.12"
+        permissions:
+          contents: read
+        steps:
           - command: release homebrew-tap
             if: ${{ !inputs.dry_run }}
       docs:

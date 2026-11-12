@@ -188,17 +188,112 @@ jobs:
         run: ./simplon.sh build homebrew-formula --source local
       - if: ${{ !inputs.dry_run }}
         run: ./simplon.sh build homebrew-formula --source pypi
+      # si#344 C.4: 'simplon-formula' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-simplon-formula.tar" build/homebrew/simplon.rb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplon-formula
+          path: ${{ runner.temp }}/simplon-handoff-simplon-formula.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - if: ${{ inputs.dry_run }}
         run: ./simplon.sh test homebrew-formula --online false
       - if: ${{ !inputs.dry_run }}
         run: ./simplon.sh test homebrew-formula --online true
+      # si#344 C.4: 'simplon-formula-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar" build/test/homebrew-formula.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplon-formula-checked
+          path: ${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # The tap commit, in a job of its own after `publish` (si#638). It needs the formula and its
+  # test result, which `publish` renders and checks after the PyPI upload and the kernel hands over
+  # (si#344 C.4), and the App token it mints from two secrets. Nothing else in this run needs the tap:
+  # while it sat in `publish`, a missing App secret (si#574) turned `publish` red after PyPI and
+  # skipped `docs` and `image` with it (run 42514180931, v0.43.0). Here it fails red and alone. No tag
+  # steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
+  # still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
+  # written with the App's, and the workflow's `contents: write` is the release job's, not this one's.
+  homebrew-tap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: publish
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # si#344 C.4: 'simplon-formula' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: simplon-formula
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-simplon-formula.tar"
+      # si#344 C.4: 'simplon-formula-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: simplon-formula-checked
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar"
       # v3.2.0: si#534 - 'release homebrew-tap' declares `token: app`, so this step mints a GitHub App
       # token for marcozwyssig/homebrew-tap and nothing else, with contents: write, from the secrets HOMEBREW_TAP_CLIENT_ID
       # and HOMEBREW_TAP_APP_KEY. The leaf below reads it as $GH_APP_TOKEN from its own `env:`; no `run:` line
       # carries the token or a secret.
       # This step carries the leaf's `if:`, so a run that skips the leaf mints nothing and needs
       # neither secret.
-      - id: app-token-9
+      - id: app-token-0
         if: ${{ !inputs.dry_run }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
@@ -209,7 +304,7 @@ jobs:
           permission-contents: write
       - if: ${{ !inputs.dry_run }}
         env:
-          GH_APP_TOKEN: ${{ steps.app-token-9.outputs.token }}
+          GH_APP_TOKEN: ${{ steps.app-token-0.outputs.token }}
         run: ./simplon.sh release homebrew-tap
 
   # The website, built by the one command a person types (`build docs`) and deployed by the two

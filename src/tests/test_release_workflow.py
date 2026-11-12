@@ -278,6 +278,9 @@ def test_no_step_gates_on_a_clean_working_tree(workflow):
 
 PUBLISH_JOB = "publish"
 
+#: si#638: the tap commit has a job of its own after `publish`, so a failed tap stops nothing but itself.
+TAP_JOB = "homebrew-tap"
+
 
 @pytest.fixture(scope="module")
 def publish_job(workflow):
@@ -520,8 +523,11 @@ def test_a_real_run_refuses_a_tag_that_is_not_here_at_this_commit(workflow, tmp_
 
 def test_a_dry_run_publishes_nothing(workflow):
     """Over every step of every product job, not a named list: a publishing step added later without the
-    guard turns this red. And the guard is on exactly those steps - a rehearsal still builds and checks."""
-    for name in PRODUCT_JOBS:
+    guard turns this red. And the guard is on exactly those steps - a rehearsal still builds and checks. Every
+    job but the derived release job, so a job of the product's own added later is held too (si#638's tap)."""
+    product_jobs = [name for name in workflow["jobs"] if name != workflowgen.RELEASE_JOB]
+    assert set(PRODUCT_JOBS) | {TAP_JOB} <= set(product_jobs)
+    for name in product_jobs:
         for step in workflow["jobs"][name]["steps"]:
             # A condition that ANDs more onto `!inputs.dry_run` is guarded too (si#622: the pin's push and its
             # pull request run only when there is a commit to push).
@@ -554,23 +560,57 @@ def test_a_rerun_of_publish_passes_the_upload_it_already_made(workflow):
 
 
 def test_the_tap_follows_pypi(workflow):
-    """si#537: the formula names PyPI's URL, so the tap commit comes after the upload, never before it."""
+    """si#537: the formula names PyPI's URL, so the tap commit comes after the upload, never before it. Since
+    si#638 the upload is in `publish` and the commit in a job of its own, which waits for `publish`."""
     # Arrange
-    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+    jobs = workflow["jobs"]
 
     # Act
-    pypi = next(i for i, step in enumerate(steps)
-                if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish"))
+    uploads = [step for step in jobs[PUBLISH_JOB]["steps"]
+               if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish")]
 
     # Assert
-    assert pypi < _tap_step(steps)
+    assert len(uploads) == 1
+    assert PUBLISH_JOB in _upstream(jobs, TAP_JOB)
+    _tap_step(jobs[TAP_JOB]["steps"])
+
+
+def _upstream(jobs, name: str) -> set[str]:
+    """Every job `name` waits for, directly or through another job's `needs:`."""
+    seen: set[str] = set()
+    todo = [name]
+    while todo:
+        needs = jobs[todo.pop()].get("needs") or []
+        for need in [needs] if isinstance(needs, str) else needs:
+            if need not in seen:
+                seen.add(need)
+                todo.append(need)
+    return seen
+
+
+def test_a_failed_tap_holds_back_neither_the_image_nor_the_site(workflow):
+    """si#638: run 42514180931 (v0.43.0) went red in `publish` at the tap's App token (si#574), after PyPI, and
+    `image` and `docs` were skipped because they needed the job the tap ran in. Neither consumes anything the
+    tap makes. Read off the generated file, over the `needs:` closure, so a tap moved back into any job either
+    one waits for turns this red - and the tap must still run somewhere, or the check would be vacuous."""
+    # Arrange
+    jobs = workflow["jobs"]
+
+    # Act
+    tapping = {name for name, job in jobs.items()
+               if any("./simplon.sh release homebrew-tap" in str(step.get("run", "")) for step in job["steps"])}
+
+    # Assert
+    assert tapping == {TAP_JOB}
+    for name in ("image", "docs"):
+        assert not ({name} | _upstream(jobs, name)) & tapping, f"{name} waits for the tap"
 
 
 def test_a_dry_run_reads_nothing_from_pypi_and_commits_nothing(workflow):
     """si#537: a dry run uploads nothing, so a step reading PyPI would go red on a version PyPI does not list.
     Each formula step comes twice - PyPI on a real run, the local wheel on a dry run - and the switch picks."""
     # Arrange
-    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+    steps = [*workflow["jobs"][PUBLISH_JOB]["steps"], *workflow["jobs"][TAP_JOB]["steps"]]
     real = [s for s in steps if _reads_pypi(s) or "./simplon.sh release homebrew-tap" in str(s.get("run", ""))]
     rehearsal = [s for s in steps if any(flag in str(s.get("run", "")) for flag in REHEARSES_LOCALLY)]
 
@@ -583,7 +623,7 @@ def test_a_dry_run_reads_nothing_from_pypi_and_commits_nothing(workflow):
 def test_the_tap_step_has_its_app_token(workflow):
     """si#534 derives the token step from `token: app`; si#537 is the first manifest that binds one."""
     # Arrange
-    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
+    steps = workflow["jobs"][TAP_JOB]["steps"]
 
     # Act
     token = steps[_tap_step(steps) - 1]

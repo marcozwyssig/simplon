@@ -28,12 +28,22 @@ import pathlib
 
 import yaml
 
-from simplon.tasks import testrun
+from simplon.tasks import testrun, workflowgen
 
 from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 WORKFLOWS = ROOT / ".github" / "workflows"
 REPORT_COMMAND = "./simplon.sh test report"
 ARTIFACT_ACTION = "actions/upload-artifact"
+
+#: si#638: where the kernel's job-to-job hand-off (si#344 C.4) puts the archive it uploads. That upload carries
+#: an artifact to the next job, not the report, so it is not part of the population these tests rule on.
+HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
+
+
+def _uploads_the_report(step: dict) -> bool:
+    """An upload-artifact step that is not the kernel's hand-off between jobs."""
+    return (ARTIFACT_ACTION in str(step.get("uses", ""))
+            and not str((step.get("with") or {}).get("path", "")).startswith(HANDOFF_PREFIX))
 
 
 def _manifest() -> dict:
@@ -119,7 +129,7 @@ def test_every_workflow_that_reports_also_uploads_the_archive():
     nothing a person can open."""
     # act
     reporting = {name for name, step in _steps() if step.get("run", "").strip() == REPORT_COMMAND}
-    uploading = {name for name, step in _steps() if ARTIFACT_ACTION in str(step.get("uses", ""))}
+    uploading = {name for name, step in _steps() if _uploads_the_report(step)}
 
     # assert
     assert reporting, f"no workflow runs `{REPORT_COMMAND}`, so this test is ruling on nothing"
@@ -133,8 +143,7 @@ def test_both_the_report_and_its_upload_run_even_when_a_gate_went_red():
     # act
     offenders = [f"{name}: {step.get('run') or step.get('uses')}"
                  for name, step in _steps()
-                 if (step.get("run", "").strip() == REPORT_COMMAND
-                     or ARTIFACT_ACTION in str(step.get("uses", "")))
+                 if (step.get("run", "").strip() == REPORT_COMMAND or _uploads_the_report(step))
                  and str(step.get("if", "")).strip() != "always()"]
 
     # assert
@@ -146,7 +155,7 @@ def test_the_upload_refuses_to_find_nothing():
     """`if-no-files-found` defaults to a WARNING, which is the recurring defect in its most ordinary
     clothes: an upload that found no report and one that uploaded a good one look the same in the log."""
     # act
-    uploads = [(name, step) for name, step in _steps() if ARTIFACT_ACTION in str(step.get("uses", ""))]
+    uploads = [(name, step) for name, step in _steps() if _uploads_the_report(step)]
 
     # assert
     assert uploads, "no workflow uploads the archive, so this test is ruling on nothing"
