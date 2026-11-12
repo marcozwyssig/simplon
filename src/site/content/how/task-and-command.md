@@ -80,8 +80,8 @@ would destroy the third state at the loader's own door.
 `publishes` and `token` (si#490) are facts about the body for the same reason, and a
 [derived release](../manifest/) reads both. A `publishes: true` task's act cannot be taken back, so a dry
 run skips its step. A `token: github` task authenticates to GitHub, so its step's `env:`, and no other
-step's, carries the run's `GITHUB_TOKEN`. The release job's checkout persists no credential (si#507), so
-a task that talks to origin with git declares `token: github` too. Neither is coerced: `publishes: "yes"`
+step's, carries the run's `GITHUB_TOKEN`. No generated checkout persists a credential (si#507, si#622),
+so a task that talks to origin with git declares `token: github` too. Neither is coerced: `publishes: "yes"`
 and `token: gitlab` are refused.
 
 A `token: app` task (si#534) writes to one repository the run's own token cannot reach. Its leaf binds that

@@ -49,6 +49,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
       # si#623: can the kernel start a container from where it uses docker - inside the kernel
       # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
       # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
@@ -168,6 +171,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'

@@ -48,6 +48,17 @@ tasks:
     impl: "orchestrator.cli:region_guard"
     help: "Refuse a file with hand-written lines outside its protected region, naming them."
     unattended: true
+  # si#622: release.yml's `image` job pushes the branch that moves deploy/image/image.pin, and no generated
+  # checkout persists the job's token any more. The push goes through `gitops.push_branch`, which hands git
+  # the step's GITHUB_TOKEN for that one call (`gitops.remote_auth`). The body names the branch from the tag,
+  # so the one force-push here cannot be pointed at any other branch.
+  push-pin:
+    impl: "orchestrator.cli:push_pin"
+    help: "Force-push the kernel-image pin branch of a release (pin/kernel-image-<tag>) to origin with the run's token."
+    unattended: true
+    token: github
+    params:
+      tag: { help: "the release whose pin branch is pushed (e.g. v1.4.0)", metavar: "TAG" }
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -405,6 +416,9 @@ ci:
         consumes:
           image: kernel
           evidence: [kernel-checked]
+      # The push of the pin branch the `image` job makes after `push-image` (si#622): that job's checkout
+      # keeps no token, so the push hands git the run's own. A person who repins by hand can use it too.
+      push-pin: { task: push-pin }
       # The tested formula, committed to the tap as Formula/simplon.rb (si#537) with a GitHub App's token, which
       # release.yml mints in the step before it (si#534). It runs in the `publish` job AFTER the PyPI upload,
       # so the formula never names a URL that is not live, and for that reason it is not a member of `all`.
@@ -1111,10 +1125,14 @@ workflows:
             if: ${{ !inputs.dry_run }}
             env:
               GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          - name: Open the pull request that pins the published image
+          - name: Commit the pin of the published image on its own branch
+            note: |
+              The pin moves in three steps since si#622, because the push between them is a command: no
+              generated checkout keeps the job's token in .git/config, so `release push-pin` hands git this
+              step's GITHUB_TOKEN for that one push. This step needs none: the fetch reads a public repository.
+              What the steps after it need is handed on through $GITHUB_ENV, and PIN_BRANCH only when there
+              is a commit to push.
             if: ${{ !inputs.dry_run }}
-            env:
-              GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             run: |
               ref="ghcr.io/marcozwyssig/simplon:${RELEASE_VERSION}"
               # The digest of the INDEX the tag names (si#368: one manifest list for two platforms), read from
@@ -1134,22 +1152,32 @@ workflows:
               git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
                   commit --quiet -am "chore: pin the kernel image to ${RELEASE_VERSION}" \
                   -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
-              git push --quiet --force origin "$branch"
+              { echo "PIN_BRANCH=$branch"; echo "PIN_REF=$ref"; echo "PIN_DIGEST=$digest"; } >> "$GITHUB_ENV"
+          - command: release push-pin
+            params: { tag: { env: RELEASE_VERSION } }
+            if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
+            env:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          - name: Open the pull request that pins the published image
+            if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
+            env:
+              GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            run: |
               # A push or pull request made with this run's GITHUB_TOKEN starts no workflow (GitHub's rule
               # against one run triggering another without end), so the pin would reach its pull request
               # with no test result at all - green-looking and unexamined (si#365). `workflow_dispatch` is
               # the documented exception, and a check belongs to the COMMIT, so the run shows on the PR.
-              gh workflow run ci.yml --ref "$branch" || {
-                echo "::error::branch $branch is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
+              gh workflow run ci.yml --ref "$PIN_BRANCH" || {
+                echo "::error::branch $PIN_BRANCH is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
                 exit 1
               }
-              if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${RELEASE_VERSION}" \
-                     --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${ref}@${digest}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
-                echo "::error::$ref is published and branch $branch is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}"
-                echo "- **image**: \`$ref\` published; pin branch \`$branch\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
+              if ! gh pr create --base main --head "$PIN_BRANCH" --title "Pin the kernel image to ${RELEASE_VERSION}" \
+                     --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${PIN_REF}@${PIN_DIGEST}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
+                echo "::error::$PIN_REF is published and branch $PIN_BRANCH is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${PIN_BRANCH}"
+                echo "- **image**: \`$PIN_REF\` published; pin branch \`$PIN_BRANCH\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
                 exit 1
               fi
-              echo "- **image**: \`$ref@${digest}\` published; pin pull request opened from \`$branch\`, ci.yml dispatched on it." >> "$GITHUB_STEP_SUMMARY"
+              echo "- **image**: \`$PIN_REF@${PIN_DIGEST}\` published; pin pull request opened from \`$PIN_BRANCH\`, ci.yml dispatched on it." >> "$GITHUB_STEP_SUMMARY"
 
 
 # NO `claude:` SECTION, since si#525: simplon's own plugin set is exactly the kernel's default for the

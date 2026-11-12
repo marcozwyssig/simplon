@@ -68,6 +68,7 @@ def origin(tmp_path, monkeypatch):
 #: with nothing, which a private repository answers with a refusal and a public one with a quiet read.
 REMOTE_CALLS = {
     "push_tag": lambda: gitops.push_tag("v1.0.0"),
+    "push_branch": lambda: gitops.push_branch("main", force=True),
     "fetch_branches": gitops.fetch_branches,
     "remote_tag_commit": lambda: gitops.remote_tag_commit("v1.0.0"),
     "remote_default_branch": gitops.remote_default_branch,
