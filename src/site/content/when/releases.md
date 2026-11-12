@@ -23,6 +23,129 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.44.0
+
+**What a product has to do:** regenerate its workflows (`support workflows`), or `test generated` reports
+drift: every generated checkout now persists no credential, and a self-hosted job gains the docker
+probe or a comment naming it. A manifest that still writes `launcher:` is refused at load; move each
+name onto the command that needs it, then run `simplon init --dir . --launchers-only`. None of the
+reachable manifests wrote the section when #621 measured them. The first `build:fetch` after the bump
+downloads each declared file once more.
+
+### `launcher: env: pass:` moved onto the command (si#492)
+
+- **A command now declares `env: { pass: [NAME, ...] }`, and each name reaches that command's
+  `toolchain:run` line and no other command's.** A command that does not declare a name never sees it.
+  Asked for by firn, which held its own `launcher:` section back until this was answered.
+- **The launcher forwards the union of all commands' lists** into the kernel's container, which runs
+  simplon's own code only. `simplon init --launchers-only` renders that union, and the stale-launcher
+  check compares against it.
+- **New diagnoses:** a leftover top-level `launcher:` is refused at load and names the command-level
+  form and `simplon init --dir . --launchers-only` as the way out. An `env:` on an aggregate is refused
+  too, because an aggregate runs no `toolchain:run` line, and the message points at its members. An
+  `env:` on a task gets the existing "belongs on a command" diagnosis.
+
+### No generated checkout leaves the job token in `.git/config` (si#507, si#622)
+
+- **Every `actions/checkout` the generator writes now says `persist-credentials: false`.** Before, any
+  step in the job could read the token, build and test steps included. A job that needs a persisted
+  credential still says `checkout: false` and writes its own checkout, as firn does.
+- **The kernel's own calls to origin bring their own token:** `release:check` and `release:tag` now
+  declare `token: github`, and their fetch, `ls-remote` and tag push hand git the run's `GITHUB_TOKEN`
+  for that one call, through git's environment rather than its argv. A persisted header is replaced,
+  not doubled.
+- simplon's own `image` job now pushes its pin branch through a product command, `release push-pin`,
+  which takes the tag and refuses anything that is not `vX.Y.Z`.
+
+### A self-hosted runner that cannot run a container says so first (si#623, si#624, si#625)
+
+- **New catalogue task `support:ci-docker-preflight`:** it runs a real container (the busybox pin
+  `test:file` already uses) where the kernel uses docker, on either route, and is green only when the
+  container ran. A refusal prints docker's own line, the uid, gid and groups the kernel runs as, the
+  socket's owner and mode, the `--group-add` gids, and the way out. The generator places it as the
+  first step on the runner kinds that get the disk pair; a product that has not placed it gets a
+  comment naming the coordinate.
+- **`deploy/ci-hosts/` ships `runner-docker-check`** for the runner machine: a drop-in that keeps a
+  runner whose user cannot run a container from starting, and a 15-minute timer that checks every
+  running runner unit with the groups it really has. No running runner unit is red, not green.
+  Installing it is described on `how/ci-hosts`.
+- **A docker client that cannot reach the daemon is no longer read as the tool's exit code.** Such a
+  client exits 1, the same value as firn's `MODEL_ERROR`, so `build:model`, `test:model` and
+  `test:model-format` reported a model error. After a red run, `run_container` now asks the daemon once,
+  and if it does not answer, dies with the daemon-unreachable diagnosis naming the socket gap.
+
+### `build:fetch` checks where a file came from, and what mode it gets (si#493, si#497)
+
+- **A file counts as there only when its sha256 and the url it was verified against both match.** A
+  moved `version_from` with an unchanged sha256 used to answer "nothing to fetch" and build the old
+  archive under the new version; the download cache (si#600) had the same defect. Every file, in the
+  tree and in the cache, now carries a `<file>.url` record, and a changed url is fetched and judged by
+  the checksum, so a mirror move with the same bytes still passes. A file with no record is no match,
+  which costs one extra download per declared file on the first run.
+- **A fetched file gets the mode a plain `open()` gives it** (`0o666 & ~umask`), with or without
+  `resume`, and so does a file restored from the download cache. It used to be 0600.
+
+### Image builds and missing contexts name what to do (si#546, si#494)
+
+- **`build:image` refuses, before the build, a platform a `test:image` command runs the image on and
+  the host cannot run.** The platforms are derived from the test commands (a test with no `platform:`
+  runs every declared one), and the probe is a real `docker run --platform`. Only `exec format error`
+  means "cannot"; any other probe failure is a warning and the build goes ahead. The refusal names the
+  test commands and the command that registers the emulator. An image no test runs on a platform keeps
+  the warning alone.
+- **A missing `contexts:` file, an image built FROM one the daemon does not hold, and
+  `build:image-file` with no recorded build now name the product command that makes it**, spelt the
+  way the CLI types it (``run `./firn.sh build gradle` first``), instead of a catalogue coordinate.
+  When no command produces it, the message says so and keeps the coordinate.
+
+### `gh:` declares the gh extensions a product needs (si#630)
+
+- **A new top-level section, `gh: { extensions: [owner/repo@version, ...] }`**, read by
+  `support install` after the gh gate. Each extension is reported on its own line. An extension listed
+  at another version is re-pinned (removed, then installed at the pin), because `gh extension install`
+  exits 0 and keeps the old version. Without a gh login each extension is skipped with a hint, not
+  failed.
+- **New diagnoses:** `gh:` without `gh` in `toolchains:`, a section or `extensions:` of the wrong shape,
+  an unknown key, a malformed entry, and the same repository named twice.
+- simplon itself declares `github/gh-stack@v0.3.0`. #636 fixed the type check #635 left red.
+
+### `init --force` no longer destroys a grown manifest (si#506)
+
+- **`simplon init --force` refuses, rc 2, when an existing file differs from what the scaffold would
+  write**, names each such file, points at `simplon init --dir . --launchers-only`, and writes nothing.
+  It used to report success after overwriting the manifest and `cli.py`. Over an unchanged tree it
+  still writes the missing files. The 0.28.0 migration steps below no longer prescribe `--force`.
+
+### simplon's own release (si#638, si#509)
+
+- **The Homebrew tap commit has a job of its own, `homebrew-tap`.** A missing or broken App secret
+  (si#574) now turns that job red and nothing else: `image` and `docs` need only `publish`. The tap's
+  inputs reach it through the kernel's hand-off.
+- **Every derived release job archives the test report of the run that gated it**, under
+  `if: always()`, from the path in the manifest's `suites: reports:`. A product with no `test:report`
+  leaf gets no upload and a comment that says so.
+
+### Also in this release
+
+- **si#544:** a task body's refusal (`TaskRefused`) prints as its message alone, rc 1; the first one
+  moved is `build homebrew-formula` without `--source`. Other exceptions keep their traceback but no
+  longer print each frame's locals.
+- **si#543:** `build homebrew-formula` refuses a wheel with a local version (`+g...`), which brew cannot
+  read, and names building on a tagged commit as the way out.
+- **si#594:** `build:model` reads firn's template count: a project with no template is nothing to do,
+  rc 0, not "nothing was generated". firn v0.10.0's config warnings in its JSON report are printed.
+- **si#607:** a lab deploy removes a leftover mgmt network on another subnet when no container is on
+  it, and names both subnets when one is, instead of three failed retries.
+- **si#503:** the container lifecycle test reports a refused container create as one verdict, in the
+  daemon's words. Test only.
+- **si#542:** the derived-pipeline test is renamed to say it holds which steps the derivation produces,
+  not that each would run bare. Test only.
+- **#606** pins `deploy/image/image.pin` to the v0.43.0 kernel image, again published by hand (si#574).
+- The pull requests are #608 (si#607), #609 (si#594), #610 (si#493), #611 (si#494), #612 (si#507),
+  #613 (si#497), #614 (si#544), #615 (si#503), #616 (si#543), #617 (si#506), #618 (si#542),
+  #619 (si#546), #620 (si#509), #621 (si#492), #626 (si#625), #627 (si#623), #628 (si#624),
+  #635 and #636 (si#630), #637 (si#622) and #640 (si#638).
+
 ## 0.43.0
 
 **What a product has to do:** nothing to keep working. To get the download cache on the container
