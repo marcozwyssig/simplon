@@ -226,7 +226,7 @@ ci:
       model-gen:
         task: build:model
         with:
-          image: ghcr.io/marcozwyssig/firn:v0.2.0
+          image: ghcr.io/marcozwyssig/firn:v0.11.0
           cwd: src
           network: none
   test:
@@ -372,7 +372,7 @@ ci:
       model:
         task: test:model
         with:
-          image: ghcr.io/marcozwyssig/firn:v0.2.0
+          image: ghcr.io/marcozwyssig/firn:v0.11.0
           network: none
           cwd: src
       # si#522: the manifest exported fresh and validated against the M2 the kernel ships, in a firn project
@@ -381,7 +381,7 @@ ci:
       manifest-model:
         task: "test:manifest-model"
         with:
-          image: ghcr.io/marcozwyssig/firn:v0.2.0
+          image: ghcr.io/marcozwyssig/firn:v0.11.0
   release:
     commands:
       # The release's members (si#344 C.3, spec C.4; si#491): the gate, the notes and the tag are separate
