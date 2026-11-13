@@ -38,6 +38,9 @@ MANIFEST = ROOT / "simplon.yaml"
 #: The product token the launcher carries, and therefore the one the generated steps must use.
 PRODUCT = "simplon"
 
+#: Where the kernel's job-to-job hand-off (si#344 C.4) puts its archive, as the generated `tar` lines name it.
+HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
+
 
 def _declared():
     return workflowgen.parse(yaml.safe_load(MANIFEST.read_text(encoding="utf-8")))
@@ -158,8 +161,9 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
     manifest = _loaded()
     doc = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
-    # Act
-    runs = [step["run"] for job in doc["jobs"].values() for step in job["steps"] if "run" in step]
+    # Act - the kernel's own hand-off lines (si#344 C.4) pack and unpack an archive, and name no command
+    runs = [step["run"] for job in doc["jobs"].values() for step in job["steps"]
+            if "run" in step and HANDOFF_PREFIX not in step["run"]]
 
     # Assert
     assert runs, "the generated workflow runs no product command at all"
@@ -173,9 +177,11 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
 
 
 def _ci_steps() -> list[str]:
-    """The commands simplon's own `self-build` job runs, in order, as the manifest declares them."""
-    job = next(job for w in _declared() if w.key == "ci" for job in w.jobs)
-    return [step.command for step in job.steps if step.command]
+    """The commands simplon's own ci workflow runs, job by job and in order, as the manifest declares them.
+    Every job, not `self-build` alone: since si#639 the hand-off canary's two commands run in jobs of their
+    own, and a command CI runs in another job is not one it leaves out."""
+    return [step.command for w in _declared() if w.key == "ci" for job in w.jobs for step in job.steps
+            if step.command]
 
 
 def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_test_leaves():
@@ -219,15 +225,19 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
     same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
     and audit the formula. So a pipeline derived from this manifest would go red on those two steps;
     this repository derives nothing, which is why it is recorded here and not repaired in the manifest.
+
+    si#639 added `build handoff-canary` and `test handoff-canary`, the two halves of the job hand-off canary.
+    Run bare on 2026-11-13: the first exits 0 and writes `build/handoff-canary.txt`, under the ignored
+    `build/`; the second exits 0 after it, and 1 without it ("is not there - nothing handed it over").
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
     assert [step.command for step in derived.steps] == [
-        "build wheel", "build reference", "build acceptance", "build site", "build image",
+        "build wheel", "build handoff-canary", "build reference", "build acceptance", "build site", "build image",
         "build homebrew-formula", "build model-guard", "build model-gen", "test suite", "test typecheck-python",
         "test release-notes",
         "test report", "test generated", "test image", "test homebrew-formula",
-        "test model", "test manifest-model"]
+        "test handoff-canary", "test model", "test manifest-model"]
 
 
 def test_this_repository_runs_a_subset_of_those_and_the_difference_is_a_choice_not_a_defect():
@@ -328,3 +338,32 @@ def test_the_release_job_can_run_linux_arm64_before_the_suite():
 
     assert len(qemu) == 1 and qemu[0] < suite
     assert steps[qemu[0]]["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64"}
+
+
+def test_the_handoff_canary_crosses_a_job_boundary_in_ci():
+    """si#639: the canary exists to run the kernel's job-to-job hand-off (si#344 C.4) on every push. Its
+    writer and its checker in ONE job would stay green and hand nothing over, so this holds the committed
+    ci.yml to the shape that makes the check mean something: two jobs, the checker's needing the writer's,
+    the writer uploading the archive after it writes and the checker unpacking it before it checks. The jobs
+    are found by the commands they run, not by their names."""
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    archive = workflowgen.HANDOFF_ARCHIVE.format(artifact="handoff-canary")
+
+    def runs(command: str) -> list[str]:
+        return [name for name, job in jobs.items()
+                if any(step.get("run", "") == f"./{PRODUCT}.sh {command}" for step in job["steps"])]
+
+    writers, checkers = runs("build handoff-canary"), runs("test handoff-canary")
+    assert len(writers) == 1 and len(checkers) == 1, (writers, checkers)
+    (writer,), (checker,) = writers, checkers
+    assert writer != checker, f"job '{writer}' writes and checks the canary, so nothing crosses a job boundary"
+    assert jobs[checker].get("needs") in (writer, [writer])
+
+    w_steps = [step.get("run") or step.get("uses", "") for step in jobs[writer]["steps"]]
+    c_steps = [step.get("run") or step.get("uses", "") for step in jobs[checker]["steps"]]
+    w_at = w_steps.index(f"./{PRODUCT}.sh build handoff-canary")
+    c_at = c_steps.index(f"./{PRODUCT}.sh test handoff-canary")
+    assert w_steps[w_at + 1] == f'tar -cf "{archive}" build/handoff-canary.txt'
+    assert w_steps[w_at + 2].startswith("actions/upload-artifact")
+    assert c_steps[c_at - 2].startswith("actions/download-artifact")
+    assert c_steps[c_at - 1] == f'tar -xf "{archive}"'

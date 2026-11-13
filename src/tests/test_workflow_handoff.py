@@ -194,7 +194,9 @@ def test_a_refusal_stops_generation_and_names_the_workflow():
         _render(body, key="release")
 
 
-def test_simplons_own_ci_renders_byte_identical_and_hands_nothing_over():
+def test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary():
+    """Since si#639 simplon's ci.yml hands one artifact across jobs, the canary that exists for it, and
+    nothing else: a second hand-off appearing here would be a job split nobody decided."""
     # arrange
     text = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
     loaded = manifest_mod.load(text, catalogue=catalogue_mod.load(), manifest_path="simplon.yaml")
@@ -207,7 +209,9 @@ def test_simplons_own_ci_renders_byte_identical_and_hands_nothing_over():
 
     # assert
     assert rendered == (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "download-artifact" not in rendered
+    assert rendered.count("actions/upload-artifact@") == 2  # the canary's, and the allure report's
+    assert rendered.count("actions/download-artifact@") == 1
+    assert "name: handoff-canary" in rendered
 
 
 def _lines(doc):

@@ -189,3 +189,132 @@ jobs:
           platforms: arm64
       - run: ./simplon.sh test suite
       - run: ./simplon.sh test typecheck-python
+
+  # A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none
+  # for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is
+  # reached through the bootstrap, because a container job would need docker in order to start.
+  #
+  # The job hand-off canary (si#639), and this job and the next exist for it alone. One command here
+  # writes a one-line file, the command in the next job reads it back; nothing in this manifest moves
+  # it, so it arrives only through the hand-off the kernel derives from `produces:`/`consumes:`
+  # (si#344 C.4): upload after this step, `needs:` and download before the next. Until this, no
+  # generated workflow of any product ran one on every push.
+  handoff-canary-write:
+    runs-on: ghr-8
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - run: ./simplon.sh support ci-docker-preflight
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-debian runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - run: ./simplon.sh support ci-disk-preflight
+      - run: ./simplon.sh build handoff-canary
+      # si#344 C.4: 'handoff-canary' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-handoff-canary.tar" build/handoff-canary.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handoff-canary
+          path: ${{ runner.temp }}/simplon-handoff-handoff-canary.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - if: always()
+        continue-on-error: true
+        run: ./simplon.sh support ci-disk-cleanup
+
+  # A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none
+  # for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is
+  # reached through the bootstrap, because a container job would need docker in order to start.
+  #
+  # The canary's reading half (si#639). Red when the file is missing or does not hold the line the
+  # writer writes for this commit and this run, so a file the hand-off did not bring cannot pass.
+  handoff-canary-check:
+    runs-on: ghr-8
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
+    needs: handoff-canary-write
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - run: ./simplon.sh support ci-docker-preflight
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-debian runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - run: ./simplon.sh support ci-disk-preflight
+      # si#344 C.4: 'handoff-canary' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: handoff-canary
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-handoff-canary.tar"
+      - run: ./simplon.sh test handoff-canary
+      - if: always()
+        continue-on-error: true
+        run: ./simplon.sh support ci-disk-cleanup

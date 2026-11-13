@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import typer
 
@@ -218,6 +219,63 @@ def push_pin(tag: str = "") -> int:
         print(f"push-pin: git could not push {branch} to origin (rc {pushed.rc}); what git said is above",
               file=sys.stderr)
         return 1
+    return 0
+
+
+def _canary_path(file: str, verb: str) -> Path | None:
+    """The checkout path of the `artifacts:` entry `file`, or None after saying why there is none."""
+    entry = (paths.CONTEXT.manifest_data().get("artifacts") or {}).get(file) if file else None
+    path = entry.get("path") if isinstance(entry, dict) else None
+    if not isinstance(path, str) or not path:
+        print(f"handoff-canary {verb}: '{file}' is no `artifacts:` entry with a `path:` "
+              f"(bind it with `{'produces' if verb == 'write' else 'consumes'}:`)", file=sys.stderr)
+        return None
+    return ROOT / path
+
+
+def _canary_line() -> str | None:
+    """What the canary carries: this checkout's HEAD and the workflow run, so a file left by another commit
+    or another run does not pass. Outside a workflow the run is `local`."""
+    done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+    sha = done.stdout.strip()
+    if done.returncode != 0 or not sha:
+        print(f"handoff-canary: git could not name HEAD in {ROOT}", file=sys.stderr)
+        return None
+    return f"simplon hand-off canary: commit {sha}, run {os.environ.get('GITHUB_RUN_ID') or 'local'}\n"
+
+
+def handoff_canary_write(file: str = "") -> int:
+    """Write the hand-off canary (si#639): one line naming HEAD and the run, at the path of artifact `file`.
+
+    The other half is `handoff_canary_check`, in another job of ci.yml, so the file reaches it only through
+    the kernel's job-to-job hand-off (si#344 C.4): the generated upload after this step, the download before
+    that one."""
+    path, line = _canary_path(file, "write"), _canary_line()
+    if path is None or line is None:
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(line, encoding="utf-8")
+    print(f"handoff-canary write: {path.relative_to(ROOT)}: {line.rstrip()}")
+    return 0
+
+
+def handoff_canary_check(file: str = "") -> int:
+    """Check the hand-off canary (si#639): the file at artifact `file`'s path holds exactly the line
+    `handoff_canary_write` writes for this commit and run. A missing file is red, not "nothing to check":
+    the hand-off failing is what this is here to show."""
+    path, line = _canary_path(file, "check"), _canary_line()
+    if path is None or line is None:
+        return 1
+    if not path.is_file():
+        print(f"handoff-canary check: {path.relative_to(ROOT)} is not there - nothing handed it over",
+              file=sys.stderr)
+        return 1
+    found = path.read_text(encoding="utf-8")
+    if found != line:
+        print(f"handoff-canary check: {path.relative_to(ROOT)} holds {found!r}, expected {line!r}",
+              file=sys.stderr)
+        return 1
+    print(f"handoff-canary check: {path.relative_to(ROOT)}: {line.rstrip()}")
     return 0
 
 
