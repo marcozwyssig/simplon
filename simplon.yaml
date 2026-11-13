@@ -59,6 +59,22 @@ tasks:
     token: github
     params:
       tag: { help: "the release whose pin branch is pushed (e.g. v1.4.0)", metavar: "TAG" }
+  # si#639: the two halves of the job hand-off canary in ci.yml. Product tasks, because no catalogue task
+  # writes a small file cheaply and none reads one back to compare its content: `build:fetch` downloads one,
+  # `build:image-file` copies one out of an image, `test:file` runs one in a container. The `param:` hands
+  # the bound artifact's name to the body.
+  handoff-canary-write:
+    impl: "orchestrator.cli:handoff_canary_write"
+    help: "Write the hand-off canary: one line naming HEAD and the workflow run, at its artifact's path."
+    unattended: true
+    output:
+      canary: { accepts: file, param: file }
+  handoff-canary-check:
+    impl: "orchestrator.cli:handoff_canary_check"
+    help: "Check that the hand-off canary holds the line its writer writes for this commit and run."
+    unattended: true
+    input:
+      canary: { accepts: file, param: file }
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -74,6 +90,8 @@ ci:
       # `dist` is the directory the wheel lands in (si#537): `build homebrew-formula` consumes it, because the
       # wheel's file name carries the version and an artifact's `path:` is fixed.
       wheel: { task: wheel, produces: { directory: dist } }
+      # si#639: one half of the hand-off canary, the half ci.yml runs in the job before `test handoff-canary`.
+      handoff-canary: { task: handoff-canary-write, produces: { canary: handoff-canary } }
       # The command reference the documentation website embeds is GENERATED, so simplon generates its own
       # with the kernel it ships - the same rule that makes it build and test itself here.
       #
@@ -344,6 +362,8 @@ ci:
         task: "test:homebrew-formula"
         consumes: { formula: simplon-formula, wheel: dist }
         produces: { test-result: simplon-formula-checked }
+      # si#639: the other half, run by ci.yml in a job of its own, so the file reaches it only by the hand-off.
+      handoff-canary: { task: handoff-canary-check, consumes: { canary: handoff-canary } }
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, the manifest's own model, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, manifest-model, release-notes]
@@ -670,6 +690,10 @@ artifacts:
   simplon-formula-checked:
     kind: test-result
     path: build/test/homebrew-formula.json
+  # si#639: the hand-off canary, written in one job of ci.yml and read back in the next.
+  handoff-canary:
+    kind: file
+    path: build/handoff-canary.txt
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #
@@ -901,6 +925,23 @@ workflows:
               platforms: arm64
           - command: test suite
           - command: test typecheck-python
+      handoff-canary-write:
+        note: |
+          The job hand-off canary (si#639), and this job and the next exist for it alone. One command here
+          writes a one-line file, the command in the next job reads it back; nothing in this manifest moves
+          it, so it arrives only through the hand-off the kernel derives from `produces:`/`consumes:`
+          (si#344 C.4): upload after this step, `needs:` and download before the next. Until this, no
+          generated workflow of any product ran one on every push.
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        steps:
+          - command: build handoff-canary
+      handoff-canary-check:
+        note: |
+          The canary's reading half (si#639). Red when the file is missing or does not hold the line the
+          writer writes for this commit and this run, so a file the hand-off did not bring cannot pass.
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        steps:
+          - command: test handoff-canary
 
   # GENERATED SINCE si#491, which retired the hand-written file. The release is the BUTTON: Actions ->
   # release -> Run workflow, with the version and `dry_run` (default true). The kernel derives the

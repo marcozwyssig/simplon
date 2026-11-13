@@ -11,6 +11,11 @@ simplon typeOf simplon.manifest.Product {
       task = product.simplon.simplon.t_wheel
       produces = product.simplon.simplon.a_dist
     }
+    command handoff_canary typeOf simplon.pipeline.TaskCommand {
+      key = "handoff-canary"
+      task = product.simplon.simplon.t_handoff_canary_write
+      produces = product.simplon.simplon.a_handoff_canary
+    }
     command reference typeOf simplon.pipeline.TaskCommand {
       key = "reference"
       task = simplon.catalogue.docs_reference
@@ -93,6 +98,11 @@ simplon typeOf simplon.manifest.Product {
       produces = product.simplon.simplon.a_simplon_formula_checked
       consumes = product.simplon.simplon.a_simplon_formula
       consumes = product.simplon.simplon.a_dist
+    }
+    command handoff_canary typeOf simplon.pipeline.TaskCommand {
+      key = "handoff-canary"
+      task = product.simplon.simplon.t_handoff_canary_check
+      consumes = product.simplon.simplon.a_handoff_canary
     }
     command all typeOf simplon.pipeline.AggregateCommand {
       key = "all"
@@ -271,6 +281,14 @@ simplon typeOf simplon.manifest.Product {
       accepts = simplon.vocabulary.directory
     }
   }
+  tasks t_handoff_canary_write typeOf simplon.pipeline.Task {
+    key = "handoff-canary-write"
+    body = "orchestrator.cli:handoff_canary_write"
+    output canary typeOf simplon.pipeline.Port {
+      accepts = simplon.vocabulary.file
+      param = "file"
+    }
+  }
   tasks t_region_guard typeOf simplon.pipeline.Task {
     key = "region-guard"
     body = "orchestrator.cli:region_guard"
@@ -278,6 +296,14 @@ simplon typeOf simplon.manifest.Product {
   tasks t_suite typeOf simplon.pipeline.Task {
     key = "suite"
     body = "orchestrator.cli:test_suite"
+  }
+  tasks t_handoff_canary_check typeOf simplon.pipeline.Task {
+    key = "handoff-canary-check"
+    body = "orchestrator.cli:handoff_canary_check"
+    input canary typeOf simplon.pipeline.Port {
+      accepts = simplon.vocabulary.file
+      param = "file"
+    }
   }
   tasks t_push_pin typeOf simplon.pipeline.Task {
     key = "push-pin"
@@ -319,6 +345,11 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon-formula-checked"
     kind = simplon.vocabulary.test_result
     path = "build/test/homebrew-formula.json"
+  }
+  artifacts a_handoff_canary typeOf simplon.pipeline.Artifact {
+    key = "handoff-canary"
+    kind = simplon.vocabulary.file
+    path = "build/handoff-canary.txt"
   }
   toolchains s_toolchains typeOf simplon.manifest.KernelSection {
     key = "toolchains"
