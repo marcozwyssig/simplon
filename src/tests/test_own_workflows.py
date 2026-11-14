@@ -168,9 +168,9 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
     # Assert
     assert runs, "the generated workflow runs no product command at all"
     for run in runs:
-        assert run.startswith(f"./{PRODUCT}.sh "), run
+        assert run.startswith(f"exec ./{PRODUCT}.sh "), run
         # The command is what precedes its flags (`build image --platform linux/amd64`, si#368).
-        workflowgen.resolve_command(manifest, run.split(" ", 1)[1].split(" --", 1)[0], where=f"ci.yml: {run}")
+        workflowgen.resolve_command(manifest, run.split(" ", 2)[2].split(" --", 1)[0], where=f"ci.yml: {run}")
 
 
 # --- si#267: what the derivation would produce here, measured against what this repository runs -------
@@ -351,7 +351,7 @@ def test_the_handoff_canary_crosses_a_job_boundary_in_ci():
 
     def runs(command: str) -> list[str]:
         return [name for name, job in jobs.items()
-                if any(step.get("run", "") == f"./{PRODUCT}.sh {command}" for step in job["steps"])]
+                if any(step.get("run", "") == f"exec ./{PRODUCT}.sh {command}" for step in job["steps"])]
 
     writers, checkers = runs("build handoff-canary"), runs("test handoff-canary")
     assert len(writers) == 1 and len(checkers) == 1, (writers, checkers)
@@ -361,8 +361,8 @@ def test_the_handoff_canary_crosses_a_job_boundary_in_ci():
 
     w_steps = [step.get("run") or step.get("uses", "") for step in jobs[writer]["steps"]]
     c_steps = [step.get("run") or step.get("uses", "") for step in jobs[checker]["steps"]]
-    w_at = w_steps.index(f"./{PRODUCT}.sh build handoff-canary")
-    c_at = c_steps.index(f"./{PRODUCT}.sh test handoff-canary")
+    w_at = w_steps.index(f"exec ./{PRODUCT}.sh build handoff-canary")
+    c_at = c_steps.index(f"exec ./{PRODUCT}.sh test handoff-canary")
     assert w_steps[w_at + 1] == f'tar -cf "{archive}" build/handoff-canary.txt'
     assert w_steps[w_at + 2].startswith("actions/upload-artifact")
     assert c_steps[c_at - 2].startswith("actions/download-artifact")

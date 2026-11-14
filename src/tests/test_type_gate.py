@@ -67,6 +67,7 @@ symptom.
 """
 import configparser
 import functools
+import re
 import tomllib
 
 import yaml
@@ -205,7 +206,10 @@ def _jobs() -> list[tuple[str, str, list[str]]]:
     for path in files:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         for name, job in doc.get("jobs", {}).items():
-            out.append((path.name, name, [s["run"] for s in job.get("steps", []) if "run" in s]))
+            # A leading `exec` (si#666: a generated step execs the launcher) changes which process runs the
+            # command, not which command runs, so it is read past - and `exec pytest` still bypasses.
+            out.append((path.name, name, [re.sub(r"^exec\s+", "", s["run"]) for s in job.get("steps", [])
+                                          if "run" in s]))
     return out
 
 

@@ -1443,7 +1443,7 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     for job in jobs:
         lines += _render_job(job, expanded=expanded[job.name], crossing=handoffs[job.name],
                              artifacts=artifacts or {}, manifest=manifest, product=product, workflow=workflow.key,
-                             workflow_env=_names(workflow.extras.get("env")))
+                             workflow_env=_names(workflow.extras.get("env")), workflow_extras=workflow.extras)
     text = "\n".join(lines).rstrip("\n") + "\n"
 
     validate(text, where=f"workflow '{workflow.key}'")
@@ -1611,7 +1611,8 @@ def _receive(artifact: str) -> tuple[Step, Step]:
 
 def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handoff",
                 artifacts: "Mapping[str, artifactsection.Declared]", manifest: Manifest, product: str,
-                workflow: str, workflow_env: "frozenset[str]" = frozenset()) -> list[str]:
+                workflow: str, workflow_env: "frozenset[str]" = frozenset(),
+                workflow_extras: "Mapping[str, object]") -> list[str]:
     where = f"workflow '{workflow}', job '{job.name}'"
     steps: list[Step] = []
     for at, step in enumerate(expanded):
@@ -1675,11 +1676,19 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
             # a multi-line `env:` value or an `if:` expression is quoted by the same rules.
             #
             # NO INVENTED `name:`. A step that declares none shows its `run:` line in the Actions UI,
-            # and that line is `./<product>.sh test all` - the same string a developer types, which is
+            # and that line is `exec ./<product>.sh test all` - the string a developer types, which is
             # the most useful thing that could stand there. A generated name would be the kernel putting
             # words in the product's mouth for no gain; a product that wants different words says
             # `name:` and gets exactly those.
-            line = f"{launcher(product)} {group.replace('.', ' ')} {name}"
+            #
+            # `exec` (si#666), so the launcher - which execs the kernel's python on every route - IS the
+            # step's process. actions/runner cancels a step by signalling the step shell's pid alone
+            # (ProcessInvoker.cs: SIGINT, 7.5 s, SIGTERM, 2.5 s, kill); a plain line left that pid to
+            # bash, which waits out its foreground child on SIGINT and dies alone on SIGTERM, orphaning
+            # the kernel and its pytest with no junit. Safe because this `run:` is one command with
+            # nothing after it; an `if: always()` follow-up is a step of its own, in a shell of its own.
+            line = (f"{'exec ' if _execs(_shell(step.modifiers, job.extras, workflow_extras)) else ''}"
+                    f"{launcher(product)} {group.replace('.', ' ')} {name}")
             body = {**step.modifiers,
                     "run": line + _parameters(manifest, group, name, step.params,
                                               where=f"{where}, step {index + 1}",
@@ -1689,6 +1698,31 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         else:
             lines += _dumped_step(step.verbatim or {}, "      ")
     return lines
+
+
+def _shell(*levels: Mapping[str, object]) -> object:
+    """The shell a step runs in as far as the workflow declares it, by GitHub's precedence: the step's
+    `shell:`, then its job's `defaults: run: shell:`, then the workflow's. None when nobody declared one."""
+    step, *defaults = levels
+    if step.get("shell") is not None:
+        return step["shell"]
+    for extras in defaults:
+        declared = extras.get("defaults")
+        run = declared.get("run") if isinstance(declared, Mapping) else None
+        if isinstance(run, Mapping) and run.get("shell") is not None:
+            return run["shell"]
+    return None
+
+
+def _execs(shell: object) -> bool:
+    """Whether a launcher line in this shell may be `exec`ed (si#666): in bash or sh, `exec` is the builtin
+    that replaces the shell. None is GitHub's default, which is bash on the Linux and macOS runners every
+    generated workflow measured runs on. pwsh, cmd, python or an expression unread at generation time keep
+    the plain line: a step that runs as before, not one that fails on the runner."""
+    if shell is None:
+        return True
+    words = str(shell).split()
+    return bool(words) and words[0] in ("bash", "sh")
 
 
 def _key_and_value(key: str, value: object, indent: str) -> list[str]:
