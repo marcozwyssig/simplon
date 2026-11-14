@@ -27,9 +27,9 @@ template Catalogue {
       for c : g.command {
         |    ${c.name.replace("_", "-")}:
         |      task: "${c.task.key}"
-        if c.param {
+        if c.params {
           |      params:
-          for p : c.param {
+          for p : c.params {
             |        ${@param(p)}
           }
         }
@@ -78,9 +78,9 @@ template Catalogue {
       if t.passthrough_args {
         |    passthrough_args: true
       }
-      if t.param {
+      if t.params {
         |    params:
-        for p : t.param {
+        for p : t.params {
           |      ${@param(p)}
         }
       }

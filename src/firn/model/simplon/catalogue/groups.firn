@@ -30,14 +30,15 @@
 //
 // This block also PLACES the general commands, which is what makes "the same groups holding the same
 // general tasks" true rather than a convention every product has to keep by hand. It places only what
-// needs no product data: the four git verbs and the two task verbs. `support:nexus` reads a `nexus:`
+// needs no product data: the git verbs, the task verbs and the commands under `support` below. `support:nexus` reads a `nexus:`
 // section, `support:environments` an `environments:` one, and
 // `test:gate`/`test:accept` need a running lab - placed here, each would be a command that dies on its
 // first line in a product that has none of that. They stay tasks, and a product declares a command for
 // one the day it has the data.
 //
 // PLACEMENT OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
-// one it answers is decided by whether it is one of the six GROUP NAMES declared above.
+// one it answers is decided by whether it is one of the GROUP NAMES declared below (the groups the areas hold,
+// and `support`).
 //
 //   `build:image`, `test:gate`, `release:tag`, `support:install` name a group, and so they name a
 //   PLACEMENT: a product may only place them under that group. `treeform.check_coordinate_placement`
@@ -49,9 +50,9 @@
 //   another product; `vcs:commit` belongs to no single phase at all, which is why the "every coordinate
 //   is a phase" alternative was rejected rather than adopted.
 //
-// GROUPS, not phases, and the distinction is the owner's: five of the six above are the phases of the
-// delivery loop, and `support` is the group that supports those five rather than a sixth of them. The
-// rule is stated over all six because `support:install` would otherwise be the one placed coordinate
+// GROUPS, not phases, and the distinction is the owner's: the groups marked `phase = true` below are the
+// phases of the delivery loop, and `support` is the group that supports them rather than one more of them.
+// The rule is stated over every group because `support:install` would otherwise be the one placed coordinate
 // nothing governed - not because `support` has been promoted.
 //
 // So CHOOSING A NAMESPACE for a new task is choosing between those two, and it is not a matter of taste:
@@ -157,7 +158,7 @@ support typeOf simplon.pipeline.CatalogueGroup {
       task = simplon.catalogue.vcs_commit
       // `argument: true` is what keeps `message` a variadic POSITIONAL - without it Typer would
       // render a single `--message TEXT`.
-      param p_message typeOf simplon.pipeline.TaskParam {
+      params p_message typeOf simplon.pipeline.TaskParam {
         key = "message"
         help = "commit message"
         argument = true
@@ -168,16 +169,16 @@ support typeOf simplon.pipeline.CatalogueGroup {
     }
     command prune_branches typeOf simplon.pipeline.CatalogueCommand {
       task = simplon.catalogue.vcs_prune_branches
-      param p_dry_run typeOf simplon.pipeline.TaskParam {
+      params p_dry_run typeOf simplon.pipeline.TaskParam {
         key = "dry_run"
         help = "preview only"
         short = "-n"
       }
-      param p_remote typeOf simplon.pipeline.TaskParam {
+      params p_remote typeOf simplon.pipeline.TaskParam {
         key = "remote"
         help = "also delete merged branches on origin"
       }
-      param p_unmerged typeOf simplon.pipeline.TaskParam {
+      params p_unmerged typeOf simplon.pipeline.TaskParam {
         key = "unmerged"
         help = "ALSO delete branches that cannot be proven merged (destructive)"
       }
@@ -192,7 +193,7 @@ support typeOf simplon.pipeline.CatalogueGroup {
     }
   }
   // tasks: the task machinery itself, NESTED under support for the same reason `git` is - it is host
-  // tooling for whoever develops the product, not a stage of the CI/CD loop the other six groups
+  // tooling for whoever develops the product, not a stage of the CI/CD loop the phase groups
   // describe. A top-level `tasks` also claimed a very generic token beside `build`/`test`/`deploy`.
   //
   // The TASK COORDINATES are untouched: `tasks:catalogue` and `tasks:generate` keep their namespace,
@@ -207,7 +208,7 @@ support typeOf simplon.pipeline.CatalogueGroup {
     }
     command generate typeOf simplon.pipeline.CatalogueCommand {
       task = simplon.catalogue.tasks_generate
-      param p_check typeOf simplon.pipeline.TaskParam {
+      params p_check typeOf simplon.pipeline.TaskParam {
         key = "check"
         help = "report drift and write nothing"
       }

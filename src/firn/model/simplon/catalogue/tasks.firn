@@ -25,8 +25,8 @@
 //
 // The population was MEASURED rather than judged: every catalogue body was walked transitively for a
 // construct that asks a person - input(), getpass, a typer/click prompt - and exactly one reaches any.
-// Forty-one of forty-two are `true`, which is the number that makes the flag worth having: a derivation
-// that had to be told about every command would not be a derivation.
+// All but that one are `true` (which one is `unattended = false` below), and that is what makes the flag
+// worth having: a derivation that had to be told about every command would not be a derivation.
 //
 // Leaving the key out is a THIRD state and means nobody has said. It is not read as false - a derivation
 // that silently dropped an undeclared command would produce a pipeline missing a gate, green for the
@@ -106,7 +106,7 @@ support_ci_disk_hygiene typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.cidisk:hygiene"
   help = "Cap docker logs, bound the build cache and install a daily prune on THIS host (needs root)."
   unattended = true
-  param p_dry_run typeOf simplon.pipeline.TaskParam {
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
     key = "dry_run"
     help = "Show what would change on this host and write nothing."
     short = "-n"
@@ -122,7 +122,7 @@ support_ci_arm64 typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.ciarm64:arm64"
   help = "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root)."
   unattended = true
-  param p_dry_run typeOf simplon.pipeline.TaskParam {
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
     key = "dry_run"
     help = "Show which recipe this host takes and what would run, and change nothing."
     short = "-n"
@@ -164,7 +164,7 @@ support_docker_preflight typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.dockerpreflight:preflight"
   help = "Check that docker answers on this host's active context, and say what an editor needs to find it."
   unattended = true
-  param p_editor typeOf simplon.pipeline.TaskParam {
+  params p_editor typeOf simplon.pipeline.TaskParam {
     key = "editor"
     help = "`devcontainer` also checks that VS Code's Dev Containers extension will find docker."
     metavar = "EDITOR"
@@ -205,7 +205,7 @@ test_gate typeOf simplon.pipeline.CatalogueTask {
   help = "Run a declared pytest suite against the running lab."
   unattended = true
   passthrough_args = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the declared suite level to run (normally pinned per command with `with:`)"
   }
@@ -220,15 +220,15 @@ test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.typecheck:check"
   help = "Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab)."
   unattended = true
-  param p_config typeOf simplon.pipeline.TaskParam {
+  params p_config typeOf simplon.pipeline.TaskParam {
     key = "config"
     help = "path to the mypy configuration, relative to `workdir` (default mypy.ini)"
   }
-  param p_workdir typeOf simplon.pipeline.TaskParam {
+  params p_workdir typeOf simplon.pipeline.TaskParam {
     key = "workdir"
     help = "directory mypy runs in, relative to the product root (default: the root)"
   }
-  param p_python typeOf simplon.pipeline.TaskParam {
+  params p_python typeOf simplon.pipeline.TaskParam {
     key = "python"
     help = "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)"
   }
@@ -306,11 +306,11 @@ test_manifest_model typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.manifestcheck:check"
   help = "Validate this product's manifest, exported fresh as a firn model, against the M2 simplon ships."
   unattended = true
-  param p_image typeOf simplon.pipeline.TaskParam {
+  params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
     help = "the pinned firn image"
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network firn runs on (default 'none')"
   }
@@ -320,19 +320,19 @@ test_walk typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.walk:walk"
   help = "Walk the product's acceptance scenarios with a person answering each step."
   unattended = false
-  param p_source typeOf simplon.pipeline.TaskParam {
+  params p_source typeOf simplon.pipeline.TaskParam {
     key = "source"
     help = "directory holding the .feature files, relative to the product root (default tests/acceptance)"
   }
-  param p_tags typeOf simplon.pipeline.TaskParam {
+  params p_tags typeOf simplon.pipeline.TaskParam {
     key = "tags"
     help = "walk only the scenarios carrying one of these tags (comma- or space-separated; default all)"
   }
-  param p_by typeOf simplon.pipeline.TaskParam {
+  params p_by typeOf simplon.pipeline.TaskParam {
     key = "by"
     help = "who is walking it, for the record (default: the checkout's own git identity)"
   }
-  param p_restart typeOf simplon.pipeline.TaskParam {
+  params p_restart typeOf simplon.pipeline.TaskParam {
     key = "restart"
     help = "discard an interrupted walk's recorded answers and ask every step again"
   }
@@ -348,19 +348,19 @@ test_model typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.firngen:validate"
   help = "Validate this product's firn model; firn's exit code passes through, named."
   unattended = true
-  param p_image typeOf simplon.pipeline.TaskParam {
+  params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
     help = "the pinned firn image"
   }
-  param p_cwd typeOf simplon.pipeline.TaskParam {
+  params p_cwd typeOf simplon.pipeline.TaskParam {
     key = "cwd"
     help = "the directory under the root where firn.toml is (a plain relative path)"
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network firn runs on ('none' for no networking)"
   }
-  param p_binary typeOf simplon.pipeline.TaskParam {
+  params p_binary typeOf simplon.pipeline.TaskParam {
     key = "binary"
     help = "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)"
   }
@@ -371,15 +371,15 @@ test_model_format typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.firngen:format_check"
   help = "Check that this product's firn model is formatted as `firn fmt` would write it."
   unattended = true
-  param p_image typeOf simplon.pipeline.TaskParam {
+  params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
     help = "the pinned firn image"
   }
-  param p_cwd typeOf simplon.pipeline.TaskParam {
+  params p_cwd typeOf simplon.pipeline.TaskParam {
     key = "cwd"
     help = "the directory under the root where firn.toml is (a plain relative path)"
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network firn runs on ('none' for no networking)"
   }
@@ -403,7 +403,7 @@ support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.claudeplugins:install_cmd"
   help = "Install the Claude Code plugins of the `claude` toolchain: simplon's default plus the manifest's `claude:` additions; idempotent."
   unattended = true
-  param p_dry_run typeOf simplon.pipeline.TaskParam {
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
     key = "dry_run"
     help = "List what is missing, and where each plugin comes from, and install nothing."
     short = "-n"
@@ -414,7 +414,7 @@ support_claude_md typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.claudemd:claude_md_cmd"
   help = "Write CLAUDE.md (simplon's central working agreements, then the product's own region) and .claude/settings.json's enabledPlugins for the `claude` toolchain; --check reports drift and writes nothing."
   unattended = true
-  param p_check typeOf simplon.pipeline.TaskParam {
+  params p_check typeOf simplon.pipeline.TaskParam {
     key = "check"
     help = "report drift and write nothing"
   }
@@ -454,7 +454,7 @@ support_completion typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.completion:generate"
   help = "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing)."
   unattended = true
-  param p_check typeOf simplon.pipeline.TaskParam {
+  params p_check typeOf simplon.pipeline.TaskParam {
     key = "check"
     help = "report drift and write nothing"
   }
@@ -464,7 +464,7 @@ support_workflows typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.workflows:generate"
   help = "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing)."
   unattended = true
-  param p_check typeOf simplon.pipeline.TaskParam {
+  params p_check typeOf simplon.pipeline.TaskParam {
     key = "check"
     help = "report drift and write nothing"
   }
@@ -513,11 +513,11 @@ docs_reference typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.cliref:reference"
   help = "Write the product's command reference as Markdown, read off its BUILT command line."
   unattended = true
-  param p_output typeOf simplon.pipeline.TaskParam {
+  params p_output typeOf simplon.pipeline.TaskParam {
     key = "output"
     help = "where the Markdown page goes, relative to the product root"
   }
-  param p_title typeOf simplon.pipeline.TaskParam {
+  params p_title typeOf simplon.pipeline.TaskParam {
     key = "title"
     help = "the page title in the front matter (default: '<product> command reference')"
   }
@@ -543,15 +543,15 @@ docs_acceptance typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.acceptance:document"
   help = "Write the product's acceptance document as Markdown, read off its own .feature files."
   unattended = true
-  param p_output typeOf simplon.pipeline.TaskParam {
+  params p_output typeOf simplon.pipeline.TaskParam {
     key = "output"
     help = "where the Markdown page goes, relative to the product root"
   }
-  param p_source typeOf simplon.pipeline.TaskParam {
+  params p_source typeOf simplon.pipeline.TaskParam {
     key = "source"
     help = "the directory holding the .feature files (default: tests/acceptance)"
   }
-  param p_title typeOf simplon.pipeline.TaskParam {
+  params p_title typeOf simplon.pipeline.TaskParam {
     key = "title"
     help = "the page title in the front matter (default: '<product> acceptance scenarios')"
   }
@@ -564,7 +564,7 @@ docs_acceptance typeOf simplon.pipeline.CatalogueTask {
 // line in a product that ships no image. A product declares the command the day it has a Dockerfile,
 // and pins WHICH image with `with: { name: ... }`.
 //
-// `build:image` and `release:image` are TWO tasks along the five verbs, not one with a flag: build
+// `build:image` and `release:image` are TWO tasks along the phase verbs, not one with a flag: build
 // produces, release publishes, and a product that builds an image only to run a smoke test against it
 // must not be one typo away from pushing it.
 // The THIRD verb over one image (si#301), and the one that was missing: build produces, release
@@ -578,47 +578,47 @@ test_image typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.image:smoke"
   help = "Run the product's container image and check that it answers."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the image to run (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to run, when it is not the one the build derives"
   }
-  param p_argv typeOf simplon.pipeline.TaskParam {
+  params p_argv typeOf simplon.pipeline.TaskParam {
     key = "argv"
     help = "what to run in the container, as one string"
   }
-  param p_mount typeOf simplon.pipeline.TaskParam {
+  params p_mount typeOf simplon.pipeline.TaskParam {
     key = "mount"
     help = "'<directory under the product>:<absolute path in the container>' to bind"
   }
-  param p_expect typeOf simplon.pipeline.TaskParam {
+  params p_expect typeOf simplon.pipeline.TaskParam {
     key = "expect"
     help = "text the output must contain for the run to count as green; `{tag}` is replaced with the tag"
   }
-  param p_rc typeOf simplon.pipeline.TaskParam {
+  params p_rc typeOf simplon.pipeline.TaskParam {
     key = "rc"
     help = "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red"
   }
-  param p_user typeOf simplon.pipeline.TaskParam {
+  params p_user typeOf simplon.pipeline.TaskParam {
     key = "user"
     help = "run as the invoking uid:gid (default true), so bind-mounted output is owned"
   }
-  param p_platform typeOf simplon.pipeline.TaskParam {
+  params p_platform typeOf simplon.pipeline.TaskParam {
     key = "platform"
     help = "one of the image's declared `platforms:` to run; default every declared one"
   }
-  param p_results typeOf simplon.pipeline.TaskParam {
+  params p_results typeOf simplon.pipeline.TaskParam {
     key = "results"
     help = "the test result to write the verdict record to (normally bound with `produces:`)"
   }
-  param p_timeout typeOf simplon.pipeline.TaskParam {
+  params p_timeout typeOf simplon.pipeline.TaskParam {
     key = "timeout"
     help = "seconds each run may take (default 300); a run past it is red and its container removed"
   }
-  param p_env typeOf simplon.pipeline.TaskParam {
+  params p_env typeOf simplon.pipeline.TaskParam {
     key = "env"
     help = "the container's environment, a mapping of names to values; a name with no value (`NAME: ~`) is forwarded from the caller"
   }
@@ -642,15 +642,15 @@ build_image typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.image:build"
   help = "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the image to build (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to build under, for a version only known after a build"
   }
-  param p_platform typeOf simplon.pipeline.TaskParam {
+  params p_platform typeOf simplon.pipeline.TaskParam {
     key = "platform"
     help = "one of the image's declared `platforms:` to build; default every declared one"
   }
@@ -678,19 +678,19 @@ build_image_file typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.imagefile:extract"
   help = "Copy one file out of an image, for the platform its file entry names."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the image to copy from (normally bound with `consumes:`)"
   }
-  param p_file typeOf simplon.pipeline.TaskParam {
+  params p_file typeOf simplon.pipeline.TaskParam {
     key = "file"
     help = "the file artifact to write, whose `platform:` names the platform (normally bound with `produces:`)"
   }
-  param p_inside typeOf simplon.pipeline.TaskParam {
+  params p_inside typeOf simplon.pipeline.TaskParam {
     key = "inside"
     help = "the absolute path of the file inside the image; a symlink is followed"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "copy from the PUBLISHED image under this tag, pulled by the file's platform digest; without it, from this checkout's build"
   }
@@ -718,35 +718,35 @@ test_file typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.imagefile:check"
   help = "Run a bare file in a pinned libc-free container, for the platform its file entry names."
   unattended = true
-  param p_file typeOf simplon.pipeline.TaskParam {
+  params p_file typeOf simplon.pipeline.TaskParam {
     key = "file"
     help = "the file artifact to run, whose `platform:` names the platform (normally bound with `consumes:`)"
   }
-  param p_argv typeOf simplon.pipeline.TaskParam {
+  params p_argv typeOf simplon.pipeline.TaskParam {
     key = "argv"
     help = "the arguments to run it with, as one string"
   }
-  param p_expect typeOf simplon.pipeline.TaskParam {
+  params p_expect typeOf simplon.pipeline.TaskParam {
     key = "expect"
     help = "text the output must contain for the run to count as green; `{tag}` is replaced with the tag"
   }
-  param p_rc typeOf simplon.pipeline.TaskParam {
+  params p_rc typeOf simplon.pipeline.TaskParam {
     key = "rc"
     help = "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag `{tag}` stands for, when it is not the version the checkout derives"
   }
-  param p_stdin typeOf simplon.pipeline.TaskParam {
+  params p_stdin typeOf simplon.pipeline.TaskParam {
     key = "stdin"
     help = "a file under the product fed to the run's standard input"
   }
-  param p_timeout typeOf simplon.pipeline.TaskParam {
+  params p_timeout typeOf simplon.pipeline.TaskParam {
     key = "timeout"
     help = "seconds the run may take (required); a run past it is red and its container removed"
   }
-  param p_results typeOf simplon.pipeline.TaskParam {
+  params p_results typeOf simplon.pipeline.TaskParam {
     key = "results"
     help = "the test result to write the verdict record to (normally bound with `produces:`)"
   }
@@ -805,7 +805,7 @@ build_nuget_config typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.nuget:config"
   help = "Write the product's nuget.config naming the GitHub feed (no credential in it)."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact whose registry the config names (normally pinned with `with:`)"
   }
@@ -823,7 +823,7 @@ build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.nuget:restore"
   help = "Restore the declared project inside the SDK image, with the credential the feed needs."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact whose project and feed to restore (normally pinned with `with:`)"
   }
@@ -842,11 +842,11 @@ build_conan_cache typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.conan:fetch"
   help = "Fetch a published Conan cache archive so a build can restore it."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to fetch (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the exact tag to fetch - there is no resolution, so it is named in full"
   }
@@ -870,7 +870,7 @@ build_fetch typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.fetchfile:fetch"
   help = "Download a declared file and check its sha256, unless the file is already there with that checksum."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the file to fetch, a `kind: file` entry (normally pinned per command with `with:`)"
   }
@@ -891,19 +891,19 @@ build_model typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.firngen:generate"
   help = "Generate from this product's firn model, refusing a protected region firn kept or orphaned."
   unattended = true
-  param p_image typeOf simplon.pipeline.TaskParam {
+  params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
     help = "the pinned firn image"
   }
-  param p_cwd typeOf simplon.pipeline.TaskParam {
+  params p_cwd typeOf simplon.pipeline.TaskParam {
     key = "cwd"
     help = "the directory under the root where firn.toml is (a plain relative path)"
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network firn runs on ('none' for no networking)"
   }
-  param p_binary typeOf simplon.pipeline.TaskParam {
+  params p_binary typeOf simplon.pipeline.TaskParam {
     key = "binary"
     help = "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)"
   }
@@ -919,19 +919,19 @@ build_model_binary typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.firngen:model_binary"
   help = "Build this product's own firn (its Java functions included) in firn-builder, and run it once."
   unattended = true
-  param p_image typeOf simplon.pipeline.TaskParam {
+  params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
     help = "the pinned firn-builder image"
   }
-  param p_cwd typeOf simplon.pipeline.TaskParam {
+  params p_cwd typeOf simplon.pipeline.TaskParam {
     key = "cwd"
     help = "the directory under the root where the firn project and its build.gradle.kts are"
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network the build runs on (default 'none': gradle runs --offline)"
   }
-  param p_bootstrap typeOf simplon.pipeline.TaskParam {
+  params p_bootstrap typeOf simplon.pipeline.TaskParam {
     key = "bootstrap"
     help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false (the default) for every other build"
   }
@@ -943,7 +943,7 @@ build_model_binary typeOf simplon.pipeline.CatalogueTask {
 // that publishes nothing. A product declares the command the day it has something to publish, and pins
 // WHICH artefact with `with: { name: ... }`.
 // THE DEPLOY FAMILY (si#235). The one group the catalogue contributed nothing to until now, and what
-// these two add is the half none of the 32 product deploy commands does: say WHICH version is going
+// these two add is the half none of the products' own deploy commands did when si#235 counted them: say WHICH version is going
 // out, prove it exists, and only then hand it on. What they do NOT do is replace a product's rollout -
 // a server's `deploy` goes through the backend the product registered, which is `simplon.adapters.backend`'s
 // extension axis and names no product here.
@@ -963,7 +963,7 @@ deploy_carrier typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.carrier:up"
   help = "Make the carrier this environment stands on: the machine, then the Portainer on it."
   unattended = true
-  param p_environment typeOf simplon.pipeline.TaskParam {
+  params p_environment typeOf simplon.pipeline.TaskParam {
     key = "environment"
     help = "the environment whose carrier to make (default: the active one)"
   }
@@ -976,7 +976,7 @@ deploy_up typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.deploy:up"
   help = "Deploy a version - a published one, `latest`, or `local` for the current code base."
   unattended = true
-  param p_version typeOf simplon.pipeline.TaskParam {
+  params p_version typeOf simplon.pipeline.TaskParam {
     key = "version"
     help = "the version to deploy: a published tag, `latest`, or `local`"
   }
@@ -989,7 +989,7 @@ deploy_down typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.deploy:down"
   help = "Remove a deployment - a client's installed version, or a server's environment."
   unattended = true
-  param p_version typeOf simplon.pipeline.TaskParam {
+  params p_version typeOf simplon.pipeline.TaskParam {
     key = "version"
     help = "which installed version to remove (a client install; a server takes none)"
   }
@@ -1001,11 +1001,11 @@ release_artifact typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to publish (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to publish under, for a version only known after a build"
   }
@@ -1037,11 +1037,11 @@ release_asset typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the asset to publish (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the release to attach to, for a version only known after a build"
   }
@@ -1064,11 +1064,11 @@ build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.nuget:pack"
   help = "Pack the declared project into the artifact's path, as the version the tag names."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to pack (normally bound with `produces:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the package version, for one only known after a build"
   }
@@ -1087,11 +1087,11 @@ release_nuget typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to push (normally bound with `consumes:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the package version to push, for one only known after a build"
   }
@@ -1122,11 +1122,11 @@ release_conan typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to publish (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to publish under, for a version only known after a build"
   }
@@ -1145,10 +1145,10 @@ release_conan typeOf simplon.pipeline.CatalogueTask {
 // The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
 // the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
 // nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
-// si#329, and the third publish coordinate. DECLARED, NOT PLACED, for `support:ci-privileges`' reason
+// si#329, a publish coordinate for Java. DECLARED, NOT PLACED, for `support:ci-privileges`' reason
 // one namespace along: a product without a jar would get a command that refuses on its first line. The
-// gap it closes was measured - `tasks/profiles.py` builds FOUR languages (cpp, java, dotnet, python) and
-// this catalogue published TWO of them, while a Gradle image has been pinned since si#316.
+// gap it closes was measured - `tasks/profiles.py` built a Java toolchain and this catalogue published
+// nothing for it, while a Gradle image has been pinned since si#316.
 //
 // IT FOLLOWS `release:nuget`'S SHAPE AND NOT `release:conan`'S, and that was argued rather than copied.
 // conan's head refuses "the kernel learning a language toolchain" - but its reason is written two entries
@@ -1173,11 +1173,11 @@ build_maven_pack typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.maven:pack"
   help = "Stage the declared Gradle modules into the artifact's path as a Maven file repository."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to stage (normally bound with `produces:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the version to stage, for one only known after a build"
   }
@@ -1197,11 +1197,11 @@ release_maven typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the artifact to upload (normally bound with `consumes:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the version to upload, for one only known after a build"
   }
@@ -1228,35 +1228,35 @@ build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.homebrewformula:build"
   help = "Render a Homebrew formula for the wheel, with its install closure as resources, into the artifact's path."
   unattended = true
-  param p_wheel typeOf simplon.pipeline.TaskParam {
+  params p_wheel typeOf simplon.pipeline.TaskParam {
     key = "wheel"
     help = "the directory artifact holding exactly one .whl (normally bound with `consumes:`)"
   }
-  param p_formula typeOf simplon.pipeline.TaskParam {
+  params p_formula typeOf simplon.pipeline.TaskParam {
     key = "formula"
     help = "the homebrew-formula artifact to write (normally bound with `produces:`)"
   }
-  param p_shape typeOf simplon.pipeline.TaskParam {
+  params p_shape typeOf simplon.pipeline.TaskParam {
     key = "shape"
     help = "the formula's shape: python (binary is built with firn's part F, si#449)"
   }
-  param p_source typeOf simplon.pipeline.TaskParam {
+  params p_source typeOf simplon.pipeline.TaskParam {
     key = "source"
     help = "where the wheel's url and sha256 come from: pypi on a real run, local on a dry run"
   }
-  param p_depends_on typeOf simplon.pipeline.TaskParam {
+  params p_depends_on typeOf simplon.pipeline.TaskParam {
     key = "depends_on"
     help = "the brew formulae the product needs besides python, as a list"
   }
-  param p_python typeOf simplon.pipeline.TaskParam {
+  params p_python typeOf simplon.pipeline.TaskParam {
     key = "python"
     help = "the python formula the venv is created with (e.g. python@3.14)"
   }
-  param p_env typeOf simplon.pipeline.TaskParam {
+  params p_env typeOf simplon.pipeline.TaskParam {
     key = "env"
     help = "extra install environment, a mapping written as ENV lines"
   }
-  param p_test typeOf simplon.pipeline.TaskParam {
+  params p_test typeOf simplon.pipeline.TaskParam {
     key = "test"
     help = "the formula's test: {args: [...], expect: <text the output contains>}"
   }
@@ -1280,19 +1280,19 @@ test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.homebrewtap:check"
   help = "Audit the Homebrew formula in the pinned brew image, check its sha256s, and record the verdict."
   unattended = true
-  param p_formula typeOf simplon.pipeline.TaskParam {
+  params p_formula typeOf simplon.pipeline.TaskParam {
     key = "formula"
     help = "the homebrew-formula artifact to check (normally bound with `consumes:`)"
   }
-  param p_wheel typeOf simplon.pipeline.TaskParam {
+  params p_wheel typeOf simplon.pipeline.TaskParam {
     key = "wheel"
     help = "the directory artifact holding the wheel the formula was rendered from (normally bound with `consumes:`)"
   }
-  param p_results typeOf simplon.pipeline.TaskParam {
+  params p_results typeOf simplon.pipeline.TaskParam {
     key = "results"
     help = "the test result to write the verdict record to (normally bound with `produces:`)"
   }
-  param p_online typeOf simplon.pipeline.TaskParam {
+  params p_online typeOf simplon.pipeline.TaskParam {
     key = "online"
     help = "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run"
   }
@@ -1324,15 +1324,15 @@ release_homebrew_tap typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "app"
-  param p_formula typeOf simplon.pipeline.TaskParam {
+  params p_formula typeOf simplon.pipeline.TaskParam {
     key = "formula"
     help = "the homebrew-formula artifact to commit (normally bound with `consumes:`)"
   }
-  param p_repository typeOf simplon.pipeline.TaskParam {
+  params p_repository typeOf simplon.pipeline.TaskParam {
     key = "repository"
     help = "the tap repository, as <owner>/<repo> (normally pinned per command with `with:`)"
   }
-  param p_branch typeOf simplon.pipeline.TaskParam {
+  params p_branch typeOf simplon.pipeline.TaskParam {
     key = "branch"
     help = "the tap's branch to commit to (default main)"
   }
@@ -1352,11 +1352,11 @@ release_image typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the image to publish (normally pinned per command with `with:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to publish under, for a version only known after a build"
   }
@@ -1381,11 +1381,11 @@ release_notes typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.releasenotes:write"
   help = "Write the release notes for a tag from the merges and tickets since the previous one."
   unattended = true
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the release-notes artifact to write (normally bound with `produces:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag being released, exactly as it will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1414,7 +1414,7 @@ release_check typeOf simplon.pipeline.CatalogueTask {
   help = "Refuse a dispatch release before anything is cut: the vX.Y.Z spelling, started from the default branch, origin fetched and carrying HEAD, no other version tag at HEAD, the tag free or at this commit on origin."
   unattended = true
   token = "github"
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the version exactly as its tag will be (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1439,7 +1439,7 @@ release_tag typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag to cut, exactly as it will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1469,7 +1469,7 @@ release_github_unpublished typeOf simplon.pipeline.CatalogueTask {
   help = "Answer whether a tag's GitHub Release is still unpublished (a draft or none); red when it is published or GitHub does not answer."
   unattended = true
   token = "github"
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1482,11 +1482,11 @@ release_github_draft typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_name typeOf simplon.pipeline.TaskParam {
+  params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
     help = "the release-notes artifact whose text is the body (normally bound with `consumes:`)"
   }
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1504,7 +1504,7 @@ release_github_attach typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1529,7 +1529,7 @@ release_github_publish typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   publishes = true
   token = "github"
-  param p_tag typeOf simplon.pipeline.TaskParam {
+  params p_tag typeOf simplon.pipeline.TaskParam {
     key = "tag"
     help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
     metavar = "TAG"
@@ -1562,7 +1562,7 @@ support_migrate typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.migrate:migrate"
   help = "Rewrite this product's manifest into the current form (si#344): `groups:` into `ci:` / `cd:` / `support:`, `images:` into `artifacts:`, and `with: name` into `produces:` / `consumes:`."
   unattended = true
-  param p_manifest typeOf simplon.pipeline.TaskParam {
+  params p_manifest typeOf simplon.pipeline.TaskParam {
     key = "manifest"
     help = "the manifest to rewrite (default: this product's own)"
     argument = true
@@ -1573,7 +1573,7 @@ support_model typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.manifestmodel:model"
   help = "Write this product's validated manifest as a firn model (si#346)."
   unattended = true
-  param p_output typeOf simplon.pipeline.TaskParam {
+  params p_output typeOf simplon.pipeline.TaskParam {
     key = "output"
     help = "the .firn file to write (default: <output>/model/<product>.firn)"
     argument = true
@@ -1593,7 +1593,7 @@ support_toolchain typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.toolchain:scaffold"
   help = "Write a ready-made toolchain configuration for a language into this product's manifest."
   unattended = true
-  param p_language typeOf simplon.pipeline.TaskParam {
+  params p_language typeOf simplon.pipeline.TaskParam {
     key = "language"
     help = "java | cpp | dotnet | python | firn | firn-binary | claude | gh | brew"
     argument = true
@@ -1603,7 +1603,7 @@ support_toolchain typeOf simplon.pipeline.CatalogueTask {
   // parameter, so the value was accepted at load and silently discarded. A product either types it
   // (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
   // because the parameter exists.
-  param p_version typeOf simplon.pipeline.TaskParam {
+  params p_version typeOf simplon.pipeline.TaskParam {
     key = "version"
     help = "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude, gh and brew take none"
     argument = true
@@ -1627,24 +1627,24 @@ toolchain_run typeOf simplon.pipeline.CatalogueTask {
   // acceptance container with no network named got the default bridge, the service name resolved
   // through the host's upstream resolver to an address that answered 404, and the scenario reported a
   // defect in a product it never touched.
-  param p_extra typeOf simplon.pipeline.TaskParam {
+  params p_extra typeOf simplon.pipeline.TaskParam {
     key = "extra"
     help = "appended to the manifest's argv, verbatim"
     argument = true
   }
-  param p_network typeOf simplon.pipeline.TaskParam {
+  params p_network typeOf simplon.pipeline.TaskParam {
     key = "network"
     help = "the docker network the container joins ('none' for no networking); pin it with `with:` on a command whose verdict depends on what it can or cannot reach"
   }
   // si#371: firn reads `firn.toml` from the directory it starts in and has no project option, so a firn
   // project below the root needs the container to start there while the whole tree stays mounted.
-  param p_cwd typeOf simplon.pipeline.TaskParam {
+  params p_cwd typeOf simplon.pipeline.TaskParam {
     key = "cwd"
     help = "the directory under the mount the command starts in (a plain relative path); absent means the mount itself"
   }
   // si#511: npm, pip and their kind fetch per platform, so a tree-local directory over the container's
   // copy is how a gate installs for the platform it runs on. Each point is created as the caller first.
-  param p_mounts typeOf simplon.pipeline.TaskParam {
+  params p_mounts typeOf simplon.pipeline.TaskParam {
     key = "mounts"
     help = "bind mounts `<path under the tree>:<absolute container path>[:ro]`; each path is created as the calling user before the run"
   }

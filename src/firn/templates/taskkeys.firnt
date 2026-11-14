@@ -1,0 +1,23 @@
+template TaskKeys {
+
+  // The loader's two lists of a task's keys (si#561, the ticket's item 3), generated WHOLE from the properties
+  // of simplon.pipeline.CatalogueTask and Task, in their declared order. They were a third hand list of what
+  // the M2 and the catalogue already say. treeform.py imports them and keeps the why beside its use.
+  //
+  // INHERITED: every attribute CatalogueTask declares, which a command takes from its task where it says
+  // nothing itself. TASK_KEYS: `impl` (a product task names its body so in the manifest; the model's `body`),
+  // then every property CatalogueTask declares (`params` the composition among them), then Task's
+  // compositions, the ports. `key` is the coordinate, never a key inside a task's mapping.
+  file "manifest/taskkeys.py" language python {
+    |"""GENERATED from simplon.pipeline (src/firn/model/simplon/pipeline/pipeline.firn) by `./simplon.sh build model`.
+    |
+    |The keys a task's mapping may carry, read off the M2's CatalogueTask and Task (si#561). Do not edit:
+    |firn rewrites the whole file, and `test generated` is red over a hand edit. The why is in treeform.py."""
+    |
+    |#: What a command inherits from the task it instantiates, where it does not say otherwise.
+    |INHERITED = (<<for p : `firn.core.Class`[.fullName() == "simplon.pipeline.CatalogueTask"].property:Attribute sep ", ">>"${p.name}"<<end>>)
+    |
+    |#: What a TASK may declare.
+    |TASK_KEYS = ("impl", <<for p : `firn.core.Class`[.fullName() == "simplon.pipeline.CatalogueTask"].property sep ", ">>"${p.name}"<<end>>, <<for p : `firn.core.Class`[.fullName() == "simplon.pipeline.Task"].property:Composition sep ", ">>"${p.name}"<<end>>)
+  }
+}
