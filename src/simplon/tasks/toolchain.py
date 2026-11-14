@@ -51,6 +51,7 @@ from simplon.manifest import context, launcherenv, layout, outputs
 from simplon.adapters import docker, hostpath, labinstance
 from simplon.kernel import log
 from simplon.tasks import profiles
+from simplon.tasks.migrate import _span
 
 
 @dataclass(frozen=True)
@@ -541,9 +542,10 @@ def _report_listed(name: str, added: bool) -> None:
         log.info(f"{name}: already in toolchains")
 
 
-#: The top-level `toolchains:` line, and a block-list item under it.
+#: The top-level `toolchains:` line, and a block-list item of it - indented, or at the key's own column,
+#: which YAML reads as the key's value too (PyYAML's dump style, si#662).
 _TOOLCHAINS = re.compile(r"^toolchains:(?P<rest>.*)$")
-_ITEM = re.compile(r"^(?P<indent> +)- ")
+_ITEM = re.compile(r"^(?P<indent> *)- ")
 
 
 def _toolchains_spliced(text: str, name: str, where: str) -> str:
@@ -586,14 +588,16 @@ def _toolchains_spliced(text: str, name: str, where: str) -> str:
             ending = lines[at][len(lines[at].rstrip("\r\n")):]
             lines[at] = f"toolchains:{flow.group('pre')}{joined}{flow.group('post')}{ending}"
         elif not rest.split("#")[0].strip():
-            last = at
-            while last + 1 < len(lines) and _ITEM.match(lines[last + 1]):
-                last += 1
-            if last == at:
+            # The block's extent is migrate's rule (si#662), so the two line readers agree on where a
+            # key's value ends - an item at the key's own column included.
+            _, end = _span([line.rstrip("\r\n") for line in lines], at, 0)
+            items = [i for i in range(at + 1, end) if _ITEM.match(lines[i])]
+            if not items:
                 log.die(f"{where}: 'toolchains:' has no list under it; write `toolchains: [{name}]`")
                 raise SystemExit(1)
+            last = items[-1]
             item = _ITEM.match(lines[last])
-            assert item is not None   # `last` only ever advanced over lines this pattern matched
+            assert item is not None   # `items` holds only lines this pattern matched
             indent = item.group("indent")
             lines.insert(last + 1, f"{indent}- {name}\n")
         else:

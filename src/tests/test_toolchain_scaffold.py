@@ -377,6 +377,43 @@ def test_a_block_list_is_appended_in_block_style(manifest):
     assert "toolchains:\n  - python\n  - gh\nci:\n" in manifest.read_text()
 
 
+def test_a_block_list_at_the_keys_own_column_is_a_list_and_is_appended(manifest):
+    # arrange: PyYAML's dump style - the items stand at the key's column, which YAML reads as its value
+    # (si#662: the splice said "has no list under it" for a list that was there)
+    manifest.write_text("product: demo\ntoolchains:\n- python\nci:\n  build:\n    commands: {}\n",
+                        encoding="utf-8")
+
+    # act
+    toolchain.scaffold("gh")
+
+    # assert: the new item at the column the list is written at, every other byte as it was
+    assert manifest.read_text() == "product: demo\ntoolchains:\n- python\n- gh\nci:\n  build:\n    commands: {}\n"
+
+
+def test_a_comment_between_items_does_not_end_the_list(manifest):
+    # arrange: migrate's block rule reads past a comment inside the block, so the item goes after the LAST
+    manifest.write_text("product: demo\ntoolchains:\n  - python\n  # agents\n  - claude\nci:\n  build:\n"
+                        "    commands: {}\n", encoding="utf-8")
+
+    # act
+    toolchain.scaffold("gh")
+
+    # assert
+    assert "toolchains:\n  - python\n  # agents\n  - claude\n  - gh\nci:\n" in manifest.read_text()
+
+
+def test_a_toolchains_key_with_no_list_under_it_is_still_refused(manifest, capsys):
+    # arrange: the diagnosis stands where it is true - `toolchains:` with nothing under it is null
+    text = "product: demo\ntoolchains:\nci:\n  build:\n    commands: {}\n"
+    manifest.write_text(text, encoding="utf-8")
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        toolchain.scaffold("gh")
+    assert manifest.read_text() == text
+    assert "'toolchains:' has no list under it" in capsys.readouterr().err
+
+
 def test_a_shape_the_splice_cannot_read_is_refused_and_nothing_is_written(manifest):
     # arrange
     text = "product: demo\ntoolchains: !!python/tuple [python]\nci:\n  build:\n    commands: {}\n"
