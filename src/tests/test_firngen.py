@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from conftest import ROOT, docker_is_usable
+from firnrun import FIRN_IMAGE
 from simplon.tasks import firngen
 
 SRC = Path(__file__).resolve().parents[1]
@@ -261,7 +262,7 @@ RENAMED = [("ghcr.io/marcozwyssig/firn:v0.2.0", 0, "W301"), (None, 4, "W305")]
 @pytest.mark.parametrize("image,firn_says,code", RENAMED, ids=["firn-v0.2.0", "pinned-firn"])
 def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path, image, firn_says, code):
     # arrange: simplon's own project, then one catalogue instance renamed - firn leaves the old class file
-    from firnrun import FIRN, firn_rc
+    from firnrun import firn_rc
     project = tmp_path / "src"
     shutil.copytree(SRC / "firn", project / "firn")
     shutil.copy(SRC / "firn.toml", project / "firn.toml")
@@ -273,17 +274,12 @@ def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path, image, firn_s
     tasks.write_text(tasks.read_text().replace("vcs_push typeOf", "vcs_pushed typeOf", 1))
 
     # act
-    rc, out = firn_rc(tmp_path, "gen", "--format=json", cwd="src", image=image or FIRN.image)
+    rc, out = firn_rc(tmp_path, "gen", "--format=json", cwd="src", image=image or FIRN_IMAGE)
 
     # assert
     assert rc == firn_says
     assert [d["code"] for d in json.loads(out)["diagnostics"]] == [code]
     assert firngen.verdict(rc, out, project) == 4          # build:model: output not current either way (si#568)
-
-
-#: si#594: the first firn release whose JSON report carries `run.templates` is v0.9.0; v0.10.0 also moves the
-#: config warnings into it. Measured on both, and on v0.2.0 and v0.8.0, which carry no count.
-FIRN_WITH_COUNT = "ghcr.io/marcozwyssig/firn:v0.10.0"
 
 
 @needs_docker
@@ -294,7 +290,9 @@ FIRN_WITH_COUNT = "ghcr.io/marcozwyssig/firn:v0.10.0"
 def test_no_template_is_done_and_a_silent_template_is_not_against_the_real_firn(tmp_path, toml, template,
                                                                                  expected):
     """si#594, the cleon-firn report: a project with no template is "nothing to do" (rc 0); one whose template
-    writes nothing for its own model (common.building) stays refused. firn says rc 0 for both."""
+    writes nothing for its own model (common.building) stays refused. firn says rc 0 for both. Needs the
+    pinned firn at v0.9.0 or later, the first whose JSON report carries `run.templates` (v0.10.0 also moves
+    the config warnings into it; measured on both, and on v0.2.0 and v0.8.0, which carry no count)."""
     # arrange: simplon's own model, which needs no template to load
     from firnrun import firn_rc
     shutil.copytree(SRC / "firn" / "model", tmp_path / "model")
@@ -304,7 +302,7 @@ def test_no_template_is_done_and_a_silent_template_is_not_against_the_real_firn(
         (tmp_path / "t" / "nothing.firnt").write_text(template)
 
     # act
-    rc, out = firn_rc(tmp_path, "gen", "--format=json", image=FIRN_WITH_COUNT)
+    rc, out = firn_rc(tmp_path, "gen", "--format=json")
 
     # assert
     assert rc == 0                                         # firn alone calls both fine
@@ -587,7 +585,7 @@ def test_a_client_that_cannot_reach_the_daemon_is_not_named_as_firns_exit(tmp_pa
 
     # act
     with pytest.raises(SystemExit) as died:
-        task(_Ctx(), image=FIRN_WITH_COUNT, cwd="m")
+        task(_Ctx(), image=FIRN_IMAGE, cwd="m")
 
     # assert: the gate's socket diagnosis, and nothing of firn's
     err = capsys.readouterr().err
