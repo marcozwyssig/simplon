@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release check -- "$RELEASE_VERSION"
+        run: exec ./app.sh release check -- "$RELEASE_VERSION"
       - name: Cut the tag in this checkout
         run: |
           there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
@@ -65,26 +65,26 @@ jobs:
           }
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release unpublished --tag "$RELEASE_VERSION"
-      - run: ./app.sh release notes --tag "$RELEASE_VERSION"
+        run: exec ./app.sh release unpublished --tag "$RELEASE_VERSION"
+      - run: exec ./app.sh release notes --tag "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release draft --tag "$RELEASE_VERSION"
-      - run: ./app.sh build build-image
-      - run: ./app.sh test test-image
+        run: exec ./app.sh release draft --tag "$RELEASE_VERSION"
+      - run: exec ./app.sh build build-image
+      - run: exec ./app.sh test test-image
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release publish --tag "$RELEASE_VERSION"
+        run: exec ./app.sh release publish --tag "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release tag -- "$RELEASE_VERSION"
+        run: exec ./app.sh release tag -- "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./app.sh release gh-publish --tag "$RELEASE_VERSION"
+        run: exec ./app.sh release gh-publish --tag "$RELEASE_VERSION"
       - name: What a release would have published (dry run)
         if: ${{ inputs.dry_run }}
         run: |

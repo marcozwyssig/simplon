@@ -65,7 +65,7 @@ def _steps(text: str, job: str = "ship") -> list[dict]:
 
 
 def _token_and_leaf(steps: list[dict], line: str) -> tuple[dict, dict]:
-    at = next(i for i, step in enumerate(steps) if step.get("run", "").startswith(line))
+    at = next(i for i, step in enumerate(steps) if step.get("run", "").startswith(f"exec {line}"))
     return steps[at - 1], steps[at]
 
 

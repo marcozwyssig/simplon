@@ -239,7 +239,7 @@ def test_a_command_step_becomes_the_launcher_line_a_developer_types(manifest):
 
     # Assert
     assert [step["run"] for step in doc["jobs"]["build"]["steps"] if "run" in step] == \
-        ["./sample.sh test all"]
+        ["exec ./sample.sh test all"]
 
 
 def test_a_nested_group_is_addressed_by_its_path(manifest):
@@ -258,7 +258,7 @@ def test_a_nested_group_is_addressed_by_its_path(manifest):
     """))
 
     # Assert
-    assert doc["jobs"]["build"]["steps"][-1]["run"] == "./sample.sh support git stamp"
+    assert doc["jobs"]["build"]["steps"][-1]["run"] == "exec ./sample.sh support git stamp"
 
 
 def test_a_command_the_manifest_does_not_declare_stops_generation(manifest):
@@ -539,7 +539,7 @@ def test_prose_is_carried_at_every_level_it_can_be_declared(manifest):
     assert "  # why this job exists" in text
     assert "      # measured at 16m03s" in text
     # and it is still a workflow afterwards
-    assert yaml.safe_load(text)["jobs"]["build"]["steps"][-1]["run"] == "./sample.sh test all"
+    assert yaml.safe_load(text)["jobs"]["build"]["steps"][-1]["run"] == "exec ./sample.sh test all"
 
 
 def test_a_paragraph_break_inside_a_note_survives_as_one(manifest):
@@ -580,7 +580,7 @@ def test_the_step_a_note_belongs_to_is_the_one_it_sits_above(manifest):
     """)
 
     # Assert
-    assert "# about the second one\n      - run: ./sample.sh support git stamp" in text
+    assert "# about the second one\n      - run: exec ./sample.sh support git stamp" in text
 
 
 # --- a product's OWN workflow, which si#40 calls the actual requirement -------------------------------
@@ -623,7 +623,7 @@ def test_a_product_may_declare_a_workflow_the_kernel_knows_nothing_about(manifes
     assert set(workflowgen.trigger_of(doc)) == {"schedule", "workflow_dispatch"}
     assert workflowgen.trigger_of(doc)["schedule"] == [{"cron": "0 2 * * *"}]
     assert doc["jobs"]["system"]["timeout-minutes"] == 45
-    assert "./sample.sh test all" in [s.get("run") for s in doc["jobs"]["system"]["steps"]]
+    assert "exec ./sample.sh test all" in [s.get("run") for s in doc["jobs"]["system"]["steps"]]
     assert doc["jobs"]["system"]["steps"][-1]["if"] == "always()"
     # and the measured reasoning is still in the file
     assert "16m03s" in text
@@ -893,7 +893,7 @@ def test_a_hand_edited_workflow_makes_check_red_and_shows_the_difference(manifes
     workflows = _parse_minimal()
     workflowgen.write(workflows, tree, manifest=manifest, product="sample", source="sample.yaml")
     target = tree / ".github/workflows/ci.yml"
-    target.write_text(target.read_text(encoding="utf-8").replace("./sample.sh test all", "pytest -q"),
+    target.write_text(target.read_text(encoding="utf-8").replace("exec ./sample.sh test all", "pytest -q"),
                       encoding="utf-8")
 
     # Act
@@ -904,7 +904,7 @@ def test_a_hand_edited_workflow_makes_check_red_and_shows_the_difference(manifes
     assert not report.ok
     assert [d.path for d in report.drifted] == [".github/workflows/ci.yml"]
     assert "-      - run: pytest -q" in report.drifted[0].diff
-    assert "+      - run: ./sample.sh test all" in report.drifted[0].diff
+    assert "+      - run: exec ./sample.sh test all" in report.drifted[0].diff
 
 
 def test_a_workflow_that_was_never_generated_is_drift_and_not_an_error(manifest, tree):
@@ -1133,7 +1133,7 @@ def test_a_command_step_carries_the_modifiers_a_real_workflow_needs(manifest, ke
     # Assert
     step = doc["jobs"]["build"]["steps"][-1]
     assert step[key] == value
-    assert step["run"] == "./sample.sh test all", "the command is still resolved and still the body"
+    assert step["run"] == "exec ./sample.sh test all", "the command is still resolved and still the body"
 
 
 def test_a_named_command_step_puts_the_name_first(manifest):
@@ -1153,7 +1153,7 @@ def test_a_named_command_step_puts_the_name_first(manifest):
     """)
 
     # Assert
-    assert "- name: Run every test\n        run: ./sample.sh test all" in text
+    assert "- name: Run every test\n        run: exec ./sample.sh test all" in text
 
 
 def test_a_command_step_with_no_name_shows_the_command_itself(manifest):
@@ -1161,7 +1161,7 @@ def test_a_command_step_with_no_name_shows_the_command_itself(manifest):
     turns on.
 
     A step with no `name:` is displayed by the Actions UI as its `run:` line, and that line is
-    `./sample.sh test all` - the same string a developer types in a checkout, which is the most useful
+    `exec ./sample.sh test all` - the string a developer types in a checkout (si#666 adds the `exec`), the most useful
     thing that could stand there. Inventing a name would be the kernel putting words in the product's
     mouth for no gain, and a product that wants different words says `name:` and gets exactly those.
     """
@@ -1170,7 +1170,90 @@ def test_a_command_step_with_no_name_shows_the_command_itself(manifest):
 
     # Assert
     assert "name" not in step
-    assert step["run"] == "./sample.sh test all"
+    assert step["run"] == "exec ./sample.sh test all"
+
+
+# --- si#666: the launcher is the step's process, so a cancel reaches the kernel ---------------------------
+
+
+def _launcher_run(manifest, *, workflow_defaults: str = "", job_defaults: str = "", step_shell: str = "") -> str:
+    """The `run:` of the one command step in a workflow whose shell is declared at the given levels."""
+    text = _render(manifest, f"""
+    workflows:
+      ci:
+        on: [push]
+        {workflow_defaults}
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            {job_defaults}
+            steps:
+              - command: test all
+                {step_shell}
+    """)
+    return yaml.safe_load(text)["jobs"]["build"]["steps"][-1]["run"]
+
+
+def test_a_command_step_execs_the_launcher(manifest):
+    """si#666. actions/runner cancels a step by signalling the step shell's pid alone (ProcessInvoker.cs:
+    SIGINT, 7.5 s, SIGTERM, 2.5 s, kill). With a plain `./sample.sh ...` line that pid is bash, which
+    waits out its foreground child on SIGINT and dies alone on SIGTERM, so the kernel and its pytest are
+    orphaned. `exec` makes the launcher - which itself execs the kernel's python - the signalled pid. The
+    generated line is one command and nothing follows it in the same `run:`, so nothing is skipped."""
+    # Arrange / Act
+    run = _launcher_run(manifest)
+
+    # Assert
+    assert run == "exec ./sample.sh test all"
+
+
+@pytest.mark.parametrize("level", ["workflow", "job", "step"])
+@pytest.mark.parametrize("shell", ["bash", "sh", "bash --noprofile --norc -eo pipefail {0}"])
+def test_a_declared_posix_shell_still_execs(manifest, level, shell):
+    """`exec` is a POSIX shell builtin: bash and sh, in any form GitHub accepts, take it."""
+    # Arrange
+    declared = {"workflow": dict(workflow_defaults=f"defaults: {{ run: {{ shell: '{shell}' }} }}"),
+                "job": dict(job_defaults=f"defaults: {{ run: {{ shell: '{shell}' }} }}"),
+                "step": dict(step_shell=f"shell: '{shell}'")}[level]
+
+    # Act
+    run = _launcher_run(manifest, **declared)
+
+    # Assert
+    assert run == "exec ./sample.sh test all"
+
+
+@pytest.mark.parametrize("level", ["workflow", "job", "step"])
+@pytest.mark.parametrize("shell", ["pwsh", "powershell", "cmd", "python", "${{ matrix.shell }}"])
+def test_a_shell_that_may_not_know_exec_gets_the_plain_line(manifest, level, shell):
+    """Under pwsh, cmd or python `exec` is not the builtin it is in bash, and an expression cannot be read
+    at generation time. There the line stays what it was, rather than a step that fails on the runner."""
+    # Arrange
+    declared = {"workflow": dict(workflow_defaults=f"defaults: {{ run: {{ shell: '{shell}' }} }}"),
+                "job": dict(job_defaults=f"defaults: {{ run: {{ shell: '{shell}' }} }}"),
+                "step": dict(step_shell=f"shell: '{shell}'")}[level]
+
+    # Act
+    run = _launcher_run(manifest, **declared)
+
+    # Assert
+    assert run == "./sample.sh test all"
+
+
+def test_the_nearest_declared_shell_decides(manifest):
+    """GitHub's own precedence: a step's `shell:` over the job's `defaults`, the job's over the workflow's."""
+    # Arrange / Act
+    bash_step_in_pwsh_job = _launcher_run(manifest, job_defaults="defaults: { run: { shell: pwsh } }",
+                                          step_shell="shell: bash")
+    bash_job_in_pwsh_workflow = _launcher_run(manifest, workflow_defaults="defaults: { run: { shell: pwsh } }",
+                                              job_defaults="defaults: { run: { shell: bash } }")
+    pwsh_step_in_bash_job = _launcher_run(manifest, job_defaults="defaults: { run: { shell: bash } }",
+                                          step_shell="shell: pwsh")
+
+    # Assert
+    assert bash_step_in_pwsh_job == "exec ./sample.sh test all"
+    assert bash_job_in_pwsh_workflow == "exec ./sample.sh test all"
+    assert pwsh_step_in_bash_job == "./sample.sh test all"
 
 
 def test_a_command_step_may_not_carry_a_second_body(manifest):
@@ -1367,12 +1450,12 @@ def test_a_product_may_declare_the_nightly_agile_cockpit_actually_has(manifest):
     assert doc["concurrency"] == {"group": "nightly", "cancel-in-progress": False}
     by_name = {s.get("name"): s for s in doc["jobs"]["system"]["steps"]}
     assert by_name["Publish the report"]["if"] == "always()"
-    assert by_name["Publish the report"]["run"] == "./sample.sh test all"
+    assert by_name["Publish the report"]["run"] == "exec ./sample.sh test all"
 
     # and the rest of the shape it really has
     assert set(workflowgen.trigger_of(doc)) == {"schedule", "workflow_dispatch"}
     assert doc["jobs"]["system"]["timeout-minutes"] == 45
-    assert by_name["The system gate"]["run"] == "./sample.sh test all"
+    assert by_name["The system gate"]["run"] == "exec ./sample.sh test all"
     assert "16m03s" in text and "pipefail" in text
 
 
@@ -1581,15 +1664,15 @@ def test_an_aggregate_is_not_derived_into_a_step(derive_manifest):
 def test_a_derived_step_is_rendered_through_the_products_launcher(derive_manifest):
     text = _render(derive_manifest, _DERIVED)
 
-    assert "run: ./sample.sh build wheel" in text
-    assert "run: ./sample.sh test suite" in text
+    assert "run: exec ./sample.sh build wheel" in text
+    assert "run: exec ./sample.sh test suite" in text
 
 
 def test_a_derived_workflow_is_something_github_would_run(derive_manifest):
     doc = yaml.safe_load(_render(derive_manifest, _DERIVED))
 
     assert [step["run"] for step in doc["jobs"]["gate"]["steps"] if "run" in step] == [
-        "./sample.sh build wheel", "./sample.sh test suite"]
+        "exec ./sample.sh build wheel", "exec ./sample.sh test suite"]
 
 
 def test_a_leaf_that_says_nothing_about_running_unwatched_is_refused_by_name():
@@ -1665,7 +1748,7 @@ def test_deriving_from_a_group_the_manifest_does_not_declare_names_the_ones_it_h
 def test_one_group_may_be_named_as_a_string(derive_manifest):
     text = _render(derive_manifest, _DERIVED.replace("derive: [build, test]", "derive: test"))
 
-    assert "run: ./sample.sh test suite" in text
+    assert "run: exec ./sample.sh test suite" in text
     assert "build wheel" not in text
 
 
@@ -1765,8 +1848,8 @@ def test_a_stage_becomes_a_job_that_deploys_what_its_environment_declares(rollou
     runs = {name: [s["run"] for s in job["steps"] if "run" in s]
             for name, job in doc["jobs"].items()}
 
-    assert runs == {"deploy-test": ["./app.sh deploy up --version latest"],
-                    "deploy-prod": ["./app.sh deploy up --version 1.4.0"]}
+    assert runs == {"deploy-test": ["exec ./app.sh deploy up --version latest"],
+                    "deploy-prod": ["exec ./app.sh deploy up --version 1.4.0"]}
 
 
 def test_the_stages_are_chained_rather_than_merely_ordered_in_the_file(rollout_manifest):
@@ -1940,8 +2023,8 @@ def test_a_self_hosted_job_is_given_a_disk_preflight_before_its_own_first_step(d
 
     # assert: FIRST of the runs, so a machine that cannot finish the job says so in one second rather
     # than eight minutes into a docker build
-    assert runs[0] == "./sample.sh support ci-disk-preflight"
-    assert runs[1] == "./sample.sh test all"
+    assert runs[0] == "exec ./sample.sh support ci-disk-preflight"
+    assert runs[1] == "exec ./sample.sh test all"
 
 
 def test_the_cleanup_step_runs_whatever_the_job_decided_and_cannot_turn_it_red(disk_manifest):
@@ -1951,7 +2034,7 @@ def test_the_cleanup_step_runs_whatever_the_job_decided_and_cannot_turn_it_red(d
     # assert: last, `always()`, and explicitly not fatal - giving the disk back is not a verdict about
     # the product's code, so it must not be able to fail a run that passed
     last = steps[-1]
-    assert last["run"] == "./sample.sh support ci-disk-cleanup"
+    assert last["run"] == "exec ./sample.sh support ci-disk-cleanup"
     assert last["if"] == "always()"
     assert last["continue-on-error"] is True
 
@@ -1973,7 +2056,7 @@ def test_a_github_hosted_job_gets_no_disk_steps(disk_manifest):
     runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
 
     # assert: exactly the product's own step and nothing added
-    assert runs == ["./sample.sh test all"]
+    assert runs == ["exec ./sample.sh test all"]
 
 
 def test_a_job_that_names_its_own_machine_gets_no_disk_steps(disk_manifest):
@@ -1995,7 +2078,7 @@ def test_a_job_that_names_its_own_machine_gets_no_disk_steps(disk_manifest):
     runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
 
     # assert
-    assert runs == ["./sample.sh test all"]
+    assert runs == ["exec ./sample.sh test all"]
 
 
 def test_a_product_that_placed_neither_coordinate_is_told_so_in_the_generated_file(manifest):
@@ -2010,7 +2093,7 @@ def test_a_product_that_placed_neither_coordinate_is_told_so_in_the_generated_fi
     runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
 
     # assert
-    assert runs == ["./sample.sh test all"]
+    assert runs == ["exec ./sample.sh test all"]
     assert "support:ci-disk-preflight" in text
     assert "support:ci-disk-cleanup" in text
 
@@ -2041,8 +2124,8 @@ def test_a_self_hosted_job_probes_docker_before_anything_else(docker_manifest):
     runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
 
     # assert: FIRST, ahead of the disk preflight - on ghr-8 that one was green while docker was refused
-    assert runs[:3] == ["./sample.sh support ci-docker-preflight", "./sample.sh support ci-disk-preflight",
-                        "./sample.sh test all"]
+    assert runs[:3] == ["exec ./sample.sh support ci-docker-preflight", "exec ./sample.sh support ci-disk-preflight",
+                        "exec ./sample.sh test all"]
 
 
 def test_a_github_hosted_job_gets_no_docker_probe(docker_manifest):
@@ -2062,7 +2145,7 @@ def test_a_github_hosted_job_gets_no_docker_probe(docker_manifest):
     runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
 
     # assert
-    assert runs == ["./sample.sh test all"]
+    assert runs == ["exec ./sample.sh test all"]
 
 
 def test_a_product_without_the_probe_keeps_its_disk_steps_and_is_told(disk_manifest):
@@ -2072,7 +2155,7 @@ def test_a_product_without_the_probe_keeps_its_disk_steps_and_is_told(disk_manif
     runs = [s.get("run") for s in yaml.safe_load(text)["jobs"]["build"]["steps"] if "run" in s]
 
     # assert
-    assert runs[0] == "./sample.sh support ci-disk-preflight"
+    assert runs[0] == "exec ./sample.sh support ci-disk-preflight"
     assert 'ci-docker-preflight: { task: "support:ci-docker-preflight" }' in text
 
 
@@ -2105,7 +2188,7 @@ def test_a_manifest_steps_params_become_the_commands_flags_and_not_a_github_step
     text = _render(kernel_manifest, _PARAMS.format(param="platform"))
 
     # assert
-    assert "run: ./sample.sh build image --platform linux/amd64" in text
+    assert "run: exec ./sample.sh build image --platform linux/amd64" in text
     assert "params:" not in text
 
 
@@ -2142,9 +2225,9 @@ def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli
     text = _render(kernel_manifest, _RELEASE_TAG)
 
     # assert
-    assert "run: ./sample.sh release tag -- v9.9.9" in text
+    assert "run: exec ./sample.sh release tag -- v9.9.9" in text
     # and the neighbour that keeps the option form, because its body gives `tag` a default
-    assert "run: ./sample.sh release notes --tag v9.9.9" in text
+    assert "run: exec ./sample.sh release notes --tag v9.9.9" in text
 
 
 _POSITIONAL_AND_OPTION = """
@@ -2178,7 +2261,7 @@ def test_a_required_parameter_is_a_positional_and_a_defaulted_one_an_option():
         """)
 
     # assert
-    assert "run: ./sample.sh test aim --mode slow -- moon" in text
+    assert "run: exec ./sample.sh test aim --mode slow -- moon" in text
 
 
 def _cli_reads_positionally(spec) -> dict[str, bool]:
@@ -2295,7 +2378,7 @@ def test_an_env_value_renders_as_a_double_quoted_variable_after_the_positional_s
         job_env=_JOB_ENV))
 
     # assert
-    assert 'run: ./sample.sh release tag -- "$RELEASE_VERSION"' in text
+    assert 'run: exec ./sample.sh release tag -- "$RELEASE_VERSION"' in text
     run_lines = [line for line in text.splitlines() if "run:" in line]
     assert not any("${{" in line for line in run_lines), run_lines
 
@@ -2304,7 +2387,7 @@ def test_an_env_value_as_an_option_reads_the_steps_own_env(kernel_manifest):
     text = _render(kernel_manifest, _env_steps(
         "              - command: build image\n                env: { PLATFORM: linux/arm64 }\n"
         "                params: { platform: { env: PLATFORM } }\n"))
-    assert 'run: ./sample.sh build image --platform "$PLATFORM"' in text
+    assert 'run: exec ./sample.sh build image --platform "$PLATFORM"' in text
 
 
 def test_an_env_value_may_be_set_at_the_workflow_level_or_by_github(kernel_manifest):
@@ -2325,8 +2408,8 @@ def test_the_rendered_value_stays_one_argument_in_a_real_shell(kernel_manifest):
     text = _render(kernel_manifest, _env_steps(
         _NOTES + "              - command: release tag\n                params: { tag: { env: RELEASE_VERSION } }\n",
         job_env=_JOB_ENV))
-    line = next(l for l in text.splitlines() if "run: ./sample.sh release tag" in l)
-    tail = line.split("run: ./sample.sh release tag", 1)[1]
+    line = next(l for l in text.splitlines() if "run: exec ./sample.sh release tag" in l)
+    tail = line.split("run: exec ./sample.sh release tag", 1)[1]
 
     # act
     out = subprocess.run(["bash", "-c", "printf '<%s>\\n'" + tail], capture_output=True, text=True,
@@ -2542,9 +2625,9 @@ def test_release_workflow_passes_actionlint(tmp_path):
 
 
 def _leaf_steps(text: str) -> dict[str, dict]:
-    """The command steps by the command they run (`./app.sh release tag ...` -> `release tag`)."""
-    return {" ".join(step["run"].split()[1:3]): step for step in _release_steps(text)
-            if str(step.get("run", "")).startswith("./app.sh ")}
+    """The command steps by the command they run (`exec ./app.sh release tag ...` -> `release tag`)."""
+    return {" ".join(step["run"].split()[2:4]): step for step in _release_steps(text)
+            if str(step.get("run", "")).startswith("exec ./app.sh ")}
 
 
 def test_a_dry_run_skips_exactly_the_publishing_leaves():
@@ -2592,7 +2675,7 @@ def test_every_derived_release_job_ends_with_the_kernels_archive(tmp_path, monke
     report, upload = _release_steps(_release_text(_REPORTING_PRODUCT))[-2:]
 
     # assert
-    assert report == {"if": "always()", "run": "./app.sh test report"}
+    assert report == {"if": "always()", "run": "exec ./app.sh test report"}
     assert upload == {"uses": workflowgen.UPLOAD_ACTION, "if": "always()",
                       "with": {"name": "allure-report", "path": "build/reports/*.html",
                                "if-no-files-found": "error", "retention-days": 90}}
@@ -2645,13 +2728,13 @@ def test_the_check_runs_before_the_cut():
     steps = _release_steps(_release_text())
 
     # act
-    check = _index(steps, run_prefix="./app.sh release check")
+    check = _index(steps, run_prefix="exec ./app.sh release check")
     cut = _index(steps, name="Cut the tag in this checkout")
 
     # assert
     assert check < cut
     assert "if" not in steps[check]
-    assert steps[check]["run"] == './app.sh release check -- "$RELEASE_VERSION"'
+    assert steps[check]["run"] == 'exec ./app.sh release check -- "$RELEASE_VERSION"'
 
 
 def test_without_the_check_first_the_cut_still_comes_first():

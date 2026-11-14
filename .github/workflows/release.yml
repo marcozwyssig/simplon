@@ -60,7 +60,7 @@ jobs:
           platforms: linux/arm64
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./simplon.sh release check -- "$RELEASE_VERSION"
+        run: exec ./simplon.sh release check -- "$RELEASE_VERSION"
       - name: Cut the tag in this checkout
         run: |
           there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
@@ -77,15 +77,15 @@ jobs:
             echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
             exit 1
           }
-      - run: ./simplon.sh test suite
-      - run: ./simplon.sh test typecheck-python
-      - run: ./simplon.sh test generated
-      - run: ./simplon.sh test release-notes
-      - run: ./simplon.sh release notes --tag "$RELEASE_VERSION"
+      - run: exec ./simplon.sh test suite
+      - run: exec ./simplon.sh test typecheck-python
+      - run: exec ./simplon.sh test generated
+      - run: exec ./simplon.sh test release-notes
+      - run: exec ./simplon.sh release notes --tag "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./simplon.sh release tag -- "$RELEASE_VERSION"
+        run: exec ./simplon.sh release tag -- "$RELEASE_VERSION"
       - name: What a release would have published (dry run)
         if: ${{ inputs.dry_run }}
         run: |
@@ -94,7 +94,7 @@ jobs:
       # si#509 (si#248): the test results of THIS run, the one that gated the release, archived
       # whether it went green or red. Kernel-owned: every derived release job ends with these two steps.
       - if: always()
-        run: ./simplon.sh test report
+        run: exec ./simplon.sh test report
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -154,7 +154,7 @@ jobs:
             echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
             exit 1
           fi
-      - run: ./simplon.sh build wheel
+      - run: exec ./simplon.sh build wheel
       # si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
       # be a tautology. What is not tautological is whether the derivation saw the inputs it needs:
       # a shallow clone, an unclean tree (a `+local` segment) or a tag that is not where the build
@@ -185,9 +185,9 @@ jobs:
         with:
           skip-existing: true
       - if: ${{ inputs.dry_run }}
-        run: ./simplon.sh build homebrew-formula --source local
+        run: exec ./simplon.sh build homebrew-formula --source local
       - if: ${{ !inputs.dry_run }}
-        run: ./simplon.sh build homebrew-formula --source pypi
+        run: exec ./simplon.sh build homebrew-formula --source pypi
       # si#344 C.4: 'simplon-formula' is produced in one job of this workflow and consumed in another, and every
       # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
       # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
@@ -207,9 +207,9 @@ jobs:
           retention-days: 1
           overwrite: true
       - if: ${{ inputs.dry_run }}
-        run: ./simplon.sh test homebrew-formula --online false
+        run: exec ./simplon.sh test homebrew-formula --online false
       - if: ${{ !inputs.dry_run }}
-        run: ./simplon.sh test homebrew-formula --online true
+        run: exec ./simplon.sh test homebrew-formula --online true
       # si#344 C.4: 'simplon-formula-checked' is produced in one job of this workflow and consumed in another, and every
       # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
       # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
@@ -305,7 +305,7 @@ jobs:
       - if: ${{ !inputs.dry_run }}
         env:
           GH_APP_TOKEN: ${{ steps.app-token-0.outputs.token }}
-        run: ./simplon.sh release homebrew-tap
+        run: exec ./simplon.sh release homebrew-tap
 
   # The website, built by the one command a person types (`build docs`) and deployed by the two
   # actions that exist only inside a runner. No `paths:` filter: every release republishes the
@@ -367,7 +367,7 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - run: ./simplon.sh build docs
+      - run: exec ./simplon.sh build docs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/site
@@ -434,12 +434,12 @@ jobs:
         with:
           image: tonistiigi/binfmt:qemu-v10.2.3
           platforms: arm64
-      - run: ./simplon.sh build image --tag "$RELEASE_VERSION"
-      - run: ./simplon.sh test image --tag "$RELEASE_VERSION"
+      - run: exec ./simplon.sh build image --tag "$RELEASE_VERSION"
+      - run: exec ./simplon.sh test image --tag "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./simplon.sh release push-image --tag "$RELEASE_VERSION"
+        run: exec ./simplon.sh release push-image --tag "$RELEASE_VERSION"
       # The pin moves in three steps since si#622, because the push between them is a command: no
       # generated checkout keeps the job's token in .git/config, so `release push-pin` hands git this
       # step's GITHUB_TOKEN for that one push. This step needs none: the fetch reads a public repository.
@@ -470,7 +470,7 @@ jobs:
       - if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./simplon.sh release push-pin --tag "$RELEASE_VERSION"
+        run: exec ./simplon.sh release push-pin --tag "$RELEASE_VERSION"
       - name: Open the pull request that pins the published image
         if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
         env:

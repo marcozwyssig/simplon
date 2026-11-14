@@ -368,8 +368,8 @@ def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
     # assert
     assert job["needs"] == "publish"
     assert job["permissions"]["packages"] == "write"
-    built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
-    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
+    built = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh build image"))
+    published = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh release push-image"))
     assert built < published
     assert job["steps"][published]["if"] == "${{ !inputs.dry_run }}"  # si#491: a rehearsal pushes nothing
     assert "release push-image" not in ci_steps and "release push-image" not in ci_text
@@ -380,16 +380,16 @@ def test_the_pin_moves_only_after_the_publish_and_only_through_a_pull_request():
     runs = [step.get("run", "") for step in _release_jobs()["image"]["steps"]]
 
     # act
-    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
+    published = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh release push-image"))
     pinned = next(i for i, r in enumerate(runs) if "deploy/image/repin.sh" in r)
-    pushed = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-pin"))
+    pushed = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh release push-pin"))
     asked = next(i for i, r in enumerate(runs) if "gh pr create --base main" in r)
     raw_pushes = [line.strip() for r in runs for line in r.splitlines() if line.strip().startswith("git push")]
 
     # assert: after the read-back, on its own branch, and handed to a person as a pull request. si#622: the
     # push is `release push-pin`, which brings the token itself, and no step pushes with plain git.
     assert published < pinned < pushed < asked
-    assert runs[pushed] == './simplon.sh release push-pin --tag "$RELEASE_VERSION"'
+    assert runs[pushed] == 'exec ./simplon.sh release push-pin --tag "$RELEASE_VERSION"'
     assert 'branch="pin/kernel-image-${RELEASE_VERSION}"' in runs[pinned]  # the branch push-pin names
     assert raw_pushes == []
 
@@ -445,7 +445,7 @@ def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_star
     runs = [step.get("run", "") for step in job["steps"]]
 
     # act
-    pushed = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-pin"))
+    pushed = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh release push-pin"))
     dispatched = next(i for i, r in enumerate(runs) if 'gh workflow run ci.yml --ref "$PIN_BRANCH"' in r)
 
     # assert: dispatched on the pushed branch, by a job allowed to, into a workflow that accepts it
@@ -467,7 +467,7 @@ def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
     # act
     ci_build = next(s for s in ci_steps if s.get("command") == "build image")
     emulator = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/setup-qemu-action"))
-    built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
+    built = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh build image"))
 
     # assert: both declared; CI stays native; the release registers the emulator before it builds, and
     # pins the INDEX digest read from the registry, not a local image's (which holds one platform)

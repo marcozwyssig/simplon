@@ -45,7 +45,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 #: the workflow and the plan out of the manifest, and then asserted each file says what it says, would
 #: hold nothing.
 DOCS_JOB = "docs"
-THE_ONE_COMMAND = "./simplon.sh build docs"
+THE_ONE_COMMAND = "exec ./simplon.sh build docs"
 #: si#204 added `acceptance` between them - a second page written into the content tree before Hugo runs.
 EXPECTED_PLAN = ("reference", "acceptance", "site")
 
@@ -185,10 +185,10 @@ def test_the_command_the_workflow_runs_is_a_real_command_that_plans_the_whole_bu
     the site would carry the previous run's reference.
     """
     # Arrange
-    command = next(run.strip() for run in _runs(docs_job) if run.startswith("./simplon.sh"))
+    command = next(run.strip() for run in _runs(docs_job) if run.startswith("exec ./simplon.sh"))
 
     # Act
-    _, group, name = command.split()
+    _, _, group, name = command.split()
 
     # Assert
     assert (group, name) in [(g, n) for g, members in product.commands.items() for n in members]
@@ -415,8 +415,8 @@ def test_the_release_job_runs_the_gate_before_the_tag(workflow):
     runs = [str(step.get("run", "")) for step in workflow["jobs"]["release"]["steps"]]
 
     # Act
-    tag = next(i for i, run in enumerate(runs) if run.startswith("./simplon.sh release tag"))
-    gate = [next(i for i, run in enumerate(runs) if run == f"./simplon.sh test {leaf}")
+    tag = next(i for i, run in enumerate(runs) if run.startswith("exec ./simplon.sh release tag"))
+    gate = [next(i for i, run in enumerate(runs) if run == f"exec ./simplon.sh test {leaf}")
             for leaf in ("suite", "typecheck-python", "generated", "release-notes")]
 
     # Assert
@@ -429,7 +429,7 @@ def test_the_release_check_runs_before_anything_is_cut(workflow):
     steps = workflow["jobs"]["release"]["steps"]
 
     # act
-    check = next(i for i, step in enumerate(steps) if step.get("run") == './simplon.sh release check -- "$RELEASE_VERSION"')
+    check = next(i for i, step in enumerate(steps) if step.get("run") == 'exec ./simplon.sh release check -- "$RELEASE_VERSION"')
     cut = next(i for i, step in enumerate(steps) if step.get("name") == "Cut the tag in this checkout")
 
     # assert
@@ -449,8 +449,8 @@ def test_in_the_release_job_only_a_token_github_step_can_reach_the_token(workflo
     for step in job["steps"]:
         run = str(step.get("run", ""))
         handed = "GITHUB_TOKEN" in (step.get("env") or {})
-        if run.startswith("./simplon.sh "):
-            words = list(itertools.takewhile(lambda w: not w.startswith(("-", '"')), run.split()[1:]))
+        if run.startswith("exec ./simplon.sh "):
+            words = list(itertools.takewhile(lambda w: not w.startswith(("-", '"')), run.split()[2:]))
             declares = product.commands[".".join(words[:-1])][words[-1]].token == "github"
             seen.append((run, handed))
             wanted.append((run, declares))
@@ -462,7 +462,7 @@ def test_in_the_release_job_only_a_token_github_step_can_reach_the_token(workflo
     assert checkout["with"].get("persist-credentials") is False
     assert "GITHUB_TOKEN" not in (job.get("env") or {})
     assert seen == wanted
-    assert ('./simplon.sh release tag -- "$RELEASE_VERSION"', True) in seen
+    assert ('exec ./simplon.sh release tag -- "$RELEASE_VERSION"', True) in seen
 
 
 #: The step a real run takes instead of the cut: the tag the release job pushed must be here, at HEAD.
@@ -671,7 +671,7 @@ def test_the_release_job_archives_the_tests_that_gated_it(workflow):
     report, upload = steps[-2:]
 
     # assert
-    assert report == {"if": "always()", "run": "./simplon.sh test report"}
+    assert report == {"if": "always()", "run": "exec ./simplon.sh test report"}
     assert upload["uses"].startswith("actions/upload-artifact@") and upload["if"] == "always()"
     assert upload["with"]["path"] == "tests/reports/*.html"
     assert upload["with"]["if-no-files-found"] == "error"
