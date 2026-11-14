@@ -436,6 +436,26 @@ def test_a_restored_file_a_fetched_file_and_a_plain_open_have_the_same_mode(prod
     assert fetched == restored == stat.S_IMODE((product / "plain").stat().st_mode) == 0o644
 
 
+@pytest.mark.parametrize("umask", [0o022, 0o077])
+def test_a_download_cache_entry_has_the_mode_a_plain_open_gives(product, cache, served, umask):
+    # arrange: si#669 - the cache entry once took mkstemp's 0600 whatever the umask, the si#497 divergence
+    # in a second place, so another uid sharing the cache could not read it and fetched again
+    old = os.umask(umask)
+    try:
+        (product / "plain").write_bytes(b"")
+
+        # act
+        assert fetchfile.fetch(name="plain") == 0
+    finally:
+        os.umask(old)
+
+    # assert: the entry and the url recorded beside it take open()'s mode, as the placed file does
+    plain = stat.S_IMODE((product / "plain").stat().st_mode)
+    entry = cache / SHA / "plain.bin"
+    assert stat.S_IMODE(entry.stat().st_mode) == plain == 0o666 & ~umask
+    assert stat.S_IMODE(entry.with_name("plain.bin" + fetchfile.SOURCE).stat().st_mode) == plain
+
+
 @pytest.mark.parametrize("environ,expected", [
     ({"DELIVERY_DIST_CACHE": "/named", "RUNNER_TOOL_CACHE": "/runner", "XDG_CACHE_HOME": "/xdg", "HOME": "/h"},
      "/named"),

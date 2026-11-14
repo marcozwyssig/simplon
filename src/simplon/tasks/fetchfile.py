@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -242,9 +241,10 @@ def _store(dest: Path, cached: Path, url: str) -> str:
     partial: Path | None = None
     try:
         cached.parent.mkdir(parents=True, exist_ok=True)
-        handle, name = tempfile.mkstemp(dir=cached.parent, prefix=f"{cached.name}.", suffix=".partial")
+        # The umask's mode, as the restore and the download give (si#669): `mkstemp` would make the entry
+        # 0600 whatever the umask, and another uid sharing the cache could not read it back.
+        handle, partial = transfer.unique_file(cached.parent, f"{cached.name}.", ".partial")
         os.close(handle)
-        partial = Path(name)
         shutil.copyfile(dest, partial)
         os.replace(partial, cached)
         _record(cached, url)
