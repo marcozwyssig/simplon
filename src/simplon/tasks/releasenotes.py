@@ -62,6 +62,7 @@ from simplon.model import artifactschema
 from simplon.manifest import artifactsection, context
 from simplon.kernel import log
 from simplon.kernel.run import run
+from simplon.tasks import release
 
 #: The manifest section this task reads. Three values, and a product that declares none of them does not
 #: place the command - which is the right outcome, and why this coordinate is offered and not placed.
@@ -72,10 +73,6 @@ SECTION = "releases"
 ARTIFACTS = "artifacts"
 ENTRY = artifactschema.Release_notesEntry
 
-#: A version as the PAGE spells one: `0.4.0`, three parts, no `v`. The tag carries the `v` and the
-#: heading does not, so a product that wrote the tag into the manifest would get a floor matching no
-#: section at all - which is why `v0.4.0` is refused here rather than helpfully stripped.
-_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 #: A `## X.Y.Z` heading, which is what gives a version a section.
 #:
@@ -135,8 +132,15 @@ class Declared:
 
 
 def version_of(text: str) -> Version | None:
-    """`0.4.0` -> `(0, 4, 0)`; anything else -> None (a release candidate, a stray tag, a typo)."""
-    match = _VERSION.fullmatch(text.strip())
+    """`0.4.0` -> `(0, 4, 0)`; anything else -> None (a release candidate, a stray tag, a typo).
+
+    A version as the PAGE spells one: three parts, no `v`. The tag carries the `v` and the heading does
+    not, so a product that wrote the tag into the manifest would get a floor matching no section at all -
+    which is why `v0.4.0` is refused here rather than helpfully stripped. What a version IS beyond that is
+    `release.VERSION`'s, the one rule (si#660): a second regex here read `01.2.3` as `(1, 2, 3)` and spelled
+    it back as `v1.2.3`, a tag that does not exist.
+    """
+    match = release.VERSION.fullmatch("v" + text.strip())
     if match is None:
         return None
     major, minor, patch = match.groups()
@@ -191,7 +195,7 @@ def declared() -> Declared | None:
         if parsed is None:
             log.error(
                 f"{where}'s `{SECTION}: {key}:` is '{raw}', which is not a version. It is spelled the "
-                f"way the page spells a heading - three parts and no `v`, e.g. `0.4.0` - because that "
+                f"way the page spells a heading - three parts, no `v` and no leading zero, e.g. `0.4.0` - because that "
                 f"is what it is compared against")
             return None
         floors[key] = parsed

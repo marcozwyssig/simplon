@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from simplon.manifest import context
-from simplon.tasks import releasenotes
+from simplon.tasks import release, releasenotes
 from simplon.kernel.run import Result
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
@@ -238,6 +238,25 @@ def test_only_a_three_part_v_tag_counts_as_a_released_version(tmp_path):
 
     # assert
     assert found == [(0, 4, 0), (0, 5, 0)]
+
+
+@pytest.mark.parametrize("tag", ["v01.2.3", "v1.02.3", "v1.2.03", "v00.1.0", "v١.2.3"])
+def test_a_tag_release_check_refuses_is_no_released_version_either(tmp_path, tag):
+    """si#660: `release.VERSION` is the one rule for a version. The notes once read `v01.2.3` as `(1, 2, 3)`
+    and spelled it back as `v1.2.3`, a tag that does not exist, so the range named nothing git knows."""
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "feat(#1): the first thing")
+    _git(root, "tag", "v0.4.0")
+    _git(root, "tag", tag)
+
+    # act
+    found = releasenotes.released_versions(root)
+
+    # assert
+    assert release.VERSION.fullmatch(tag) is None
+    assert found == [(0, 4, 0)]
+    assert releasenotes.version_of(tag[1:]) is None
 
 
 def test_merges_in_a_range_are_the_merge_commits_and_not_the_work_behind_them(tmp_path):
