@@ -23,6 +23,7 @@ run on a host that has nothing but Python.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import ssl
 import urllib.error
@@ -75,13 +76,18 @@ def _get(endpoint: str, token: str, path: str, *, insecure: bool) -> object:
 
     The token NEVER reaches a command line - it is a header on a request this process makes, which is
     `credentials.py`'s rule at the one place in this kernel that talks to Proxmox at all.
+
+    EVERY FAILURE LEAVES AS `ProxmoxError`, because that is all the callers catch (si#657). urllib wraps
+    only the sending of the request in `URLError`; a timeout or a broken connection while the answer is
+    READ arrives bare (`TimeoutError`, `IncompleteRead`, `ConnectionResetError`), and so does a body
+    that is not the API's JSON object. Measured against real local listeners in `test_proxmoxapi.py`.
     """
     url = f"{endpoint.rstrip('/')}/api2/json{path}"
     request = urllib.request.Request(url, headers={"Authorization": f"PVEAPIToken={token}"})
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_S,
                                     context=_context(insecure)) as response:
-            return json.loads(response.read()).get("data")
+            body = response.read()
     except urllib.error.HTTPError as error:
         if error.code == 401:
             raise ProxmoxError(
@@ -93,6 +99,26 @@ def _get(endpoint: str, token: str, path: str, *, insecure: bool) -> object:
         raise ProxmoxError(
             f"{endpoint} could not be reached: {error.reason}. A self-signed certificate is the usual "
             f"cause and is what `insecure: true` on the carrier is for") from None
+    except TimeoutError:
+        raise ProxmoxError(
+            f"{endpoint} did not answer within {_TIMEOUT_S}s for {path}. Check that the endpoint is the "
+            f"node's API port (8006) and that the node is up, then rerun") from None
+    except (http.client.HTTPException, OSError) as error:
+        raise ProxmoxError(
+            f"{endpoint} broke off its answer for {path} ({type(error).__name__}: {error}). Nothing "
+            f"was read; rerun, and if it repeats, check what sits between here and the node") from None
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        raise ProxmoxError(
+            f"{endpoint} answered {path} with something that is not JSON. The endpoint has to be the "
+            f"Proxmox API itself (it serves /api2/json), not a proxy or login page in front of "
+            f"it") from None
+    if not isinstance(answer, dict):
+        raise ProxmoxError(
+            f"{endpoint} answered {path} with JSON that is not a JSON object. The endpoint has to be "
+            f"the Proxmox API itself (it serves /api2/json)")
+    return answer.get("data")
 
 
 def storages(endpoint: str, token: str, node: str, *, insecure: bool) -> list[Storage]:
