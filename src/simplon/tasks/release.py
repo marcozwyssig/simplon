@@ -154,7 +154,15 @@ def tag(tag: str) -> int:
         log.error(f"nothing to tag: {gitops.ROOT} has no commit at HEAD (is it a git checkout?)")
         return 1
 
-    branch = gitops.default_branch()
+    # Asked of origin, as `check` asks it (si#659): a local origin/HEAD is unset in an actions/checkout
+    # clone and stale after origin's default branch moves, and both used to read as `main`.
+    branch = gitops.remote_default_branch()
+    if branch is None:
+        log.error("origin could not be asked which branch is its default, or it names none (nothing pushed "
+                  "yet), so where a release may be cut from has no answer - and nothing was cut. Check the "
+                  "remote (add it if there is none) and the network, push the default branch if origin has "
+                  "none, then run this again")
+        return 1
     if not gitops.fetch_branches():
         # Survivable, and stated rather than swallowed. A stale origin/<branch> can only make the guard
         # refuse a commit the branch really does carry; it cannot let an off-branch commit through.
@@ -162,11 +170,11 @@ def tag(tag: str) -> int:
                  f"reads what is here; a stale ref can only make it refuse too much, never too little")
     if not gitops.ref_exists(f"origin/{branch}"):
         # Without this, `merge-base --is-ancestor` against a ref that does not exist answers "no" and
-        # the refusal below would diagnose a feature branch in a repository that simply has no remote.
+        # the refusal below would diagnose a feature branch where the branch was simply never fetched
+        # (origin answered `ls-remote` above, but the fetch failed).
         log.error(f"there is no origin/{branch} here, so the question '{branch} carries this commit' "
-                  f"has no answer - and nothing was cut. Add the remote and push {branch} first, or "
-                  f"point origin/HEAD at the branch releases really are cut from "
-                  f"(`git remote set-head origin -a`)")
+                  f"has no answer - and nothing was cut. Origin names {branch} as its default, so "
+                  f"fetch it (`git fetch origin {branch}`) and run this again")
         return 1
 
     action, reason = gitops.tag_verdict(carried_by_main=gitops.carried_by(head, f"origin/{branch}"),
