@@ -40,10 +40,12 @@ import codecs
 import os
 import queue
 import re
+import signal
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from types import FrameType
+from typing import Any, Callable, Mapping
 
 #: How long the reader waits for a line to FINISH before handing over what it already has.
 #:
@@ -72,6 +74,40 @@ _PUMP_THREAD = "run_stream"
 #: How long the unwind waits for the reader thread after killing the child. Only the exception path ever
 #: waits at all; see `run_stream`'s `finally`.
 _UNWIND_GRACE = 5.0
+
+#: The stop signals `run` hands on to its child (si#649).
+_STOPS = ("SIGINT", "SIGTERM")
+
+#: How long `run` waits, after its first stop signal, for the child it handed the stop to - then it kills
+#: the child itself. Bounded because a run that hangs is neither green nor red. Under 10 s because that is
+#: when a GitHub runner's cancel ends with SIGKILL (actions/runner `ProcessInvoker`: SIGINT, 7.5 s,
+#: SIGTERM, 2.5 s, then kill) and a kernel killed while it waits would leave the orphan this exists against.
+_STOP_GRACE = 9.0
+
+
+class _Stopped(BaseException):
+    """Raised by `run`'s handler on the FIRST stop signal, only to leave the unbounded wait for a bounded one."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _terminal_sent_it() -> bool:
+    """True when this process is in the foreground group of a terminal it is attached to.
+
+    Then a SIGINT is almost always a Ctrl-C, which the terminal sends to the whole group - the child, which
+    shares it, already has its own. Handing it on a second time is not harmless: measured on pytest, a
+    second SIGINT 1 to 100 ms after the first ends it BY the signal (rc -2) instead of as interrupted (rc 2),
+    in the middle of the teardown the first one started.
+    """
+    for fd in (0, 1, 2):
+        try:
+            if os.tcgetpgrp(fd) == os.getpgrp():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 @dataclass(frozen=True)
@@ -118,22 +154,82 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     the process's stdin (e.g. `tee`-ing a script into the VM). cwd runs the process from that directory
     (e.g. pytest from the test dir so conftest.py is importable). env, when given, is ADDED to this
     process's environment for the child alone (si#507: a credential one git call needs and no other).
+
+    A STOP THAT REACHES THIS PROCESS REACHES THE CHILD (si#649). `subprocess.run` hands neither SIGINT nor
+    SIGTERM on, and measured with a sleeping pytest as the child: a SIGTERM killed this python at once and
+    left pytest running, reparented to init, with no junit; a SIGINT became a KeyboardInterrupt here and a
+    SIGKILL to pytest 0.25 s later, again with no junit. So while the child runs, a SIGINT or SIGTERM is
+    passed to it (a terminal's Ctrl-C excepted, see `_terminal_sent_it`), the child gets `_STOP_GRACE` to
+    finish - for pytest, to write its junit - and is killed if it has not. Then the signal is delivered
+    HERE, to whatever handler was in place before, so the caller unwinds exactly as it did: SIGINT as a
+    KeyboardInterrupt, SIGTERM by its default action (rc -15, 143 in a shell) or by the handler
+    `docker.stopped_on_interrupt` installed. A cancelled run still looks cancelled; what changed is that
+    it no longer leaves its child behind.
+
+    Only on POSIX and on the main thread, the one place a handler may be installed. Elsewhere this is the
+    plain `subprocess.run` it was, and the child is as unprotected as before.
     """
-    proc = subprocess.run(
-        argv,
-        capture_output=capture,
-        text=True,
-        timeout=timeout,
-        check=check,
-        input=input_text,
-        cwd=cwd,
-        env={**os.environ, **env} if env else None,
-    )
-    return Result(
-        rc=proc.returncode,
-        out=(proc.stdout or "") if capture else "",
-        err=(proc.stderr or "") if capture else "",
-    )
+    full_env = {**os.environ, **env} if env else None
+    stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)]
+    if os.name != "posix" or threading.current_thread() is not threading.main_thread():
+        done = subprocess.run(argv, capture_output=capture, text=True, timeout=timeout, check=check,
+                              input=input_text, cwd=cwd, env=full_env)
+        return Result(rc=done.returncode,
+                      out=(done.stdout or "") if capture else "",
+                      err=(done.stderr or "") if capture else "")
+
+    pipe = subprocess.PIPE if capture else None
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else None,
+                            stdout=pipe, stderr=pipe, text=True, cwd=cwd, env=full_env)
+    received: list[int] = []
+
+    def hand_on(signum: int, frame: object) -> None:
+        if not (signum == signal.SIGINT and _terminal_sent_it()):
+            proc.send_signal(signum)            # a no-op once the child has been reaped
+        received.append(signum)
+        if len(received) == 1 and waiting:
+            raise _Stopped(signum)              # out of the unbounded wait; later ones are only handed on
+
+    waiting = True
+    previous: dict[int, Callable[[int, FrameType | None], Any] | int | signal.Handlers] = {}
+    try:
+        try:
+            # A signal this process IGNORES stays ignored and is not handed on: whoever set that meant it.
+            # One whose handler was not set from Python (`None`) cannot be put back, so it is left alone.
+            for s in stops:
+                handler = signal.getsignal(s)
+                if handler is not None and handler != signal.SIG_IGN:
+                    previous[s] = handler
+                    signal.signal(s, hand_on)
+            out, err = proc.communicate(input_text, timeout=timeout)
+            waiting = False
+        except _Stopped:
+            waiting = False
+            # The child has the stop. Wait for it - bounded - and kill it only if it does not end.
+            try:
+                out, err = proc.communicate(timeout=_STOP_GRACE)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out, err = proc.communicate()
+        except subprocess.TimeoutExpired:
+            waiting = False
+            proc.kill()                         # what `subprocess.run` does with its own timeout
+            proc.communicate()
+            raise
+        except BaseException:
+            waiting = False
+            proc.kill()
+            proc.wait()
+            raise
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+    if received:
+        # Delivered to the handler that was there before, which is what makes the caller's unwind its own.
+        signal.raise_signal(received[0])
+    if check and proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, argv, out, err)
+    return Result(rc=proc.returncode, out=(out or "") if capture else "", err=(err or "") if capture else "")
 
 
 def stream(argv: list[str], *, cwd: str | None = None) -> int:
