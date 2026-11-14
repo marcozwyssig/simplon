@@ -68,7 +68,9 @@ def test_a_rerun_replaces_the_pin_branch_by_force(clone):
     assert _git("-C", str(origin), "rev-parse", BRANCH) == _git("-C", str(work), "rev-parse", "HEAD")
 
 
-@pytest.mark.parametrize("tag", ["", "main", "latest", "v1.2", "v1.2.3/x", BRANCH])
+@pytest.mark.parametrize("tag", ["", "main", "latest", "v1.2", "v1.2.3/x", BRANCH,
+                                 # si#660: what `release.VERSION` refuses names no release, so no pin branch
+                                 "v01.2.3", "v1.2.03", "v١.2.3"])
 def test_anything_but_a_release_tag_is_refused_and_nothing_is_pushed(clone, tag):
     """The branch is named from the tag, so a tag that is no vX.Y.Z could name some other branch."""
     # arrange
