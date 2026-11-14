@@ -844,7 +844,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
         return 1
     options: list[str] = []
     if user:
-        options += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        options += docker.user_args()
     if mount:
         bound = _mount_argv(mount, root)
         if bound is None:
