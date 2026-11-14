@@ -42,6 +42,7 @@ from typing import Sequence
 
 from simplon.kernel import log, run
 from simplon.adapters import oras
+from simplon.manifest.context import TaskRefused
 
 # The scopes `gh auth login` does not request, and every package operation needs.
 PACKAGE_SCOPES: tuple = ("read:packages", "write:packages")
@@ -55,8 +56,15 @@ GITHUB_PACKAGE_HOSTS: frozenset = frozenset({"ghcr.io", "nuget.pkg.github.com",
                                              "maven.pkg.github.com"})
 
 
-class PackageError(RuntimeError):
-    """A package operation failed. The message is written to be acted on, not just read."""
+class PackageError(TaskRefused):
+    """A package operation failed. The message is written to be acted on, not just read.
+
+    A `TaskRefused` (si#697), so a task body it leaves reaches the terminal as its message alone, rc 1.
+    As a RuntimeError every one of them - no token, a registry refusal, a failed push - arrived at the
+    foot of a traceback, measured through `build maven-pack` and `build nuget-pack` on a host with
+    neither GITHUB_TOKEN nor `gh`. No caller caught it as a RuntimeError or a ValueError: every one
+    names PackageError, so moving the base changes no caller's meaning.
+    """
 
 
 def scope_advice(scopes: Sequence[str] = PACKAGE_SCOPES) -> str:

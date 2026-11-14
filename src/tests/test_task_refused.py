@@ -76,3 +76,41 @@ def test_a_bug_that_raises_valueerror_keeps_its_traceback_without_the_locals(pro
 def test_a_task_refusal_is_still_a_valueerror():
     # assert: every caller and test that catches a body's ValueError keeps catching it
     assert issubclass(TaskRefused, ValueError)
+
+
+# --- si#697: a package failure is a refusal too ---------------------------------------------------------
+
+@pytest.fixture
+def a_product_that_needs_a_token(tmp_path):
+    """A scaffolded product whose `build` asks `githubpackages.token()` - the first line every nuget and
+    maven body that needs a credential runs - on a host with no token and no `gh`."""
+    bootstrap.write("fooctl", tmp_path)
+    cli = tmp_path / PKG / "cli.py"
+    text = cli.read_text()
+    build = '    log.info("fooctl: build (placeholder) - wire me up in ' + PKG + '/cli.py")\n'
+    assert build in text
+    cli.write_text(text.replace(build, "    from simplon.adapters import githubpackages\n"
+                                       "    githubpackages.token()\n"))
+    (tmp_path / "no-gh").mkdir()
+    return tmp_path
+
+
+def test_a_package_failure_is_its_message_alone_with_rc_1(a_product_that_needs_a_token, monkeypatch):
+    # arrange: no token in the environment, and a PATH on which `gh` cannot be found
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("PATH", str(a_product_that_needs_a_token / "no-gh"))
+
+    # act
+    ran = _run(a_product_that_needs_a_token, "build")
+
+    # assert: the way out is printed, and nothing above it
+    assert ran.returncode == 1
+    assert ran.stderr.startswith("no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run")
+    assert "export GITHUB_TOKEN" in ran.stderr
+    assert "Traceback" not in ran.stderr and "PackageError" not in ran.stderr
+
+
+def test_a_package_error_is_a_task_refusal():
+    # assert: run_app prints it as a refusal, and every caller that catches PackageError keeps catching it
+    from simplon.adapters.githubpackages import PackageError
+    assert issubclass(PackageError, TaskRefused)
