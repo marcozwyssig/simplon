@@ -5,7 +5,7 @@
 //
 // Each kind lists the keys it adds to the ones it inherits (si#344 B2), with the shape of each value. Any
 // other key is refused by name. `untyped` is a key the kernel does not read (biz-cockpit's code reads
-// `name` and `build_contexts`) or reads with its own rule (maven's `modules`, which may be one string).
+// `name`) or reads with its own rule (maven's `modules`, which may be one string).
 package simplon.vocabulary
 
 artifact typeOf simplon.pipeline.ArtifactKind {
@@ -58,7 +58,7 @@ image typeOf simplon.pipeline.ArtifactKind {
   }
   field f_build_contexts typeOf simplon.pipeline.ArtifactField {
     key = "build_contexts"
-    shape = "untyped"
+    shape = "table"
   }
 }
 directory typeOf simplon.pipeline.ArtifactKind {

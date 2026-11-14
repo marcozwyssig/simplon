@@ -825,6 +825,25 @@ ci:
 - **A file context needs BuildKit** (`--build-context`), the builder that `docker build` uses since
   Docker 23 and the one the kernel image carries.
 
+#### A directory of your own tree, handed to the build under a name
+
+`build_contexts:` maps a name to a directory under the product root, and `build:image` passes each as
+`--build-context <name>=<directory>` (si#664) - with `platforms:`, as a context of every bake target that
+builds the image. A Dockerfile reads it with `COPY --from=<name>`:
+
+```yaml
+artifacts:
+  frontend:
+    kind: image
+    # ... registry, repository, dockerfile, context as above
+    build_contexts:
+      backend-api: src/backend/api  # COPY --from=backend-api openapi.json ./
+```
+
+The path is relative to the product root, not to `context:`, and must stay under it, like `context:`. A
+directory that does not exist is named before docker is started. A name that `contexts:` already uses is
+refused, because the build takes one context per name.
+
 #### A file attached to a GitHub Release, under a name and a checksum
 
 A `kind: file` entry may carry an optional **`asset_name:`**, the name `release:github-attach` publishes
