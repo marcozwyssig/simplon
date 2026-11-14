@@ -6,14 +6,34 @@ and 1449-1480 so the CLI's output is diff-identical to the bash original during 
 status dashboard used. `die` prints to stderr and raises SystemExit(1) - the Python equivalent of the
 bash `die() { ... >&2; exit 1; }`; `error` is that same stderr line WITHOUT the exit, for a caller that
 must report a real failure and still finish its own cleanup or hand a non-zero rc back itself.
+
+The level lines are coloured only on a terminal with `NO_COLOR` unset (si#655), decided per stream:
+the launcher forwards `NO_COLOR`, and a pipe or a CI log has no use for an escape.
 """
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
-from typing import NoReturn
+from typing import NoReturn, TextIO
 
 _RESET = "\033[0m"
+_BLUE = "\033[1;34m"
+_GREEN = "\033[1;32m"
+_YELLOW = "\033[1;33m"
+_RED = "\033[1;31m"
+
+
+def _paint(colour: str, text: str, stream: TextIO) -> str:
+    """`text` in `colour` when a person is looking at `stream`, plain otherwise (si#655).
+
+    Decided per call and per stream: a step capture or a test swaps `sys.stdout` at run time, and
+    `2>file` on a terminal leaves stdout looked at while stderr is not. `NO_COLOR` follows
+    no-color.org: set and non-empty means no colour, wherever the stream points.
+    """
+    if os.environ.get("NO_COLOR") or not stream.isatty():
+        return text
+    return f"{colour}{text}{_RESET}"
 
 
 def _ts() -> str:
@@ -22,16 +42,16 @@ def _ts() -> str:
 
 
 def info(msg: str) -> None:
-    print(f"\033[1;34m[{_ts()}] ==>\033[0m {msg}", flush=True)
+    print(f"{_paint(_BLUE, f'[{_ts()}] ==>', sys.stdout)} {msg}", flush=True)
 
 
 def ok(msg: str) -> None:
-    print(f"\033[1;32m[{_ts()}]  OK\033[0m {msg}", flush=True)
+    print(f"{_paint(_GREEN, f'[{_ts()}]  OK', sys.stdout)} {msg}", flush=True)
 
 
 def warn(msg: str) -> None:
     # Matches bash: only `die` writes to stderr; `warn` goes to STDOUT (netctl.sh:80 vs 81).
-    print(f"\033[1;33m[{_ts()}]   !\033[0m {msg}", flush=True)
+    print(f"{_paint(_YELLOW, f'[{_ts()}]   !', sys.stdout)} {msg}", flush=True)
 
 
 #: How many visible columns the `[HH:MM:SS] ==> ` prefix spends before a message starts. Published
@@ -53,7 +73,7 @@ def inplace(msg: str) -> None:
     one unreadable smear or thousands of lines, which is why `simplon.adapters.fetch` asks `isatty()` first and
     reaches for `info` when the answer is no.
     """
-    print(f"\033[1;34m[{_ts()}] ==>\033[0m {msg}\033[K\r", end="", flush=True)
+    print(f"{_paint(_BLUE, f'[{_ts()}] ==>', sys.stdout)} {msg}\033[K\r", end="", flush=True)
 
 
 def clear_line() -> None:
@@ -66,7 +86,7 @@ def clear_line() -> None:
 def error(msg: str) -> None:
     """A real failure, on STDERR - louder than `warn` (which goes to stdout for the merely notable) and
     without `die`'s exit, so the caller keeps control of the exit code."""
-    print(f"\033[1;31m[{_ts()}] ERR\033[0m {msg}", file=sys.stderr)
+    print(f"{_paint(_RED, f'[{_ts()}] ERR', sys.stderr)} {msg}", file=sys.stderr)
 
 
 def die(msg: str) -> NoReturn:
