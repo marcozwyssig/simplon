@@ -1903,6 +1903,74 @@ def test_a_file_context_not_yet_fetched_names_the_product_command_that_fetches_i
     assert "build:fetch" not in err
 
 
+# --- si#664: `build_contexts:`, a named DIRECTORY under the product root ----------------------------------
+
+#: biz-cockpit's frontend entry, as its live `biz-cockpit.yaml` declares it (read 2026-11-14 through the GitHub
+#: API; the frozen `fixtures/manifests/biz-cockpit.yaml` is the pre-si#344 `images:` form): the backend's
+#: published contract handed to the frontend's build as a directory context.
+_BIZ_COCKPIT_FRONTEND = {"kind": "image", "name": "biz-cockpit-frontend", "context": "src/frontend",
+                         "dockerfile": "pkg/Dockerfile", "build_contexts": {"backend-api": "src/backend/api"},
+                         "registry": "ghcr.io", "repository": "marcozwyssig/biz-cockpit-frontend"}
+
+
+def test_the_biz_cockpit_frontends_directory_context_reaches_docker_build(cli, _no_provenance, _product):
+    """si#664: the schema accepted `build_contexts:` and `build:image` dropped it, so the Dockerfile's
+    `COPY --from=backend-api` asked Docker Hub for an image of that name."""
+    # arrange
+    cfg = image.declared({"artifacts": {"frontend": _BIZ_COCKPIT_FRONTEND}}, "frontend")
+
+    # act
+    image.build_image(cfg, "1", _product, {})
+
+    # assert
+    argv = cli.argv_starting("docker", "build")[0]
+    assert argv[argv.index("--build-context") + 1] == f"backend-api={_product / 'src/backend/api'}"
+
+
+def test_a_directory_context_is_baked_under_its_name(tmp_path):
+    # arrange
+    data = _images(app=_body(platforms=["linux/amd64"], build_contexts={"api": "src/api"}))
+    cfg = image.declared(data, "app")
+
+    # act
+    bake = image.bake_definition(cfg, "app", "ghcr.io/owner/demo-app:1", {}, tmp_path)
+
+    # assert
+    assert bake["target"]["app"]["contexts"] == {"api": str(tmp_path / "src/api")}
+
+
+def test_a_missing_directory_context_is_named_before_docker_is_started(cli, _no_provenance, _product, capsys):
+    # arrange
+    (_product / "demo.yaml").write_text(_MANIFEST + "    build_contexts: { api: src/api }\n", encoding="utf-8")
+
+    # act
+    rc = image.build(name="worker", tag="1")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "build") == []
+    assert "build_contexts: api - no directory under the product root answers to src/api" in capsys.readouterr().err
+
+
+def test_a_directory_context_outside_the_product_is_refused_by_name():
+    # arrange
+    data = _images(app=_body(build_contexts={"api": "../elsewhere/api"}))
+
+    # act / assert
+    with pytest.raises(ValueError, match="'build_contexts.api'"):
+        image.declared(data, "app")
+
+
+def test_a_name_in_both_contexts_and_build_contexts_is_refused_rather_than_one_silently_winning():
+    # arrange
+    data = _images(app=_body(contexts=["gradle-dist"], build_contexts={"gradle-dist": "src/dist"}))
+    data["artifacts"]["gradle-dist"] = _FILE
+
+    # act / assert
+    with pytest.raises(ValueError, match="'gradle-dist' is named by both `contexts:` and `build_contexts:`"):
+        image.declared(data, "app")
+
+
 def test_a_broken_dependency_is_refused_as_itself_and_not_as_its_dependent():
     # arrange: the dependency is missing a required key
     data = _images(app=_body(contexts=["base"]),

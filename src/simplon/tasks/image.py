@@ -156,6 +156,10 @@ class Image:
     #: pairs: each is passed as `--build-context <name>=<the file's directory>`, so the Dockerfile reads the
     #: file from there and never downloads it.
     files: tuple[tuple[str, str], ...] = ()
+    #: si#664. The declared `build_contexts:`, as (name, directory under the product root) pairs: each is
+    #: passed as `--build-context <name>=<the directory>` - biz-cockpit hands its frontend the backend's
+    #: published contract this way.
+    directories: tuple[tuple[str, str], ...] = ()
 
 
 def _image_names(section: Mapping) -> list[str]:
@@ -246,6 +250,22 @@ def _file_contexts(section: Mapping, declared: tuple[str, ...], where: str) -> t
     return tuple(out)
 
 
+def _directory_contexts(declared: Mapping[str, str], contexts: tuple[str, ...],
+                        where: str) -> tuple[tuple[str, str], ...]:
+    """The `build_contexts:` (si#664), each a directory under the product root - '.' included, as for
+    `context:`.
+
+    A name `contexts:` already supplies is refused: both would reach the build under one name, and one of
+    them would be dropped with no word said - the defect this key itself had until si#664."""
+    out: list[tuple[str, str]] = []
+    for name, path in declared.items():
+        if name in contexts:
+            raise ValueError(f"{where}: '{name}' is named by both `contexts:` and `build_contexts:` - the build "
+                             f"takes one context per name, so rename one of the two")
+        out.append((name, _inside_the_product(path, f"build_contexts.{name}", where)))
+    return tuple(out)
+
+
 def _contexts(section: Mapping, declared: tuple[str, ...], chain: tuple[str, ...], where: str,
               source: str, coordinate: str) -> tuple[tuple[str, Image], ...]:
     """The declared images `body` is built FROM, each validated as an image in its own right.
@@ -325,6 +345,7 @@ def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, .
         platforms=platforms,
         contexts=_contexts(section, entry.contexts or (), (*chain, name), where, source, coordinate),
         files=_file_contexts(section, entry.contexts or (), where),
+        directories=_directory_contexts(entry.build_contexts or {}, entry.contexts or (), where),
     )
 
 
@@ -368,6 +389,10 @@ def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
     for name, path in cfg.files:
         if not (root / path).is_file():
             missing.append(f"contexts: {name} - no file at {path}; {run_first(name, 'build:fetch')}")
+    # si#664: a directory context is the product's own tree, like `context:`, so `is_dir` again.
+    for name, path in cfg.directories:
+        if not (root / path).is_dir():
+            missing.append(f"build_contexts: {name} - no directory under the product root answers to {path}")
     return missing
 
 
@@ -553,7 +578,7 @@ def build_image(cfg: Image, tag: str, root: Path, args: dict[str, str]) -> int:
     argv = ["docker", "build", "--file", str(root / cfg.dockerfile), "--tag", ref]
     for key in sorted(args):
         argv += ["--build-arg", f"{key}={args[key]}"]
-    for name, directory in file_contexts(cfg, root).items():
+    for name, directory in {**file_contexts(cfg, root), **directory_contexts(cfg, root)}.items():
         argv += ["--build-context", f"{name}={directory}"]
     # `root / "."` IS `root` - pathlib drops the segment - so the '.' the manifest may carry needs no
     # branch here, and a branch that can never take its second arm is a claim about the code that is
@@ -1180,9 +1205,14 @@ def file_contexts(cfg: Image, root: Path) -> dict[str, str]:
     return {name: str((root / path).parent) for name, path in cfg.files}
 
 
+def directory_contexts(cfg: Image, root: Path) -> dict[str, str]:
+    """{name: the directory} for each `build_contexts:` entry (si#664)."""
+    return {name: str(root / path) for name, path in cfg.directories}
+
+
 def _target_contexts(cfg: Image, version: str, root: Path) -> dict[str, str]:
     return {**{context_name(dep, version): f"target:{dep_name}" for dep_name, dep in cfg.contexts},
-            **file_contexts(cfg, root)}
+            **file_contexts(cfg, root), **directory_contexts(cfg, root)}
 
 
 def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path,
@@ -1204,7 +1234,7 @@ def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str],
     def target(image_: Image) -> dict:
         body: dict = {"context": str(root / image_.context), "dockerfile": str(root / image_.dockerfile),
                       "platforms": list(chosen), "args": {**derived, **image_.build_args}}
-        if image_.contexts or image_.files:
+        if image_.contexts or image_.files or image_.directories:
             body["contexts"] = _target_contexts(image_, derived.get(VERSION_ARG, ""), root)
         return body
 
