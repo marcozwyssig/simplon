@@ -61,16 +61,16 @@ class Port(NamedTuple):
 
 #: Each catalogue task that takes or gives an artifact -> its ports, inputs first.
 PORTS: dict[str, tuple[Port, ...]] = {
-    "build:image": (
-        Port("file", "input", "file", "", ()),
-        Port("image", "output", "image", "name", ("registry", "repository", "dockerfile", "context", )),
-    ),
-    "build:fetch": (
-        Port("file", "output", "file", "name", ("path", "url", "sha256", )),
+    "docs:site": (
+        Port("site", "output", "site", "", ()),
     ),
     "test:image": (
         Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
         Port("test-result", "output", "test-result", "results", ("path", )),
+    ),
+    "build:image": (
+        Port("file", "input", "file", "", ()),
+        Port("image", "output", "image", "name", ("registry", "repository", "dockerfile", "context", )),
     ),
     "build:image-file": (
         Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
@@ -80,26 +80,24 @@ PORTS: dict[str, tuple[Port, ...]] = {
         Port("file", "input", "file", "file", ("path", )),
         Port("test-result", "output", "test-result", "results", ("path", )),
     ),
-    "release:image": (
-        Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
-        Port("evidence", "input", "test-result", "", ()),
-    ),
-    "release:artifact": (
-        Port("directory", "input", "directory", "name", ("registry", "repository", "media_type", "path", )),
-        Port("evidence", "input", "test-result", "", ()),
-    ),
-    "build:conan-cache": (
-        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
-    ),
-    "release:conan": (
-        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
-        Port("evidence", "input", "test-result", "", ()),
-    ),
     "build:nuget-config": (
         Port("nuget", "input", "nuget", "name", ("registry", )),
     ),
     "build:nuget-restore": (
         Port("nuget", "input", "nuget", "name", ("registry", "image", "project", )),
+    ),
+    "build:conan-cache": (
+        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
+    ),
+    "build:fetch": (
+        Port("file", "output", "file", "name", ("path", "url", "sha256", )),
+    ),
+    "deploy:up": (
+        Port("source", "input", "artifact", "", ()),
+    ),
+    "release:artifact": (
+        Port("directory", "input", "directory", "name", ("registry", "repository", "media_type", "path", )),
+        Port("evidence", "input", "test-result", "", ()),
     ),
     "build:nuget-pack": (
         Port("nuget", "output", "nuget", "name", ("image", "project", "path", )),
@@ -108,8 +106,16 @@ PORTS: dict[str, tuple[Port, ...]] = {
         Port("nuget", "input", "nuget", "name", ("registry", "image", "path", )),
         Port("evidence", "input", "test-result", "", ()),
     ),
+    "release:conan": (
+        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
+        Port("evidence", "input", "test-result", "", ()),
+    ),
     "build:maven-pack": (
         Port("maven", "output", "maven", "name", ("image", "group", "modules", "path", )),
+    ),
+    "release:maven": (
+        Port("maven", "input", "maven", "name", ("registry", "group", "modules", "path", )),
+        Port("evidence", "input", "test-result", "", ()),
     ),
     "build:homebrew-formula": (
         Port("wheel", "input", "directory", "wheel", ("path", )),
@@ -124,8 +130,8 @@ PORTS: dict[str, tuple[Port, ...]] = {
         Port("formula", "input", "homebrew-formula", "formula", ("path", )),
         Port("evidence", "input", "test-result", "", ()),
     ),
-    "release:maven": (
-        Port("maven", "input", "maven", "name", ("registry", "group", "modules", "path", )),
+    "release:image": (
+        Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
         Port("evidence", "input", "test-result", "", ()),
     ),
     "release:notes": (
@@ -146,12 +152,6 @@ PORTS: dict[str, tuple[Port, ...]] = {
     "release:github-publish": (
         Port("github-release", "output", "github-release", "", ()),
     ),
-    "docs:site": (
-        Port("site", "output", "site", "", ()),
-    ),
-    "deploy:up": (
-        Port("source", "input", "artifact", "", ()),
-    ),
     "toolchain:run": (
         Port("source", "input", "artifact", "", ()),
         Port("out", "output", "artifact", "", ()),
@@ -160,34 +160,6 @@ PORTS: dict[str, tuple[Port, ...]] = {
 
 #: Every catalogue task -> the body the model names. Since si#400 4c the one place a body is named.
 BODIES: dict[str, str] = {
-    "build:image": "simplon.tasks.image:build",
-    "build:fetch": "simplon.tasks.fetchfile:fetch",
-    "test:image": "simplon.tasks.image:smoke",
-    "build:image-file": "simplon.tasks.imagefile:extract",
-    "test:file": "simplon.tasks.imagefile:check",
-    "release:image": "simplon.tasks.image:release",
-    "release:artifact": "simplon.tasks.artifact:publish",
-    "build:conan-cache": "simplon.tasks.conan:fetch",
-    "release:conan": "simplon.tasks.conan:publish",
-    "build:nuget-config": "simplon.tasks.nuget:config",
-    "build:nuget-restore": "simplon.tasks.nuget:restore",
-    "build:nuget-pack": "simplon.tasks.nuget:pack",
-    "release:nuget": "simplon.tasks.nuget:push",
-    "build:maven-pack": "simplon.tasks.maven:pack",
-    "build:homebrew-formula": "simplon.tasks.homebrewformula:build",
-    "test:homebrew-formula": "simplon.tasks.homebrewtap:check",
-    "release:homebrew-tap": "simplon.tasks.homebrewtap:tap",
-    "release:maven": "simplon.tasks.maven:push",
-    "release:notes": "simplon.tasks.releasenotes:write",
-    "release:check": "simplon.tasks.release:check",
-    "release:tag": "simplon.tasks.release:tag",
-    "release:github-unpublished": "simplon.tasks.githubrelease:unpublished",
-    "release:github-draft": "simplon.tasks.githubrelease:draft",
-    "release:github-attach": "simplon.tasks.githubrelease:attach",
-    "release:github-publish": "simplon.tasks.githubrelease:publish",
-    "docs:site": "simplon.tasks.site:build",
-    "deploy:up": "simplon.tasks.deploy:up",
-    "toolchain:run": "simplon.tasks.toolchain:run_toolchain",
     "vcs:commit": "simplon.tasks.vcs:commit",
     "vcs:push": "simplon.tasks.vcs:push",
     "vcs:prune-branches": "simplon.tasks.vcs:prune_branches",
@@ -197,16 +169,19 @@ BODIES: dict[str, str] = {
     "support:ci-disk-hygiene": "simplon.tasks.cidisk:hygiene",
     "support:ci-arm64": "simplon.tasks.ciarm64:arm64",
     "support:ci-disk-preflight": "simplon.tasks.cidisk:preflight",
-    "support:docker-preflight": "simplon.tasks.dockerpreflight:preflight",
     "support:ci-disk-cleanup": "simplon.tasks.cidisk:cleanup",
     "support:ci-docker-preflight": "simplon.tasks.dockerpreflight:ci_preflight",
+    "support:docker-preflight": "simplon.tasks.dockerpreflight:preflight",
     "test:gate": "simplon.tasks.testrun:gate",
     "test:typecheck-python": "simplon.tasks.typecheck:check",
     "test:generated": "simplon.tasks.generated:check",
     "test:release-notes": "simplon.tasks.releasenotes:check",
     "test:report": "simplon.tasks.testrun:report_cmd",
     "test:accept": "simplon.tasks.testrun:accept_cmd",
+    "test:manifest-model": "simplon.tasks.manifestcheck:check",
     "test:walk": "simplon.tasks.walk:walk",
+    "test:model": "simplon.tasks.firngen:validate",
+    "test:model-format": "simplon.tasks.firngen:format_check",
     "support:nexus": "simplon.tasks.nexus:nexus_cmd",
     "support:install": "simplon.tasks.hosttools:install",
     "support:claude-plugins": "simplon.tasks.claudeplugins:install_cmd",
@@ -215,23 +190,48 @@ BODIES: dict[str, str] = {
     "support:completion": "simplon.tasks.completion:generate",
     "support:workflows": "simplon.tasks.workflows:generate",
     "docs:render": "simplon.tasks.docs:render",
+    "docs:site": "simplon.tasks.site:build",
     "docs:reference": "simplon.tasks.cliref:reference",
     "docs:acceptance": "simplon.tasks.acceptance:document",
-    "build:model": "simplon.tasks.firngen:generate",
-    "build:model-binary": "simplon.tasks.firngen:model_binary",
+    "test:image": "simplon.tasks.image:smoke",
+    "build:image": "simplon.tasks.image:build",
+    "build:image-file": "simplon.tasks.imagefile:extract",
+    "test:file": "simplon.tasks.imagefile:check",
     "build:cmake-files": "simplon.tasks.buildfiles:cmake",
     "build:dotnet-solution": "simplon.tasks.buildfiles:dotnet",
+    "build:nuget-config": "simplon.tasks.nuget:config",
+    "build:nuget-restore": "simplon.tasks.nuget:restore",
+    "build:conan-cache": "simplon.tasks.conan:fetch",
+    "build:fetch": "simplon.tasks.fetchfile:fetch",
+    "build:model": "simplon.tasks.firngen:generate",
+    "build:model-binary": "simplon.tasks.firngen:model_binary",
     "deploy:carrier": "simplon.tasks.carrier:up",
+    "deploy:up": "simplon.tasks.deploy:up",
     "deploy:down": "simplon.tasks.deploy:down",
+    "release:artifact": "simplon.tasks.artifact:publish",
     "release:asset": "simplon.tasks.asset:publish",
+    "build:nuget-pack": "simplon.tasks.nuget:pack",
+    "release:nuget": "simplon.tasks.nuget:push",
+    "release:conan": "simplon.tasks.conan:publish",
+    "build:maven-pack": "simplon.tasks.maven:pack",
+    "release:maven": "simplon.tasks.maven:push",
+    "build:homebrew-formula": "simplon.tasks.homebrewformula:build",
+    "test:homebrew-formula": "simplon.tasks.homebrewtap:check",
+    "release:homebrew-tap": "simplon.tasks.homebrewtap:tap",
+    "release:image": "simplon.tasks.image:release",
+    "release:notes": "simplon.tasks.releasenotes:write",
+    "release:check": "simplon.tasks.release:check",
+    "release:tag": "simplon.tasks.release:tag",
+    "release:github-unpublished": "simplon.tasks.githubrelease:unpublished",
+    "release:github-draft": "simplon.tasks.githubrelease:draft",
+    "release:github-attach": "simplon.tasks.githubrelease:attach",
+    "release:github-publish": "simplon.tasks.githubrelease:publish",
     "tasks:generate": "simplon.tasks.taskverbs:generate",
     "tasks:catalogue": "simplon.tasks.taskverbs:catalogue",
     "support:migrate": "simplon.tasks.migrate:migrate",
-    "test:manifest-model": "simplon.tasks.manifestcheck:check",
-    "test:model": "simplon.tasks.firngen:validate",
-    "test:model-format": "simplon.tasks.firngen:format_check",
     "support:model": "simplon.tasks.manifestmodel:model",
     "support:toolchain": "simplon.tasks.toolchain:scaffold",
+    "toolchain:run": "simplon.tasks.toolchain:run_toolchain",
 }
 
 #: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads: its
@@ -524,4 +524,4 @@ def validate(kind: str, body: Mapping[str, object]) -> ArtifactEntry:
     if kind == "release-assets":
         return Release_assetsEntry.model_validate(body)
     raise KeyError(kind)
-# Generated by firn, do not edit outside protected regions. id=[ArtifactSchema:,fa0b5410e83a0bf1]
+# Generated by firn, do not edit outside protected regions. id=[ArtifactSchema:,9594ea55726bbf5a]

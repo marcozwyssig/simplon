@@ -93,7 +93,7 @@ def test_a_usage_error_comes_back_as_2(tree):
 
 
 @needs_docker
-def test_gen_writes_both_targets_and_the_fresh_catalogue_is_refused_for_having_no_tasks(tree):
+def test_gen_writes_both_targets_and_the_fresh_catalogue_is_the_committed_one(tree):
     # arrange: the kinds the model declares, in the kernel's spelling (firn#962: a firn name has no `-`)
     kinds_model = tree / "src" / "firn" / "model" / "simplon" / "vocabulary" / "kinds.firn"
     model = re.findall(r"^(\w+) typeOf simplon\.pipeline\.ArtifactKind", kinds_model.read_text(), re.M)
@@ -101,7 +101,7 @@ def test_gen_writes_both_targets_and_the_fresh_catalogue_is_refused_for_having_n
     catalogue_file = tree / "src" / "simplon" / "catalogue.yaml"
     page = tree / "src" / "site" / "content" / "with-what" / "kinds.md"
 
-    # act: the copy carries no catalogue, so gen writes one from nothing - an empty region
+    # act: the copy carries no catalogue, so gen writes one from nothing - since si#561 the whole of it
     rc = _rc(tree, "gen")
 
     # assert: both targets written, every kind present
@@ -109,6 +109,7 @@ def test_gen_writes_both_targets_and_the_fresh_catalogue_is_refused_for_having_n
     assert catalogue_file.is_file() and page.is_file()
     assert len(model) > 0, "the model regex found no kinds - this test would pass over nothing"
     assert set(yaml.safe_load(catalogue_file.read_text(encoding="utf-8"))["kinds"]) == expected
-    # ...and a catalogue gen wrote over a missing file loads as nothing: the loader must refuse it
-    with pytest.raises(ValueError, match="declares no tasks"):
-        catalogue.load(catalogue_file)
+    # ...and since si#561 that is the whole catalogue, groups and tasks too: it loads, and it is the committed one
+    committed = catalogue.load()
+    fresh = catalogue.load(catalogue_file)
+    assert fresh.tasks and fresh.tasks == committed.tasks and fresh.groups == committed.groups

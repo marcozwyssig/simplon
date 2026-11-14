@@ -209,7 +209,9 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
     deleted or left with only its id line. Run on 2026-10-12 over the committed files: it exits 0 and
     writes nothing. si#400 4b folded `model-whole` and `model-mode` into `model-gen`, which runs
     `build:model` and does both from firn's own report; run on 2026-10-16 over the committed tree, it
-    exits 0 and leaves the tree clean.
+    exits 0 and leaves the tree clean. si#561 generated the catalogue whole and removed its region, so
+    `model-guard` went and `build model` is that one leaf again; run on 2026-11-14 over the committed
+    tree, it exits 0 and leaves the tree clean.
 
     si#344 C.3 added `test image`, which runs the kernel image built by `build image` and writes its verdict
     record. Run on 2026-10-14 with `--platform linux/amd64` (the arm64 half was not built on this machine):
@@ -234,7 +236,7 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
 
     assert [step.command for step in derived.steps] == [
         "build wheel", "build handoff-canary", "build reference", "build acceptance", "build site", "build image",
-        "build homebrew-formula", "build model-guard", "build model-gen", "test suite", "test typecheck-python",
+        "build homebrew-formula", "build model", "test suite", "test typecheck-python",
         "test release-notes",
         "test report", "test generated", "test image", "test homebrew-formula",
         "test handoff-canary", "test model", "test manifest-model"]
@@ -251,11 +253,12 @@ def test_this_repository_runs_a_subset_of_those_and_the_difference_is_a_choice_n
     si#371 added `test model`, which the CI runs, and `build model`, which it does not: `firn gen` had no
     template to render yet, so a step for it would have reported on nothing. Since si#344 B1 it has one,
     and the CI still runs no step for it because `test generated` runs it already - the catalogue is a
-    `generated:` entry, regenerated and diffed there. Its two leaves (`model-guard` since B1's final
-    review; `model-whole` and `model-mode` stood beside them until si#400 4b folded both into `model-gen`)
-    are the fourth and fifth difference, and as cheap as the two above. `test image` (si#344 C.3) is the sixth: the release runs it, between building and publishing the image,
+    `generated:` entry, regenerated and diffed there. It is the fourth difference, and as cheap as the two
+    above (until si#561 it was two leaves, `model-guard` and `model-gen`; `model-whole` and `model-mode`
+    stood beside them until si#400 4b folded both into `model-gen`). `test image` (si#344 C.3) is the fifth:
+    the release runs it, between building and publishing the image,
     and ci.yml builds that image for amd64 only and does not run it. `build homebrew-formula` and `test
-    homebrew-formula` (si#537) are the seventh and eighth: the release's `publish` job runs them after the
+    homebrew-formula` (si#537) are the sixth and seventh: the release's `publish` job runs them after the
     PyPI upload, and the test pulls the 3.2 GB brew image, which no push to this repository should. Derived
     bare, both would refuse for want of their step parameter (the test above), so for them "correct" is
     not true either.
@@ -274,8 +277,8 @@ def test_this_repository_runs_a_subset_of_those_and_the_difference_is_a_choice_n
     run_here = set(_ci_steps())
 
     assert run_here < derived
-    assert sorted(derived - run_here) == ["build acceptance", "build homebrew-formula", "build model-gen",
-                                          "build model-guard", "build reference", "build site",
+    assert sorted(derived - run_here) == ["build acceptance", "build homebrew-formula", "build model",
+                                          "build reference", "build site",
                                           "test homebrew-formula", "test image"]
 
 

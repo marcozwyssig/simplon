@@ -634,3 +634,56 @@ def test_the_summary_sentence_counts_the_catalogue_and_not_a_memory():
 
     # assert: and the split really ruled on something, rather than agreeing with an empty page
     assert placed and free and len(placed) + len(free) == len(cat.tasks)
+
+
+# --- the namespace kind in the model (si#561) ----------------------------------------------------------
+
+#: The catalogue's command tree, which si#561 made the source of `groups:`; si#562 is to read the phase bit here.
+GROUPS_MODEL = ROOT / "src" / "firn" / "model" / "simplon" / "catalogue" / "groups.firn"
+_GROUP_HEADER = re.compile(r"^\s*(?:group )?([a-z][a-z0-9-]*) typeOf simplon\.pipeline\.CatalogueGroup \{\s*$")
+
+
+def _groups_marked_phase() -> tuple[set[str], set[str]]:
+    """Every CatalogueGroup groups.firn declares, and those whose OWN block says `phase = true`.
+
+    A brace counter rather than a firn query, because firn needs docker and this is a fact about one file's
+    text. A nested block's `phase` belongs to the innermost group open around it, which is what the stack is.
+    """
+    declared: set[str] = set()
+    phases: set[str] = set()
+    stack: list[tuple[str | None, int]] = []
+    depth = 0
+    for line in GROUPS_MODEL.read_text(encoding="utf-8").splitlines():
+        code = line.split("//", 1)[0]
+        header = _GROUP_HEADER.match(code)
+        if header:
+            declared.add(header.group(1))
+        if code.strip() == "phase = true":
+            open_groups = [name for name, at in stack if name is not None and at == depth]
+            if not open_groups:
+                raise ValueError(f"`phase = true` outside a group in {GROUPS_MODEL}: {line!r}")
+            phases.add(open_groups[-1])
+        for _ in range(code.count("{")):
+            depth += 1
+            stack.append((header.group(1) if header else None, depth))
+            header = None
+        for _ in range(code.count("}")):
+            stack.pop()
+            depth -= 1
+    if not declared:
+        raise ValueError(f"{GROUPS_MODEL} declares no CatalogueGroup")
+    return declared, phases
+
+
+def test_the_model_marks_exactly_the_five_phases_and_the_catalogue_declares_each():
+    """si#561 widened the generated catalogue to `groups:` so the namespace kind is in the model, and the
+    phase/not-a-phase half of it is the one thing `groups:` does not write: `phase` has no YAML key. Until
+    si#562 reads it, this holds it to the PHASES this file spells out, and each to a group the loaded
+    catalogue really has."""
+    # act
+    declared, phases = _groups_marked_phase()
+
+    # assert
+    assert phases == set(PHASES)
+    assert phases <= set(_visible_groups(catalogue_mod.load()))
+    assert "support" in declared and "support" not in phases

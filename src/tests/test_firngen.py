@@ -240,15 +240,17 @@ def test_a_file_holding_only_the_id_line_is_valid_output(text, tmp_path):
     assert firngen.verdict(0, _out(written=["x.py"]), tmp_path) == 0
 
 
-def test_build_model_is_the_guard_then_build_model_on_simplons_own_project():
+def test_build_model_is_build_model_on_simplons_own_project():
+    """si#561 generates the catalogue whole, so the region guard that ran before gen went with its region:
+    a hand edit is firn's W303, which `build:model` turns into rc 4 (measured on v0.11.0, see simplon.yaml)."""
     # arrange
     build = yaml.safe_load((ROOT / "simplon.yaml").read_text())["ci"]["build"]["commands"]
 
     # act
-    order, gen = build["model"]["depends_on"], build["model-gen"]
+    gen = build["model"]
 
-    # assert: the region guard before gen; wholeness and modes are build:model's own, from firn's report
-    assert order == ["model-guard", "model-gen"]
+    # assert: one leaf; wholeness and modes are build:model's own, from firn's report
+    assert "depends_on" not in gen and "model-guard" not in build and "model-gen" not in build
     assert gen["task"] == "build:model" and gen["with"]["cwd"] == "src"
 
 
@@ -272,6 +274,11 @@ def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path, image, firn_s
     shutil.rmtree(project / "firn" / "model" / "product")   # its commands reference the instance by name
     tasks = project / "firn" / "model" / "simplon" / "catalogue" / "tasks.firn"
     tasks.write_text(tasks.read_text().replace("vcs_push typeOf", "vcs_pushed typeOf", 1))
+    # si#561: the catalogue's placed `push` names the instance too, so the rename reaches it as a rename would
+    groups = tasks.with_name("groups.firn")
+    placed = "task = simplon.catalogue.vcs_push\n"
+    assert groups.read_text().count(placed) == 1
+    groups.write_text(groups.read_text().replace(placed, "task = simplon.catalogue.vcs_pushed\n"))
 
     # act
     rc, out = firn_rc(tmp_path, "gen", "--format=json", cwd="src", image=image or FIRN_IMAGE)
