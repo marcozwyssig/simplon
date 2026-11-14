@@ -104,8 +104,116 @@ Task typeOf firn.core.Class extends firn.core.NamedResource {
 // A task the PLATFORM offers (si#344 C.1): a catalogue coordinate in `key`, its body in `body`. Its own
 // class, because every product model declares plain Tasks in the same firn project (`support manifest
 // model`), and a template over `Task` would gather theirs too. Since si#400 4a it holds every catalogue task, ported or not.
+//
+// si#561: what catalogue.yaml's `tasks:` says of a task beyond its coordinate, its body and its ports, so firn
+// generates that section from here. `help` and `unattended` are on every task (`unattended` is false, true, or
+// absent - and absent is refused at load, so it is 1..1 here); the other three are written only where they are
+// true or set. `param` is a parameter's presentation under the task's `params:`.
 CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
   allowRoot = true
+  property help typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property unattended typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+  property publishes typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  property token typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property passthrough_args typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  property param typeOf firn.core.Composition {
+    range = simplon.pipeline.TaskParam
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// One entry of a `params:` block (si#561), on a catalogue task or on a command the catalogue places: how a body
+// parameter is presented on the command line. `key` is the parameter's name; the resource's own name carries a
+// `p_` prefix, as ArtifactField's carries `f_`, so a parameter and a port of one name (`test:file`'s `file`)
+// do not collide. A port's `param` is restated here where the catalogue presents it (26 of 27 ports): the help
+// is the task's own, and the one port without a presentation (`release:github-attach`'s `assets`) has none.
+TaskParam typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property help typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property short typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property metavar typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property argument typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+// A group of the catalogue's command tree (si#561): what catalogue.yaml writes under `groups:`. `phase` is the
+// namespace kind si#562 reads: true on the five phases of the delivery loop, absent on `support`, the group that
+// supports them (si#34), and on the areas. `env_first` is said on the area (`cd`) and handed down by the loader;
+// a namespace no group carries is a family.
+CatalogueGroup typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property help typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property transparent typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  property env_first typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  property phase typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  property command typeOf firn.core.Composition {
+    range = simplon.pipeline.CatalogueCommand
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property group typeOf firn.core.Composition {
+    range = simplon.pipeline.CatalogueGroup
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// A command the catalogue PLACES in every product's tree (si#561): its name is the command word with `_` for
+// `-` (as a kind's is: firn v0.2.0, which a product may still pin, refuses a `-` in a name), `task` the
+// catalogue task it runs, `param` the presentation it adds.
+CatalogueCommand typeOf firn.core.Class extends firn.core.NamedResource {
+  property task typeOf firn.core.Association {
+    range = simplon.pipeline.CatalogueTask
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property param typeOf firn.core.Composition {
+    range = simplon.pipeline.TaskParam
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
 }
 
 Artifact typeOf firn.core.Class extends firn.core.NamedResource {

@@ -45,17 +45,8 @@ simplon typeOf simplon.manifest.Product {
       produces = product.simplon.simplon.a_simplon_formula
       consumes = product.simplon.simplon.a_dist
     }
-    command model typeOf simplon.pipeline.AggregateCommand {
+    command model typeOf simplon.pipeline.TaskCommand {
       key = "model"
-      member = product.simplon.simplon.build.model_guard
-      member = product.simplon.simplon.build.model_gen
-    }
-    command model_guard typeOf simplon.pipeline.TaskCommand {
-      key = "model-guard"
-      task = product.simplon.simplon.t_region_guard
-    }
-    command model_gen typeOf simplon.pipeline.TaskCommand {
-      key = "model-gen"
       task = simplon.catalogue.build_model
     }
   }
@@ -288,10 +279,6 @@ simplon typeOf simplon.manifest.Product {
       accepts = simplon.vocabulary.file
       param = "file"
     }
-  }
-  tasks t_region_guard typeOf simplon.pipeline.Task {
-    key = "region-guard"
-    body = "orchestrator.cli:region_guard"
   }
   tasks t_suite typeOf simplon.pipeline.Task {
     key = "suite"
