@@ -359,11 +359,10 @@ behaves exactly as it does for a Python product - which the chapter can show, be
 
 ```text
 $ ./javademo.sh release tag v0.1.0
-[06:25:33]   ! could not fetch from origin, so origin/main may be out of date. The guard below reads
-              what is here; a stale ref can only make it refuse too much, never too little
-[06:25:33] ERR there is no origin/main here, so the question 'main carries this commit' has no answer
-              - and nothing was cut. Add the remote and push main first, or point origin/HEAD at the
-              branch releases really are cut from (`git remote set-head origin -a`)
+[11:24:20] ERR origin could not be asked which branch is its default, or it names none (nothing
+              pushed yet), so where a release may be cut from has no answer - and nothing was cut.
+              Check the remote (add it if there is none) and the network, push the default branch
+              if origin has none, then run this again
 ```
 
 `git tag` afterwards lists nothing. What the guard checks, and what it deliberately does not, is in
