@@ -82,7 +82,7 @@ def test_the_generated_workflow_runs_the_product_by_its_own_launcher_name(produc
     text = _target(product).read_text(encoding="utf-8")
 
     # Assert
-    assert "./sample.sh test all" in text
+    assert "exec ./sample.sh test all" in text
     assert "simplon.sh" not in text
 
 
@@ -149,7 +149,7 @@ def test_a_hand_edited_workflow_makes_check_return_one(product, capsys):
     # Arrange
     workflows_task.generate()
     target = _target(product)
-    target.write_text(target.read_text(encoding="utf-8").replace("./sample.sh test all", "pytest -q"),
+    target.write_text(target.read_text(encoding="utf-8").replace("exec ./sample.sh test all", "pytest -q"),
                       encoding="utf-8")
 
     # Act
@@ -159,7 +159,7 @@ def test_a_hand_edited_workflow_makes_check_return_one(product, capsys):
     assert rc == 1
     out = capsys.readouterr().out
     assert "-      - run: pytest -q" in out, "the report must show the difference, not merely announce it"
-    assert "+      - run: ./sample.sh test all" in out
+    assert "+      - run: exec ./sample.sh test all" in out
 
 
 def test_check_names_the_command_that_regenerates(product, capsys):

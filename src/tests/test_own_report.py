@@ -32,7 +32,7 @@ from simplon.tasks import testrun, workflowgen
 
 from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 WORKFLOWS = ROOT / ".github" / "workflows"
-REPORT_COMMAND = "./simplon.sh test report"
+REPORT_COMMAND = "exec ./simplon.sh test report"
 ARTIFACT_ACTION = "actions/upload-artifact"
 
 #: si#638: where the kernel's job-to-job hand-off (si#344 C.4) puts the archive it uploads. That upload carries

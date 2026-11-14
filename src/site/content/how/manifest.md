@@ -940,7 +940,7 @@ workflows:
 
 The line that matters is `command: test all`. It is not a string that happens to look like a command -
 it is **resolved against the command tree above** before anything is written, and what lands in the file
-is `./myctl.sh test all`. Rename that command and generation fails, loudly, in the same commit. Today,
+is `exec ./myctl.sh test all`. Rename that command and generation fails, loudly, in the same commit. Today,
 in a hand-written workflow, a renamed command leaves a `run:` line calling something that is gone, and
 the first anybody hears of it is a red runner.
 
@@ -1250,8 +1250,15 @@ Without that, every step carrying a `name:` or an `if:` would have had to be wri
 products: **34 of 41** command-invoking steps carry one of `name:`, `if:` or `env:`.
 
 A command step that declares no `name:` shows its `run:` line in the Actions UI, and that line is
-`./myctl.sh test all` - the same string you type in a checkout. The kernel does not invent a name for
-it; say `name:` if you want different words.
+`exec ./myctl.sh test all` - the string you type in a checkout, run as the step's own process. The
+kernel does not invent a name for it; say `name:` if you want different words.
+
+The `exec` is how a cancelled run stops cleanly (si#666). GitHub cancels a step by signalling the step's
+shell and nothing below it; without `exec` that shell dies alone and the kernel and its test run keep
+going, reparented, with no report written. With it the kernel is the process that is signalled, and it
+hands the stop on to the test run, which writes its report on the way out. The `run:` line is one
+command, so nothing after it is skipped. A step whose declared shell is not bash or sh (`shell: pwsh`,
+an expression, at the step, job or workflow level) keeps the plain line.
 
 Two things are the kernel's, and both are settings you should not have to remember. The checkout is
 emitted with `fetch-depth: 0`, because `actions/checkout` defaults to a shallow clone that carries no

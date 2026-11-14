@@ -69,7 +69,7 @@ def test_the_producing_job_archives_and_uploads_after_its_producing_step():
 
     # assert: checkout, build image, test image, tar, upload
     steps = _steps(doc, "test")
-    assert steps[2]["run"] == "./demo.sh test image"
+    assert steps[2]["run"] == "exec ./demo.sh test image"
     assert steps[3]["run"] == 'tar -cf "${{ runner.temp }}/simplon-handoff-app-checked.tar" build/test/app.json'
     assert steps[4] == {"uses": "actions/upload-artifact@v4",
                         "with": {"name": "app-checked",
@@ -89,7 +89,7 @@ def test_the_consuming_job_needs_the_producer_and_downloads_before_its_consuming
     assert steps[2] == {"uses": "actions/download-artifact@v4",
                         "with": {"name": "app-checked", "path": "${{ runner.temp }}"}}
     assert steps[3]["run"] == 'tar -xf "${{ runner.temp }}/simplon-handoff-app-checked.tar"'
-    assert steps[4]["run"] == "./demo.sh release push-image"
+    assert steps[4]["run"] == "exec ./demo.sh release push-image"
 
 
 def test_the_file_says_why_the_kernel_wrote_the_handoff_steps():
