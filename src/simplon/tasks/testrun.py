@@ -89,10 +89,13 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import signal
+import threading
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
-from typing import Callable
+from types import FrameType
+from typing import Any, Callable
 
 import typer
 
@@ -875,8 +878,8 @@ def _started() -> float:
     return float(int(time.time()))
 
 
-def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
-                earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
+def _assessed(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
+              earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
     """Run ONE gate and say not only whether it was red but whether it was red ABOUT anything (#30).
 
     A declared precondition runs FIRST and a non-zero verdict returns immediately, having cleared nothing -
@@ -1009,7 +1012,7 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         _clear_results(results, reports)
     os.makedirs(results, exist_ok=True)
     junit = os.path.join(reports, f"{os.path.splitext(gate.junit)[0]}-filtered.xml" if filtered else gate.junit)
-    with _setup_marker(reports) as marker, keep_awake():
+    with _writing_results(), _setup_marker(reports) as marker, keep_awake():
         if gate.preamble:
             rc = _setup(gate, gate.preamble, "preamble")()
             if rc != 0:
@@ -1049,6 +1052,90 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
     return _written(_harvested(GateVerdict(gate.name, verdict.of_subprocess(rc), rc),
                                gate, cfg, results, since),
                     results, earlier, filtered)
+
+
+#: What a gate a stop ended says (si#667). `killed` is the outcome that already means "ended by a signal,
+#: reported nothing about the product"; this names WHERE the signal came from, because the default sentence
+#: is written for a suite that was shot and here the whole run was asked to stop.
+STOPPED_DETAIL = "the run was stopped while this gate ran, so this says nothing about the product"
+
+
+class _Stopped(BaseException):
+    """Raised by `assess_gate`'s handler when a stop reaches this process while a gate runs (si#667)."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+        self.wrote = False
+
+
+@contextlib.contextmanager
+def _writing_results() -> Iterator[None]:
+    """Mark a stop that passes through here as having ended a gate that already WRITES into the results
+    dir, so its record goes into the archive too and not only into the stamp (see `_written`)."""
+    try:
+        yield
+    except _Stopped as stop:
+        stop.wrote = True
+        raise
+
+
+def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
+                earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
+    """Run ONE gate (`_assessed` says how) and, when a stop ends it, RECORD it before the stop goes on.
+
+    A STOPPED GATE IS `KILLED`, NOT ABSENT (si#667). si#649 made `run` hand a SIGINT or SIGTERM on to the
+    suite and then re-deliver it here, and from here it used to propagate straight out: a SIGINT as a
+    KeyboardInterrupt, a SIGTERM by its default action. Either way nothing was written. Measured with a
+    real pytest gate stopped mid-run: no stamp and no environment for that gate - it read exactly like a
+    gate that never ran - and `accept` stopped in its second gate left the stamp of its first standing,
+    `"verdict": "passed"`, as the record of a run that was cancelled.
+
+    So while the gate runs, a SIGINT or SIGTERM is turned into `_Stopped`, which `run` re-delivers to like
+    any previous handler. The handlers are put back FIRST, so a second stop while the record is written
+    acts at once as it did before; then the gate is recorded as `killed` with the signal it was stopped by
+    - on the terminal, in the stamp (with the gates before it in this run), and in the archive when the
+    gate already wrote into it - and the signal is re-delivered to the previous handler. The process still
+    unwinds exactly as before: KeyboardInterrupt, death by SIGTERM, or whatever a caller's own handler
+    does. A stopped gate is never green and the stop is never swallowed; only when the previous handler
+    returns without raising does the gate return its `killed` verdict, and the run stays red.
+
+    `killed` and not a new outcome, because it is already the word for this: `ran` False, and the line
+    names the signal. Its rc is the signal the stop came as (`-signum`), not the child's own exit: a
+    pytest that was handed a SIGINT exits 2, and that 2 is not what ended the gate.
+
+    Only on POSIX and on the main thread, where a handler may be installed - `run`'s own limit.
+    """
+    stops = [getattr(signal, name) for name in ("SIGINT", "SIGTERM") if hasattr(signal, name)]
+    if os.name != "posix" or threading.current_thread() is not threading.main_thread():
+        return _assessed(gate, cfg, extra, filtered=filtered, earlier=earlier)
+
+    def stopped(signum: int, frame: FrameType | None) -> None:
+        raise _Stopped(signum)
+
+    previous: dict[int, Callable[[int, FrameType | None], Any] | int | signal.Handlers] = {}
+    try:
+        try:
+            # An ignored signal stays ignored, and one whose handler was not set from Python (`None`)
+            # cannot be put back - the same two exceptions `run` makes.
+            for s in stops:
+                handler = signal.getsignal(s)
+                if handler is not None and handler != signal.SIG_IGN:
+                    previous[s] = handler
+                    signal.signal(s, stopped)
+            return _assessed(gate, cfg, extra, filtered=filtered, earlier=earlier)
+        finally:
+            for s, handler in previous.items():
+                signal.signal(s, handler)
+    except _Stopped as stop:
+        gv = GateVerdict(gate.name, Verdict.KILLED, -stop.signum, detail=STOPPED_DETAIL)
+        if stop.wrote:
+            gv = _written(gv, results_dir(cfg, filtered=filtered), earlier, filtered)
+        else:
+            log.warn(f"{gv.gate}: {gv.line}")
+        verdict.write_stamp(_reports_dir(cfg), RunVerdict(earlier + (gv,), filtered=filtered))
+        signal.raise_signal(stop.signum)
+        return gv
 
 
 def _written(gv: GateVerdict, results: str, earlier: tuple[GateVerdict, ...], filtered: bool) -> GateVerdict:
