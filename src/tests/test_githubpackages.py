@@ -85,6 +85,36 @@ def test_neither_source_is_an_error_that_names_both(monkeypatch):
         githubpackages.token()
 
 
+def test_no_token_and_no_gh_is_a_package_error_that_names_both_ways_out(monkeypatch):
+    """si#656: on a host without `gh`, the fallback raised FileNotFoundError, a traceback for every caller
+    but the one (adapters.github) that had grown its own catch. Real `run`, no stub: the PATH holds no gh."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")
+
+    with pytest.raises(githubpackages.PackageError) as refused:
+        githubpackages.token()
+
+    assert "GITHUB_TOKEN" in str(refused.value)
+    assert "install gh" in str(refused.value)
+
+
+def test_a_login_without_token_or_gh_is_a_package_error_and_runs_no_client(monkeypatch):
+    """`_login` asks for the token before it runs the client, so the client never sees an invented one."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    ran = []
+
+    def no_such_binary(argv, **kwargs):
+        ran.append(argv)
+        raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(run, "run", no_such_binary)
+
+    with pytest.raises(githubpackages.PackageError):
+        githubpackages.docker_login("ghcr.io/owner")
+
+    assert ran == [["gh", "auth", "token"]]
+
+
 # --- the advice everyone needs once -----------------------------------------------------------------
 
 def test_the_advice_names_the_command_that_grants_the_scopes(monkeypatch):

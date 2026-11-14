@@ -82,12 +82,21 @@ def token() -> str:
 
     NEVER from a config file. A token committed to one leaked into a product repository's history once,
     and the fix was to leave no field a secret could be written into.
+
+    A host without `gh` is the same answer as a `gh` without a login, a PackageError (si#656): `run`
+    raises OSError for a missing binary, and that reached every caller but adapters.github as a traceback.
     """
     from_env = os.getenv("GITHUB_TOKEN", "").strip()
     if from_env:
         return from_env
 
-    result = run.run(["gh", "auth", "token"], capture=True)
+    try:
+        result = run.run(["gh", "auth", "token"], capture=True)
+    except OSError as no_gh:
+        raise PackageError(
+            f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). Either export "
+            "GITHUB_TOKEN, or install gh and run `gh auth login`. In GitHub Actions, pass "
+            "`secrets.GITHUB_TOKEN` in the step's `env:` - Actions sets it for no step on its own.") from None
     if result.rc == 0 and result.out.strip():
         log.info("using the token from `gh auth token` (GITHUB_TOKEN is not set)")
         return result.out.strip()
