@@ -251,11 +251,17 @@ def test_build_model_is_the_guard_then_build_model_on_simplons_own_project():
     assert gen["task"] == "build:model" and gen["with"]["cwd"] == "src"
 
 
+#: si#645: firn v0.2.0 keeps the renamed task's old class file with rc 0 (W301) and only build:model refuses
+#: it; from v0.3.0 on (measured on v0.3.0, v0.4.0, v0.5.0, v0.8.0 to v0.11.0) firn itself leaves it with
+#: W305, "not deleted ... firn has no record of writing it", and exits 4. Both are held: a product may pin either.
+RENAMED = [("ghcr.io/marcozwyssig/firn:v0.2.0", 0, "W301"), (None, 4, "W305")]
+
+
 @needs_docker
-def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path):
-    # arrange: simplon's own project, then one catalogue instance renamed - firn keeps the old class file
-    # with rc 0 (W301, measured)
-    from firnrun import firn_rc
+@pytest.mark.parametrize("image,firn_says,code", RENAMED, ids=["firn-v0.2.0", "pinned-firn"])
+def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path, image, firn_says, code):
+    # arrange: simplon's own project, then one catalogue instance renamed - firn leaves the old class file
+    from firnrun import FIRN, firn_rc
     project = tmp_path / "src"
     shutil.copytree(SRC / "firn", project / "firn")
     shutil.copy(SRC / "firn.toml", project / "firn.toml")
@@ -267,11 +273,12 @@ def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path):
     tasks.write_text(tasks.read_text().replace("vcs_push typeOf", "vcs_pushed typeOf", 1))
 
     # act
-    rc, out = firn_rc(tmp_path, "gen", "--format=json", cwd="src")
+    rc, out = firn_rc(tmp_path, "gen", "--format=json", cwd="src", image=image or FIRN.image)
 
     # assert
-    assert rc == 0                                         # firn alone calls it fine
-    assert firngen.verdict(rc, out, project) == 4          # build:model does not: output not current (si#568)
+    assert rc == firn_says
+    assert [d["code"] for d in json.loads(out)["diagnostics"]] == [code]
+    assert firngen.verdict(rc, out, project) == 4          # build:model: output not current either way (si#568)
 
 
 #: si#594: the first firn release whose JSON report carries `run.templates` is v0.9.0; v0.10.0 also moves the

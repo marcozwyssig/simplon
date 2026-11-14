@@ -22,7 +22,7 @@ from simplon.manifest import catalogue
 from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
-FIRN = profiles.profile("firn", version="0.2.0")
+FIRN = profiles.profile("firn", version="0.11.0")
 #: The `toolchain:run` bodies the firn profile wrote before si#568, which moved the profile onto the kernel's
 #: `build:model`/`test:model`. They are kept here because what this file holds - firn's codes come back
 #: through `toolchain:run` unchanged - is still the contract for every product that kept those lines.

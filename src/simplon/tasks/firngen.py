@@ -45,7 +45,7 @@ FIRN_CODES: dict[int, str] = {
     1: "MODEL_ERROR - the model or a template is wrong; firn's diagnostics above say where",
     2: "USAGE - firn did not understand the command line",
     3: "IO - firn could not read or write a file (no firn.toml where it started?)",
-    4: "OUTPUT_NOT_CURRENT - firn kept a file it would have rewritten (W303/W304/E316); see above",
+    4: "OUTPUT_NOT_CURRENT - firn kept a file it would have rewritten or deleted (W303/W304/W305/E316); see above",
     5: "RESOURCE_EXHAUSTED - firn ran out of a resource (memory, stack)",
     6: "DUPLICATE_REGISTRY_KEY - a product binary refused two functions under one key",
     7: ("BINARY_BOOTSTRAP - the model's only errors are E181 in the project's own files: its templates call "
