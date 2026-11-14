@@ -30,7 +30,7 @@ import typer
 
 from simplon import cli as simplon_cli
 from simplon.kernel.product import StepFactoryContext
-from simplon.tasks import gitops
+from simplon.tasks import gitops, release
 
 from . import environments
 from . import paths
@@ -193,10 +193,6 @@ def region_guard(file: str | None = None) -> int:
     return 1
 
 
-#: The release a pin branch is named after; `release push-pin` pushes `pin/kernel-image-<tag>` and nothing else.
-PIN_TAG = re.compile(r"v\d+\.\d+\.\d+")
-
-
 def push_pin(tag: str = "") -> int:
     """Force-push the kernel-image pin branch of release `tag` to origin with the run's GITHUB_TOKEN (si#622).
 
@@ -206,7 +202,8 @@ def push_pin(tag: str = "") -> int:
     remakes the branch from origin/main. The branch is named HERE, from the tag, so the one force-push in
     this repository cannot be pointed at a branch somebody works on.
     """
-    if not PIN_TAG.fullmatch(tag):
+    # The release a pin branch is named after, by the kernel's one version rule (si#660).
+    if not release.VERSION.fullmatch(tag):
         print(f"push-pin: '{tag}' is not a release tag vX.Y.Z, so nothing is pushed", file=sys.stderr)
         return 2
     branch = f"pin/kernel-image-{tag}"

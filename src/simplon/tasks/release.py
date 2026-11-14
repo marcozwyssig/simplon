@@ -46,8 +46,10 @@ from simplon.kernel import log
 from simplon.tasks import gitops
 
 #: The dispatch release's version, fixed in the kernel with no manifest key (Marco, si#463 D3): `vX.Y.Z`, no
-#: leading zero, no suffix. Only `release:check` reads it, so only a product with `workflows: release:` meets it;
-#: `release:tag` keeps git's own rule and nothing more.
+#: leading zero, no suffix. `release:check` is the only refusal built on it, so only a product with
+#: `workflows: release:` meets it; `release:tag` keeps git's own rule and nothing more. It is also the one
+#: answer to "is this tag a release version" for every other reader (si#660): `releasenotes.version_of`
+#: and simplon's own `release push-pin` ask it rather than carrying a looser regex of their own.
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
