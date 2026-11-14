@@ -1121,6 +1121,24 @@ def test_a_smoke_run_names_and_labels_its_container_for_the_product(cli, _no_pro
     lifecycle_name(cli.argv_starting("docker", "run")[0], "demo")
 
 
+def test_a_smoke_run_as_the_caller_hands_over_no_uid_where_the_host_has_none(cli, _no_provenance, _product,
+                                                                               _tagged, monkeypatch):
+    # arrange: si#661 - Windows has no `os.getuid`. `user:` (the default) went through an inline copy of
+    # `docker.user_args()` without its guard, so this run was an AttributeError before docker started.
+    # Simulated as `test_user_args_is_empty_where_the_host_has_no_uid_concept` does; no Windows host ran it.
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.delattr(docker.os, "getuid", raising=False)
+
+    # act
+    rc = image.smoke("app", argv="check")
+
+    # assert: the run starts, as the image's own USER - the mount carries no ownership to get wrong
+    assert rc == 0
+    started = cli.argv_starting("docker", "run")
+    assert len(started) == 1
+    assert "--user" not in started[0]
+
+
 def test_an_interrupted_smoke_run_removes_the_container_it_named(_no_provenance, _product, _tagged,
                                                                   removals, monkeypatch):
     # arrange: the interrupt arrives while the client runs, as a Ctrl-C or a runner cancel does
