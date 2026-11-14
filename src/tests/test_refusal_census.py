@@ -968,6 +968,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
     # si#343: a file context hands the build the file's directory, so a `file` with no `path:` has none to hand.
     ("image", "_file_contexts", "is a `file` and declares no `path:`"): DIAGNOSIS,
+    # si#664: one name in `contexts:` and `build_contexts:` asks for two contexts under one name; the build
+    # takes one, so as written one declaration would be dropped unsaid. Over the 8 reachable manifests
+    # (GitHub API, 2026-11-14) only biz-cockpit declares `build_contexts:`, and its name is in no `contexts:`.
+    ("image", "_directory_contexts", "is named by both `contexts:` and `build_contexts:`"): DIAGNOSIS,
 
     # --- artifactsection.py and the generated artifactschema.py (si#344 B2) --------------------------------
     # DIAGNOSIS, all of them. An `artifacts:` that is not a mapping, an entry that is not one, a kind the

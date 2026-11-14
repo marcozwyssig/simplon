@@ -424,10 +424,13 @@ def test_a_rerun_after_a_successful_release_does_not_invent_a_failed_push(lab, c
 
 
 def test_a_push_that_fails_for_no_collision_is_not_reported_as_a_taken_number(lab, capsys):
-    # arrange: the reason is asked OF ORIGIN rather than parsed out of git's English. Here origin is
-    # gone entirely - a failure with no collision behind it - and the advice must be "retry", never
-    # "the number is gone".
-    _git(lab.work, "remote", "set-url", "origin", str(lab.origin) + "-does-not-exist")
+    # arrange: the reason is asked OF ORIGIN rather than parsed out of git's English. Here origin
+    # refuses every push through a pre-receive hook - a failure with no collision behind it - and the
+    # advice must be "retry", never "the number is gone". Not an unreachable origin: since si#659 that
+    # is refused before anything is cut, because the default branch is asked of origin first.
+    hook = lab.origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
 
     # act
     rc = release.tag("v1.0.0")
@@ -523,7 +526,84 @@ def test_a_repository_with_no_remote_branch_to_judge_against_is_refused_rather_t
     err = capsys.readouterr().err
     assert rc == 1
     assert sorted(_git(work, "tag", "-l").stdout.split()) == []
-    assert "origin/main" in err
+    assert "origin could not be asked" in err
+
+
+# si#659: the default branch is asked OF ORIGIN, as `release:check` asks it. A local origin/HEAD is unset in
+# a clone made the way actions/checkout makes one, and stale after origin's default branch moves; both used
+# to read as `main` and refused a release from the branch origin really names.
+
+def _origin_on_trunk(tmp_path: Path, monkeypatch) -> Path:
+    """A bare origin whose default branch is `trunk`, seeded with one commit; git isolated as `lab` is."""
+    empty = tmp_path / "gitconfig"
+    empty.write_text("", encoding="utf-8")
+    for name, value in (("GIT_CONFIG_GLOBAL", str(empty)), ("GIT_CONFIG_SYSTEM", str(empty)),
+                        ("GIT_AUTHOR_NAME", "Test"), ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
+                        ("GIT_COMMITTER_NAME", "Test"), ("GIT_COMMITTER_EMAIL", "test@example.invalid")):
+        monkeypatch.setenv(name, value)
+    origin, seed = tmp_path / "origin.git", tmp_path / "seed"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "trunk", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(seed)], check=True)
+    _commit(seed, "one")
+    _git(seed, "push", "-q", str(origin), "trunk")
+    return origin
+
+
+def test_an_actions_checkout_clone_tags_from_the_branch_origin_names(tmp_path, monkeypatch, capsys):
+    # arrange: the clone actions/checkout makes - init, add origin, fetch the one ref - has no origin/HEAD
+    origin = _origin_on_trunk(tmp_path, monkeypatch)
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    _git(work, "remote", "add", "origin", str(origin))
+    _git(work, "fetch", "-q", "--no-tags", "origin", "+refs/heads/trunk:refs/remotes/origin/trunk")
+    _git(work, "checkout", "-q", "-B", "trunk", "refs/remotes/origin/trunk")
+    assert _git(work, "symbolic-ref", "-q", "refs/remotes/origin/HEAD").returncode != 0
+    monkeypatch.setattr(context, "_current", ProductContext("sample", work, work / "sample.yaml"))
+
+    # act
+    rc = release.tag("v1.0.0")
+
+    # assert
+    assert rc == 0
+    assert "carried by origin/trunk" in capsys.readouterr().out
+    assert Lab(work, origin).remote_tags() == {"v1.0.0": _sha(work)}
+
+
+def test_a_stale_origin_head_does_not_outvote_origin(tmp_path, monkeypatch, capsys):
+    # arrange: cloned while origin's default was `main`; origin then moved to `trunk`, so the clone's
+    # origin/HEAD still names a branch origin no longer has
+    origin = _origin_on_trunk(tmp_path, monkeypatch)
+    _git(origin, "branch", "-q", "main", "trunk")
+    _git(origin, "symbolic-ref", "HEAD", "refs/heads/main")
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _git(origin, "symbolic-ref", "HEAD", "refs/heads/trunk")
+    _git(origin, "branch", "-q", "-D", "main")
+    _git(work, "fetch", "-q", "--prune", "origin")
+    _git(work, "checkout", "-q", "-B", "trunk", "origin/trunk")
+    assert _git(work, "symbolic-ref", "-q", "refs/remotes/origin/HEAD").stdout.strip() == "refs/remotes/origin/main"
+    monkeypatch.setattr(context, "_current", ProductContext("sample", work, work / "sample.yaml"))
+
+    # act
+    rc = release.tag("v1.0.0")
+
+    # assert
+    assert rc == 0
+    assert "carried by origin/trunk" in capsys.readouterr().out
+
+
+def test_an_origin_that_cannot_be_asked_is_refused_before_anything_is_cut(lab, tmp_path, capsys):
+    # arrange: origin/main is here and carries HEAD, so a fallback to `main` would cut the tag and fail
+    # only at the push. A failed probe is not a result: nothing is cut on a question that had no answer.
+    _git(lab.work, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+
+    # act
+    rc = release.tag("v1.0.0")
+
+    # assert
+    assert rc == 1
+    assert lab.local_tags() == []
+    assert "origin could not be asked which branch is its default" in capsys.readouterr().err
 
 
 # --- what the site says about it (#32 acceptance 4) ---------------------------------------------------

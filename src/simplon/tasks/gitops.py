@@ -203,8 +203,9 @@ def init_submodule(path: str = "lib/platform") -> int:
 def default_branch() -> str:
     """The BARE name of the branch `origin/HEAD` points at, falling back to `main`.
 
-    Extracted from `prune_branches`, which has asked this question since it existed, so `release:tag`
-    asks it the same way rather than restating the expression. The fallback earns its place: a
+    `prune_branches` asks this question, and only it: `release:check` and `release:tag` ask origin through
+    `remote_default_branch()` instead (si#659), because this local ref is unset in an actions/checkout clone
+    and stale after origin's default branch moves, and both read as `main`. The fallback earns its place: a
     repository whose remote-tracking symbolic ref was never set - `git remote add` + `git push -u`,
     without a clone - has no `origin/HEAD` at all, which is the ordinary state of a repository created
     rather than cloned.

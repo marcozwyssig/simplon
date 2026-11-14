@@ -240,8 +240,9 @@ class GateVerdict:
 
         So the translation is applied where its precondition is CARRIED rather than assumed: `KILLED` is
         the only outcome read off a signal, `__post_init__` refuses one that does not carry a negative
-        wait status, and `simplon.tasks.testrun` produces it from `of_subprocess` and nowhere else. Every
-        other rc passes through as it is - a product body answering -1 for "could not read"
+        wait status, and `simplon.tasks.testrun` produces it in two places only: from `of_subprocess`, and
+        (si#667) from the stop signal this process itself received while a gate ran - `-signum`, a real
+        signal in both, so 128+n names the one that ended the gate. Every other rc passes through as it is - a product body answering -1 for "could not read"
         (`simplon.kernel.waits.device_count` does exactly that in this repository) leaves the process as an
         ordinary failure instead of one that names a signal nobody sent.
         """

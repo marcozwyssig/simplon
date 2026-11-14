@@ -33,6 +33,9 @@ from simplon.manifest import context
 from simplon.tasks import toolchain
 
 #: firn's diagnostics that leave a file behind with rc 0 (docs/04 §2.5; still rc 0 in v0.5.0).
+#: W301 (and the `kept` list below) stays for a product that pins firn older than v0.3.0 (si#645, Marco
+#: 2026-11-13). From v0.3.0 on firn reports a renamed task's old file itself as W305 and exits 4 (measured on
+#: v0.3.0..v0.11.0). Retire W301 here once no reachable manifest pins firn older than v0.3.0.
 REFUSED = ("W300", "W301")
 #: The kernel's own verdict for them: firn's OUTPUT_NOT_CURRENT, which is what they are in substance.
 KEPT_RC = 4

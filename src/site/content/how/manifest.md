@@ -811,7 +811,8 @@ ci:
   turns it off. A hit is copied beside `path:`, its sha256 checked again on the copy, and renamed into
   place without a download. A miss downloads as before and then copies the verified file into the cache.
   Both leave the file with the mode a plain `open()` gives it under the caller's umask (typically
-  0644), as every fetched file gets, because BuildKit's layer cache key includes the mode. A cache fault
+  0644), as every fetched file gets, because BuildKit's layer cache key includes the mode. The cache
+  entry takes that mode too (si#669), so another uid sharing the cache can read it back. A cache fault
   (an unreadable entry, a wrong checksum in the cache, a cache that cannot be written) is a warning and a
   miss, never the verdict, and the log says which of four things happened: restored from the download
   cache, fetched and stored in it, fetched with the cache not written, or fetched with the cache off. On
@@ -824,6 +825,25 @@ ci:
   `contexts:` already says it.
 - **A file context needs BuildKit** (`--build-context`), the builder that `docker build` uses since
   Docker 23 and the one the kernel image carries.
+
+#### A directory of your own tree, handed to the build under a name
+
+`build_contexts:` maps a name to a directory under the product root, and `build:image` passes each as
+`--build-context <name>=<directory>` (si#664) - with `platforms:`, as a context of every bake target that
+builds the image. A Dockerfile reads it with `COPY --from=<name>`:
+
+```yaml
+artifacts:
+  frontend:
+    kind: image
+    # ... registry, repository, dockerfile, context as above
+    build_contexts:
+      backend-api: src/backend/api  # COPY --from=backend-api openapi.json ./
+```
+
+The path is relative to the product root, not to `context:`, and must stay under it, like `context:`. A
+directory that does not exist is named before docker is started. A name that `contexts:` already uses is
+refused, because the build takes one context per name.
 
 #### A file attached to a GitHub Release, under a name and a checksum
 
@@ -940,7 +960,7 @@ workflows:
 
 The line that matters is `command: test all`. It is not a string that happens to look like a command -
 it is **resolved against the command tree above** before anything is written, and what lands in the file
-is `./myctl.sh test all`. Rename that command and generation fails, loudly, in the same commit. Today,
+is `exec ./myctl.sh test all`. Rename that command and generation fails, loudly, in the same commit. Today,
 in a hand-written workflow, a renamed command leaves a `run:` line calling something that is gone, and
 the first anybody hears of it is a red runner.
 
@@ -1250,8 +1270,15 @@ Without that, every step carrying a `name:` or an `if:` would have had to be wri
 products: **34 of 41** command-invoking steps carry one of `name:`, `if:` or `env:`.
 
 A command step that declares no `name:` shows its `run:` line in the Actions UI, and that line is
-`./myctl.sh test all` - the same string you type in a checkout. The kernel does not invent a name for
-it; say `name:` if you want different words.
+`exec ./myctl.sh test all` - the string you type in a checkout, run as the step's own process. The
+kernel does not invent a name for it; say `name:` if you want different words.
+
+The `exec` is how a cancelled run stops cleanly (si#666). GitHub cancels a step by signalling the step's
+shell and nothing below it; without `exec` that shell dies alone and the kernel and its test run keep
+going, reparented, with no report written. With it the kernel is the process that is signalled, and it
+hands the stop on to the test run, which writes its report on the way out. The `run:` line is one
+command, so nothing after it is skipped. A step whose declared shell is not bash or sh (`shell: pwsh`,
+an expression, at the step, job or workflow level) keeps the plain line.
 
 Two things are the kernel's, and both are settings you should not have to remember. The checkout is
 emitted with `fetch-depth: 0`, because `actions/checkout` defaults to a shallow clone that carries no

@@ -3,8 +3,11 @@ two shapes a command impl runs external tools with (platform#43). Real `sh` subp
 under test IS the plumbing of the real exit code."""
 import errno
 import os
+import signal
 import subprocess
+import sys
 import threading
+import time
 from unittest import mock
 
 import pytest
@@ -248,3 +251,162 @@ def test_ok_and_answered_are_different_questions(rc, out, ok, answered):
     # assert
     assert result.ok is ok
     assert result.answered is answered
+
+
+# --- si#649: a stop that reaches the kernel reaches its child -------------------------------------------
+#
+# The kernel runs in an interpreter of its own here, because what is under test is what that PROCESS does
+# when it is signalled; a test process cannot SIGTERM itself and watch. The child is a real pytest that
+# sleeps, because the property si#649 asks for is pytest's: that it is given the chance to write its junit.
+
+_KERNEL = """
+import sys
+from simplon.kernel import run as run_module
+run_module._STOP_GRACE = float(sys.argv[1])
+run_module.run(sys.argv[3:], capture=sys.argv[2] == "capture")
+"""
+
+_SLOW_SUITE = """
+import os, time
+def test_slow():
+    with open(os.environ["SI649_PIDFILE"], "w") as f:
+        f.write(str(os.getpid()))
+    time.sleep(60)
+"""
+
+_DEAF_CHILD = """
+import os, signal, time
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(os.environ["SI649_PIDFILE"], "w") as f:
+    f.write(str(os.getpid()))
+time.sleep(60)
+"""
+
+posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX signals; the Windows path is unchanged")
+
+
+def _alive(pid: int) -> bool:
+    """Running, as opposed to gone or a zombie waiting for init to reap it."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def _gone_within(pid: int, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while _alive(pid):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _kernel_with_child(tmp_path, child: list[str], *, capture: bool = False, grace: float = 9.0):
+    """Start a kernel process whose `run` runs `child`, and return it with the child's pid once the child
+    has said it is up: a signal sent before that would measure the start, not the stop."""
+    pidfile = tmp_path / "child.pid"
+    src = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(run_module.__file__))))
+    env = {**os.environ, "SI649_PIDFILE": str(pidfile),
+           "PYTHONPATH": os.pathsep.join([src, *filter(None, [os.environ.get("PYTHONPATH")])])}
+    kernel = subprocess.Popen([sys.executable, "-c", _KERNEL, str(grace), "capture" if capture else "stream",
+                               *child], cwd=tmp_path, env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 30
+    while not (pidfile.exists() and pidfile.read_text()):
+        assert kernel.poll() is None, "the kernel ended before its child came up"
+        assert time.monotonic() < deadline, "the child never came up"
+        time.sleep(0.05)
+    return kernel, int(pidfile.read_text())
+
+
+@pytest.fixture
+def slow_pytest(tmp_path):
+    (tmp_path / "test_slow.py").write_text(_SLOW_SUITE)
+    junit = tmp_path / "junit.xml"
+    return [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "test_slow.py",
+            f"--junitxml={junit}"], junit
+
+
+@posix_only
+@pytest.mark.parametrize("capture", [False, True], ids=["streamed", "captured"])
+def test_a_SIGTERM_to_the_kernel_does_not_leave_its_child_running(tmp_path, slow_pytest, capture):
+    """si#649, the orphan. Measured before the fix: the kernel's python died on SIGTERM at once and its
+    pytest child ran on, reparented to init, with no junit - the shape of the two orphans netctl's runner
+    terminated at job cleanup. The stop has to reach the child, and the kernel still has to end BY the
+    signal: a run that was cancelled must look cancelled."""
+    # arrange
+    argv, _ = slow_pytest
+    kernel, child = _kernel_with_child(tmp_path, argv, capture=capture)
+    try:
+        # act
+        kernel.send_signal(signal.SIGTERM)
+        rc = kernel.wait(30)
+
+        # assert
+        assert _gone_within(child, 5), "the kernel ended and its child is still running"
+        assert rc == -signal.SIGTERM
+    finally:
+        if _alive(child):
+            os.kill(child, signal.SIGKILL)
+
+
+@posix_only
+def test_a_SIGINT_to_the_kernel_lets_its_pytest_child_write_the_junit(tmp_path, slow_pytest):
+    """si#649, the missing report. A runner's cancel starts with SIGINT, and a SIGINT that reached only the
+    kernel became `subprocess.run`'s KeyboardInterrupt path, which SIGKILLs the child 0.25 s later -
+    measured: no junit. Handed on, pytest stops the way it stops on Ctrl-C and writes its report on the way
+    out, and the kernel still ends interrupted, never green."""
+    # arrange
+    argv, junit = slow_pytest
+    kernel, child = _kernel_with_child(tmp_path, argv)
+    try:
+        # act
+        kernel.send_signal(signal.SIGINT)
+        rc = kernel.wait(30)
+
+        # assert
+        assert junit.exists(), "the child was stopped before it could write its junit"
+        assert not _alive(child)
+        assert rc == -signal.SIGINT
+    finally:
+        if _alive(child):
+            os.kill(child, signal.SIGKILL)
+
+
+@posix_only
+def test_a_child_that_ignores_the_stop_is_killed_once_the_grace_is_over(tmp_path):
+    """The wait after a stop is BOUNDED, because a run that hangs is neither green nor red. A child deaf to
+    both signals is killed by the kernel itself when the grace ends, rather than outliving it."""
+    # arrange
+    (tmp_path / "deaf.py").write_text(_DEAF_CHILD)
+    kernel, child = _kernel_with_child(tmp_path, [sys.executable, "deaf.py"], grace=0.5)
+    try:
+        # act
+        started = time.monotonic()
+        kernel.send_signal(signal.SIGTERM)
+        rc = kernel.wait(30)
+
+        # assert
+        assert not _alive(child)
+        assert time.monotonic() - started < 10
+        assert rc == -signal.SIGTERM
+    finally:
+        if _alive(child):
+            os.kill(child, signal.SIGKILL)
+
+
+def test_run_still_kills_the_child_on_its_own_timeout():
+    # act / assert: handing a stop on must not have cost `timeout` its meaning
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_module.run(["sleep", "30"], timeout=0.3)
+
+
+def test_run_still_feeds_input_and_captures_both_streams():
+    # act
+    res = run_module.run(["sh", "-c", "cat; echo err >&2; exit 4"], input_text="fed\n")
+
+    # assert
+    assert (res.rc, res.out, res.err) == (4, "fed\n", "err\n")

@@ -907,9 +907,11 @@ def test_report_doesNotAnnounceAParentSuiteForAJunitXmlThatCannotCarryOne(monkey
 
 
 def _badge(out, phrase):
-    """The colour the line carrying `phrase` was logged with - `log.ok` is green, `log.warn` yellow."""
+    """The level the line carrying `phrase` was logged at - `log.ok` says ` OK`, `log.warn` says `  !`.
+    Read from the words, not the colour: a captured stream is no terminal, so it carries none (si#655)."""
     line = next(l for l in out.splitlines() if phrase in l)
-    return {"\033[1;32m": "ok", "\033[1;33m": "warn"}.get(line[:7], line[:7])
+    level = line[len("[HH:MM:SS]"):len("[HH:MM:SS]   !")]
+    return {"  OK": "ok", "   !": "warn"}.get(level, level)
 
 
 def test_report_doesNotWearTheOkBadge_whenTheDeclaredParentSuiteReachedNothing(monkeypatch, tmp_path,

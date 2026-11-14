@@ -42,6 +42,7 @@ from typing import Sequence
 
 from simplon.kernel import log, run
 from simplon.adapters import oras
+from simplon.manifest.context import TaskRefused
 
 # The scopes `gh auth login` does not request, and every package operation needs.
 PACKAGE_SCOPES: tuple = ("read:packages", "write:packages")
@@ -55,8 +56,15 @@ GITHUB_PACKAGE_HOSTS: frozenset = frozenset({"ghcr.io", "nuget.pkg.github.com",
                                              "maven.pkg.github.com"})
 
 
-class PackageError(RuntimeError):
-    """A package operation failed. The message is written to be acted on, not just read."""
+class PackageError(TaskRefused):
+    """A package operation failed. The message is written to be acted on, not just read.
+
+    A `TaskRefused` (si#697), so a task body it leaves reaches the terminal as its message alone, rc 1.
+    As a RuntimeError every one of them - no token, a registry refusal, a failed push - arrived at the
+    foot of a traceback, measured through `build maven-pack` and `build nuget-pack` on a host with
+    neither GITHUB_TOKEN nor `gh`. No caller caught it as a RuntimeError or a ValueError: every one
+    names PackageError, so moving the base changes no caller's meaning.
+    """
 
 
 def scope_advice(scopes: Sequence[str] = PACKAGE_SCOPES) -> str:
@@ -82,12 +90,21 @@ def token() -> str:
 
     NEVER from a config file. A token committed to one leaked into a product repository's history once,
     and the fix was to leave no field a secret could be written into.
+
+    A host without `gh` is the same answer as a `gh` without a login, a PackageError (si#656): `run`
+    raises OSError for a missing binary, and that reached every caller but adapters.github as a traceback.
     """
     from_env = os.getenv("GITHUB_TOKEN", "").strip()
     if from_env:
         return from_env
 
-    result = run.run(["gh", "auth", "token"], capture=True)
+    try:
+        result = run.run(["gh", "auth", "token"], capture=True)
+    except OSError as no_gh:
+        raise PackageError(
+            f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). Either export "
+            "GITHUB_TOKEN, or install gh and run `gh auth login`. In GitHub Actions, pass "
+            "`secrets.GITHUB_TOKEN` in the step's `env:` - Actions sets it for no step on its own.") from None
     if result.rc == 0 and result.out.strip():
         log.info("using the token from `gh auth token` (GITHUB_TOKEN is not set)")
         return result.out.strip()
