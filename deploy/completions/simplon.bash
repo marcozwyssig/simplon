@@ -25,7 +25,7 @@ _simplon_nodes() {
         'test') _simplon_reply=('suite' 'typecheck-python' 'release-notes' 'report' 'generated' 'walk' 'image' 'homebrew-formula' 'handoff-canary' 'all' 'model' 'manifest-model') ;;
         'release') _simplon_reply=('check' 'notes' 'tag' 'push-image' 'push-pin' 'homebrew-tap' 'all') ;;
         'support') _simplon_reply=('git' 'tasks' 'manifest' 'install' 'claude-plugins' 'claude-md' 'toolchain' 'completion' 'doctor' 'workflows' 'ci-privileges' 'ci-disk-hygiene' 'ci-arm64' 'ci-disk-preflight' 'ci-disk-cleanup' 'ci-docker-preflight') ;;
-        'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;
+        'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'clean' 'submodules' 'auth-scopes') ;;
         'support.tasks') _simplon_reply=('catalogue' 'generate') ;;
         'support.manifest') _simplon_reply=('migrate' 'model') ;;
     esac

@@ -183,6 +183,13 @@ support typeOf simplon.pipeline.CatalogueGroup {
         help = "ALSO delete branches that cannot be proven merged (destructive)"
       }
     }
+    command clean typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_clean
+      params p_force typeOf simplon.pipeline.TaskParam {
+        key = "force"
+        help = "remove what the preview lists (without it nothing is removed)"
+      }
+    }
     command submodules typeOf simplon.pipeline.CatalogueCommand {
       task = simplon.catalogue.vcs_submodules
     }

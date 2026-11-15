@@ -230,6 +230,79 @@ def push() -> int:
     return 0
 
 
+def _clean_lines(text: str, prefix: str) -> list[str]:
+    """The paths `git clean` reports behind `prefix` ("Would remove ", "Removing ", ...)."""
+    return [line[len(prefix):] for line in (text or "").splitlines() if line.startswith(prefix)]
+
+
+def _entries(n: int) -> str:
+    return f"{n} entry" if n == 1 else f"{n} entries"
+
+
+def _git_failed(res: Result, what: str) -> int:
+    """rc 1 with git's own words: a `git clean` that failed is never a silent 0 (si#714)."""
+    log.error(f"git clean {what} failed (rc {res.rc}): {(res.err or res.out or '').strip()}")
+    return 1
+
+
+def clean(force: bool = False) -> int:
+    """si#714: remove every untracked file, ignored ones included (`git clean -dx`); preview unless `force`.
+
+    NESTED REPOSITORIES ARE NEVER TOUCHED: no `-ff`, so a nested checkout or a worktree (`.claude/worktrees/
+    agent-*`) survives, and both runs name it as skipped. git names only the nested repositories it meets
+    INSIDE a directory it is clearing; one that sits directly in the untracked set it leaves out without a
+    word. Those are found by asking git the same dry-run question with `-ff` - the entries it would then
+    add that the plain run neither removes nor reaches into are exactly the repositories it skipped. Both
+    questions are dry runs; neither removes anything.
+
+    Three verdicts kept apart: a clean checkout ("nothing to remove", rc 0), a preview or a removal (rc 0,
+    every entry listed with the count), and a git that fails (rc 1 with git's message).
+
+    DELETING IS THE LAST THING THIS DOES. On the venv route it removes the venv it is running from, so
+    after the removal nothing new is imported, only the finished list printed with the already-loaded
+    `log`. The next launcher call re-provisions the venv.
+    """
+    _require("git")
+    preview = _git(["clean", "-ndx"])
+    if not preview.ok:
+        return _git_failed(preview, "-ndx")
+    removes = _clean_lines(preview.out, "Would remove ")
+    skipped = _clean_lines(preview.out, "Would skip repository ")
+    every = _git(["clean", "-ndx", "-ff"])
+    if not every.ok:
+        return _git_failed(every, "-ndx -ff")
+    reached = removes + skipped
+    skipped += [e for e in _clean_lines(every.out, "Would remove ")
+                if e not in removes and not any(r.startswith(e) for r in reached)]
+    skipped.sort()
+
+    if not removes:
+        log.ok("nothing to remove: no untracked or ignored files")
+        for path in skipped:
+            log.info(f"skipped (nested repository): {path}")
+        return 0
+    if not force:
+        for path in removes:
+            log.info(f"would remove {path}")
+        for path in skipped:
+            log.info(f"skipped (nested repository): {path}")
+        log.warn(f"preview: {_entries(len(removes))} would be removed (untracked and ignored), nothing "
+                 f"was removed. Run again with --force to remove them.")
+        return 0
+
+    done = _git(["clean", "-dx", "-f"])
+    # Nothing is imported from here on: the venv this runs from may just have gone.
+    removed = _clean_lines(done.out, "Removing ")
+    for path in removed:
+        log.info(f"removed {path}")
+    for path in skipped:
+        log.info(f"skipped (nested repository): {path}")
+    if not done.ok:
+        return _git_failed(done, "-dx -f")
+    log.ok(f"removed {_entries(len(removed))} (untracked and ignored)")
+    return 0
+
+
 def _pr_heads(state: str) -> set[str] | None:
     """The head-branch names of this repository's pull requests in `state` (merged / open), or None when
     gh is missing or the query failed. None is not the empty set: "no open PR" licenses deleting a

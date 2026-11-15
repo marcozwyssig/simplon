@@ -53,6 +53,15 @@ def prune_branches(dry_run: bool = False, remote: bool = False, unmerged: bool =
     return gitops.prune_branches(dry=dry_run, remote=remote, unmerged=unmerged)
 
 
+def clean(force: bool = False) -> int:
+    """Remove every untracked file, ignored ones included; preview unless `--force` (si#714).
+
+    The preview lists what would go and how many entries that is, and removes nothing. Nested
+    repositories and worktrees are never touched and are named as skipped."""
+    _configure()
+    return gitops.clean(force=force)
+
+
 def submodules() -> int:
     """git submodule update --init lib/platform - init the submodule a fresh worktree/clone needs.
 
