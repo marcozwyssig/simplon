@@ -136,7 +136,7 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # the product's, through the backend it registers.
     assert cat.namespaces() == ["build", "deploy", "docs", "release", "support", "tasks", "test",
                                 "toolchain", "vcs"]
-    assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
+    assert sorted(cat.namespace("vcs")) == ["auth-scopes", "clean", "commit", "prune-branches", "push",
                                             "submodules"]
     # `support:install` provisions the host tooling the kernel cannot work without (oras), and
     # `vcs:auth-scopes` the gh token's package scopes - the two halves of "this machine can publish".
@@ -694,7 +694,7 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     placed = _placed_tasks(cat.groups)
 
     # assert
-    assert set(git) == {"commit", "push", "prune-branches", "submodules", "auth-scopes"}
+    assert set(git) == {"commit", "push", "prune-branches", "clean", "submodules", "auth-scopes"}
     assert set(tasks) == {"catalogue", "generate"}
     # `support:install` and `vcs:auth-scopes` are placed for the same reason the git verbs are: both
     # read nothing from a product manifest - one drives the tool gates, the other the gh token.
@@ -725,7 +725,9 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # product's own CLAUDE.md and .claude/settings.json.
     # `support:toolchain` (si#550) joins by the same bar: si#525 gave every product a `toolchains:` list,
     # and this is the command that adds to it. It writes only the product's own manifest.
-    assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
+    # `vcs:clean` (si#714) joins beside the other git verbs: it needs nothing but the repository root, and
+    # without `--force` it only lists.
+    assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:clean", "vcs:submodules",
                       "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
                       "support:model", "support:claude-plugins", "support:claude-md", "support:toolchain",
                       "tasks:catalogue", "tasks:generate"}

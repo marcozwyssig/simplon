@@ -852,7 +852,9 @@ NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
 #: A command si#525 placed in an EXISTING group, `support claude-plugins`, so it is not a new group to pop.
 #: The catalogue places it first after `install`; a product that declared its own (netctl) keeps its own
 #: help and impl, and only its position in the group moved - that is what is taken back out here.
-NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"), ("support", "toolchain"))
+#: si#714 places `clean` in `support git` the same way.
+NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"), ("support", "toolchain"),
+                                ("support.git", "clean"))
 
 
 @pytest.mark.parametrize("product", PRODUCTS)

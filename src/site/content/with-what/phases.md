@@ -150,12 +150,12 @@ the number that says whether a rib is filled:
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 17 |
-| `vcs` | family | 5 |
+| `vcs` | family | 6 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Seventy-two coordinates: sixty carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Seventy-three coordinates: sixty carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -536,17 +536,18 @@ product files each one where it belongs in *its* loop:
 
 ### `vcs`
 
-**In the catalogue today: 5 tasks.**
+**In the catalogue today: 6 tasks.**
 
 - `vcs:commit`
 - `vcs:push`
 - `vcs:prune-branches`
+- `vcs:clean`
 - `vcs:submodules`
 - `vcs:auth-scopes`
 
 Committing belongs to no phase at all, which is the clearest argument that the second axis has to exist:
 had every coordinate been forced to name a group, this family would have been the first thing to break.
-The catalogue places all five under `support git`.
+The catalogue places all six under `support git`.
 
 ### `docs`
 
