@@ -23,6 +23,90 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.45.0
+
+**What a product has to do:** regenerate its workflows (`support workflows`), or `test generated` reports
+drift: every generated command step now reads `exec ./<product>.sh ...`. Nothing else is required. A
+package failure (no token, no `gh`, a registry refusal) now prints as its message alone, rc 1, instead
+of at the foot of a traceback. `build_contexts:` on an image is now read and passed to docker as a
+directory context; a name that appears in both `contexts:` and `build_contexts:` is refused at load.
+Of the reachable manifests only biz-cockpit declares `build_contexts:` when #696 measured them, and its
+entry loads unchanged. Kernel log lines carry no colour in a pipe or with `NO_COLOR` set.
+
+### A cancelled run stops the kernel and leaves a record (si#649, si#666, si#667)
+
+- **`kernel.run.run` hands a SIGINT or SIGTERM on to its child** and waits a grace period for it to end
+  (under the runner's ten seconds to SIGKILL), kills it if it has not, then re-delivers the signal to
+  the previous handler. A pytest child that gets the SIGINT writes its junit; nothing is left running
+  reparented to pid 1. An ignored signal stays ignored; Windows and non-main threads keep the plain
+  `subprocess.run`.
+- **A generated command step `exec`s the launcher**, so the runner's cancel signals the kernel's python
+  and not a bash that waits it out. `exec` is written only where the step, job or workflow shell is bash
+  or sh, or none is declared; `pwsh`, `powershell`, `cmd`, `python` or an expression keep the plain line.
+  Product-written `run:` steps are not touched. A hand-written workflow gets the same effect by writing
+  `exec` itself.
+- **A gate that a stop ended is recorded as `killed`**, with rc `-signum`, on the console, in the stamp
+  (with the run's earlier gates) and in the archive's environment. Before, a stopped gate left no entry,
+  and in `accept` the stamp of an earlier green gate stood as the verdict of the cancelled run. The stop
+  is then re-delivered, so the process still ends the way it did.
+
+### `build_contexts:` reaches docker (si#664)
+
+- **`build:image` renders each `build_contexts:` entry as `--build-context <name>=<root>/<dir>`**, and a
+  `platforms:` bake carries it as a target context. Before, the key was accepted at load and read by
+  nothing, so docker resolved the name as an image and failed to pull it.
+- The key is now a table (name to path). Each path is held inside the product like `context:`, and a
+  missing directory is named before docker starts.
+- **New diagnosis:** a name in both `contexts:` and `build_contexts:` is refused at load, since one of
+  the two would otherwise be dropped silently.
+
+### Package failures say what to do (si#656, si#697)
+
+- **`githubpackages.token()` with no `GITHUB_TOKEN` and no `gh` on the host** raises the same
+  `PackageError` as a `gh` without a login, naming both ways out, instead of a `FileNotFoundError` from
+  nuget, maven or the oras and docker logins.
+- **`PackageError` is now a `TaskRefused`**, so every package failure prints as its message alone, rc 1.
+
+### One rule for a release version, and `release:tag` asks origin (si#660, si#659)
+
+- **`release.VERSION` is the one reader of a release version.** The release-notes reader and
+  simplon's own `push-pin` used `\d`, which accepted a leading zero and non-ASCII digits and spelt `v01.2.3` back as
+  `v1.2.3`, a tag that does not exist. A `## 01.2.3` heading is now no section.
+- **`release:tag` asks origin for its default branch** (`ls-remote --symref`), as `release:check`
+  already did. An actions/checkout-shaped clone has no local `origin/HEAD`, and a stale one outvoted
+  origin; both read as `main`. An origin that cannot be asked is refused before anything is cut, with no
+  fallback to `main`.
+
+### The catalogue is generated whole from the firn model (si#561, si#645)
+
+- **firn now generates `src/simplon/catalogue.yaml` whole**: groups and tasks come from the M2 catalogue
+  model as the kinds already did. The parsed catalogue is equal to the hand-written one; its comments
+  moved into the model. The protected region and simplon's own `build model-guard` and `region-guard`
+  task are gone: firn reports a hand edit itself (W303) and `build:model` returns rc 4.
+- **simplon's own gates pin firn v0.11.0**, read by the suite from one source in `simplon.yaml`.
+  `build:model` keeps its W301 refusal for products that pin a firn older than v0.3.0, and names the
+  trigger that retires it.
+
+### Also in this release
+
+- **si#655:** kernel log lines paint colour only on a terminal with `NO_COLOR` unset, decided per call
+  and per stream.
+- **si#661:** `test:image` takes `--user` from `docker.user_args()`, so a host without `os.getuid` runs
+  the container as the image's own `USER` instead of failing before docker starts. Simulated, not run
+  on Windows.
+- **si#662:** `support:toolchain` appends to a `toolchains:` block list written at the key's own column,
+  and a comment between items no longer ends the list early.
+- **si#669:** a `build:fetch` cache entry takes the umask's mode, like the placed file and its `.url`
+  record, instead of `mkstemp`'s 0600.
+- **si#657:** a Proxmox API read that times out, is cut short or answers something that is not a JSON
+  object is a `ProxmoxError` naming the endpoint and the way out, not a traceback.
+- **si#639:** simplon's own CI runs a two-job canary through the kernel's job hand-off on every push.
+- **#642** pins `deploy/image/image.pin` to the v0.44.0 kernel image, published and read back by the
+  release run.
+- The pull requests are #642, #644 (si#639), #648 and #650 (si#645), #651 (si#649), #694 (si#662),
+  #695 (si#656), #696 (si#664), #698 (si#655), #699 (si#657), #700 (si#659), #701 (si#669),
+  #702 (si#661), #704 (si#660), #706 (si#666), #707 (si#697), #708 (si#667) and #688 (si#561).
+
 ## 0.44.0
 
 **What a product has to do:** regenerate its workflows (`support workflows`), or `test generated` reports
