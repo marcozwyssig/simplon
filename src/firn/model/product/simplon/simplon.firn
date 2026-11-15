@@ -231,6 +231,10 @@ simplon typeOf simplon.manifest.Product {
         key = "prune-branches"
         task = simplon.catalogue.vcs_prune_branches
       }
+      command clean typeOf simplon.pipeline.TaskCommand {
+        key = "clean"
+        task = simplon.catalogue.vcs_clean
+      }
       command submodules typeOf simplon.pipeline.TaskCommand {
         key = "submodules"
         task = simplon.catalogue.vcs_submodules

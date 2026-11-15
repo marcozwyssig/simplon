@@ -54,6 +54,14 @@ vcs_prune_branches typeOf simplon.pipeline.CatalogueTask {
   help = "Delete local branches already merged into main (squash-aware via gh)."
   unattended = true
 }
+// si#714. `unattended: true` because the default is a PREVIEW that deletes nothing, and `--force` is a
+// deliberate act: a pipeline that runs it bare lists what would go and stays green.
+vcs_clean typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:clean"
+  body = "simplon.tasks.vcs:clean"
+  help = "Remove every untracked file, ignored ones included (preview unless --force; nested repositories are kept)."
+  unattended = true
+}
 // `unattended: true` beside the word "interactive" in the help is not a contradiction, and it is the
 // clearest example of what the flag actually asks. The device flow needs a person - but the body
 // CHECKS for a terminal and returns 0 saying "nothing to do" when there is none, because in CI the
