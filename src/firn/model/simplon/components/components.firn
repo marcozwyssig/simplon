@@ -78,6 +78,10 @@ manifest typeOf simplon.architecture.Component {
   module m_manifest_treeform typeOf simplon.architecture.Module {
     path = "manifest.treeform"
   }
+  // si#561: TASK_KEYS and INHERITED, generated from the M2 for treeform.
+  module m_manifest_taskkeys typeOf simplon.architecture.Module {
+    path = "manifest.taskkeys"
+  }
   module m_manifest_yamlkeys typeOf simplon.architecture.Module {
     path = "manifest.yamlkeys"
   }

@@ -42,12 +42,6 @@ tasks:
     impl: "orchestrator.cli:doctor"
     help: "Check the tools and the environment."
     unattended: true
-  # firn rewrites everything outside a protected region with rc 0, so a hand-written line there is lost
-  # without a word (si#344 B1 final review); `build model-guard` runs this before `firn gen` can.
-  region-guard:
-    impl: "orchestrator.cli:region_guard"
-    help: "Refuse a file with hand-written lines outside its protected region, naming them."
-    unattended: true
   # si#622: release.yml's `image` job pushes the branch that moves deploy/image/image.pin, and no generated
   # checkout persists the job's token any more. The push goes through `gitops.push_branch`, which hands git
   # the step's GITHUB_TOKEN for that one call (`gitops.remote_auth`). The body names the branch from the tag,
@@ -167,35 +161,6 @@ ci:
       docs:
         help: "Write the command reference, then build the website from it."
         depends_on: [reference, acceptance, site]
-      # simplon's own model, generated into the tree (si#371, si#344 B1): `firn gen` writes the `kinds:`
-      # section of the kernel's catalogue (src/simplon/catalogue.yaml) and the website's kinds page (src/site/content/with-what/kinds.md) from
-      # src/firn/model/simplon/vocabulary/kinds.firn, and keeps the catalogue's hand-written protected
-      # region. An AGGREGATE, for the same reason `docs` is one: two steps in an order only the manifest
-      # can state.
-      #
-      # WHAT `model-gen` DOES BESIDES `gen` IS TWO MEASURED DEFECTS' REPAIRS, not tidiness, and since si#400 4b
-      # it does them from firn's own report (`gen --format=json`) instead of from two hand-typed file lists.
-      # firn v0.1.0 writes every file it generates with mode 0600 (measured 2026-10-12: 644 before `gen`, 600
-      # after), and setuptools carries that mode into the wheel unchanged for package data - a root-installed
-      # kernel whose catalogue only root can read. firn has no option for it, so the kernel's `build:model`
-      # sets 0644 on every file firn reports; test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone`
-      # is the guard. (It also refused a file firn reported deleted and one holding only its id line, until
-      # si#568: firn#966 covers both since firn v0.2.0, more accurately.) Until
-      # 4b those were two steps of their own, `model-whole` and `model-mode`, each with the same list of five
-      # files typed out - and one class per catalogue task would have added a line per task to both.
-      #
-      # `build:model` also turns what firn only WARNS about into rc 4 (si#568): a file kept because it holds a
-      # protected region no template produces any more (W301), and a region appended to the end of a file
-      # (W300). A kept task file still defines its class with its old KEY (part 4 spec, decision 6).
-      #
-      # THE FIRST STEP GUARDS WHAT `gen` WOULD DELETE (si#344 B1 final review). firn rewrites everything
-      # outside the catalogue's protected region on every run with rc 0, and the end of the file - below
-      # firn's id line - is the natural place to add a task: it loads, and the next `gen` deletes it, while
-      # `test generated` is green over the deletion (unstaged) or asks for it to be committed (staged).
-      # `model-guard` refuses such lines by number BEFORE firn runs, and `stop_on_failure: true` is what
-      # makes "before" true: with the default (false) the aggregate would run `model-gen` after a red
-      # guard and delete the lines anyway. firn v0.2.0's W303 says the same about hand edits; it arrived
-      # with the bump (si#410), and the guard stays until W303 is measured to cover what the guard refuses.
       # The Homebrew formula (si#537), rendered by the kernel from the wheel in `dist` (si#536). Its URL and
       # sha256 are not here: `source` says where they come from, PyPI on a real run and the local wheel on a
       # dry run, and it is a step parameter in release.yml rather than a `with:` value, because the same
@@ -213,18 +178,34 @@ ci:
           python: python@3.14
           env: { SODIUM_INSTALL: system }
           test: { args: ["--help"], expect: "usage:" }
-      model:
-        help: "Guard the catalogue's hand-written lines, then generate the catalogue's kinds, the artifact schema, one class per catalogue task, the kinds page and the architecture data and page from simplon's firn model."
-        depends_on: [model-guard, model-gen]
-        stop_on_failure: true
-      # The catalogue only: kinds.md has no protected region, so nothing in it is hand-written to lose.
-      model-guard:
-        task: region-guard
-        with:
-          file: src/simplon/catalogue.yaml
+      # simplon's own model, generated into the tree (si#371, si#344 B1): `firn gen` writes the kernel's
+      # catalogue (src/simplon/catalogue.yaml) WHOLE since si#561 - its `kinds:` from
+      # src/firn/model/simplon/vocabulary/kinds.firn, its `groups:` and `tasks:` from
+      # src/firn/model/simplon/catalogue/ - and the website's kinds page (src/site/content/with-what/kinds.md).
       # `firn gen`, started in src/, where firn.toml is, through the kernel's `build:model` (si#400 4b).
-      model-gen:
+      #
+      # WHAT IT DOES BESIDES `gen` IS TWO MEASURED DEFECTS' REPAIRS, not tidiness, and since si#400 4b
+      # it does them from firn's own report (`gen --format=json`) instead of from two hand-typed file lists.
+      # firn v0.1.0 writes every file it generates with mode 0600 (measured 2026-10-12: 644 before `gen`, 600
+      # after), and setuptools carries that mode into the wheel unchanged for package data - a root-installed
+      # kernel whose catalogue only root can read. firn has no option for it, so the kernel's `build:model`
+      # sets 0644 on every file firn reports; test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone`
+      # is the guard. (It also refused a file firn reported deleted and one holding only its id line, until
+      # si#568: firn#966 covers both since firn v0.2.0, more accurately.) Until
+      # 4b those were two steps of their own, `model-whole` and `model-mode`, each with the same list of five
+      # files typed out - and one class per catalogue task would have added a line per task to both.
+      #
+      # `build:model` also turns what firn only WARNS about into rc 4 (si#568): a file kept because it holds a
+      # protected region no template produces any more (W301), and a region appended to the end of a file
+      # (W300). A kept task file still defines its class with its old KEY (part 4 spec, decision 6). And a
+      # generated file edited by hand is firn's W303, kept and rc 4: until si#561 a `model-guard` step refused
+      # hand-written lines outside the catalogue's protected region before firn ran, because firn v0.1.0
+      # deleted them with rc 0. si#561 measured W303 on firn v0.11.0 over the whole-generated catalogue (a
+      # line appended after the id line, and a task changed in place: both kept, rc 4) and removed the
+      # region, the guard and its task with it.
+      model:
         task: build:model
+        help: "Generate the catalogue (kinds, groups, tasks), the artifact schema, one class per catalogue task, the kinds page and the architecture data and page from simplon's firn model."
         with:
           image: ghcr.io/marcozwyssig/firn:v0.11.0
           cwd: src
@@ -625,10 +606,16 @@ generated:
   firn-model:
     path: src/firn/model/product/simplon/simplon.firn
     by: support manifest model src/firn/model/product/simplon/simplon.firn
-  # The kernel's catalogue (si#344 B1): its `kinds:` section is generated by firn from
-  # src/firn/model/simplon/vocabulary/kinds.firn; the rest is a protected region firn keeps.
+  # The kernel's catalogue (si#344 B1), generated WHOLE by firn since si#561: `kinds:` from
+  # src/firn/model/simplon/vocabulary/kinds.firn, `groups:` and `tasks:` from src/firn/model/simplon/catalogue/.
+  # It has no protected region, so a hand edit is red here first.
   catalogue:
     path: src/simplon/catalogue.yaml
+    by: build model
+  # The loader's TASK_KEYS and INHERITED (si#561), generated WHOLE by firn from the M2's CatalogueTask and
+  # Task properties: it has no protected region, so a hand edit is red here first.
+  task-keys:
+    path: src/simplon/manifest/taskkeys.py
     by: build model
   # The kinds reference page (si#344 B1), generated by firn beside the catalogue's kinds.
   kinds-page:

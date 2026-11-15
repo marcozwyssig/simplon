@@ -11,7 +11,7 @@ templates = ["firn/templates"]
 # (si#400 4b).
 [target.simplon]
 path = "simplon"
-templates = ["Catalogue", "ArtifactSchema", "Tasks"]
+templates = ["Catalogue", "ArtifactSchema", "Tasks", "TaskKeys"]
 
 # The architecture's data (si#390 part 1): test code, read by src/tests/test_architecture.py, never shipped.
 # Its own directory, which firn owns whole: firn v0.1.0 deletes, with rc 0, any file in a target that holds a

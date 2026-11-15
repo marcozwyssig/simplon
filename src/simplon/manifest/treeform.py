@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from simplon.manifest import artifactsection, ports
+from simplon.manifest.taskkeys import INHERITED, TASK_KEYS
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -542,11 +543,12 @@ def _check_command_is_mapping(spec, where: str, name: str) -> None:
 # in the catalogue, it is true for everybody - which is the same argument the coordinate space itself
 # runs on. A command may still override it, because a product can wrap a body in a way that changes the
 # answer, and the override is the instance's to make.
-INHERITED = ("help", "passthrough_args", "unattended", "publishes", "token")
-
+#
 # What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
 # a template that pinned a value, hid itself or planned other commands would not be a template.
-TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended", "publishes", "token", "input", "output")
+#
+# Both are GENERATED since si#561 (simplon/manifest/taskkeys.py), from the properties of the M2's
+# CatalogueTask and Task in their declared order: they were a third hand list of what the model says.
 COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "passes", "with",
                      "task", "env")
 

@@ -6,11 +6,654 @@
 // `key` repeats catalogue.yaml's coordinate; `body` is the one place a task's body is named (since si#400 4c
 // the catalogue names none). src/tests/test_catalogue_ports.py holds the keys to the catalogue's coordinates
 // and each body to the wrapper its generated class imports.
+// si#400 4a: the catalogue's tasks that take or give no artifact have no port. They are here because the
+// generated task classes (plan 4b) and every command's `task` need all of them.
+//
+// si#561: this file is the source of catalogue.yaml's `tasks:` section, which firn generates from it
+// (src/firn/templates/catalogue.firnt) in the order written here. The comments are the catalogue's own
+// rationale, moved here from the YAML's hand-written region: where a task goes, why it is offered or placed.
+// Their "above", "below" and "this file" were written about catalogue.yaml, which still has that shape: the
+// groups (groups.firn) first, then the tasks in this file's order.
+//
+// `unattended:` (si#267) on every task below: can a pipeline run this with nobody at the keyboard?
+//
+// It is declared HERE, once, for every product that imports the coordinate, for the same reason the
+// coordinate space itself exists - `test:walk` asks a person to answer each scenario, and it asks that
+// of everybody. The kernel derives a product's pipeline from its command tree using this bit (a job that
+// says `derive:` instead of `steps:`), so a product no longer has to know which of its commands a
+// machine may run unasked.
+//
+// The population was MEASURED rather than judged: every catalogue body was walked transitively for a
+// construct that asks a person - input(), getpass, a typer/click prompt - and exactly one reaches any.
+// All but that one are `true` (which one is `unattended = false` below), and that is what makes the flag
+// worth having: a derivation that had to be told about every command would not be a derivation.
+//
+// Leaving the key out is a THIRD state and means nobody has said. It is not read as false - a derivation
+// that silently dropped an undeclared command would produce a pipeline missing a gate, green for the
+// wrong reason - so it is named and refused instead. `check_task` also rejects it as an unknown key on
+// any task that misspells it.
 package simplon.catalogue
+
+
+// --- vcs: the version-control verbs -----------------------------------------------------------------
+vcs_commit typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:commit"
+  body = "simplon.tasks.vcs:commit"
+  help = "git add -A + git commit -m."
+  unattended = true
+}
+vcs_push typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:push"
+  body = "simplon.tasks.vcs:push"
+  help = "git pull --rebase then push (current branch)."
+  unattended = true
+}
+vcs_prune_branches typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:prune-branches"
+  body = "simplon.tasks.vcs:prune_branches"
+  help = "Delete local branches already merged into main (squash-aware via gh)."
+  unattended = true
+}
+// `unattended: true` beside the word "interactive" in the help is not a contradiction, and it is the
+// clearest example of what the flag actually asks. The device flow needs a person - but the body
+// CHECKS for a terminal and returns 0 saying "nothing to do" when there is none, because in CI the
+// workflow token already carries the scopes. So a pipeline that runs it does not hang and does not go
+// red. The flag asks what happens with nobody watching, not whether a person is ever involved.
+vcs_auth_scopes typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:auth-scopes"
+  body = "simplon.tasks.vcs:auth_scopes"
+  help = "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent)."
+  unattended = true
+}
+vcs_submodules typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:submodules"
+  body = "simplon.tasks.vcs:submodules"
+  help = "git submodule update --init lib/platform (init the submodule a fresh worktree needs)."
+  unattended = true
+}
+
+// --- support: the privileges a CI host has to be given (si#92) ---------------------------------------
+// DECLARED, NOT PLACED, and that is the whole point of si#92's design note. `support:install` above is
+// placed because it is useful in EVERY product (si#58's bar); this one grants `NOPASSWD: ALL` and a
+// docker group, which is a change nobody wants appearing in a CLI they did not ask for it in. A product
+// that provisions CI hosts places it deliberately; every other product never sees it.
+//
+// It refuses when it is not root, and says so - the privilege it hands out is the one the kernel needs
+// in order to be allowed to do anything, so it cannot take it from inside a job. si#87 drew the same
+// line one level down, where the docker group moved to the engine install.
+support_ci_privileges typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-privileges"
+  body = "simplon.tasks.ciprivileges:grant"
+  help = "Give a user passwordless sudo and the docker group on THIS host (needs root; idempotent)."
+  unattended = true
+}
+
+// --- support: the docker disk of a CI host (si#327) ---------------------------------------------------
+// THREE COORDINATES BECAUSE THERE ARE THREE MOMENTS, and collapsing them would lose the distinction that
+// is the whole repair. `ci-disk-hygiene` is the one a person runs ONCE per machine, as root, and it is
+// declared-not-placed for `ci-privileges`' reason: it restarts the docker engine, which is not something
+// anybody wants appearing in a CLI they did not ask for it in. The other two run inside a job, need no
+// privilege, and are what a generated workflow calls.
+//
+// WHAT MADE THIS NECESSARY. The kernel has shipped `simplon/adapters/diskguard.py` since it was moved out of
+// netctl, and until si#327 NOTHING CALLED IT - measured over the whole tree, the only references outside
+// the module were its own tests. Meanwhile this repository's CI built an image on every push, filled a
+// runner's 64 GB refquota, and lost a day to `E: You don't have enough free space in
+// /var/cache/apt/archives/`. A step never run in its own house rots unseen (si#8, si#89, si#200), and
+// this is that pattern one module along.
+support_ci_disk_hygiene typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-hygiene"
+  body = "simplon.tasks.cidisk:hygiene"
+  help = "Cap docker logs, bound the build cache and install a daily prune on THIS host (needs root)."
+  unattended = true
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
+    key = "dry_run"
+    help = "Show what would change on this host and write nothing."
+    short = "-n"
+  }
+}
+// --- support: linux/arm64 emulation on a CI host (si#358) --------------------------------------------
+// DECLARED, NOT PLACED, for `ci-privileges`' reason: it needs root and changes the host kernel for every
+// process on it, so it is a command a person types on a runner, once. It checks first - against the same
+// `simplon` builder a multi-platform build uses - and installs only when that builder cannot run arm64:
+// `qemu-user-binfmt` on a VM, a boot-time binfmt_misc registration in an LXC container.
+support_ci_arm64 typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-arm64"
+  body = "simplon.tasks.ciarm64:arm64"
+  help = "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root)."
+  unattended = true
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
+    key = "dry_run"
+    help = "Show which recipe this host takes and what would run, and change nothing."
+    short = "-n"
+  }
+}
+support_ci_disk_preflight typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-preflight"
+  body = "simplon.tasks.cidisk:preflight"
+  help = "Refuse to start a job on a runner whose docker disk is too full to finish one."
+  unattended = true
+}
+support_ci_disk_cleanup typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-cleanup"
+  body = "simplon.tasks.cidisk:cleanup"
+  help = "Prune build cache older than a day - the step a job runs when it is done, whatever it decided."
+  unattended = true
+}
+// --- support: can the kernel start a container from where it uses docker (si#623) ------------------
+// The in-job half beside `ci-disk-preflight`, and the first step of a self-hosted job when placed. It
+// RUNS a pinned container rather than asking `docker version`: on ghr-8 on 2026-11-11 a runner update
+// left the socket refusing the kernel while the disk preflight stayed green, and thirty steps went red
+// on symptoms. A refusal names the uid and groups, the socket's uid, gid and mode, the `--group-add`
+// gids, and the way out.
+support_ci_docker_preflight typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-docker-preflight"
+  body = "simplon.tasks.dockerpreflight:ci_preflight"
+  help = "Refuse to start a job when docker cannot run a container from where the kernel uses it."
+  unattended = true
+}
+// --- support: does this host's docker answer, and will the editor find it (si#564) ------------------
+// DECLARED, NOT PLACED: a product with a VS Code Dev Containers path places it (firn does, under
+// `support`, as a step of `deploy devcontainer`). It resolves docker from the ACTIVE CONTEXT, never by
+// assuming /var/run/docker.sock, and with `editor: devcontainer` it names the one VS Code setting
+// (`docker.context`) the Dev Containers extension reads before it falls back to `default` - read from
+// the extension's code, 0.471.0, si#564's first comment. It runs no sudo and writes no editor setting.
+
+support_docker_preflight typeOf simplon.pipeline.CatalogueTask {
+  key = "support:docker-preflight"
+  body = "simplon.tasks.dockerpreflight:preflight"
+  help = "Check that docker answers on this host's active context, and say what an editor needs to find it."
+  unattended = true
+  params p_editor typeOf simplon.pipeline.TaskParam {
+    key = "editor"
+    help = "`devcontainer` also checks that VS Code's Dev Containers extension will find docker."
+    metavar = "EDITOR"
+  }
+}
+
+// --- test: the suite runner ------------------------------------------------------------------------
+// `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
+// `with: { name: ... }` (netctl#1469 plan 2, replacing the old invocation-name trick of netctl#1406). A
+// product declares one command per level, pins `name` and overrides the help, which is the case the
+// shared-impl rule in simplon.tasks.taskgen exists for. A product that instantiates this WITHOUT a `name`
+// pin gets a real, undocumented `--name` option and the body falls back to resolving the suite by
+// invocation name (transitional, see `gate`'s own docstring) - `params.name` below only documents the
+// option for that unpinned case; a command that pins it drops the presentation, since the value is off
+// the command line (`treeform.resolve`).
+//
+// IT STAYS PYTEST IN A HOST VENV, DECIDED AGAINST THE MEASUREMENT (si#202). si#199's rule is that a
+// product depends on no application installed on the system, and this is one of the two commands that
+// did not. It is not moved into a container, and the reason is that the container route already exists
+// and is better: a containerised suite CANNOT be a `suite:` gate, because that kind's runner is the
+// kernel's own pytest - so it is a `command:` gate naming a `toolchain:run` command, with
+// `results_from:` (si#133) harvesting what the container wrote. Driven green in si#197 with the
+// scenario and its steps intact in the archive, and it needed no kernel change at all. Making
+// `test:gate` a second containerised runner would be a second way to one verdict, which is the shape
+// si#8 already cost this repository.
+//
+// That is also the answer for a product whose suite is Java or .NET: it was never this command's, and
+// `results_from:` is how a non-pytest runner has contributed since si#133.
+//
+// WHAT THE HOST ROUTE OWES ITS USER is an honest refusal, and si#202 measured that it did not give one.
+// With python3 off PATH and the suite venv already built the gate is GREEN (the venv's interpreter is
+// an absolute path); with the venv gone it ended in a rendered `FileNotFoundError` naming neither the
+// tool nor the way out, having first wiped the venv it might have reused. Both refusals now live in
+// `simplon.adapters.pyvenv`, with the measurement.
+test_gate typeOf simplon.pipeline.CatalogueTask {
+  key = "test:gate"
+  body = "simplon.tasks.testrun:gate"
+  help = "Run a declared pytest suite against the running lab."
+  unattended = true
+  passthrough_args = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the declared suite level to run (normally pinned per command with `with:`)"
+  }
+}
+// The Python type gate. A product declares the command the day it has a mypy.ini. The kernel carries
+// the MECHANISM; the tool is an optional extra rather than a kernel runtime dependency, because a
+// product that never declares this command should not inherit a constraint on which type checker it
+// may install. Adopting the gate is therefore three things: this one manifest line, the config file
+// that states what is covered, and `simplon[typecheck]` in the product's own requirements.
+test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
+  key = "test:typecheck-python"
+  body = "simplon.tasks.typecheck:check"
+  help = "Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab)."
+  unattended = true
+  params p_config typeOf simplon.pipeline.TaskParam {
+    key = "config"
+    help = "path to the mypy configuration, relative to `workdir` (default mypy.ini)"
+  }
+  params p_workdir typeOf simplon.pipeline.TaskParam {
+    key = "workdir"
+    help = "directory mypy runs in, relative to the product root (default: the root)"
+  }
+  params p_python typeOf simplon.pipeline.TaskParam {
+    key = "python"
+    help = "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)"
+  }
+}
+// The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
+// this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
+// write a word, and nothing said anything. That is netctl#1280's rule exactly: a body belongs in the
+// platform as soon as it needs no product knowledge, and this needs none. Which versions exist is
+// `git tag`, which the page documents is its headings, what landed between two tags is `git log`.
+//
+// A `test:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only sit under `test`, in every product.
+// `release:` was the live alternative and is refused in the body's own docstring - the notes are written
+// BEFORE the tag (si#3), so a guard that only speaks when `release tag` is typed speaks after every
+// cheap chance to fix it has passed.
+//
+// DECLARED, NOT PLACED, by si#58's bar: it reads a `releases:` section naming the page and two version
+// floors, so placed it would be a command that dies on its first line in every product that keeps no
+// release notes. A product declares it the day it has a page; simplon does exactly that.
+//
+// NO `params:`, because there is nothing for a `with:` block to pin: all three values are the product's
+// DATA and arrive through the manifest, and si#105's rule means a key here that no parameter answers to
+// is refused at load anyway.
+// THE STALENESS GATE (si#240). A generated artefact that is COMMITTED carries one fact twice - the
+// source it comes from and the bytes in the tree - and they drift silently. The question was invented
+// twice before this task existed (biz-cockpit's `verify_spec` over its OpenAPI contract, this
+// repository's `test_own_completion.py` over its shell completion) and it has drawn blood once: si#6ddecaf
+// left `main` red with an uncompletable command because a manifest change never reached the completion.
+//
+// In `test` and not in `build`, because its verdict is red or green and nothing else - the same reason
+// `test:release-notes` sits here rather than beside the thing it rules on.
+test_generated typeOf simplon.pipeline.CatalogueTask {
+  key = "test:generated"
+  body = "simplon.tasks.generated:check"
+  help = "Fail if a committed generated file is not what its own command produces."
+  unattended = true
+}
+test_release_notes typeOf simplon.pipeline.CatalogueTask {
+  key = "test:release-notes"
+  body = "simplon.tasks.releasenotes:check"
+  help = "Check the product's releases page against the tags and merges its repository carries."
+  unattended = true
+}
+test_report typeOf simplon.pipeline.CatalogueTask {
+  key = "test:report"
+  body = "simplon.tasks.testrun:report_cmd"
+  help = "Merge the unit results into the shared Allure results and render the HTML archive."
+  unattended = true
+}
+test_accept typeOf simplon.pipeline.CatalogueTask {
+  key = "test:accept"
+  body = "simplon.tasks.testrun:accept_cmd"
+  help = "Run the lab-based suites in sequence against the running lab."
+  unattended = true
+  passthrough_args = true
+}
+// The MANUAL half of an acceptance test (si#205): a person walks the product's own `.feature` files
+// step by step and answers each Given / When / Then, so a customer can verify for themselves that the
+// functionality they asked for is there.
+//
+// ONE SOURCE, TWO MODES, and this is the second mode rather than a second artefact. The scenarios are
+// the same files `docs:acceptance` documents and a product's pytest-bdd suite executes; what a caller
+// chooses by typing this instead of `test suite` is WHO answers, never WHICH scenarios exist. That is
+// si#197's stated requirement, and it is why there is no `@manual` tag: a tag here selects for one run.
+//
+// A `test:` NAMESPACE, so si#34 makes it a PLACEMENT - it may only sit under `test`, in every product,
+// beside the automatic gate whose verdict it has to be comparable with.
+//
+// DECLARED, NOT PLACED, by si#58's bar: it needs `.feature` files to walk, so placed it would be a
+// command that refuses on its first line in every product that writes none. A product declares it the
+// day it has scenarios; simplon does exactly that.
+// si#522: `firn validate` over the product's manifest, exported fresh, against the M2 the kernel ships, in
+// a project staged below the output root - the product's own firn.toml is not touched.
+test_manifest_model typeOf simplon.pipeline.CatalogueTask {
+  key = "test:manifest-model"
+  body = "simplon.tasks.manifestcheck:check"
+  help = "Validate this product's manifest, exported fresh as a firn model, against the M2 simplon ships."
+  unattended = true
+  params p_image typeOf simplon.pipeline.TaskParam {
+    key = "image"
+    help = "the pinned firn image"
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network firn runs on (default 'none')"
+  }
+}
+test_walk typeOf simplon.pipeline.CatalogueTask {
+  key = "test:walk"
+  body = "simplon.tasks.walk:walk"
+  help = "Walk the product's acceptance scenarios with a person answering each step."
+  unattended = false
+  params p_source typeOf simplon.pipeline.TaskParam {
+    key = "source"
+    help = "directory holding the .feature files, relative to the product root (default tests/acceptance)"
+  }
+  params p_tags typeOf simplon.pipeline.TaskParam {
+    key = "tags"
+    help = "walk only the scenarios carrying one of these tags (comma- or space-separated; default all)"
+  }
+  params p_by typeOf simplon.pipeline.TaskParam {
+    key = "by"
+    help = "who is walking it, for the record (default: the checkout's own git identity)"
+  }
+  params p_restart typeOf simplon.pipeline.TaskParam {
+    key = "restart"
+    help = "discard an interrupted walk's recorded answers and ask every step again"
+  }
+}
+
+// --- test: a product's own firn model (si#568) -------------------------------------------------------
+// What every firn product runs over its own project besides `gen` (firn's own session, 2026-11-04):
+// `validate` and `fmt --check`. No verdict of the kernel's own - firn's report is printed and its rc is
+// the answer, named against firn's exit-code table (firngen.FIRN_CODES).
+
+test_model typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model"
+  body = "simplon.tasks.firngen:validate"
+  help = "Validate this product's firn model; firn's exit code passes through, named."
+  unattended = true
+  params p_image typeOf simplon.pipeline.TaskParam {
+    key = "image"
+    help = "the pinned firn image"
+  }
+  params p_cwd typeOf simplon.pipeline.TaskParam {
+    key = "cwd"
+    help = "the directory under the root where firn.toml is (a plain relative path)"
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network firn runs on ('none' for no networking)"
+  }
+  params p_binary typeOf simplon.pipeline.TaskParam {
+    key = "binary"
+    help = "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)"
+  }
+}
+
+test_model_format typeOf simplon.pipeline.CatalogueTask {
+  key = "test:model-format"
+  body = "simplon.tasks.firngen:format_check"
+  help = "Check that this product's firn model is formatted as `firn fmt` would write it."
+  unattended = true
+  params p_image typeOf simplon.pipeline.TaskParam {
+    key = "image"
+    help = "the pinned firn image"
+  }
+  params p_cwd typeOf simplon.pipeline.TaskParam {
+    key = "cwd"
+    help = "the directory under the root where firn.toml is (a plain relative path)"
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network firn runs on ('none' for no networking)"
+  }
+}
+
+// --- support: host and tooling upkeep ---------------------------------------------------------------
+support_nexus typeOf simplon.pipeline.CatalogueTask {
+  key = "support:nexus"
+  body = "simplon.tasks.nexus:nexus_cmd"
+  help = "Drive the LAN Sonatype Nexus artefact proxy: up | down | status | repos | cleanup."
+  unattended = true
+}
+support_install typeOf simplon.pipeline.CatalogueTask {
+  key = "support:install"
+  body = "simplon.tasks.hosttools:install"
+  help = "Provision the host tooling the kernel needs - today oras; idempotent."
+  unattended = true
+}
+support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
+  key = "support:claude-plugins"
+  body = "simplon.tasks.claudeplugins:install_cmd"
+  help = "Install the Claude Code plugins of the `claude` toolchain: simplon's default plus the manifest's `claude:` additions; idempotent."
+  unattended = true
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
+    key = "dry_run"
+    help = "List what is missing, and where each plugin comes from, and install nothing."
+    short = "-n"
+  }
+}
+support_claude_md typeOf simplon.pipeline.CatalogueTask {
+  key = "support:claude-md"
+  body = "simplon.tasks.claudemd:claude_md_cmd"
+  help = "Write CLAUDE.md (simplon's central working agreements, then the product's own region) and .claude/settings.json's enabledPlugins for the `claude` toolchain; --check reports drift and writes nothing."
+  unattended = true
+  params p_check typeOf simplon.pipeline.TaskParam {
+    key = "check"
+    help = "report drift and write nothing"
+  }
+}
+support_environments typeOf simplon.pipeline.CatalogueTask {
+  key = "support:environments"
+  body = "simplon.tasks.env:environments"
+  help = "List the named environments and the backend each targets, marking the active one."
+  unattended = true
+}
+// The manifest's SECOND output (si#40). `simplon.manifest.load` has promised since it was
+// written that "the same manifest assembles the runtime CLI now and, in Phase 2, the CI workflows";
+// this is that phase, and it is the same shape as `tasks:generate` for the same reason - the files are
+// committed, so the manifest and the file can disagree, and `--check` is what notices.
+//
+// A `support:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only be placed under `support`, in
+// every product. That is the right axis for it - regenerating CI files is tooling for whoever develops
+// the product, not a stage of the delivery loop - and `treeform.check_coordinate_placement` holds it.
+//
+// OFFERED, NOT PLACED, and by the same test si#39 applied to `release:tag`: the placement bar is
+// "useful in EVERY product", and this one reads a `workflows:` section. Placed, it would be a command
+// that refuses on its first line in every product that has not declared one. A product declares it the
+// day it has workflows to generate; simplon does exactly that.
+// The manifest's THIRD output (si#58): the runtime CLI, the CI workflows, and now the shell
+// completion. Read out of the same command tree, so the three cannot describe different products.
+//
+// A `support:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only sit under `support`, in every
+// product. That is the right axis - a completion file is tooling for whoever USES the product, not a
+// stage of the delivery loop - and `treeform.check_coordinate_placement` holds it.
+//
+// Why generated at all rather than Typer's own `--install-completion`: that hook runs the program on
+// every TAB, measured here at 340-360 ms per start. This writes the tree out once as shell, so the TAB
+// costs a `case` statement in the shell the user is already in. The price is a second source for the
+// command tree, and `--check` plus `src/tests/test_own_completion.py` is what pays it.
+support_completion typeOf simplon.pipeline.CatalogueTask {
+  key = "support:completion"
+  body = "simplon.tasks.completion:generate"
+  help = "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing)."
+  unattended = true
+  params p_check typeOf simplon.pipeline.TaskParam {
+    key = "check"
+    help = "report drift and write nothing"
+  }
+}
+support_workflows typeOf simplon.pipeline.CatalogueTask {
+  key = "support:workflows"
+  body = "simplon.tasks.workflows:generate"
+  help = "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing)."
+  unattended = true
+  params p_check typeOf simplon.pipeline.TaskParam {
+    key = "check"
+    help = "report drift and write nothing"
+  }
+}
+
+// --- docs: the documentation render ------------------------------------------------------------------
+// Placed as a TASK, not as a command in the `build` group above: it needs the product's pinned image tag
+// and a `docToolchainConfig.groovy` in the checkout, so a command declared here would die on its first
+// line in a product that has neither. A product declares the command the day it has both.
+docs_render typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:render"
+  body = "simplon.tasks.docs:render"
+  help = "Render the project docs via docToolchain (generateHTML + generatePDF) in Docker."
+  unattended = true
+}
+// The second SHAPE of the same capability, not a second category (#2): `render` produces a product's
+// architecture documentation (AsciiDoc, HTML *and* PDF, for people working ON the system), `site`
+// produces its product website (Markdown through Hugo, HTML only, for people working WITH it). A
+// product may declare both; netctl, which has the first, would get the second beside it.
+// In Docker, like `render` and for the same reason (netctl#1280): bring the tool rather than provision
+// the development machine. It also collapses the tool question - a Hugo module theme needs Hugo
+// Extended, Go AND Git together, which is three installations locally and none in an image.
+// A TASK for the same reason as `render`: it needs a Hugo project in the checkout and a `site:` section
+// naming the pinned image, where the sources are, where the output goes, which theme and which base URL
+// - so a command placed here would die on its first line in a product that has neither. Those five are
+// the product's data, the container invocation is the mechanism, and that split is why this belongs to
+// the kernel at all.
+docs_site typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:site"
+  body = "simplon.tasks.site:build"
+  help = "Build the product's documentation website with Hugo, in Docker (HTML only)."
+  unattended = true
+  output site typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.site
+  }
+}
+// The THIRD documentation shape, and the only one that is not a render of something a human wrote: the
+// product's command reference, read off the app the CLI has just assembled. It is here rather than in a
+// script beside the website for the reason every other entry in this file is: the mechanism (walk the
+// Click tree, format Markdown) carries no product knowledge, while WHERE the page belongs is the
+// product's own layout and arrives as `output`. A product with a website pins it with
+// `with: { output: ... }`; one without still gets a usable command, because the path is an ordinary
+// positional argument when nothing pins it.
+docs_reference typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:reference"
+  body = "simplon.tasks.cliref:reference"
+  help = "Write the product's command reference as Markdown, read off its BUILT command line."
+  unattended = true
+  params p_output typeOf simplon.pipeline.TaskParam {
+    key = "output"
+    help = "where the Markdown page goes, relative to the product root"
+  }
+  params p_title typeOf simplon.pipeline.TaskParam {
+    key = "title"
+    help = "the page title in the front matter (default: '<product> command reference')"
+  }
+}
+
+// The FOURTH documentation shape, and the second that renders nothing a human wrote for it (si#204):
+// the product's acceptance document, read off its own `.feature` files. `reference` lists what can be
+// TYPED, this lists what is VERIFIED, and both exist because the hand-maintained version of either goes
+// stale in silence. The mechanism is `reference`'s, deliberately - a reader, a Markdown render, a file
+// written - because si#204 asked whether the two are nearly the same before anything was designed and
+// they are.
+//
+// A FAMILY and not a placement, and here that is load-bearing rather than habitual: this product files
+// it under `build` beside `reference`, because the page is an input to the website build, and a product
+// that regards its acceptance document as part of what `test` produces would file it there and be just
+// as right. `docs:` names what the task IS.
+//
+// `source` HAS A DEFAULT AND `output` DOES NOT, which is si#183's asymmetry unchanged: the feature files
+// are only ever read, so the kernel may assume where to look, while the output path is written and the
+// kernel may not assume what to overwrite in a product's tree.
+docs_acceptance typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:acceptance"
+  body = "simplon.tasks.acceptance:document"
+  help = "Write the product's acceptance document as Markdown, read off its own .feature files."
+  unattended = true
+  params p_output typeOf simplon.pipeline.TaskParam {
+    key = "output"
+    help = "where the Markdown page goes, relative to the product root"
+  }
+  params p_source typeOf simplon.pipeline.TaskParam {
+    key = "source"
+    help = "the directory holding the .feature files (default: tests/acceptance)"
+  }
+  params p_title typeOf simplon.pipeline.TaskParam {
+    key = "title"
+    help = "the page title in the front matter (default: '<product> acceptance scenarios')"
+  }
+}
+
+// --- build: what a product produces ------------------------------------------------------------------
+// The container image, and a TASK rather than a placed command for the same reason `release:artifact`
+// is one: it needs an `artifacts:` entry of `kind: image` naming the registry, the repository, the
+// Dockerfile and the build context, so a command declared under `build:` above would die on its first
+// line in a product that ships no image. A product declares the command the day it has a Dockerfile,
+// and pins WHICH image with `with: { name: ... }`.
+//
+// `build:image` and `release:image` are TWO tasks along the phase verbs, not one with a flag: build
+// produces, release publishes, and a product that builds an image only to run a smoke test against it
+// must not be one typo away from pushing it.
+// The THIRD verb over one image (si#301), and the one that was missing: build produces, release
+// publishes, and until this nothing RAN what was produced. A product could build an image, push it,
+// and never once execute the runtime stage of its own Dockerfile -- the directives that copy a
+// binary into a base and set an entrypoint -- which is the half no unit test reaches. It builds
+// nothing and pulls nothing: it runs what the daemon holds under the reference the build would have
+// produced, so a missing image is a refusal naming `build image` rather than a quiet pull.
+test_image typeOf simplon.pipeline.CatalogueTask {
+  key = "test:image"
+  body = "simplon.tasks.image:smoke"
+  help = "Run the product's container image and check that it answers."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the image to run (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to run, when it is not the one the build derives"
+  }
+  params p_argv typeOf simplon.pipeline.TaskParam {
+    key = "argv"
+    help = "what to run in the container, as one string"
+  }
+  params p_mount typeOf simplon.pipeline.TaskParam {
+    key = "mount"
+    help = "'<directory under the product>:<absolute path in the container>' to bind"
+  }
+  params p_expect typeOf simplon.pipeline.TaskParam {
+    key = "expect"
+    help = "text the output must contain for the run to count as green; `{tag}` is replaced with the tag"
+  }
+  params p_rc typeOf simplon.pipeline.TaskParam {
+    key = "rc"
+    help = "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red"
+  }
+  params p_user typeOf simplon.pipeline.TaskParam {
+    key = "user"
+    help = "run as the invoking uid:gid (default true), so bind-mounted output is owned"
+  }
+  params p_platform typeOf simplon.pipeline.TaskParam {
+    key = "platform"
+    help = "one of the image's declared `platforms:` to run; default every declared one"
+  }
+  params p_results typeOf simplon.pipeline.TaskParam {
+    key = "results"
+    help = "the test result to write the verdict record to (normally bound with `produces:`)"
+  }
+  params p_timeout typeOf simplon.pipeline.TaskParam {
+    key = "timeout"
+    help = "seconds each run may take (default 300); a run past it is red and its container removed"
+  }
+  params p_env typeOf simplon.pipeline.TaskParam {
+    key = "env"
+    help = "the container's environment, a mapping of names to values; a name with no value (`NAME: ~`) is forwarded from the caller"
+  }
+  input image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
+  }
+  output test_result typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+    param = "results"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
 
 build_image typeOf simplon.pipeline.CatalogueTask {
   key = "build:image"
   body = "simplon.tasks.image:build"
+  help = "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the image to build (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to build under, for a version only known after a build"
+  }
+  params p_platform typeOf simplon.pipeline.TaskParam {
+    key = "platform"
+    help = "one of the image's declared `platforms:` to build; default every declared one"
+  }
   output image typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.image
     param = "name"
@@ -25,37 +668,32 @@ build_image typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.file
   }
 }
-build_fetch typeOf simplon.pipeline.CatalogueTask {
-  key = "build:fetch"
-  body = "simplon.tasks.fetchfile:fetch"
-  output file typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.file
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_path
-    needs = simplon.vocabulary.file.f_url
-    needs = simplon.vocabulary.file.f_sha256
-  }
-}
-test_image typeOf simplon.pipeline.CatalogueTask {
-  key = "test:image"
-  body = "simplon.tasks.image:smoke"
-  input image typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.image
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.image.f_repository
-    needs = simplon.vocabulary.image.f_dockerfile
-    needs = simplon.vocabulary.image.f_context
-  }
-  output test_result typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.test_result
-    param = "results"
-    needs = simplon.vocabulary.artifact.f_path
-  }
-}
+
+// si#552: one file out of an image, for the platform the FILE ENTRY names (`platform:`, required here and one
+// of the image's `platforms:`). No `platform` param: one entry per platform, so no command can write arm64's
+// bytes under amd64's name. Without `tag` it copies what this checkout's `build:image` recorded and never
+// pulls; with `tag` it pulls the published image's platform manifest by digest.
 build_image_file typeOf simplon.pipeline.CatalogueTask {
   key = "build:image-file"
   body = "simplon.tasks.imagefile:extract"
+  help = "Copy one file out of an image, for the platform its file entry names."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the image to copy from (normally bound with `consumes:`)"
+  }
+  params p_file typeOf simplon.pipeline.TaskParam {
+    key = "file"
+    help = "the file artifact to write, whose `platform:` names the platform (normally bound with `produces:`)"
+  }
+  params p_inside typeOf simplon.pipeline.TaskParam {
+    key = "inside"
+    help = "the absolute path of the file inside the image; a symlink is followed"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "copy from the PUBLISHED image under this tag, pulled by the file's platform digest; without it, from this checkout's build"
+  }
   input image typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.image
     param = "name"
@@ -70,9 +708,48 @@ build_image_file typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+
+// si#552: the bare file `build:image-file` wrote, run in a pinned libc-free container (busybox musl) for the
+// platform its FILE ENTRY names - a file that needs the image's libc fails here, not on a user's machine.
+// `timeout` is required: a run without a limit has no verdict. The record names the file's sha256, the
+// subject a release that uploads the file compares with (si#553).
 test_file typeOf simplon.pipeline.CatalogueTask {
   key = "test:file"
   body = "simplon.tasks.imagefile:check"
+  help = "Run a bare file in a pinned libc-free container, for the platform its file entry names."
+  unattended = true
+  params p_file typeOf simplon.pipeline.TaskParam {
+    key = "file"
+    help = "the file artifact to run, whose `platform:` names the platform (normally bound with `consumes:`)"
+  }
+  params p_argv typeOf simplon.pipeline.TaskParam {
+    key = "argv"
+    help = "the arguments to run it with, as one string"
+  }
+  params p_expect typeOf simplon.pipeline.TaskParam {
+    key = "expect"
+    help = "text the output must contain for the run to count as green; `{tag}` is replaced with the tag"
+  }
+  params p_rc typeOf simplon.pipeline.TaskParam {
+    key = "rc"
+    help = "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag `{tag}` stands for, when it is not the version the checkout derives"
+  }
+  params p_stdin typeOf simplon.pipeline.TaskParam {
+    key = "stdin"
+    help = "a file under the product fed to the run's standard input"
+  }
+  params p_timeout typeOf simplon.pipeline.TaskParam {
+    key = "timeout"
+    help = "seconds the run may take (required); a run past it is red and its container removed"
+  }
+  params p_results typeOf simplon.pipeline.TaskParam {
+    key = "results"
+    help = "the test result to write the verdict record to (normally bound with `produces:`)"
+  }
   input file typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.file
     param = "file"
@@ -84,24 +761,254 @@ test_file typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_image typeOf simplon.pipeline.CatalogueTask {
-  key = "release:image"
-  body = "simplon.tasks.image:release"
-  input image typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.image
+
+// The product's OWN build files, written from its source tree (si#102). The second half of si#95:
+// `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
+// compiler reads. They meet in the tree and nowhere else.
+//
+// PLACEMENTS rather than families, unlike `toolchain:run` beside them, and the reason is meaning
+// rather than symmetry: generating a build file is a `build` act and belongs nowhere else, while
+// `toolchain:run` had to be a family because `ctest` and `dotnet test` belong under `test`.
+//
+// DECLARED, NOT PLACED, by si#58's bar: the placement bar is "useful in EVERY product", and a product
+// written in neither language has no tree these can read. A C++ or .NET product declares the one
+// command it wants; every other product never sees either.
+//
+// NEITHER TAKES A PARAMETER, and neither carries a `params:` block, because there is nothing for a
+// `with:` block to pin: the root and the product name come from the registered ProductContext, and the
+// one thing a directory cannot show - what a target depends on - is read from the product's own
+// top-level `build: targets:` section. si#105 is the ticket that makes this worth stating: the loader
+// binds `with:` to the impl's PARAMETERS one for one, so a key here that no parameter answers to is
+// refused at load and a manifest naming it cannot be assembled at all.
+build_cmake_files typeOf simplon.pipeline.CatalogueTask {
+  key = "build:cmake-files"
+  body = "simplon.tasks.buildfiles:cmake"
+  help = "Write this product's CMakeLists.txt files from its source tree."
+  unattended = true
+}
+build_dotnet_solution typeOf simplon.pipeline.CatalogueTask {
+  key = "build:dotnet-solution"
+  body = "simplon.tasks.buildfiles:dotnet"
+  help = "Write this product's .sln and .csproj files from its source tree."
+  unattended = true
+}
+// The CONSUMING halves of si#127 and si#128 - a coordinate each, because publishing alone is half a
+// feature and a package nobody can resolve has not been handed over.
+//
+// `build:nuget-config` writes the product's nuget.config from the same `artifacts:` entry
+// `release:nuget` pushes with, so the source name and the feed URL cannot disagree between the two
+// halves. The file it writes is COMMITTED and holds no credential: measured, NuGet expands `%VAR%` in
+// a ClearTextPassword on Linux, so what is in the file is the variable's NAME. si#127 states that as
+// the part to get right.
+build_nuget_config typeOf simplon.pipeline.CatalogueTask {
+  key = "build:nuget-config"
+  body = "simplon.tasks.nuget:config"
+  help = "Write the product's nuget.config naming the GitHub feed (no credential in it)."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact whose registry the config names (normally pinned with `with:`)"
+  }
+  input nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.image.f_repository
-    needs = simplon.vocabulary.image.f_dockerfile
-    needs = simplon.vocabulary.image.f_context
   }
-  input evidence typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.test_result
+}
+// A COORDINATE RATHER THAN A `toolchain:run` COMMAND, and si#105's rule is why: a toolchain command's
+// environment is what the manifest names and nothing else, and a token is exactly what a manifest may
+// not name. So a product cannot declare this one, which is what makes it the kernel's.
+build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
+  key = "build:nuget-restore"
+  body = "simplon.tasks.nuget:restore"
+  help = "Restore the declared project inside the SDK image, with the credential the feed needs."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact whose project and feed to restore (normally pinned with `with:`)"
+  }
+  input nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.nuget.f_image
+    needs = simplon.vocabulary.nuget.f_project
+  }
+}
+// The pull half of si#128's transport. It moves a FILE and knows nothing about conan: the product runs
+// `conan cache restore <path>` itself, through its own toolchain command, against its own cache.
+build_conan_cache typeOf simplon.pipeline.CatalogueTask {
+  key = "build:conan-cache"
+  body = "simplon.tasks.conan:fetch"
+  help = "Fetch a published Conan cache archive so a build can restore it."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to fetch (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the exact tag to fetch - there is no resolution, so it is named in full"
+  }
+  input conan typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.conan
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.conan.f_repository
+    needs = simplon.vocabulary.conan.f_media_type
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+
+// A FILE FROM OUTSIDE, CHECKED BEFORE ANYTHING READS IT (si#343, asked by firn#547). A `kind: file` entry
+// names a URL, its sha256 and where the file lives under the product root; this leaves the verified file
+// there and nothing else. An image whose `contexts:` names the entry gets it as `--build-context`, so the
+// Dockerfile never downloads it and the build runs offline. Like `build:conan-cache` above it is a TASK,
+// not a placed command: a product with no download has nothing to name.
+build_fetch typeOf simplon.pipeline.CatalogueTask {
+  key = "build:fetch"
+  body = "simplon.tasks.fetchfile:fetch"
+  help = "Download a declared file and check its sha256, unless the file is already there with that checksum."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the file to fetch, a `kind: file` entry (normally pinned per command with `with:`)"
+  }
+  output file typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.file
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_path
+    needs = simplon.vocabulary.file.f_url
+    needs = simplon.vocabulary.file.f_sha256
+  }
+}
+
+// `firn gen` over a product's firn project (si#400 4b): firn's own answer, plus rc 1 on what firn only
+// warns about (W300/W301 - a kept file still defines its task class), 0644 on every file it wrote, and rc 1
+// on a reported file holding only firn's id line. The list is firn's report, never a hand-typed one.
+build_model typeOf simplon.pipeline.CatalogueTask {
+  key = "build:model"
+  body = "simplon.tasks.firngen:generate"
+  help = "Generate from this product's firn model, refusing a protected region firn kept or orphaned."
+  unattended = true
+  params p_image typeOf simplon.pipeline.TaskParam {
+    key = "image"
+    help = "the pinned firn image"
+  }
+  params p_cwd typeOf simplon.pipeline.TaskParam {
+    key = "cwd"
+    help = "the directory under the root where firn.toml is (a plain relative path)"
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network firn runs on ('none' for no networking)"
+  }
+  params p_binary typeOf simplon.pipeline.TaskParam {
+    key = "binary"
+    help = "the product's own firn, relative to cwd (build/firn/firn after build:model-binary)"
+  }
+}
+
+// THE PRODUCT'S OWN FIRN (si#568): firn with the project's Java functions, built by the product's own Gradle
+// build in firn's `firn-builder` image (`firnBinary`, firn docs/05 section 6), then run once. The root is
+// mounted at its own path because `lsp.args` holds absolute host paths. `build:model` and `test:model`
+// run the result with `binary: build/firn/firn`.
+
+build_model_binary typeOf simplon.pipeline.CatalogueTask {
+  key = "build:model-binary"
+  body = "simplon.tasks.firngen:model_binary"
+  help = "Build this product's own firn (its Java functions included) in firn-builder, and run it once."
+  unattended = true
+  params p_image typeOf simplon.pipeline.TaskParam {
+    key = "image"
+    help = "the pinned firn-builder image"
+  }
+  params p_cwd typeOf simplon.pipeline.TaskParam {
+    key = "cwd"
+    help = "the directory under the root where the firn project and its build.gradle.kts are"
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network the build runs on (default 'none': gradle runs --offline)"
+  }
+  params p_bootstrap typeOf simplon.pipeline.TaskParam {
+    key = "bootstrap"
+    help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false (the default) for every other build"
+  }
+}
+
+// --- release: what a product hands over --------------------------------------------------------------
+// A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
+// directory and the media type, so a command declared here would die on its first line in a product
+// that publishes nothing. A product declares the command the day it has something to publish, and pins
+// WHICH artefact with `with: { name: ... }`.
+// THE DEPLOY FAMILY (si#235). The one group the catalogue contributed nothing to until now, and what
+// these two add is the half none of the products' own deploy commands did when si#235 counted them: say WHICH version is going
+// out, prove it exists, and only then hand it on. What they do NOT do is replace a product's rollout -
+// a server's `deploy` goes through the backend the product registered, which is `simplon.adapters.backend`'s
+// extension axis and names no product here.
+//
+// A TASK and not a placed command, for `release:artifact`'s reason: both need a `deploy:` section
+// naming what is deployed and whether this is a client or a server, so a command declared here would
+// die on its first line in a product that deploys nothing.
+// A TASK and not a placed command, for the same reason `deploy:up` is one: it needs a `carriers:`
+// section and an environment that points at one, so a command declared here would die on its first
+// line in every product that deploys nowhere.
+//
+// UNDER `deploy` AND NOT UNDER `support` (si#5, owner 2026-09-14). Setting a carrier up needs the
+// environment; `support` is environment-less by taxonomy and `deploy` is already environment-first.
+// That decision took back an earlier placement and removed the whole conflict rather than managing it.
+deploy_carrier typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:carrier"
+  body = "simplon.tasks.carrier:up"
+  help = "Make the carrier this environment stands on: the machine, then the Portainer on it."
+  unattended = true
+  params p_environment typeOf simplon.pipeline.TaskParam {
+    key = "environment"
+    help = "the environment whose carrier to make (default: the active one)"
+  }
+}
+// si#435 (decided 2026-10-15): deploy:up's input is bound by the manifest's `deploy: source:`, the section that
+// already names what is deployed, and never by `consumes:` - so no `param`: the body reads the section itself.
+// It accepts any artifact: a server deploys an image, a client installs a directory.
+deploy_up typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:up"
+  body = "simplon.tasks.deploy:up"
+  help = "Deploy a version - a published one, `latest`, or `local` for the current code base."
+  unattended = true
+  params p_version typeOf simplon.pipeline.TaskParam {
+    key = "version"
+    help = "the version to deploy: a published tag, `latest`, or `local`"
+  }
+  input source typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.artifact
+  }
+}
+deploy_down typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:down"
+  body = "simplon.tasks.deploy:down"
+  help = "Remove a deployment - a client's installed version, or a server's environment."
+  unattended = true
+  params p_version typeOf simplon.pipeline.TaskParam {
+    key = "version"
+    help = "which installed version to remove (a client install; a server takes none)"
   }
 }
 release_artifact typeOf simplon.pipeline.CatalogueTask {
   key = "release:artifact"
   body = "simplon.tasks.artifact:publish"
+  help = "Publish a declared directory to a registry as an OCI artifact."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to publish (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to publish under, for a version only known after a build"
+  }
   input directory typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.directory
     param = "name"
@@ -114,56 +1021,57 @@ release_artifact typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.test_result
   }
 }
-build_conan_cache typeOf simplon.pipeline.CatalogueTask {
-  key = "build:conan-cache"
-  body = "simplon.tasks.conan:fetch"
-  input conan typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.conan
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.conan.f_repository
-    needs = simplon.vocabulary.conan.f_media_type
-    needs = simplon.vocabulary.artifact.f_path
+// The same act aimed at a PERSON rather than at a build. `release:artifact` puts a directory where a
+// consuming pipeline pulls it with its own token; this puts files where somebody clicks them. A product
+// may want both, one, or neither, and a public repository has a third answer - what its licence lets it
+// hand out is not the kernel's to assume, which is the whole reason this is offered and not placed.
+//
+// `gh` rather than the kernel's GitHub client (`adapters.github`, si#486): create-if-absent and
+// replace-if-present are one flag each in `gh`, and twenty lines of PyGithub plus a content-type table
+// in the product this was ported from. The dependency argument this once also made is withdrawn - see
+// src/simplon/tasks/asset.py.
+release_asset typeOf simplon.pipeline.CatalogueTask {
+  key = "release:asset"
+  body = "simplon.tasks.asset:publish"
+  help = "Attach declared files to a GitHub release, creating it if it is not there yet."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the asset to publish (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the release to attach to, for a version only known after a build"
   }
 }
-release_conan typeOf simplon.pipeline.CatalogueTask {
-  key = "release:conan"
-  body = "simplon.tasks.conan:publish"
-  input conan typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.conan
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.conan.f_repository
-    needs = simplon.vocabulary.conan.f_media_type
-    needs = simplon.vocabulary.artifact.f_path
-  }
-  input evidence typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.test_result
-  }
-}
-build_nuget_config typeOf simplon.pipeline.CatalogueTask {
-  key = "build:nuget-config"
-  body = "simplon.tasks.nuget:config"
-  input nuget typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.nuget
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_registry
-  }
-}
-build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
-  key = "build:nuget-restore"
-  body = "simplon.tasks.nuget:restore"
-  input nuget typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.nuget
-    param = "name"
-    needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.nuget.f_image
-    needs = simplon.vocabulary.nuget.f_project
-  }
-}
+// si#127. The .NET half of the uniform build could compile a library and had no way to hand it over.
+// A TASK for the same reason `release:artifact` is one: it needs an `artifacts:` entry naming the
+// registry, the SDK image, the project and the tag, so a command declared here would die on its first
+// line in a product that publishes nothing.
+//
+// THE TOKEN NEVER REACHES A COMMAND LINE, and that is measured rather than careful: an api key alone
+// does not authenticate against a feed that wants an Authorization header, the `<apikeys>` config
+// section cannot hold one on Linux at all, and a push against a source that already carries
+// credentials needs no key. See src/simplon/tasks/nuget.py for the transcripts.
+// si#344 C.3: PACK AND PUSH ARE TWO TASKS, so the package exists between them and a test can consume it.
+// The release rule (spec C.3) asks for a test result about what a release publishes, and a package that
+// first existed inside its own push could not have one. `build:nuget-pack` writes it to the entry's
+// `path:`; `release:nuget` pushes exactly the package that path holds for the version.
 build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
   key = "build:nuget-pack"
   body = "simplon.tasks.nuget:pack"
+  help = "Pack the declared project into the artifact's path, as the version the tag names."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to pack (normally bound with `produces:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the package version, for one only known after a build"
+  }
   output nuget typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.nuget
     param = "name"
@@ -175,6 +1083,18 @@ build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
 release_nuget typeOf simplon.pipeline.CatalogueTask {
   key = "release:nuget"
   body = "simplon.tasks.nuget:push"
+  help = "Push the package `build:nuget-pack` wrote for this version to GitHub's NuGet feed."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to push (normally bound with `consumes:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the package version to push, for one only known after a build"
+  }
   input nuget typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.nuget
     param = "name"
@@ -186,9 +1106,81 @@ release_nuget typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.test_result
   }
 }
+// si#128, and the comment is the ticket's own warning: GitHub Packages has NO Conan registry - the
+// kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container. So this is a
+// TRANSPORT, not a remote. `conan cache save` writes a .tgz, this moves it into the registry as an OCI
+// artifact, and the consumer pulls that exact tag and runs `conan cache restore`. There is no `conan
+// install` resolution against the registry, no version range and no graph solved remotely.
+//
+// Conan not speaking an OCI remote itself was MEASURED, because the whole design rests on it:
+// `conan remote add` in Conan 2.32.0 accepts one remote type, `local-recipes-index`. A second value in
+// that list is what reopens this.
+release_conan typeOf simplon.pipeline.CatalogueTask {
+  key = "release:conan"
+  body = "simplon.tasks.conan:publish"
+  help = "Publish a Conan cache archive to a registry as an OCI artifact (a transport, not a remote)."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to publish (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to publish under, for a version only known after a build"
+  }
+  input conan typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.conan
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.conan.f_repository
+    needs = simplon.vocabulary.conan.f_media_type
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
+}
+// The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
+// the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
+// nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
+// si#329, a publish coordinate for Java. DECLARED, NOT PLACED, for `support:ci-privileges`' reason
+// one namespace along: a product without a jar would get a command that refuses on its first line. The
+// gap it closes was measured - `tasks/profiles.py` built a Java toolchain and this catalogue published
+// nothing for it, while a Gradle image has been pinned since si#316.
+//
+// IT FOLLOWS `release:nuget`'S SHAPE AND NOT `release:conan`'S, and that was argued rather than copied.
+// conan's head refuses "the kernel learning a language toolchain" - but its reason is written two entries
+// below and is specific: GitHub Packages has no Conan registry, so a transport was the only thing
+// possible. For Maven there is a registry (see that same comment's list), so conan's reason does not
+// reach here.
+//
+// IT READS THE REGISTRY BACK, which nuget does not, because a `gradle publish` with no `maven-publish`
+// publication configured has NO WORK TO DO AND DOES NOT FAIL FOR IT - a green publish that uploaded
+// nothing. That is `release:image`'s rule ("a push nobody verifies is the same defect as a report nobody
+// reads") meeting a tool that really can exit 0 having done nothing. The verification has three
+// outcomes: a 401 means the token may not look, which is not the same as a missing jar.
+//
+// si#344 C.3: STAGE AND UPLOAD ARE TWO TASKS, for `release:nuget`'s reason. `build:maven-pack` runs
+// `gradle publish` into a FILE repository under the entry's `path:`, added by an init script the kernel
+// writes, so the product's build file is not touched; `release:maven` uploads exactly those files with
+// HTTP PUT and reads the POMs back. Measured against GitHub on 2026-10-15 (si#436): two versions of a
+// scratch module uploaded with this upload, and GitHub's `maven-metadata.xml` lists both, although each
+// PUT carried a one-version file. GitHub keeps the version list itself (tasks/maven.py has the numbers).
 build_maven_pack typeOf simplon.pipeline.CatalogueTask {
   key = "build:maven-pack"
   body = "simplon.tasks.maven:pack"
+  help = "Stage the declared Gradle modules into the artifact's path as a Maven file repository."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to stage (normally bound with `produces:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the version to stage, for one only known after a build"
+  }
   output maven typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.maven
     param = "name"
@@ -198,9 +1190,76 @@ build_maven_pack typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+release_maven typeOf simplon.pipeline.CatalogueTask {
+  key = "release:maven"
+  body = "simplon.tasks.maven:push"
+  help = "Upload what `build:maven-pack` staged to GitHub's Maven registry and read the coordinates back."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the artifact to upload (normally bound with `consumes:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the version to upload, for one only known after a build"
+  }
+  input maven typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.maven
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.maven.f_group
+    needs = simplon.vocabulary.maven.f_modules
+    needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
+}
+// si#536 (part D of si#449): a HOMEBREW FORMULA, rendered whole from the wheel's own metadata and a few
+// `with:` values; a product writes no template, version, URL, sha256 or resource block. The resources are
+// the install closure, measured in the pinned brew image (`tasks/homebrewclosure.py`), each with its PyPI
+// sdist. DECLARED, NOT PLACED: a product with no Python CLI to ship through Homebrew has nothing for it.
+// `source:` has no default because the two values are two different runs: `pypi` after the upload, where
+// PyPI's url and sha256 must match the local wheel, and `local` on a dry run, with a placeholder URL.
 build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   key = "build:homebrew-formula"
   body = "simplon.tasks.homebrewformula:build"
+  help = "Render a Homebrew formula for the wheel, with its install closure as resources, into the artifact's path."
+  unattended = true
+  params p_wheel typeOf simplon.pipeline.TaskParam {
+    key = "wheel"
+    help = "the directory artifact holding exactly one .whl (normally bound with `consumes:`)"
+  }
+  params p_formula typeOf simplon.pipeline.TaskParam {
+    key = "formula"
+    help = "the homebrew-formula artifact to write (normally bound with `produces:`)"
+  }
+  params p_shape typeOf simplon.pipeline.TaskParam {
+    key = "shape"
+    help = "the formula's shape: python (binary is built with firn's part F, si#449)"
+  }
+  params p_source typeOf simplon.pipeline.TaskParam {
+    key = "source"
+    help = "where the wheel's url and sha256 come from: pypi on a real run, local on a dry run"
+  }
+  params p_depends_on typeOf simplon.pipeline.TaskParam {
+    key = "depends_on"
+    help = "the brew formulae the product needs besides python, as a list"
+  }
+  params p_python typeOf simplon.pipeline.TaskParam {
+    key = "python"
+    help = "the python formula the venv is created with (e.g. python@3.14)"
+  }
+  params p_env typeOf simplon.pipeline.TaskParam {
+    key = "env"
+    help = "extra install environment, a mapping written as ENV lines"
+  }
+  params p_test typeOf simplon.pipeline.TaskParam {
+    key = "test"
+    help = "the formula's test: {args: [...], expect: <text the output contains>}"
+  }
   input wheel typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.directory
     param = "wheel"
@@ -212,9 +1271,31 @@ build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+// si#536 (part D of si#449): the formula `build:homebrew-formula` rendered, checked before a tap gets it.
+// `brew audit` and `brew style` run in the pinned brew image; audit does not catch a wrong sha256 (measured),
+// so the body compares the formula's digests with the local wheel and PyPI. `online` has no default, for the
+// reason `source:` has none: a dry run's placeholder URL is red under `--online --new` (measured).
 test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   key = "test:homebrew-formula"
   body = "simplon.tasks.homebrewtap:check"
+  help = "Audit the Homebrew formula in the pinned brew image, check its sha256s, and record the verdict."
+  unattended = true
+  params p_formula typeOf simplon.pipeline.TaskParam {
+    key = "formula"
+    help = "the homebrew-formula artifact to check (normally bound with `consumes:`)"
+  }
+  params p_wheel typeOf simplon.pipeline.TaskParam {
+    key = "wheel"
+    help = "the directory artifact holding the wheel the formula was rendered from (normally bound with `consumes:`)"
+  }
+  params p_results typeOf simplon.pipeline.TaskParam {
+    key = "results"
+    help = "the test result to write the verdict record to (normally bound with `produces:`)"
+  }
+  params p_online typeOf simplon.pipeline.TaskParam {
+    key = "online"
+    help = "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run"
+  }
   input formula typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.homebrew_formula
     param = "formula"
@@ -231,9 +1312,30 @@ test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+// si#536 (part D of si#449): the checked formula committed to a tap repository as `Formula/<name>.rb`, with
+// a GitHub App token (`token: app`, si#534) because the tap is ANOTHER repository, which the workflow's
+// own token cannot write. Only the bytes the bound evidence tested are committed, and only when their url and
+// sha256 are what PyPI serves (asked right before the commit; never the dry-run placeholder). Three outcomes, from
+// `adapters.repofile` (si#535): written, already current, refused - and only refused is red.
 release_homebrew_tap typeOf simplon.pipeline.CatalogueTask {
   key = "release:homebrew-tap"
   body = "simplon.tasks.homebrewtap:tap"
+  help = "Commit the tested Homebrew formula to the tap repository as Formula/<name>.rb."
+  unattended = true
+  publishes = true
+  token = "app"
+  params p_formula typeOf simplon.pipeline.TaskParam {
+    key = "formula"
+    help = "the homebrew-formula artifact to commit (normally bound with `consumes:`)"
+  }
+  params p_repository typeOf simplon.pipeline.TaskParam {
+    key = "repository"
+    help = "the tap repository, as <owner>/<repo> (normally pinned per command with `with:`)"
+  }
+  params p_branch typeOf simplon.pipeline.TaskParam {
+    key = "branch"
+    help = "the tap's branch to commit to (default main)"
+  }
   input formula typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.homebrew_formula
     param = "formula"
@@ -243,37 +1345,105 @@ release_homebrew_tap typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.test_result
   }
 }
-release_maven typeOf simplon.pipeline.CatalogueTask {
-  key = "release:maven"
-  body = "simplon.tasks.maven:push"
-  input maven typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.maven
+release_image typeOf simplon.pipeline.CatalogueTask {
+  key = "release:image"
+  body = "simplon.tasks.image:release"
+  help = "Push the product's container image and verify the tag, and every declared platform, is in the registry."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the image to publish (normally pinned per command with `with:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to publish under, for a version only known after a build"
+  }
+  input image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.maven.f_group
-    needs = simplon.vocabulary.maven.f_modules
-    needs = simplon.vocabulary.artifact.f_path
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
   }
   input evidence typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.test_result
   }
 }
+// The release NOTES (si#344 C.3, spec decision 16), generated from the merges since the previous tag and
+// the tickets they name - the walk `test:release-notes` already makes to check a hand-written page, not a
+// second one. OFFERED, not placed, for `release:tag`'s reason: it is one leaf of a release, and a product
+// that releases by hand-written notes alone has nothing waiting for it.
 release_notes typeOf simplon.pipeline.CatalogueTask {
   key = "release:notes"
   body = "simplon.tasks.releasenotes:write"
+  help = "Write the release notes for a tag from the merges and tickets since the previous one."
+  unattended = true
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the release-notes artifact to write (normally bound with `produces:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag being released, exactly as it will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
   output release_notes typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.release_notes
     param = "name"
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+
+// The dispatch release's CHECK (si#487, si#463 D3): the first member of every release aggregate a
+// `workflows: release:` names (held there at load), and the derived job runs it before the cut. It refuses
+// a version not spelled vX.Y.Z (fixed, no manifest key), a run started from another ref, an origin that
+// cannot be fetched or asked, a commit origin's default branch does not carry, another version tag at HEAD,
+// and a tag origin carries at another commit. It asks GitHub's API nothing: whether a release is published
+// is `release:github-unpublished`'s question.
+//
+// OFFERED, not placed: a product without the dispatch flow has no use for a fixed vX.Y.Z.
+//
+// `token: github` because it fetches and asks origin, and the release job's checkout persists no
+// credential (si#507): in a private repository git would otherwise be refused. `release:tag` likewise.
 release_check typeOf simplon.pipeline.CatalogueTask {
   key = "release:check"
   body = "simplon.tasks.release:check"
+  help = "Refuse a dispatch release before anything is cut: the vX.Y.Z spelling, started from the default branch, origin fetched and carrying HEAD, no other version tag at HEAD, the tag free or at this commit on origin."
+  unattended = true
+  token = "github"
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the version exactly as its tag will be (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
 }
+
+// The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
+// the guard #23 asked for, sitting inside it.
+//
+// OFFERED, not placed, since #39. It reads no product data, which is what made placing it look right -
+// but the bar is what a command DOES, not what it needs: this one publishes, a misfire is a public tag
+// that cannot be taken back, and a product with no tag-triggered workflow has nothing waiting for it.
+// A product that releases by tag declares it in one line; simplon does exactly that.
+//
+// `tag` is the tag exactly as it will exist, not a version the kernel decorates. WHICH tags publish is
+// the product's own statement - its release workflow's trigger and its setuptools-scm settings - and a
+// kernel that turned `1.4.0` into `v1.4.0` would be guessing at a convention it cannot read.
 release_tag typeOf simplon.pipeline.CatalogueTask {
   key = "release:tag"
   body = "simplon.tasks.release:tag"
+  help = "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`)."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag to cut, exactly as it will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
   input release_notes typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.release_notes
   }
@@ -281,13 +1451,46 @@ release_tag typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.tag
   }
 }
+
+// The GITHUB RELEASE, one task per moment (si#486, part of si#463; the attach is si#553): asked before the
+// build (is the tag's release still unpublished?), drafted before the build with the notes as its body,
+// the built files attached to the draft after the build, and published after the image. One coordinate
+// per moment rather than one with a `--step`, because the ports differ per moment - only the draft reads the notes,
+// only the attach reads files and their evidence, only the publish produces the release - and a port cannot
+// depend on a parameter. The attach is its own moment, not a part of the draft, because the files it
+// attaches exist only after the build (si#463 D).
+//
+// OFFERED, not placed, for `release:tag`'s reason: each publishes or prepares a publish, a misfire is
+// public, and a product with no GitHub release has nothing waiting for it. No `vX.Y.Z` here: a product
+// whose release tags are build stamps uses these as they are, and the pattern is `release:check`'s.
 release_github_unpublished typeOf simplon.pipeline.CatalogueTask {
   key = "release:github-unpublished"
   body = "simplon.tasks.githubrelease:unpublished"
+  help = "Answer whether a tag's GitHub Release is still unpublished (a draft or none); red when it is published or GitHub does not answer."
+  unattended = true
+  token = "github"
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
 }
 release_github_draft typeOf simplon.pipeline.CatalogueTask {
   key = "release:github-draft"
   body = "simplon.tasks.githubrelease:draft"
+  help = "Create the tag's draft GitHub Release with the release notes as its body, or reuse the draft an earlier run left."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_name typeOf simplon.pipeline.TaskParam {
+    key = "name"
+    help = "the release-notes artifact whose text is the body (normally bound with `consumes:`)"
+  }
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
   input release_notes typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.release_notes
     param = "name"
@@ -297,6 +1500,15 @@ release_github_draft typeOf simplon.pipeline.CatalogueTask {
 release_github_attach typeOf simplon.pipeline.CatalogueTask {
   key = "release:github-attach"
   body = "simplon.tasks.githubrelease:attach"
+  help = "Attach the tested files and their .sha256 sidecars to the tag's draft GitHub Release; every other asset on the draft is deleted."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
   input files typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.file
     needs = simplon.vocabulary.artifact.f_path
@@ -313,217 +1525,133 @@ release_github_attach typeOf simplon.pipeline.CatalogueTask {
 release_github_publish typeOf simplon.pipeline.CatalogueTask {
   key = "release:github-publish"
   body = "simplon.tasks.githubrelease:publish"
+  help = "Publish the tag's draft GitHub Release, once origin carries the tag."
+  unattended = true
+  publishes = true
+  token = "github"
+  params p_tag typeOf simplon.pipeline.TaskParam {
+    key = "tag"
+    help = "the tag exactly as it exists or will exist (e.g. v1.4.0)"
+    metavar = "TAG"
+  }
   output github_release typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.github_release
   }
 }
-docs_site typeOf simplon.pipeline.CatalogueTask {
-  key = "docs:site"
-  body = "simplon.tasks.site:build"
-  output site typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.site
+
+// --- tasks: the task machinery, addressable ---------------------------------------------------------
+// `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
+// mechanisms: what is product-specific reaches them through simplon.manifest.context and a manifest-pinned
+// `with: { target: ... }`, never through an import.
+tasks_generate typeOf simplon.pipeline.CatalogueTask {
+  key = "tasks:generate"
+  body = "simplon.tasks.taskverbs:generate"
+  help = "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing)."
+  unattended = true
+}
+tasks_catalogue typeOf simplon.pipeline.CatalogueTask {
+  key = "tasks:catalogue"
+  body = "simplon.tasks.taskverbs:catalogue"
+  help = "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach."
+  unattended = true
+}
+
+// --- manifest: the product's own manifest as the thing worked on (si#344) -------------------------
+support_migrate typeOf simplon.pipeline.CatalogueTask {
+  key = "support:migrate"
+  body = "simplon.tasks.migrate:migrate"
+  help = "Rewrite this product's manifest into the current form (si#344): `groups:` into `ci:` / `cd:` / `support:`, `images:` into `artifacts:`, and `with: name` into `produces:` / `consumes:`."
+  unattended = true
+  params p_manifest typeOf simplon.pipeline.TaskParam {
+    key = "manifest"
+    help = "the manifest to rewrite (default: this product's own)"
+    argument = true
   }
 }
-// si#435 (decided 2026-10-15): deploy:up's input is bound by the manifest's `deploy: source:`, the section that
-// already names what is deployed, and never by `consumes:` - so no `param`: the body reads the section itself.
-// It accepts any artifact: a server deploys an image, a client installs a directory.
-deploy_up typeOf simplon.pipeline.CatalogueTask {
-  key = "deploy:up"
-  body = "simplon.tasks.deploy:up"
-  input source typeOf simplon.pipeline.Port {
-    accepts = simplon.vocabulary.artifact
+support_model typeOf simplon.pipeline.CatalogueTask {
+  key = "support:model"
+  body = "simplon.tasks.manifestmodel:model"
+  help = "Write this product's validated manifest as a firn model (si#346)."
+  unattended = true
+  params p_output typeOf simplon.pipeline.TaskParam {
+    key = "output"
+    help = "the .firn file to write (default: <output>/model/<product>.firn)"
+    argument = true
   }
 }
+
+// --- toolchain: a pinned image over the product tree (si#95) -----------------------------------------
+// A FAMILY, not a placement: si#34 would confine `build:toolchain` to `build`, and ctest / dotnet test /
+// gradle test belong under `test`. Declared and not placed, because a product with no compiled
+// toolchain should not receive the command with the kernel.
+// The ready-made configuration, GENERATED rather than resolved (si#95). It lands under `support`
+// because it touches the product's own tree and reads no phase - the same argument `install` sits on.
+// Placed since si#550 (see `support: commands:` above). It was declared and not placed while it wrote
+// only compiled toolchains; si#525 gave it claude and gh, which every product has.
+support_toolchain typeOf simplon.pipeline.CatalogueTask {
+  key = "support:toolchain"
+  body = "simplon.tasks.toolchain:scaffold"
+  help = "Write a ready-made toolchain configuration for a language into this product's manifest."
+  unattended = true
+  params p_language typeOf simplon.pipeline.TaskParam {
+    key = "language"
+    help = "java | cpp | dotnet | python | firn | firn-binary | claude | gh | brew"
+    argument = true
+  }
+  // DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
+  // never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
+  // parameter, so the value was accepted at load and silently discarded. A product either types it
+  // (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
+  // because the parameter exists.
+  params p_version typeOf simplon.pipeline.TaskParam {
+    key = "version"
+    help = "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12); claude, gh and brew take none"
+    argument = true
+  }
+}
+
 toolchain_run typeOf simplon.pipeline.CatalogueTask {
   key = "toolchain:run"
   body = "simplon.tasks.toolchain:run_toolchain"
+  help = "Run a pinned toolchain image over the product tree, as the calling user."
+  unattended = true
+  // BOTH HALVES OF THE APPENDING RULE, and neither is enough alone (si#105). `extra` is the variadic
+  // positional the caller's tail lands in - without it Click answers `Got unexpected extra argument`;
+  // `passthrough_args` is what lets a FLAG reach that positional instead of being refused as an unknown
+  // option. The manifest's argv still comes first, and an empty tail changes the line by not one byte.
+  passthrough_args = true
+  // `network:` IS DOCUMENTED HERE SINCE si#202, and the entry is a correction rather than an addition:
+  // the parameter always bound from `with:` and rendered as a real `--network` option with no help text
+  // at all, so the one key that decides whether a container can reach the public internet was the one
+  // key the generated command reference said nothing about. si#197 measured what that costs - an
+  // acceptance container with no network named got the default bridge, the service name resolved
+  // through the host's upstream resolver to an address that answered 404, and the scenario reported a
+  // defect in a product it never touched.
+  params p_extra typeOf simplon.pipeline.TaskParam {
+    key = "extra"
+    help = "appended to the manifest's argv, verbatim"
+    argument = true
+  }
+  params p_network typeOf simplon.pipeline.TaskParam {
+    key = "network"
+    help = "the docker network the container joins ('none' for no networking); pin it with `with:` on a command whose verdict depends on what it can or cannot reach"
+  }
+  // si#371: firn reads `firn.toml` from the directory it starts in and has no project option, so a firn
+  // project below the root needs the container to start there while the whole tree stays mounted.
+  params p_cwd typeOf simplon.pipeline.TaskParam {
+    key = "cwd"
+    help = "the directory under the mount the command starts in (a plain relative path); absent means the mount itself"
+  }
+  // si#511: npm, pip and their kind fetch per platform, so a tree-local directory over the container's
+  // copy is how a gate installs for the platform it runs on. Each point is created as the caller first.
+  params p_mounts typeOf simplon.pipeline.TaskParam {
+    key = "mounts"
+    help = "bind mounts `<path under the tree>:<absolute container path>[:ro]`; each path is created as the calling user before the run"
+  }
   input source typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.artifact
   }
   output out typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.artifact
   }
-}
-
-// si#400 4a: the catalogue's tasks that take or give no artifact, so they have no port. They are here
-// because the generated task classes (plan 4b) and every command's `task` need all of them.
-vcs_commit typeOf simplon.pipeline.CatalogueTask {
-  key = "vcs:commit"
-  body = "simplon.tasks.vcs:commit"
-}
-vcs_push typeOf simplon.pipeline.CatalogueTask {
-  key = "vcs:push"
-  body = "simplon.tasks.vcs:push"
-}
-vcs_prune_branches typeOf simplon.pipeline.CatalogueTask {
-  key = "vcs:prune-branches"
-  body = "simplon.tasks.vcs:prune_branches"
-}
-vcs_auth_scopes typeOf simplon.pipeline.CatalogueTask {
-  key = "vcs:auth-scopes"
-  body = "simplon.tasks.vcs:auth_scopes"
-}
-vcs_submodules typeOf simplon.pipeline.CatalogueTask {
-  key = "vcs:submodules"
-  body = "simplon.tasks.vcs:submodules"
-}
-support_ci_privileges typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-privileges"
-  body = "simplon.tasks.ciprivileges:grant"
-}
-support_ci_disk_hygiene typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-disk-hygiene"
-  body = "simplon.tasks.cidisk:hygiene"
-}
-support_ci_arm64 typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-arm64"
-  body = "simplon.tasks.ciarm64:arm64"
-}
-support_ci_disk_preflight typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-disk-preflight"
-  body = "simplon.tasks.cidisk:preflight"
-}
-
-support_docker_preflight typeOf simplon.pipeline.CatalogueTask {
-  key = "support:docker-preflight"
-  body = "simplon.tasks.dockerpreflight:preflight"
-}
-support_ci_disk_cleanup typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-disk-cleanup"
-  body = "simplon.tasks.cidisk:cleanup"
-}
-support_ci_docker_preflight typeOf simplon.pipeline.CatalogueTask {
-  key = "support:ci-docker-preflight"
-  body = "simplon.tasks.dockerpreflight:ci_preflight"
-}
-test_gate typeOf simplon.pipeline.CatalogueTask {
-  key = "test:gate"
-  body = "simplon.tasks.testrun:gate"
-}
-test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
-  key = "test:typecheck-python"
-  body = "simplon.tasks.typecheck:check"
-}
-test_generated typeOf simplon.pipeline.CatalogueTask {
-  key = "test:generated"
-  body = "simplon.tasks.generated:check"
-}
-test_release_notes typeOf simplon.pipeline.CatalogueTask {
-  key = "test:release-notes"
-  body = "simplon.tasks.releasenotes:check"
-}
-test_report typeOf simplon.pipeline.CatalogueTask {
-  key = "test:report"
-  body = "simplon.tasks.testrun:report_cmd"
-}
-test_accept typeOf simplon.pipeline.CatalogueTask {
-  key = "test:accept"
-  body = "simplon.tasks.testrun:accept_cmd"
-}
-test_walk typeOf simplon.pipeline.CatalogueTask {
-  key = "test:walk"
-  body = "simplon.tasks.walk:walk"
-}
-support_nexus typeOf simplon.pipeline.CatalogueTask {
-  key = "support:nexus"
-  body = "simplon.tasks.nexus:nexus_cmd"
-}
-support_install typeOf simplon.pipeline.CatalogueTask {
-  key = "support:install"
-  body = "simplon.tasks.hosttools:install"
-}
-support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
-  key = "support:claude-plugins"
-  body = "simplon.tasks.claudeplugins:install_cmd"
-}
-support_claude_md typeOf simplon.pipeline.CatalogueTask {
-  key = "support:claude-md"
-  body = "simplon.tasks.claudemd:claude_md_cmd"
-}
-support_environments typeOf simplon.pipeline.CatalogueTask {
-  key = "support:environments"
-  body = "simplon.tasks.env:environments"
-}
-support_completion typeOf simplon.pipeline.CatalogueTask {
-  key = "support:completion"
-  body = "simplon.tasks.completion:generate"
-}
-support_workflows typeOf simplon.pipeline.CatalogueTask {
-  key = "support:workflows"
-  body = "simplon.tasks.workflows:generate"
-}
-docs_render typeOf simplon.pipeline.CatalogueTask {
-  key = "docs:render"
-  body = "simplon.tasks.docs:render"
-}
-docs_reference typeOf simplon.pipeline.CatalogueTask {
-  key = "docs:reference"
-  body = "simplon.tasks.cliref:reference"
-}
-docs_acceptance typeOf simplon.pipeline.CatalogueTask {
-  key = "docs:acceptance"
-  body = "simplon.tasks.acceptance:document"
-}
-build_model typeOf simplon.pipeline.CatalogueTask {
-  key = "build:model"
-  body = "simplon.tasks.firngen:generate"
-}
-
-build_model_binary typeOf simplon.pipeline.CatalogueTask {
-  key = "build:model-binary"
-  body = "simplon.tasks.firngen:model_binary"
-}
-build_cmake_files typeOf simplon.pipeline.CatalogueTask {
-  key = "build:cmake-files"
-  body = "simplon.tasks.buildfiles:cmake"
-}
-build_dotnet_solution typeOf simplon.pipeline.CatalogueTask {
-  key = "build:dotnet-solution"
-  body = "simplon.tasks.buildfiles:dotnet"
-}
-deploy_carrier typeOf simplon.pipeline.CatalogueTask {
-  key = "deploy:carrier"
-  body = "simplon.tasks.carrier:up"
-}
-deploy_down typeOf simplon.pipeline.CatalogueTask {
-  key = "deploy:down"
-  body = "simplon.tasks.deploy:down"
-}
-release_asset typeOf simplon.pipeline.CatalogueTask {
-  key = "release:asset"
-  body = "simplon.tasks.asset:publish"
-}
-tasks_generate typeOf simplon.pipeline.CatalogueTask {
-  key = "tasks:generate"
-  body = "simplon.tasks.taskverbs:generate"
-}
-tasks_catalogue typeOf simplon.pipeline.CatalogueTask {
-  key = "tasks:catalogue"
-  body = "simplon.tasks.taskverbs:catalogue"
-}
-support_migrate typeOf simplon.pipeline.CatalogueTask {
-  key = "support:migrate"
-  body = "simplon.tasks.migrate:migrate"
-}
-test_manifest_model typeOf simplon.pipeline.CatalogueTask {
-  key = "test:manifest-model"
-  body = "simplon.tasks.manifestcheck:check"
-}
-
-test_model typeOf simplon.pipeline.CatalogueTask {
-  key = "test:model"
-  body = "simplon.tasks.firngen:validate"
-}
-
-test_model_format typeOf simplon.pipeline.CatalogueTask {
-  key = "test:model-format"
-  body = "simplon.tasks.firngen:format_check"
-}
-support_model typeOf simplon.pipeline.CatalogueTask {
-  key = "support:model"
-  body = "simplon.tasks.manifestmodel:model"
-}
-support_toolchain typeOf simplon.pipeline.CatalogueTask {
-  key = "support:toolchain"
-  body = "simplon.tasks.toolchain:scaffold"
 }

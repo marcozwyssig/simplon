@@ -1,0 +1,229 @@
+// simplon.catalogue's command tree (si#561): the source of catalogue.yaml's `groups:` section, which firn
+// generates from it (src/firn/templates/catalogue.firnt). The comments are the catalogue's own rationale,
+// moved here from the YAML's hand-written region; their "above", "below" and "this file" were written about
+// catalogue.yaml, which still has that shape: these groups first, then the tasks of tasks.firn.
+//
+// The delivery kernel's task catalogue (netctl#1437): the coordinate space between the platform and a
+// *ctl product. A product imports a NAMESPACE and refers to `<namespace>:<name>`, never to a module path,
+// so a body can move inside the kernel without breaking a product manifest.
+//
+// The kernel is a product of itself too (simplon.yaml, deploy/orchestrator/): its build/test/support
+// commands are assembled from this same catalogue, exactly like any other *ctl product. That
+// reverses an earlier rule ("only a product generates, because only a product has a surface") -
+// the reversal exists because a spike found this catalogue resolved by walking five directories
+// up to the old monorepo's root, correct only while vendored and silently wrong once installed.
+// Nobody had noticed, because nobody had ever run the kernel the way a consumer does. A tool
+// never used in its own house rots unseen.
+//
+// Only coordinates something actually references, no more. A catalogue that offers what nobody imports is
+// speculation, and the design's own rule is the minimum that solves the problem. (It was exactly the
+// fourteen netctl referenced until the kernel's own loop needed `build:image`, `release:image` and
+// `release:tag` - each added by a ticket that had the case in hand, never in advance.)
+//
+// `help:` here is the fallback wording. A product's own `help:` wins where it declares one, and for a
+// non-shared body the CLI summary comes from the body's DOCSTRING anyway (see simplon.tasks.taskgen).
+//
+// The CI/CD loop, owned by the platform (netctl#1444, netctl#1469). Every *ctl product runs the same
+// build -> test -> release -> deploy -> monitor loop, so declaring it once here beats each product
+// restating it - and a product CANNOT restate it: `treeform.merge` rejects a path this block does not
+// declare, so the group lock is the structure rather than a check over it.
+//
+// This block also PLACES the general commands, which is what makes "the same groups holding the same
+// general tasks" true rather than a convention every product has to keep by hand. It places only what
+// needs no product data: the git verbs, the task verbs and the commands under `support` below. `support:nexus` reads a `nexus:`
+// section, `support:environments` an `environments:` one, and
+// `test:gate`/`test:accept` need a running lab - placed here, each would be a command that dies on its
+// first line in a product that has none of that. They stay tasks, and a product declares a command for
+// one the day it has the data.
+//
+// PLACEMENT OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
+// one it answers is decided by whether it is one of the GROUP NAMES declared below (the groups the areas hold,
+// and `support`).
+//
+//   `build:image`, `test:gate`, `release:tag`, `support:install` name a group, and so they name a
+//   PLACEMENT: a product may only place them under that group. `treeform.check_coordinate_placement`
+//   rejects `build:image` under `test`, naming both coordinates and the group that is allowed. It reads
+//   the MERGED tree, so the placements THIS file makes are held to the rule too.
+//
+//   `vcs:`, `docs:`, `tasks:` name none, and so they name a FAMILY - what the task IS, said without
+//   saying when it runs. `docs:site` sits under `build` in simplon and could sit under `release` in
+//   another product; `vcs:commit` belongs to no single phase at all, which is why the "every coordinate
+//   is a phase" alternative was rejected rather than adopted.
+//
+// GROUPS, not phases, and the distinction is the owner's: the groups marked `phase = true` below are the
+// phases of the delivery loop, and `support` is the group that supports them rather than one more of them.
+// The rule is stated over every group because `support:install` would otherwise be the one placed coordinate
+// nothing governed - not because `support` has been promoted.
+//
+// So CHOOSING A NAMESPACE for a new task is choosing between those two, and it is not a matter of taste:
+// name a group only when the task belongs to that group in every product that will ever have it, and
+// name a family whenever the placement is the product's call. Getting it wrong is not silent - either the
+// loader refuses a placement that was in fact legitimate, or a task that really does belong to one group
+// is free to wander. Neither is a rename anyone wants to do twice.
+package simplon.catalogue
+
+// THE AREAS (si#344). `ci` and `cd` are TRANSPARENT: real nodes of this tree - the group lock sees
+// them, so `ci: deploy:` is refused like any undeclared path, and a phase's area is said once, here -
+// and absent from every command path: `build image` stays `build image`. `treeform.elide_transparent`
+// folds them away before the CLI is built. `cd` is env-first, so everything under it takes an
+// environment and nothing under `ci` does (decision 5; `env_groups:` is gone).
+ci typeOf simplon.pipeline.CatalogueGroup {
+  transparent = true
+  help = "Produce, verify and publish the artefacts."
+  group build typeOf simplon.pipeline.CatalogueGroup {
+    help = "Produce the artefacts."
+    phase = true
+  }
+  group test typeOf simplon.pipeline.CatalogueGroup {
+    help = "Verify them."
+    phase = true
+  }
+  // `release` holds no placed command, and that is a decision rather than an omission (#39).
+  //
+  // THE PLACEMENT RULE. Placing a command hands it to every product that writes its manifest in the tree
+  // form, and there is no way to decline one - `merge_trees` unions both trees and a product cannot
+  // subtract. So the bar is not "harmless in most products" but USEFUL IN EVERY ONE. The commands that
+  // pass it are below: they touch the machine or the repository, they read nothing from a manifest, and
+  // a product that never runs them is no worse off for having them.
+  //
+  // `release:tag` does not pass it, and it is the first task where the difference bit. It PUBLISHES: it
+  // cuts a tag and pushes it, so a misfire is public and cannot be taken back, and a product with no
+  // tag-triggered workflow has nothing waiting for that tag. Offering it costs a product one manifest
+  // line; placing it costs every product a command it never asked for, pointed at its own origin.
+  //
+  // It remains a task, and simplon declares it in its own manifest - which is the shape every product
+  // that releases by tag should use.
+  group release typeOf simplon.pipeline.CatalogueGroup {
+    help = "Publish them."
+    phase = true
+  }
+}
+cd typeOf simplon.pipeline.CatalogueGroup {
+  transparent = true
+  env_first = true
+  help = "Put them into an environment and watch them there."
+  group deploy typeOf simplon.pipeline.CatalogueGroup {
+    help = "Put them into an environment."
+    phase = true
+  }
+  group monitor typeOf simplon.pipeline.CatalogueGroup {
+    help = "Watch what is running there."
+    phase = true
+  }
+}
+support typeOf simplon.pipeline.CatalogueGroup {
+  help = "Host preflight, environment introspection and host tooling."
+  // The one command that PROVISIONS rather than inspects. It sits at the support level rather than
+  // in a subgroup because it is about the machine as a whole, and a fresh checkout should reach it
+  // without knowing which tool is missing.
+  command install typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_install
+  }
+  // PLACED since si#525, which made it useful in every product: without the `claude` toolchain it
+  // says Claude support is off and exits 0, so a product with no Claude Code pays one help line.
+  // Before si#525 it read a `claude:` section every product had to write, and was a task only.
+  command claude_plugins typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_claude_plugins
+  }
+  // Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
+  command claude_md typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_claude_md
+  }
+  // PLACED since si#550, by the same bar. si#525 made `toolchains:` a list every product has (init
+  // writes claude and gh), and this is the command that adds to it, so a product without a compiled
+  // language uses it too. Unplaced, the scaffold's comment promised a command nobody had.
+  command toolchain typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_toolchain
+  }
+  // PLACED rather than offered (si#58), and it is the same argument `install` above is placed on.
+  // The placement bar is "useful in EVERY product": this one reads no manifest section - the command
+  // tree it writes out is the tree every manifest already has - it publishes nothing, it touches
+  // only the product's own root, and a product that never runs it is no worse off. `tasks:generate`
+  // is the closer precedent still: it too is placed, and it too writes a generated file at a path
+  // the kernel chooses.
+  //
+  // What settles it is what the thing IS. A completion that has to be asked for is a completion
+  // nobody has - the cost of not knowing it exists falls entirely on the person who would have
+  // benefited, and they cannot discover it by pressing TAB, because that is the thing that does not
+  // work yet. That is the fourth quality goal, and it is exactly the shape of the defect si#58 was
+  // raised for: the tool declining to say what it already knows.
+  // No `params:` here - the TASK below carries the presentation for `check`, and repeating it in
+  // the placement would be a second source for one option's help text.
+  command completion typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_completion
+  }
+  group git typeOf simplon.pipeline.CatalogueGroup {
+    help = "Version-control helpers."
+    command commit typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_commit
+      // `argument: true` is what keeps `message` a variadic POSITIONAL - without it Typer would
+      // render a single `--message TEXT`.
+      params p_message typeOf simplon.pipeline.TaskParam {
+        key = "message"
+        help = "commit message"
+        argument = true
+      }
+    }
+    command push typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_push
+    }
+    command prune_branches typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_prune_branches
+      params p_dry_run typeOf simplon.pipeline.TaskParam {
+        key = "dry_run"
+        help = "preview only"
+        short = "-n"
+      }
+      params p_remote typeOf simplon.pipeline.TaskParam {
+        key = "remote"
+        help = "also delete merged branches on origin"
+      }
+      params p_unmerged typeOf simplon.pipeline.TaskParam {
+        key = "unmerged"
+        help = "ALSO delete branches that cannot be proven merged (destructive)"
+      }
+    }
+    command submodules typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_submodules
+    }
+    // Credentials, not tooling - which is why this is here and not in `support install`: it opens
+    // a browser and asks a human to authorise something, rather than touching the machine.
+    command auth_scopes typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.vcs_auth_scopes
+    }
+  }
+  // tasks: the task machinery itself, NESTED under support for the same reason `git` is - it is host
+  // tooling for whoever develops the product, not a stage of the CI/CD loop the phase groups
+  // describe. A top-level `tasks` also claimed a very generic token beside `build`/`test`/`deploy`.
+  //
+  // The TASK COORDINATES are untouched: `tasks:catalogue` and `tasks:generate` keep their namespace,
+  // so `cat.namespaces()` and every product's `with:` pin are unaffected. What moves is the GROUP
+  // PATH - `<product> tasks generate` becomes `<product> support tasks generate` - and the hidden
+  // flat aliases (`<product> generate`, `<product> catalogue`) survive it exactly as the vcs verbs'
+  // did, because a flat alias is registered per unambiguous NAME, not per path.
+  group tasks typeOf simplon.pipeline.CatalogueGroup {
+    help = "The task machinery itself: regenerate the CLI module, list the tasks."
+    command catalogue typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.tasks_catalogue
+    }
+    command generate typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.tasks_generate
+      params p_check typeOf simplon.pipeline.TaskParam {
+        key = "check"
+        help = "report drift and write nothing"
+      }
+    }
+  }
+  // manifest: tools over the product's manifest itself (si#344). PLACED for the reason `tasks
+  // generate` is placed: it reads no section a product might lack, touches only the product's own
+  // root and publishes nothing.
+  group manifest typeOf simplon.pipeline.CatalogueGroup {
+    help = "Tools over this product's manifest."
+    command migrate typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.support_migrate
+    }
+    command model typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.support_model
+    }
+  }
+}
