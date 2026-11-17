@@ -277,7 +277,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     return result
 
 
-def _drain_killed(proc: subprocess.Popen) -> tuple[str | None, str | None, bool]:
+def _drain_killed(proc: subprocess.Popen) -> tuple[str, str, bool]:
     """What a child killed for its timeout had said, and whether a process it started still holds its pipes.
 
     MEASURED (si#654): `git ls-remote` against a remote that accepts and never answers is two processes,
@@ -289,13 +289,13 @@ def _drain_killed(proc: subprocess.Popen) -> tuple[str | None, str | None, bool]
     """
     try:
         out, err = proc.communicate(timeout=_UNWIND_GRACE)
-        return out, err, False
+        return out or "", err or "", False
     except subprocess.TimeoutExpired:
         for pipe in (proc.stdout, proc.stderr):
             if pipe is not None:
                 pipe.close()
         proc.wait()
-        return None, None, True
+        return "", "", True
 
 
 def shown(argv: list[str]) -> str:
