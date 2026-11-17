@@ -153,3 +153,32 @@ def test_a_failed_dependency_install_dies_instead_of_returning_a_venv_without_th
     message = str(raised.value)
     assert "requirements.txt" in message, message
     assert "No matching distribution found for allure-pytest==2.16.1" in message, message
+
+
+def test_a_tampered_get_pip_is_refused_and_never_run(monkeypatch, tmp_path):
+    # arrange (si#668): ensurepip is missing, so get-pip.py is the route; the real download serves a
+    # script that is not the pinned one
+    import servedbytes
+    venv = tmp_path / ".venv"
+    ran = []
+
+    def fake_run(argv, **kw):
+        ran.append(argv)
+        if argv[:3] == ["python3", "-m", "ensurepip"]:
+            return Result(rc=1, out="", err="")
+        if "--without-pip" in argv:
+            _executable(venv / "bin" / "python")
+        return Result(rc=0, out="", err="")
+
+    monkeypatch.setattr(pyvenv, "run", fake_run)
+    servedbytes.serve(monkeypatch, b"print('not get-pip')\n")
+    monkeypatch.setattr(pyvenv.log, "die", _boom)
+
+    # act
+    with pytest.raises(SystemExit) as refused:
+        pyvenv.ensure_venv(venv)
+
+    # assert: the refusal names the URL and the pin, and the venv's python never ran a script
+    assert pyvenv.GET_PIP_URL in str(refused.value) and pyvenv.GET_PIP_SHA256 in str(refused.value)
+    assert not [argv for argv in ran if argv[0] == str(venv / "bin" / "python")]
+    assert not (venv / "get-pip.py").exists()

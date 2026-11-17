@@ -25,7 +25,9 @@ import os
 import sys
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, TypedDict, cast
 
+import click
 import typer
+import typer.core
 
 import simplon
 from simplon.manifest import bound, clitaxonomy, outputs, signatures
@@ -118,6 +120,35 @@ class EnvironmentProvider(Protocol):
     def default(self) -> str: ...
     def is_local(self, name: str | None = ...) -> bool: ...
     def require_backend(self, backend: str = ...) -> None: ...
+
+
+def _help_on_stderr(ctx: click.Context) -> None:
+    """Print `ctx`'s help on STDERR. Typer's rich help writes to whatever `sys.stdout` is at the moment it
+    prints, so the redirect is what moves it; plain Click hands the text back instead, and it is echoed."""
+    with contextlib.redirect_stdout(sys.stderr):
+        text = ctx.get_help()
+    if text:
+        click.echo(text, err=True, color=ctx.color)
+
+
+class GroupNeedsACommand(typer.core.TyperGroup):
+    """A command group whose bare call is INCOMPLETE: the help on stderr, exit 2 (si#716).
+
+    Click's `no_args_is_help` printed the help on stdout and exited 0, so `<product> build` with the
+    subcommand dropped was green and had done nothing. That is the same mistake as an unknown subcommand,
+    which Click already answers with 2, and it gets the same answer here - with the help, because a group
+    called bare is most likely somebody asking what is in it. `--help` is a question and stays 0.
+
+    Every group the kernel builds uses it, and so does the module `simplon.tasks.taskgen` renders. A
+    group-default group (`invoke_without_command=True`) does not reach this: its bare call runs the
+    namesake member, which is doing something.
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if not args and self.no_args_is_help and not ctx.resilient_parsing:
+            _help_on_stderr(ctx)
+            ctx.exit(2)
+        return super().parse_args(ctx, args)
 
 
 def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typer.Typer:
@@ -506,7 +537,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
             # has not, plus the addressing hint either way - `clitaxonomy.group_help`, which the generated
             # module renders through as well so the two mechanisms cannot drift (si#75).
             node = tax.resolve_path(group)
-            ga = typer.Typer(add_completion=False, no_args_is_help=True,
+            ga = typer.Typer(add_completion=False, no_args_is_help=True, cls=GroupNeedsACommand,
                              help=clitaxonomy.group_help(group, product, env_first=env_first,
                                                          declared=node.help if node else ""))
         group_apps[group] = ga
@@ -785,6 +816,14 @@ def main(*, app: typer.Typer, context: ProductContext,
             sys.argv[1] = "--help"
         elif sys.argv[1] in aliases:
             sys.argv[1] = aliases[sys.argv[1]]
+    else:
+        # si#716: no command at all - after `--no-tui` and an env token are consumed - is as incomplete
+        # as a group called without one, and answers the same: the help on stderr, exit 2. A product's root
+        # app is its own (`no_args_is_help=True` in every one measured), so the kernel decides it here, on
+        # the argv it is handed, rather than asking each product to change its root's class.
+        root = typer.main.get_command(app)
+        _help_on_stderr(root.make_context(launcher(context.name), [], resilient_parsing=True))
+        raise SystemExit(2)
 
     # The env-gate reads the command's GROUP (from the manifest taxonomy): an agnostic group rejects an
     # explicit env; a CD group (deploy/operate/monitor) gates on the active backend so a non-local target

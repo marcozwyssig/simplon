@@ -11,7 +11,7 @@ import pytest
 
 from simplon.manifest import context
 from simplon.adapters import githubpackages
-from simplon.manifest.context import ProductContext
+from simplon.manifest.context import ProductContext, TaskRefused
 from simplon.tasks import conan
 
 _MANIFEST = """
@@ -167,8 +167,52 @@ def test_the_fetch_refuses_when_the_pull_left_nothing_where_it_said(pulled, monk
     monkeypatch.setattr(githubpackages, "pull", lambda ref, destination: None)
     (_product / "build" / "conan" / "demo.tgz").unlink()
 
-    with pytest.raises(RuntimeError, match="demo.tgz"):
+    with pytest.raises(TaskRefused, match="demo.tgz"):
         conan.fetch(name="cpplib")
+
+
+def test_a_pull_that_left_another_file_names_it_and_the_way_out(monkeypatch, _product):
+    """si#709, measured against a real registry and a real oras: an artifact holding `other.tgz` pulls
+    with rc 0, writes `other.tgz`, and used to end in a bare RuntimeError - a traceback. It is a
+    TaskRefused now, so it reaches the terminal as its message alone with rc 1, and the message names the
+    file the pull did write and the two ways out."""
+    # arrange
+    conan_dir = _product / "build" / "conan"
+    (conan_dir / "demo.tgz").unlink()
+    (conan_dir / "older.tgz").write_bytes(b"was here before the pull")
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: None)
+    monkeypatch.setattr(githubpackages, "pull",
+                        lambda ref, destination: (conan_dir / "other.tgz").write_bytes(b"pulled"))
+
+    # act
+    with pytest.raises(TaskRefused) as refused:
+        conan.fetch(name="cpplib")
+
+    # assert
+    said = str(refused.value)
+    assert "other.tgz" in said and "older.tgz" not in said
+    assert "path:" in said
+
+
+def test_a_second_pull_that_rewrote_the_same_other_file_still_names_it(monkeypatch, _product):
+    """The rerun: the `other.tgz` the first pull left is there before the second one, which rewrites it.
+    Comparing names alone would say the pull wrote nothing at all, which is false."""
+    # arrange
+    import os
+    conan_dir = _product / "build" / "conan"
+    (conan_dir / "demo.tgz").unlink()
+    (conan_dir / "other.tgz").write_bytes(b"from the first pull")
+    os.utime(conan_dir / "other.tgz", ns=(1_000_000_000, 1_000_000_000))
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: None)
+    monkeypatch.setattr(githubpackages, "pull",
+                        lambda ref, destination: (conan_dir / "other.tgz").write_bytes(b"pulled"))
+
+    # act
+    with pytest.raises(TaskRefused) as refused:
+        conan.fetch(name="cpplib")
+
+    # assert
+    assert "it wrote other.tgz" in str(refused.value)
 
 
 def test_the_fetch_needs_a_tag_too(pulled):

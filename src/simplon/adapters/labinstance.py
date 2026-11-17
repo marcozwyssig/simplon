@@ -123,6 +123,16 @@ def worktree_basename(root: Path) -> str | None:
     return root.name if (root / ".git").is_file() else None
 
 
+def _explicit(value: str, source: str, product: InstanceSpec) -> str:
+    """``value`` if it is a legal id - the reserved default, or what ``from_worktree`` could have derived -
+    else a ValueError naming where it came from, what it was and what is accepted."""
+    if value == product.default or re.fullmatch(rf"[a-z0-9]{{1,{product.max_id_len}}}", value):
+        return value
+    raise ValueError(
+        f"simplon: instance id {value!r} from {source} is invalid; use {product.default!r} or "
+        f"1-{product.max_id_len} chars of [a-z0-9] (the manifest's '{MANIFEST_SECTION}.max_id_len')")
+
+
 def resolve(flag: str | None = None, *, worktree: object = _PROBE) -> str:
     """Resolve the lab instance id by the four-step precedence at the top of this module. THE single
     resolution point: an explicit ``flag`` wins, else the manifest-named env var, else a linked worktree's
@@ -132,13 +142,17 @@ def resolve(flag: str | None = None, *, worktree: object = _PROBE) -> str:
     default, so a product's single-tenant human UX is byte-for-byte unchanged. ``worktree`` is injectable
     purely for tests (the basename, or ``None`` to assert the main-checkout branch); left unset it probes
     the real checkout via ``simplon.manifest.context.current().root``. The derived id always satisfies the
-    product's id validation, so import-time resolution never fails loudly."""
-    if flag is not None and flag.strip():
-        return flag.strip()
+    product's id validation, so with no flag and no env value resolution never fails loudly.
+
+    An EXPLICIT id - the flag or the env value - is held to the same rule (si#665): the reserved default,
+    or 1 to ``max_id_len`` characters of ``[a-z0-9]``. Before, only the derived id was, and an over-long
+    ``--instance`` reached the interface names and failed inside the lab instead of at the flag."""
     product = spec()
+    if flag is not None and flag.strip():
+        return _explicit(flag.strip(), "--instance", product)
     value = os.environ.get(product.env_var, "").strip()
     if value:
-        return value
+        return _explicit(value, product.env_var, product)
     basename = worktree_basename(context.current().root) if worktree is _PROBE else worktree
     if isinstance(basename, str) and basename:
         return from_worktree(basename, product.max_id_len)

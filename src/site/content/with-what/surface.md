@@ -65,6 +65,12 @@ and the object version those bytes came from, the request carries `If-Range`, an
 `206` confirming the exact offset asked for truncates the partial file and downloads the whole object
 again. A server with no range support is therefore a fresh download, never an append.
 
+`sha256=` (si#668) pins the body. The whole file is hashed before it takes the destination's name, and
+a digest that is not the pinned one raises `DownloadError` naming the file, the URL, the expected and the
+received digest, with nothing written and no part kept to resume from. Every download the kernel itself
+makes passes one: the docker static CLI, the oras archive, `get-pip.py`, Homebrew's and Docker's install
+scripts and the GitHub CLI keyring.
+
 It also owns the pair that says how big something is, and the pair is two functions on purpose:
 
 ```python

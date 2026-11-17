@@ -496,8 +496,11 @@ one `docker context inspect` names, honouring `DOCKER_HOST` and `DOCKER_CONTEXT`
 `/var/run/docker.sock`, which Colima, Rancher Desktop, Podman and a rootless daemon do not use. It is red
 only when docker does not answer. With `editor: devcontainer` it also asks what VS Code's Dev Containers
 extension will see, which is docker without the terminal's `DOCKER_HOST`/`DOCKER_CONTEXT` (a VS Code
-started from the Dock inherits no shell export), and names the one user setting, `"docker.context"`, that
-the extension reads before it falls back to `default`. It runs no `sudo` and writes no editor setting.
+started from the Dock inherits no shell export), and names the ways in (si#689): the user setting
+`"docker.context"`, which only "Reopen in Container" reads, and for a window opened by URI
+(`code --folder-uri vscode-remote://dev-container+<hex>`) an authority that is the hex of
+`{"hostPath": ..., "settings": {"context": ...}}` rather than of the bare folder path, which the
+extension reads as `default`. It runs no `sudo` and writes no editor setting.
 It is offered, not placed: only a product with an editor path or a docker it cannot assume needs it.
 
 ## The empty rib
@@ -615,6 +618,10 @@ instead.
   - **failed:** the plugin is named.
 - **Exit codes:** the launcher never fails a command over a plugin; `support install` is rc 1 on a
   failure.
+- **The container route provisions nothing** (si#710). Inside the kernel container `support install`
+  skips brew, gh, the gh extensions and the plugins, each with one line saying to run it on the venv
+  route, and the skip is rc 0. Until then the gates saw the image's own gh and installed into the
+  throwaway container.
 
 **And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the
 si#95 design's own command table had put at `test unit` and `test analyse`. The split the kernel keeps is

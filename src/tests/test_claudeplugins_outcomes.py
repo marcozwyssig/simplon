@@ -114,7 +114,8 @@ def test_skipped_on_the_container_route(machine):
 
     # assert
     assert outcome.state is claudeplugins.State.SKIPPED
-    assert outcome.detail == "the container route: `claude` runs on the host"
+    assert outcome.detail == ("the container route installs nothing on the host; run support install on "
+                              "the venv route")
 
 
 def test_nothing_missing(machine):

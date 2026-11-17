@@ -1090,6 +1090,11 @@ What the kernel writes:
   derived and takes no step of yours, so this is how a suite that runs a foreign-platform file, as a
   `test:file` e2e does, gets an emulator on a hosted runner. A job you write yourself registers it with
   its own step; `emulates:` anywhere but beside `release:` is refused.
+- **A time limit** (si#720). The job carries `timeout-minutes`, by default the kernel's
+  `RELEASE_TIMEOUT_MINUTES` (the source of its value is named where it is set, in `workflowgen.py`), so a
+  hung release does not hold its runner for GitHub's default of 360 minutes. `timeout_minutes: <n>` beside
+  `release:` sets another; a value that is not a positive whole number, or the key beside no `release:`,
+  is refused at load.
 
 The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`, exactly as
 `release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest. They are

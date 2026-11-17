@@ -18,9 +18,12 @@ WINDOWS HAS NO MANAGER TO TRY, and this was checked rather than assumed: winget 
 download is not the fallback, it is the path. `_MANAGERS` is a table for exactly that reason - the day
 a winget manifest exists, it is one row.
 
-WHAT THIS MODULE DOES NOT DO: verify a checksum. The archive comes from the pinned release over HTTPS,
-which is the same trust the docker static-CLI bootstrap and every `curl | sh` installer in this repo
-already extend. Naming it here so the next reader knows it is a decision, not an oversight.
+EVERY ARCHIVE CARRIES A PINNED SHA256 (si#668), and a download that is not the pinned file writes no
+binary. This used to say the module verified nothing and trusted the release over HTTPS; si#668 decided
+that every pinned download carries a sha256. The digests in `_SHA256` were measured by downloading each
+asset on 2026-11-17, and they agree with the `oras_<version>_checksums.txt` oras publishes beside the
+release. A host the table has no row for is refused by name: oras 1.3.4 publishes no windows/arm64
+asset (measured: 404), so that URL used to be a download that failed halfway without naming the host.
 """
 from __future__ import annotations
 
@@ -35,7 +38,8 @@ from simplon.adapters import fetch, tools
 from simplon.kernel import log
 from simplon.kernel.run import run
 
-# Pinned release; bump deliberately. The tag carries no host in it - one version, every platform.
+# Pinned release; bump the version AND `_SHA256` together, deliberately. The tag carries no host in it -
+# one version, every platform.
 ORAS_VERSION = "1.3.4"
 _RELEASES = "https://github.com/oras-project/oras/releases/download"
 
@@ -45,6 +49,15 @@ _ARCHES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "ar
 _ARCHIVES = {"darwin": "tar.gz", "linux": "tar.gz", "windows": "zip"}
 # platform.system() -> (the manager's own binary, the argv that installs oras with it). A host is only
 # offered a manager it actually has; see the module docstring for why Windows has no row.
+# (os, arch) -> the sha256 of that host's ORAS_VERSION archive. Source: measured, by downloading each
+# asset on 2026-11-17; identical to the release's own oras_1.3.4_checksums.txt.
+_SHA256 = {
+    ("darwin", "amd64"): "5e964f3d5a36eb9499a9d3e252a86b09e7adf3e6f6447eec56fd249c6702af7e",
+    ("darwin", "arm64"): "217761a9500242ff473de8656b5aca21136ff39e17e9e61fd8936bbfd902704c",
+    ("linux", "amd64"): "f27adb935022d94df8dc77719c322dda592c78a0d57a6f7dcdd8d900b248c454",
+    ("linux", "arm64"): "15702c6e3a4a56a8bd8ac5c17efdbcab56d9bada661ccbcf017f5b10c1d89399",
+    ("windows", "amd64"): "ffdb6aa40267686b5d507da1f21a57fc502a9a7c86b90c54557d335644c99dbd",
+}
 _MANAGERS: dict[str, tuple[str, list[str]]] = {
     "darwin": ("brew", ["brew", "install", "oras"]),
     "linux": ("brew", ["brew", "install", "oras"]),
@@ -80,7 +93,16 @@ def release_url(system: str, machine: str, version: str = ORAS_VERSION) -> str:
     if arch is None:
         raise OrasError(f"oras publishes no release for architecture '{machine}'; supported are "
                         "x86_64/amd64 and aarch64/arm64")
+    if (os_name, arch) not in _SHA256:
+        raise OrasError(f"oras {ORAS_VERSION} publishes no release for {os_name}/{arch}; install oras by "
+                        f"hand from https://github.com/oras-project/oras/releases")
     return f"{_RELEASES}/v{version}/oras_{version}_{os_name}_{arch}.{archive}"
+
+
+def release_sha256(system: str, machine: str) -> str:
+    """The pinned sha256 of the ORAS_VERSION archive `release_url` names for that host. Pure."""
+    release_url(system, machine)
+    return _SHA256[(system.lower(), _ARCHES[machine.lower()])]
 
 
 def _have(tool: str) -> bool:
@@ -117,12 +139,16 @@ def _fetch_release(dest: Path) -> None:
 
     The archive also carries a LICENSE and a README, which have no business in a bin directory.
     """
-    url = release_url(platform.system(), platform.machine())
+    system, machine = platform.system(), platform.machine()
+    url = release_url(system, machine)
     log.info(f"oras missing and no package manager carries it; fetching {url}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     archive = dest.parent / f"oras-download{'.zip' if url.endswith('.zip') else '.tgz'}"
     try:
-        fetch.download(url, archive, label=f"oras {ORAS_VERSION}")
+        try:
+            fetch.download(url, archive, label=f"oras {ORAS_VERSION}", sha256=release_sha256(system, machine))
+        except fetch.DownloadError as exc:
+            raise OrasError(f"could not provide oras: {exc}") from exc
         member = dest.name
         if url.endswith(".zip"):
             with zipfile.ZipFile(archive) as zf:

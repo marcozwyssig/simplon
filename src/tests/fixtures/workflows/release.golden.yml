@@ -30,6 +30,7 @@ jobs:
   # (`report: { task: "test:report" }` under `test`) and the job archives them.
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:

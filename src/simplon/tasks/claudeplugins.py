@@ -28,6 +28,7 @@ import shutil
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
+from simplon.adapters import hostinstall
 from simplon.manifest import context
 from simplon.kernel import log
 from simplon.kernel.run import run
@@ -450,7 +451,7 @@ def _installed(timeout_s: float) -> tuple[tuple[Marketplace, ...], tuple[str, ..
 def _skip_reason(env: Mapping[str, str], container: bool) -> str:
     """Why this machine or route installs nothing, or "" when it can."""
     if container:
-        return "the container route: `claude` runs on the host"
+        return hostinstall.CONTAINER_ROUTE_SKIP
     for variable in ("CI", "GITHUB_ACTIONS"):
         if env.get(variable, "").lower() == "true":
             return f"{variable}=true: plugins are for a machine somebody develops on"
@@ -617,8 +618,9 @@ def install(dry_run: bool = False) -> int:
     The dry run lists each plugin with WHERE IT COMES FROM - the default, a toolchain, or the product - so
     the person running it can see what the product added on top of simplon's default.
     """
+    container = hostinstall.container_route(__import__("os").environ)
     if not dry_run:
-        outcome = step()
+        outcome = step(container=container)
         report(outcome)
         return _rc(outcome)
     try:
@@ -633,7 +635,7 @@ def install(dry_run: bool = False) -> int:
         log.info(f"marketplace {market.name} ({_source_of(market)}, {_market_origin(market)})")
     for plugin_id in eff.plugins:
         log.info(f"{plugin_id} ({eff.origin[plugin_id]})")
-    reason = _skip_reason(__import__("os").environ, container=False)
+    reason = _skip_reason(__import__("os").environ, container=container)
     if reason:
         report(Outcome(State.SKIPPED, reason))
         return 0

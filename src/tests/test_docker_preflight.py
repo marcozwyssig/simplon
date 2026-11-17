@@ -100,6 +100,31 @@ def test_editor_on_a_non_default_context_names_the_setting(tmp_path, monkeypatch
     assert '"docker.context": "colima"' in _out(capsys)
 
 
+@pytest.mark.parametrize("terminal,editor,context", [
+    ("", "colima|unix:///c.sock", "colima"),
+    ("colima|unix:///c.sock", "default|unix:///missing.sock", "colima"),
+], ids=["vscode-on-a-named-context", "vscode-on-default-terminal-on-a-named-one"])
+def test_advice_naming_docker_context_also_names_the_window_opened_by_uri(tmp_path, monkeypatch, capsys,
+                                                                          terminal, editor, context):
+    """si#689, measured by firn#1304 (Dev Containers 0.473.0, macOS, Colima): the user setting is read only by
+    "Reopen in Container"; a window opened by `code --folder-uri vscode-remote://dev-container+<hex>` gets
+    `default` unless the authority itself carries the context. Advice naming only the setting is wrong there."""
+    # arrange
+    if terminal:
+        monkeypatch.setenv("DOCKER_CONTEXT", context)
+    _docker(tmp_path, monkeypatch, terminal=terminal, editor=editor)
+
+    # act
+    rc = dockerpreflight.preflight(editor="devcontainer")
+
+    # assert
+    out = _out(capsys)
+    assert rc == 0
+    assert f'"docker.context": "{context}"' in out and "Reopen in Container" in out
+    assert "--folder-uri" in out and f'"settings": {{"context": "{context}"}}' in out
+    assert "/var/run/docker.sock" in out
+
+
 def test_editor_on_default_with_its_socket_is_quiet_ok(tmp_path, monkeypatch, capsys):
     # arrange: the default context, and its socket exists
     sock = tmp_path / "docker.sock"

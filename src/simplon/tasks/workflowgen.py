@@ -111,6 +111,16 @@ QEMU_ACTION = "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
 EMULATES_KEY = "emulates"
 APP_TOKEN_ENV = "GH_APP_TOKEN"
 
+#: si#720: the derived release job's time limit, set by `timeout_minutes:` beside `release:`. GitHub has no
+#: workflow-level limit and a product job named `release` is refused, so without this key a hung release
+#: holds its runner for GitHub's default of 360 minutes. The default is measured, not guessed: simplon's own
+#: derived release job ran 10.3 to 16.5 minutes over its green runs up to 2026-11-15, and firn's
+#: hand-written `image` job, which builds arm64 under emulation the way its derived job now does, ran 47.8
+#: to 62.9 minutes over its green runs up to 2026-11-15 (`gh run view --json jobs`) under the 120 firn set
+#: itself. 120 keeps firn's own limit, about twice its longest measured run.
+TIMEOUT_KEY = "timeout_minutes"
+RELEASE_TIMEOUT_MINUTES = 120
+
 #: The one file that crosses, in the runner's temp directory, never in the product's tree.
 HANDOFF_ARCHIVE = "${{{{ runner.temp }}}}/simplon-handoff-{artifact}.tar"
 
@@ -273,6 +283,8 @@ class Workflow:
     release: str = ""
     #: si#570: the platforms the derived release job registers emulation for before anything runs.
     emulates: tuple[str, ...] = ()
+    #: si#720: the derived release job's `timeout-minutes`.
+    timeout_minutes: int = RELEASE_TIMEOUT_MINUTES
 
     @property
     def generated(self) -> bool:
@@ -369,6 +381,7 @@ def _workflow(key: str, body: object) -> Workflow:
 
     release = _release_key(body, where)
     emulates = _emulates(body, where, release)
+    timeout = _release_timeout(body, where, release)
     trigger = _declared_trigger(body, where) if not release else _RELEASE_TRIGGER
     if trigger is None:
         raise ValueError(
@@ -398,7 +411,7 @@ def _workflow(key: str, body: object) -> Workflow:
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
                     extras=_release_extras(body, where) if release else _workflow_extras(body),
-                    emulates=emulates)
+                    emulates=emulates, timeout_minutes=timeout)
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
@@ -488,6 +501,26 @@ def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[
     return tuple(value)
 
 
+def _release_timeout(body: Mapping[object, object], where: str, release: str) -> int:
+    """si#720: the derived release job's `timeout-minutes`, from `timeout_minutes:`, or the default.
+
+    Both refusals are DIAGNOSES: beside no `release:` the key would reach GitHub as a workflow key, which
+    it refuses, and a job the product writes carries `timeout-minutes:` itself; a value that is not a
+    positive whole number of minutes is refused by GitHub or, as 0, ends the job before it starts."""
+    value = body.get(TIMEOUT_KEY)
+    if value is None:
+        return RELEASE_TIMEOUT_MINUTES
+    if not release:
+        raise ValueError(
+            f"{where}: `{TIMEOUT_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
+            f"a job you write carries `timeout-minutes:` itself")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            f"{where}: `{TIMEOUT_KEY}:` is the derived release job's time limit, a positive whole number of "
+            f"minutes (the default is {RELEASE_TIMEOUT_MINUTES}), got {value!r}")
+    return value
+
+
 def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
     """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
 
@@ -568,7 +601,7 @@ def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
     return tuple(stages)
 
 
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, EMULATES_KEY, "runs-on", "runs_on", runners.KEY, True})
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, EMULATES_KEY, TIMEOUT_KEY, "runs-on", "runs_on", runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
@@ -1170,7 +1203,8 @@ def _release(workflow: "Workflow", manifest: Manifest,
     steps.extend(archive)
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
                 note=unarchived,
-                extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
+                extras={"timeout-minutes": workflow.timeout_minutes,
+                        "env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 
 #: si#509: what the release job's archive is called as a run artifact; ci.yml's own archive uses the same.

@@ -197,3 +197,38 @@ def test_a_download_that_produces_nothing_fails_naming_the_manual_fix(monkeypatc
     # act / assert: the failure names where a human gets it, not merely that it is absent
     with pytest.raises(oras.OrasError, match="oras-project/oras"):
         oras.ensure_oras()
+
+
+# --- the pinned sha256 (si#668) ---------------------------------------------------------------------
+
+def test_every_release_url_has_a_pinned_sha256():
+    # The hosts `release_url` answers for, each with a digest measured from its download.
+    for system, machine in [("Darwin", "x86_64"), ("Darwin", "arm64"), ("Linux", "x86_64"),
+                            ("Linux", "aarch64"), ("Windows", "AMD64")]:
+        assert len(oras.release_sha256(system, machine)) == 64
+
+
+def test_windows_on_arm_is_refused_by_name_because_the_release_carries_no_such_asset():
+    # Measured 2026-11-17: oras_1.3.4_windows_arm64.zip answers 404, so the URL used to be a download
+    # that fails halfway without naming the host.
+    with pytest.raises(oras.OrasError, match="windows.*arm64|arm64.*windows"):
+        oras.release_url("Windows", "ARM64")
+
+
+def test_a_tampered_archive_is_refused_and_writes_no_binary(monkeypatch, tmp_path):
+    # arrange: the real download, serving bytes that are not the pinned archive
+    import servedbytes
+    asked = servedbytes.serve(monkeypatch, b"not the oras archive")
+    monkeypatch.setattr(oras.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(oras.platform, "machine", lambda: "x86_64")
+    dest = tmp_path / "bin" / "oras"
+
+    # act
+    with pytest.raises(oras.OrasError) as refused:
+        oras._fetch_release(dest)
+
+    # assert: which URL, expected and got; and nothing under the bin directory
+    said = str(refused.value)
+    assert asked == [oras.release_url("Linux", "x86_64")] and asked[0] in said
+    assert oras.release_sha256("Linux", "x86_64") in said
+    assert not dest.exists() and list(dest.parent.iterdir()) == []

@@ -15,6 +15,8 @@ import pytest
 from simplon.adapters import brew, fetch, hostinstall, tools
 from simplon.adapters.hostinstall import State
 
+import servedbytes
+
 
 def _tool(directory: Path, name: str, body: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
@@ -107,11 +109,8 @@ def test_root_on_a_plain_host_has_no_route(host, monkeypatch, tmp_path):
 
 
 def _serve(monkeypatch, payload: bytes):
-    def download(url, dest, **kw):
-        assert url == brew.INSTALL_URL
-        Path(dest).write_bytes(payload)
-        return Path(dest)
-    monkeypatch.setattr(fetch, "download", download)
+    # The real download, answered from memory (si#668): the pin is checked where every pin is.
+    servedbytes.serve(monkeypatch, payload)
 
 
 def _pin_to(monkeypatch, payload: bytes):

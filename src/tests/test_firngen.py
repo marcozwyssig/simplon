@@ -210,6 +210,50 @@ def test_firns_config_warnings_are_printed(tmp_path, capsys):
     assert "W102: the template folder 'firn/templates' holds no .firnt file" in err and "firn.toml:3:14" in err
 
 
+# --- si#713: a templates entry that matches nothing (firn W105) is red, never "selects none" ---------
+
+#: firn v0.11.0's own W105, measured with the pinned image: the code is the sentence's prefix, there is no
+#: separate field for it.
+_W105 = {"sentence": "W105: the templates entry 'no.such.Anywhere' of target 't' matches no template; nothing "
+                     "runs for it; a name without a dot is a template's name, one with a dot its package and name",
+         "where": "firn.toml:6:14"}
+
+
+def test_a_w105_with_no_file_is_rc_1_and_not_selects_none(tmp_path, capsys):
+    """si#713: firn counts only the templates that resolve, so a misspelt entry also gives `run.templates` 0."""
+    # act
+    rc = firngen.verdict(0, _out(templates=0, warnings=[_W105]), tmp_path)
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "selects none" not in err
+    assert "no.such.Anywhere" in err and "firn.toml" in err
+
+
+def test_a_w105_next_to_produced_files_is_still_rc_1(tmp_path, capsys):
+    """si#713, the maintainer's decision: any W105 is red, whatever the other targets produced."""
+    # arrange
+    _file(tmp_path, "a.py")
+
+    # act
+    rc = firngen.verdict(0, _out(written=["a.py"], templates=1, warnings=[_W105]), tmp_path)
+
+    # assert
+    assert rc == 1
+    assert "W105" in capsys.readouterr().err
+
+
+def test_other_config_warnings_stay_printed_only(tmp_path):
+    """si#713: only W105 turns the verdict red; a W102 next to produced files stays rc 0."""
+    # arrange
+    _file(tmp_path, "a.py")
+    said = [{"sentence": "W102: the template folder 'firn/templates' holds no .firnt file", "where": "firn.toml:3:14"}]
+
+    # act / assert
+    assert firngen.verdict(0, _out(written=["a.py"], warnings=said), tmp_path) == 0
+
+
 def test_a_reported_file_that_is_not_there_is_rc_1(tmp_path, capsys):
     # act
     rc = firngen.verdict(0, _out(written=["gone.py"]), tmp_path)
@@ -293,7 +337,8 @@ def test_a_renamed_task_is_refused_against_the_real_firn(tmp_path, image, firn_s
 @pytest.mark.parametrize("toml,template,expected", [
     ('templates = []\n[target.t]\npath = "out"\n', None, 0),
     ('templates = ["t"]\n[target.t]\npath = "out"\ntemplates = ["Nothing"]\n', "template Nothing {\n}\n", 1),
-], ids=["no-template", "a-template-that-writes-nothing"])
+    ('templates = ["t"]\n[target.t]\npath = "out"\ntemplates = ["no.such.Anywhere"]\n', "template Nothing {\n}\n", 1),
+], ids=["no-template", "a-template-that-writes-nothing", "a-templates-entry-that-matches-nothing-si713"])
 def test_no_template_is_done_and_a_silent_template_is_not_against_the_real_firn(tmp_path, toml, template,
                                                                                  expected):
     """si#594, the cleon-firn report: a project with no template is "nothing to do" (rc 0); one whose template
