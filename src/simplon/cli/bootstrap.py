@@ -678,12 +678,23 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
 _ALIASES: dict[str, str] = {}
 
 
+def _placeholder(phase: str) -> int:
+    """What every scaffolded body below does until it is replaced: say so, and FAIL (si#663).
+
+    A placeholder that returned 0 made a fresh product's pipeline green doing nothing - `deploy all` passed
+    over five bodies that had each only logged a line. "Nothing was done" is not "succeeded", so the
+    exit code says which: non-zero, with the file that holds the body to fill in.
+    """
+    log.error(f"@@PRODUCT@@: {phase} is still the scaffold's placeholder and did nothing - "
+              f"replace its body in @@PKG_DIR@@/cli.py")
+    return 1
+
+
 def build() -> int:
     """Build the product artefacts (placeholder). Replace with your real build pipeline."""
-    log.info("@@PRODUCT@@: build (placeholder) - wire me up in @@PKG_DIR@@/cli.py")
     # The generated wrapper's exit code IS this return value (cli.py.j2's `_rc` reads it), not a
-    # raise - a framework-free body reports success by what it returns.
-    return 0
+    # raise - a framework-free body reports success by what it returns, and 0 is success.
+    return _placeholder("build")
 
 
 def check() -> int:
@@ -693,30 +704,22 @@ def check() -> int:
     pytest suite and `test:typecheck-python` runs mypy, so a real product usually replaces this with a
     `suites:` section and one command per gate - and keeps each verdict its own.
     """
-    log.info("@@PRODUCT@@: check (placeholder) - wire me up in @@PKG_DIR@@/cli.py")
-    # See build() above: the exit code is the return value, not a raise.
-    return 0
+    return _placeholder("check")
 
 
 def up() -> int:
     """Deploy the product to the target environment (placeholder)."""
-    log.info("@@PRODUCT@@: up (placeholder)")
-    # See build() above: the exit code is the return value, not a raise.
-    return 0
+    return _placeholder("up")
 
 
 def down() -> int:
     """Tear the deployment down (placeholder)."""
-    log.info("@@PRODUCT@@: down (placeholder)")
-    # See build() above: the exit code is the return value, not a raise.
-    return 0
+    return _placeholder("down")
 
 
 def status() -> int:
     """Report what is running in the target environment (placeholder)."""
-    log.info("@@PRODUCT@@: status (placeholder)")
-    # See build() above: the exit code is the return value, not a raise.
-    return 0
+    return _placeholder("status")
 
 
 # The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each

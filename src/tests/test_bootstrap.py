@@ -562,6 +562,26 @@ def test_generated_cli_help_runs_end_to_end(tmp_path):
     assert "deploy" in res.stdout
 
 
+# --- si#663: a placeholder body does not claim a verdict -----------------------------------------------
+
+@pytest.mark.parametrize("argv", [["build"], ["test", "check"], ["deploy", "up"], ["deploy", "down"],
+                                  ["monitor", "status"]])
+def test_a_scaffolded_placeholder_body_exits_non_zero_naming_the_file_to_fill_in(tmp_path, argv):
+    """A fresh product whose bodies are still the scaffold's ran green doing nothing: each logged a line
+    and returned 0, so `deploy all` was green over five placeholders (si#663, measured on cleon-firn).
+    "Nothing was done" and "succeeded" were the same value."""
+    # arrange
+    bootstrap.write("fooctl", tmp_path)
+
+    # act
+    res = _run_generated(tmp_path / BLOCK / "src" / "python", argv)
+
+    # assert: not green, and the way out is the file that holds the body
+    assert res.returncode != 0, res.stdout + res.stderr
+    assert f"{PKG}/cli.py" in res.stdout + res.stderr
+    assert "placeholder" in res.stdout + res.stderr
+
+
 def test_simplon_manifest_migrate_runs_without_loading_the_manifest(tmp_path, monkeypatch):
     # arrange: an OLD-form manifest that the cut kernel will refuse to load - this entry point must not care
     (tmp_path / "demo.yaml").write_text("product: demo\ngroups:\n  build:\n    commands:\n      w: { task: x }\n")

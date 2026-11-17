@@ -90,8 +90,14 @@ Now run something:
 
 ```text
 $ ./myctl.sh build
-[14:48:58] ==> myctl: build (placeholder) - wire me up in deploy/provision/orchestrator/src/python/orchestrator/cli.py
+[14:48:58] ERR myctl: build is still the scaffold's placeholder and did nothing - replace its body in deploy/provision/orchestrator/src/python/orchestrator/cli.py
+$ echo $?
+1
 ```
+
+It fails, and on purpose. A body that did nothing and exited 0 would make the whole pipeline green
+before it does anything at all, so every scaffolded body says where it lives and exits non-zero until
+you replace it.
 
 And try to run it against an environment:
 
