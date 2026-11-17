@@ -26,7 +26,6 @@ on PATH, and the shellenv line printed. Not measured: macOS, and an install as a
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
 import sys
@@ -87,13 +86,9 @@ def _install(where: str | None, interactive: bool) -> Outcome:
     with tempfile.TemporaryDirectory() as scratch:
         script = Path(scratch) / "install.sh"
         try:
-            fetch.download(INSTALL_URL, script, label="Homebrew install.sh")
+            fetch.download(INSTALL_URL, script, label="Homebrew install.sh", sha256=INSTALL_SHA256)
         except fetch.DownloadError as exc:
-            return Outcome(State.FAILED, str(exc))
-        got = hashlib.sha256(script.read_bytes()).hexdigest()
-        if got != INSTALL_SHA256:
-            return Outcome(State.FAILED, f"install.sh from {INSTALL_URL} has sha256 {got}, expected "
-                                         f"{INSTALL_SHA256}; nothing was run")
+            return Outcome(State.FAILED, f"{exc} Nothing was run.")
         env = dict(os.environ)
         if not interactive:
             env["NONINTERACTIVE"] = "1"

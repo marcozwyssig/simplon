@@ -63,7 +63,6 @@ FAILED for v9.9.9 with "it is not installed now".
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
 import re
@@ -112,13 +111,9 @@ def _apt_install(euid: int | None) -> Outcome | None:
     with tempfile.TemporaryDirectory() as scratch:
         keyring = Path(scratch) / "keyring.gpg"
         try:
-            fetch.download(KEYRING_URL, keyring, label="GitHub CLI keyring")
+            fetch.download(KEYRING_URL, keyring, label="GitHub CLI keyring", sha256=KEYRING_SHA256)
         except fetch.DownloadError as exc:
             return Outcome(State.FAILED, str(exc))
-        got = hashlib.sha256(keyring.read_bytes()).hexdigest()
-        if got != KEYRING_SHA256:
-            return Outcome(State.FAILED, f"the keyring from {KEYRING_URL} has sha256 {got}, expected "
-                                         f"{KEYRING_SHA256}; nothing was written")
         arch = run(["dpkg", "--print-architecture"])
         if not arch.answered:
             return Outcome(State.FAILED, f"dpkg --print-architecture answered nothing (rc {arch.rc})")

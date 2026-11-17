@@ -443,28 +443,61 @@ def test_linux_install_pipes_the_installer_into_bash_not_command_substitution(mo
     assert "$(" not in cmd
 
 
+def _serve_engine_script(monkeypatch, body: bytes = b"echo the pinned docker install script\n"):
+    """The real download of docker's install script, answered from memory and pinned to `body` (si#668)."""
+    import hashlib
+    import servedbytes
+    servedbytes.serve(monkeypatch, body)
+    monkeypatch.setattr(labhost.docker, "ENGINE_INSTALL_SHA256", hashlib.sha256(body).hexdigest())
+
+
 def test_linux_install_installs_docker_before_containerlab_when_missing(monkeypatch):
     # arrange: neither docker nor containerlab present; docker appears once its installer ran (#468)
     present = {"docker": False}
     calls = []
 
     def fake_run(argv, **kwargs):
-        cmd = argv[-1]
-        calls.append(cmd)
-        if "get.docker.com" in cmd:
+        calls.append(argv)
+        if argv[:3] == ["sudo", "-E", "sh"]:
             present["docker"] = True
         return Result(rc=0, out="", err="")
 
     monkeypatch.setattr(labhost, "_have", lambda tool: present.get(tool, False))
     monkeypatch.setattr(labhost, "run", fake_run)
+    monkeypatch.setattr(labhost.docker, "run", fake_run)
+    _serve_engine_script(monkeypatch)
     # act
     rc = labhost._install_linux()
-    # assert: docker installs FIRST (piped into the shell, never $(...)), then containerlab
+    # assert: docker installs FIRST, from the pinned script run as a file (si#668: no longer piped from
+    # get.docker.com), then containerlab
     assert rc == 0
-    docker_cmd = next(c for c in calls if "get.docker.com" in c)
-    clab_cmd = next(c for c in calls if "get.containerlab.dev" in c)
-    assert "| sudo -E sh" in docker_cmd and "$(" not in docker_cmd
+    docker_cmd = next(c for c in calls if c[:3] == ["sudo", "-E", "sh"])
+    clab_cmd = next(c for c in calls if "get.containerlab.dev" in c[-1])
+    assert docker_cmd[3].endswith("install.sh")
     assert calls.index(docker_cmd) < calls.index(clab_cmd)
+
+
+def test_a_tampered_docker_install_script_is_refused_and_never_run(monkeypatch):
+    # arrange (si#668): the served script is not the pinned one
+    import servedbytes
+    servedbytes.serve(monkeypatch, b"echo not the docker install script\n")
+    calls = []
+    monkeypatch.setattr(labhost, "_have", lambda tool: False)
+    monkeypatch.setattr(labhost, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+    monkeypatch.setattr(labhost.docker, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+
+    def die(msg):
+        raise SystemExit(msg)
+    monkeypatch.setattr(labhost.log, "die", die)
+
+    # act
+    with pytest.raises(SystemExit) as refused:
+        labhost._install_linux()
+
+    # assert: nothing ran, and the refusal names the URL and the pin
+    assert calls == []
+    assert labhost.docker.ENGINE_INSTALL_URL in str(refused.value)
+    assert labhost.docker.ENGINE_INSTALL_SHA256 in str(refused.value)
 
 
 def test_remove_colima_deletes_the_vm_uninstalls_the_package_and_wipes_the_lima_host_state(monkeypatch):

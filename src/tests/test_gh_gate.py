@@ -16,6 +16,8 @@ import pytest
 from simplon.adapters import fetch, gh, hostinstall
 from simplon.adapters.hostinstall import State
 
+import servedbytes
+
 _WORKING_GH = '#!/bin/sh\necho "gh version 2.103.0"\n'
 
 
@@ -51,11 +53,8 @@ def _ensure(**kw):
 
 
 def _serve_keyring(monkeypatch, payload: bytes, pin: bool = True):
-    def download(url, dest, **kw):
-        assert url == gh.KEYRING_URL
-        Path(dest).write_bytes(payload)
-        return Path(dest)
-    monkeypatch.setattr(fetch, "download", download)
+    # The real download, answered from memory (si#668): the pin is checked where every pin is.
+    servedbytes.serve(monkeypatch, payload)
     if pin:
         monkeypatch.setattr(gh, "KEYRING_SHA256", hashlib.sha256(payload).hexdigest())
 
