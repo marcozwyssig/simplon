@@ -197,7 +197,8 @@ def _run(where: str, image: str, argv: list[str], cwd: str | None, network: str 
 
 def verdict(rc: int, out: str, root: Path) -> int:
     """0 only when firn succeeded, reported at least one file (or ran no template at all, si#594), left nothing
-    it only warns about, and every file it reported is there and is now 0644. `root` is firn's project root,
+    it only warns about, named no template that matches nothing (W105, si#713), and every file it reported is
+    there and is now 0644. `root` is firn's project root,
     which the reported paths are relative to. A non-zero rc is firn's and comes back unchanged."""
     try:
         report = json.loads(out)
@@ -223,11 +224,22 @@ def verdict(rc: int, out: str, root: Path) -> int:
         print(f"build:model: {', '.join(refused)} - firn left a protected region no template produces, with "
               f"rc 0; see above (simplon's verdict, rc {KEPT_RC})", file=sys.stderr)
         bad = KEPT_RC
+    # si#713: firn counts only the templates that resolve, so a templates entry that matches nothing (W105)
+    # also gives `run.templates` 0. Any W105 is red, whatever the other targets produced (the maintainer's
+    # decision); the warning is identified by its sentence's prefix, which is all firn's report carries.
+    unresolved = [w for w in report.get("warnings") or [] if str(w.get("sentence", "")).startswith("W105")]
+    if unresolved:
+        print("build:model: a templates entry in firn.toml names no template (W105 above), so what it was meant "
+              "to generate is not generated - fix the name in firn.toml (simplon's verdict, rc 1: firn said 0)",
+              file=sys.stderr)
+        bad = bad or 1
     produced = [*files.get("written", []), *files.get("unchanged", []), *files.get("upToDate", [])]
     if not produced:
         # si#594: `run.templates` (firn v0.9.0 on) counts the templates the run's targets select. 0 is a project
         # with nothing to generate; a missing count (older firn) is not a zero, so that run stays refused.
         templates = (report.get("run") or {}).get("templates")
+        if templates == 0 and unresolved:
+            return bad
         if templates == 0:
             print("build:model: firn ran no template - the project selects none, so there is nothing to generate "
                   "(firn said 0)", file=sys.stderr)
