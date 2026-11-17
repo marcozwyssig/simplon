@@ -59,7 +59,7 @@ import re
 import shlex
 import textwrap
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -1070,7 +1070,57 @@ def secret_prefix(repository: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "_", repository.rpartition("/")[2]).upper()
 
 
-APP_TOKEN_NOTE = """{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
+APP_SECRETS_CHECK_NAME = "Check the secrets every `token: app` step needs"
+
+APP_SECRETS_NOTE = """si#574: {needs} mints a GitHub App token from these secrets. A dry run skips that step, so
+without this check it is green with a secret missing, and the real run stops at the token step - after the
+steps before it have published what cannot be taken back (v0.37.0: tag and PyPI, then no formula). The
+expression `secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too."""
+
+APP_SECRETS_UNCHECKED = """si#574: not checked before the cut - the secrets of {needs}: each runs in a job that names
+an `environment:`, whose secrets only that job can read, so a check in this job would be red with them set."""
+
+
+def _app_secrets_check(jobs: "Sequence[Job]", expanded: "Mapping[str, Sequence[Step]]", manifest: Manifest,
+                       where: str) -> "tuple[Step | None, str]":
+    """si#574: the release job's step that is red when a secret a `token: app` leaf of this workflow needs is
+    not set, and the note naming the leaves it cannot check. (None, "") when the workflow mints no App token.
+
+    Every job's leaves count, not only the derived job's: simplon's own tap is a product job beside it. A
+    leaf in a job with an `environment:` is left out and said, never checked against secrets it cannot see.
+    A repository `_app_token` refuses is skipped here; rendering that step raises with the reason."""
+    prefixes: dict[str, list[str]] = {}
+    unchecked: list[str] = []
+    for job in jobs:
+        for at, step in enumerate(expanded[job.name]):
+            for words, leaf in _leaves(manifest, step, f"{where}, job '{job.name}', step {at + 1}"):
+                repository = leaf.with_.get("repository")
+                if leaf.token != "app" or not isinstance(repository, str) or "/" not in repository:
+                    continue
+                if job.extras.get("environment") is not None:
+                    unchecked.append(f"'{words}' (job '{job.name}')")
+                    continue
+                prefixes.setdefault(secret_prefix(repository), []).append(f"'{words}'")
+    note = APP_SECRETS_UNCHECKED.format(needs=", ".join(unchecked)) if unchecked else ""
+    if not prefixes:
+        return None, note
+    names = [f"{prefix}_{suffix}" for prefix in prefixes for suffix in ("CLIENT_ID", "APP_KEY")]
+    script = ['missing=""',
+              *(f'[ "$SET_{name}" = true ] || missing="$missing {name}"' for name in names),
+              'if [ -n "$missing" ]; then',
+              '  echo "::error::not set in this repository\'s Actions secrets:$missing - a \\`token: app\\` step '
+              'mints its GitHub App token from them (si#574); store them before releasing"',
+              "  exit 1",
+              "fi",
+              f'echo "set: {" ".join(names)}"']
+    needs = ", ".join(words for words_of in prefixes.values() for words in words_of)
+    return Step(verbatim={"name": APP_SECRETS_CHECK_NAME,
+                          "env": {f"SET_{name}": f"${{{{ secrets.{name} != '' }}}}" for name in names},
+                          "run": "\n".join(script) + "\n"},
+                note=APP_SECRETS_NOTE.format(needs=needs)), note
+
+
+APP_TOKEN_NOTE ="""{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
 token for {repository} and nothing else, with contents: write, from the secrets {prefix}_CLIENT_ID
 and {prefix}_APP_KEY. The leaf below reads it as ${env} from its own `env:`; no `run:` line
 carries the token or a secret."""
@@ -1481,6 +1531,13 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
         artifacts = artifactsection.declared(context.current().manifest_data())
     jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports, product), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
+    if workflow.release:
+        check, unchecked = _app_secrets_check(jobs, expanded, manifest, f"workflow '{workflow.key}'")
+        if check is not None:
+            expanded[RELEASE_JOB].insert(0, check)
+        if unchecked:
+            jobs = tuple(replace(job, note="\n\n".join(p for p in (job.note, unchecked) if p))
+                         if job.name == RELEASE_JOB else job for job in jobs)
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")
                               for at, step in enumerate(expanded[job.name])),

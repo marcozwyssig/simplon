@@ -1126,7 +1126,10 @@ declared on the task, so a catalogue task brings its own and a task of your own 
   a digit or with `GITHUB_`), a step whose `env:` is not a mapping or sets `GH_APP_TOKEN` itself, and an
   aggregate step whose plan holds such a
   leaf among others, because one `run:` line would hand the token to all of them. Run the leaf as its own
-  step.
+  step. In a `release:` workflow the derived `release` job checks, before the cut and on a dry run too,
+  that every such secret of the workflow's `token: app` leaves is set, reading `secrets.X != ''` and never
+  the value (si#574). A leaf in a job that names an `environment:` is not checked, because the release job
+  cannot see that environment's secrets; the generated file says so above the `release` job.
 
 Refused beside `release:`:
 
