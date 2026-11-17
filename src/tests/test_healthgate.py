@@ -17,8 +17,13 @@ These tests pin the discipline itself, with the product's words injected as data
 
 AAA throughout; goal-stating names incl. the negative cases (a healthy deployment must still pass).
 """
+import os
+import shutil
+import time
+
 import pytest
 
+from conftest import docker_is_usable
 from simplon.adapters import healthgate
 
 
@@ -134,21 +139,23 @@ def test_every_failing_subject_is_reported_not_just_the_first():
 
 @pytest.fixture
 def scripted_health(monkeypatch):
-    """Drive `settle` off a scripted sequence of per-round status maps, with the sleep removed. Returns
-    the recorder so a test can assert HOW MANY rounds actually ran (the early-exit contract)."""
+    """Drive `settle` off a scripted sequence of per-round status maps, on a clock that only the sleep moves.
+    Returns the recorder so a test can assert HOW MANY rounds actually ran (the early-exit contract)."""
     def _install(rounds: list[dict[str, str]], *, subjects=("c-zh", "c-be")):
         seen: list[dict[str, str]] = []
-        monkeypatch.setattr(healthgate.time, "sleep", lambda _s: None)
+        now = [0.0]
+        monkeypatch.setattr(healthgate, "_clock", lambda: now[0])
+        monkeypatch.setattr(healthgate.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
 
-        def fake_status(container: str) -> str:
+        def fake_observe(container: str) -> tuple[str, str]:
             # one map per round, the last one repeating once the script runs out
             idx = min(len(seen), len(rounds) - 1)
             status = rounds[idx][container]
             if container == subjects[-1]:
                 seen.append(rounds[idx])
-            return status
+            return status, ""
 
-        monkeypatch.setattr(healthgate, "container_health", fake_status)
+        monkeypatch.setattr(healthgate, "observe", fake_observe)
         return seen
     return _install
 
@@ -185,15 +192,16 @@ def test_settle_stops_at_the_first_unhealthy_instead_of_waiting_out_the_budget(s
 
 
 def test_settle_fails_when_a_subject_never_leaves_starting(scripted_health):
-    # arrange: a tiny budget (3 rounds at 1s), never converging
+    # arrange: a tiny budget (3 s at 1 s per round), never converging
     seen = scripted_health([{"c-zh": "healthy", "c-be": "starting"}])
 
     # act
     rc = healthgate.settle(_spec(("c-zh", "c-be"), budget_s=3))
 
-    # assert: the budget is spent and the verdict is red, not a shrug
+    # assert: the budget is spent and the verdict is red, not a shrug - observed at 0, 1 and 2 s and once
+    # more at the deadline (si#658: deadline-based, so the last look is at the budget's end)
     assert rc != 0
-    assert len(seen) == 3
+    assert len(seen) == 4
 
 
 def test_settle_is_skippable_for_debugging_a_knowingly_degraded_deployment(scripted_health):
@@ -235,3 +243,80 @@ def test_a_gate_with_no_remediation_still_reports_the_failure(scripted_health, c
     # assert
     assert rc != 0
     assert "health gate FAILED" in out
+
+
+# --- si#658: could not ask is not missing, the inspect is bounded, the budget is a deadline ------------
+
+def _docker_answering(tmp_path, script: str) -> str:
+    """A PATH whose `docker` is `script` (a real executable), with the rest of the PATH kept."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text("#!/bin/sh\n" + script, encoding="utf-8")
+    docker.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker CLI here to point at a dead daemon")
+def test_an_unreachable_daemon_is_unknown_and_not_missing(monkeypatch, tmp_path):
+    # arrange: the real docker CLI, aimed at a socket nothing listens on
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path}/no-daemon.sock")
+
+    # act
+    status, why = healthgate.observe("c-zh")
+
+    # assert
+    assert status == healthgate.UNKNOWN
+    assert "no-daemon.sock" in why
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker CLI here to point at a dead daemon")
+def test_the_gate_says_the_daemon_could_not_be_asked(monkeypatch, tmp_path, capsys):
+    # arrange
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path}/no-daemon.sock")
+
+    # act
+    rc = healthgate.settle(_spec(("c-zh",), budget_s=30))
+    out = capsys.readouterr().out
+
+    # assert: red at once, and about the gate's eyes, not about the container
+    assert rc != 0
+    assert "docker could not be asked" in out and "is missing" not in out
+
+
+@pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to ask about a container")
+def test_a_container_docker_does_not_know_is_still_missing():
+    # act
+    status, why = healthgate.observe("simplon-si658-no-such-container")
+
+    # assert
+    assert (status, why) == (healthgate.MISSING, "")
+
+
+def test_an_inspect_that_does_not_answer_is_unknown_within_its_limit(monkeypatch, tmp_path):
+    # arrange: a docker that never answers, and a short limit
+    monkeypatch.setenv("PATH", _docker_answering(tmp_path, "exec sleep 30\n"))
+    monkeypatch.setattr(healthgate, "INSPECT_TIMEOUT_S", 0.5)
+
+    # act
+    started = time.monotonic()
+    status, why = healthgate.observe("c-zh")
+
+    # assert
+    assert time.monotonic() - started < 5
+    assert status == healthgate.UNKNOWN and "`docker inspect c-zh` gave no answer within 0.5 s" in why
+
+
+def test_a_slow_probe_does_not_stretch_the_budget(monkeypatch, tmp_path):
+    # arrange: every inspect takes 1 s and the subject never leaves `starting`; budget 3 s, 1 s per round.
+    # Counting rounds, that was 3 probes and 2 sleeps, 5 s; the budget plus one probe is 4 s.
+    monkeypatch.setenv("PATH", _docker_answering(tmp_path, "sleep 1\necho starting\n"))
+
+    # act
+    started = time.monotonic()
+    rc = healthgate.settle(_spec(("c-zh",), budget_s=3, interval_s=1))
+    took = time.monotonic() - started
+
+    # assert
+    assert rc != 0
+    assert took < 4.5, f"the gate took {took:.1f} s on a 3 s budget with 1 s probes"
