@@ -47,6 +47,7 @@ from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from simplon.manifest import artifactsection, context
+from simplon.manifest.context import TaskRefused
 from simplon.model import artifactschema
 from simplon.adapters import githubpackages
 from simplon.kernel import log
@@ -137,6 +138,11 @@ def publish(name: str = "", tag: str = "") -> int:
     return 0
 
 
+def _listing(directory: Path) -> dict[str, int]:
+    """Each entry of `directory` with its mtime, so a pull's effect can be read off a before and an after."""
+    return {entry.name: entry.stat().st_mtime_ns for entry in directory.iterdir()}
+
+
 def fetch(name: str = "", tag: str = "") -> int:
     """Pull the archive `name` declares back to the path the manifest gives it.
 
@@ -147,15 +153,23 @@ def fetch(name: str = "", tag: str = "") -> int:
     """
     registry, ref, archive, _ = _reference(name, tag, "build:conan-cache")
     archive.parent.mkdir(parents=True, exist_ok=True)
+    before = _listing(archive.parent)
     # si#443: a login made here lives as long as this pull, not in the runner's own docker config.
     with _scope(registry):
         _login_if_githubs(registry)
         githubpackages.pull(ref, str(archive.parent))
     if not archive.is_file():
-        raise RuntimeError(
-            f"the pull of {ref} reported success and left no {archive.name} in {archive.parent}. Either "
-            f"the artifact holds a differently named file or nothing was written; the manifest's "
-            f"`path:` is what names the file this expects")
+        # A TaskRefused (si#709): a pull that leaves no file is a red run with its reason, never a
+        # traceback and never "nothing to pull". Measured against a real registry: an artifact holding
+        # `other.tgz` pulls with rc 0 and writes `other.tgz`, so what the pull DID write is the evidence -
+        # new or rewritten, because a second run rewrites the `other.tgz` the first one left.
+        after = _listing(archive.parent)
+        wrote = sorted(name for name, stamp in after.items() if before.get(name) != stamp)
+        found = (f"it wrote {', '.join(wrote)}" if wrote else "it wrote nothing at all")
+        raise TaskRefused(
+            f"the pull of {ref} reported success and left no {archive.name} in {archive.parent}: "
+            f"{found}. The manifest's `path:` names the file this expects - set it to the file the "
+            f"artifact holds, or publish the archive under that name")
 
     root = context.current().root
     shown = archive.relative_to(root) if archive.is_relative_to(root) else archive
