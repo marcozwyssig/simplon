@@ -252,7 +252,9 @@ def test_extensions_are_skipped_and_said_so_when_the_gate_left_no_gh(extensions,
     assert rc == rc_expected
     assert asked == []
     out = capsys.readouterr()
-    assert f"gh extensions skipped: the gh gate left no gh that runs here ({state.value})" in out.out + out.err
+    # a SKIPPED gate's own reason is the extensions' reason too (si#710): it says where to go instead
+    why = "why" if state is State.SKIPPED else f"the gh gate left no gh that runs here ({state.value})"
+    assert f"gh extensions skipped: {why}; not installed: github/gh-stack" in out.out + out.err
 
 
 def test_extensions_are_skipped_when_an_installed_gh_does_not_run_here(extensions, tmp_path, monkeypatch,
@@ -321,3 +323,55 @@ def test_a_gh_that_is_not_logged_in_skips_the_extensions_without_failing_the_com
 
 
 from simplon.kernel.run import Result  # noqa: E402
+
+
+# --- si#710: the container route provisions nothing ------------------------------------------------------
+
+
+def test_on_the_container_route_every_host_gate_is_skipped_and_says_so(monkeypatch, tmp_path, capsys):
+    """firn measured it on 0.44.0: inside the kernel container gh.ensure() answered PRESENT (the image
+    carries gh), and with GH_TOKEN exported every declared extension went `installed` - into the
+    throwaway container, never onto the host. The REAL gates run here, over a gh that runs and answers
+    every call; only `DELIVERY_ROUTE=inside`, which the launcher sets on its way into the container, says
+    which route this is."""
+    # arrange
+    calls = []
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "a token")
+    monkeypatch.setattr(oras, "ensure_oras", lambda: None)
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: True)
+    monkeypatch.setattr(gh, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+    monkeypatch.setattr(hostinstall, "act", lambda argv, **kw: calls.append(argv) or "")
+    monkeypatch.setattr(claudeplugins, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+    monkeypatch.setattr(claudeplugins.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
+    _declare_extensions(tmp_path, ["brew", "gh", "claude"], ["github/gh-stack@v0.3.0"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert: nothing ran, every gate said why and where to go instead, and the skip is not a failure
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert rc == 0, said
+    assert calls == [], f"the container route ran {calls}"
+    route = "the container route installs nothing on the host; run support install on the venv route"
+    for gate in ("brew skipped: ", "gh skipped: ", "gh extensions skipped: ", "Claude Code plugins"):
+        assert gate in said, said
+    assert said.count(route) == 4, said
+
+
+def test_on_the_venv_route_the_gates_run_as_before(gates, tmp_path, monkeypatch):
+    # arrange: the route the launcher takes on a host with a python3
+    monkeypatch.setenv("DELIVERY_ROUTE", "venv")
+    seen = []
+    monkeypatch.setattr(gh, "ensure", lambda **kw: seen.append(kw) or Outcome(State.PRESENT))
+    _declare(tmp_path, "gh")
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 0
+    assert seen == [{"container": False}]

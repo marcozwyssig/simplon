@@ -12,6 +12,7 @@ them touches a machine and the other opens a browser and asks a human to authori
 """
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from simplon.kernel import log
@@ -26,12 +27,12 @@ from simplon.tasks import claudeplugins, profiles
 _GATES = (("oras", lambda: oras.ensure_oras(), oras.OrasError),)
 
 
-def _claude_plugins() -> bool:
+def _claude_plugins(container: bool) -> bool:
     """The `claude` toolchain's gate (si#525): the product's effective plugin set, reported in its own
     words. OFF says nothing - a product that does not use Claude Code pays nothing, not even a line.
     False only for FAILED (or a missing executable the product's `claude.requires:` names, si#396);
     SKIPPED is not a failure, and neither is a default plugin skipped for a missing executable (si#582)."""
-    outcome = claudeplugins.step()
+    outcome = claudeplugins.step(container=container)
     if outcome.state is not claudeplugins.State.OFF:
         claudeplugins.report(outcome)
     return claudeplugins._rc(outcome) == 0
@@ -75,8 +76,10 @@ def _gh_extensions(extensions: tuple[gh.Extension, ...], gate: hostinstall.Outco
         return True
     usable = gate.state in (hostinstall.State.PRESENT, hostinstall.State.INSTALLED) and hostinstall.runs("gh")
     if not usable:
-        log.info(f"gh extensions skipped: the gh gate left no gh that runs here ({gate.state.value}); not "
-                 f"installed: {', '.join(str(extension) for extension in extensions)}")
+        why = (gate.detail if gate.state is hostinstall.State.SKIPPED
+               else f"the gh gate left no gh that runs here ({gate.state.value})")
+        log.info(f"gh extensions skipped: {why}; not installed: "
+                 f"{', '.join(str(extension) for extension in extensions)}")
         return True
     ok = True
     for extension, outcome in gh.ensure_extensions(extensions):
@@ -94,6 +97,9 @@ def install() -> int:
     next run, and someone provisioning a machine wants the whole list now.
     """
     failed = []
+    # si#710: the route, derived ONCE and handed to every gate. Inside the kernel container each gate saw
+    # the image's own tools and provisioned the container, reporting it as the host.
+    container = hostinstall.container_route(os.environ)
     declared = _declared()
     if declared is None:
         failed.append("toolchains")
@@ -102,7 +108,7 @@ def install() -> int:
     if extensions is None:
         failed.append("gh extensions")
         extensions = ()
-    if hostinstall.rc(_host_gate("brew", declared, lambda: brew.ensure())):
+    if hostinstall.rc(_host_gate("brew", declared, lambda: brew.ensure(container=container))):
         failed.append("brew")
     for name, gate, failure_type in _GATES:
         try:
@@ -111,11 +117,11 @@ def install() -> int:
         except failure_type as failure:
             log.warn(f"{name}: {failure}")
             failed.append(name)
-    gh_gate = _host_gate("gh", declared, lambda: gh.ensure())
+    gh_gate = _host_gate("gh", declared, lambda: gh.ensure(container=container))
     if hostinstall.rc(gh_gate):
         failed.append("gh")
     if not _gh_extensions(extensions, gh_gate):
         failed.append("gh extensions")
-    if not _claude_plugins():
+    if not _claude_plugins(container):
         failed.append("claude")
     return 1 if failed else 0
