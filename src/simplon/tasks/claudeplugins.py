@@ -25,7 +25,6 @@ from __future__ import annotations
 import enum
 import json
 import shutil
-import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
@@ -436,10 +435,9 @@ def _installed(timeout_s: float) -> tuple[tuple[Marketplace, ...], tuple[str, ..
     answers = []
     for what in (["plugin", "marketplace", "list"], ["plugin", "list"]):
         shown = f"`claude {' '.join(what)} --json`"
-        try:
-            res = run(["claude", *what, "--json"], timeout=timeout_s)
-        except subprocess.TimeoutExpired as exc:
-            raise _Failed(f"{shown} did not answer within {timeout_s:g}s") from exc
+        res = run(["claude", *what, "--json"], timeout=timeout_s)
+        if res.timed_out:
+            raise _Failed(f"{shown} did not answer within {timeout_s:g}s")
         if not res.ok:
             raise _Failed(f"{shown} failed (rc {res.rc}): {res.err.strip() or res.out.strip()}")
         answers.append(res.out)
@@ -469,9 +467,8 @@ def _effective_here() -> Effective | None:
 def _act(argv: list[str], timeout_s: float) -> str:
     """Run one install command; "" on success, else why. Captured, never streamed: the launcher runs this
     before the command a person typed, and nothing of it may reach that command's stdout."""
-    try:
-        res = run(argv, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
+    res = run(argv, timeout=timeout_s)
+    if res.timed_out:
         return f"`{' '.join(argv)}` did not finish within {timeout_s:g}s"
     return "" if res.ok else (res.err.strip() or res.out.strip() or f"rc {res.rc}")
 

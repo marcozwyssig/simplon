@@ -14,7 +14,6 @@ import hashlib
 import json
 import os
 import stat
-import subprocess
 
 import pytest
 from pathlib import Path
@@ -455,8 +454,8 @@ _BYTES = b"\x7fELF firn arm64"
 
 
 class _Docker:
-    """The command line for `check`: `docker run` answers `answer` (rc, out, err), or raises
-    `subprocess.TimeoutExpired` when `answer` is None; every call is recorded with its keyword arguments."""
+    """The command line for `check`: `docker run` answers `answer` (rc, out, err), or a Result that timed
+    out when `answer` is None (si#653: what `run` returns past its limit); every call is recorded with its keyword arguments."""
 
     def __init__(self):
         self.calls: list[tuple[list[str], dict]] = []
@@ -468,12 +467,12 @@ class _Docker:
         self.calls.append((argv, kwargs))
         if argv[:2] == ["docker", "run"]:
             if self.answer is None:
-                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+                return Result(rc=-9, out="", err="", timed_out=True)
             rc, out, err = self.answer
             return Result(rc=rc, out=out, err=err)
         if argv[:2] == ["docker", "pull"]:
             if self.pulled is None:
-                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+                return Result(rc=-9, out="", err="", timed_out=True)
             rc, out, err = self.pulled
             return Result(rc=rc, out=out, err=err)
         return Result(rc=0, out="", err="")

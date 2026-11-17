@@ -297,8 +297,8 @@ def test_asking_for_no_asset_at_all_names_where_one_is_pinned(gh):
 
 
 def test_a_missing_gh_is_named_rather_than_raised_from_inside_the_wrapper(gh, monkeypatch):
-    """`run()` does not turn a missing binary into a return code - it raises FileNotFoundError out of a
-    wrapper the reader never opened. Same gate, and same wording, as `gitops`."""
+    """`run()` returns a missing binary as `not_started`, which a caller that reads only the rc would take
+    for a gh that said no (si#653). Same gate, and same wording, as `gitops`."""
     monkeypatch.setattr(asset.shutil, "which", lambda tool: None)
 
     with pytest.raises(SystemExit):

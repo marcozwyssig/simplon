@@ -399,9 +399,63 @@ def test_a_child_that_ignores_the_stop_is_killed_once_the_grace_is_over(tmp_path
 
 
 def test_run_still_kills_the_child_on_its_own_timeout():
-    # act / assert: handing a stop on must not have cost `timeout` its meaning
-    with pytest.raises(subprocess.TimeoutExpired):
-        run_module.run(["sleep", "30"], timeout=0.3)
+    # act: handing a stop on must not have cost `timeout` its meaning
+    started = time.monotonic()
+    res = run_module.run(["sleep", "30"], timeout=0.3)
+
+    # assert
+    assert res.timed_out and not res.ok
+    assert time.monotonic() - started < 10
+
+
+# --- the two ways a child gives no rc are values, not exceptions (si#653) ------------------------------
+
+def _run_both_paths(argv, **kwargs) -> list[Result]:
+    """`run` on the main thread and off it: the two paths must answer alike."""
+    off: list[Result] = []
+    thread = threading.Thread(target=lambda: off.append(run_module.run(argv, **kwargs)))
+    thread.start()
+    thread.join(30)
+    return [run_module.run(argv, **kwargs), *off]
+
+
+def test_a_child_past_its_timeout_is_a_result_that_says_so():
+    # act
+    results = _run_both_paths(["sh", "-c", "echo before; exec sleep 30"], timeout=0.5)
+
+    # assert: one per path, each timed out, not "not started", not ok, and keeping what the child said
+    assert len(results) == 2
+    for res in results:
+        assert (res.timed_out, res.not_started, res.ok, res.out) == (True, "", False, "before\n")
+
+
+def test_a_binary_that_is_not_there_is_a_result_that_says_why():
+    # act
+    results = _run_both_paths(["no-such-binary-si653"])
+
+    # assert: not started, with the OS's reason, distinguishable from a timeout and from a refusal
+    assert len(results) == 2
+    for res in results:
+        assert not res.ok and not res.timed_out
+        assert "no-such-binary-si653" in res.not_started
+        assert res.err == res.not_started
+
+
+def test_a_nonzero_rc_is_neither_a_timeout_nor_a_start_failure():
+    # act
+    res = run_module.run(["sh", "-c", "exit 3"], timeout=10)
+
+    # assert
+    assert (res.rc, res.ok, res.timed_out, res.not_started) == (3, False, False, "")
+
+
+def test_stream_says_why_a_binary_could_not_be_started(capfd):
+    # act: `stream` hands back only the rc, so the reason must reach the terminal it streams to
+    rc = stream(["no-such-binary-si653"])
+
+    # assert
+    assert rc != 0
+    assert "no-such-binary-si653" in capfd.readouterr().err
 
 
 def test_run_still_feeds_input_and_captures_both_streams():

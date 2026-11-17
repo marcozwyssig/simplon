@@ -193,17 +193,16 @@ def test_brew_install_backs_off_between_attempts():
     assert "sleep $((i*5))" in script
 
 
-def test_a_timeout_is_a_refusal_naming_the_limit(tmp_path, monkeypatch):
-    import subprocess
+def test_a_timeout_is_a_refusal_naming_the_limit(tmp_path, monkeypatch, removals):
+    from simplon.kernel.run import Result
 
-    def timed_out(argv, **kw):
-        raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
-    monkeypatch.setattr(hc, "run", timed_out)
+    monkeypatch.setattr(hc, "run", lambda argv, **kw: Result(-9, "", "", timed_out=True))
     wheel = tmp_path / "x-1.0-py3-none-any.whl"
     wheel.write_bytes(b"")
     tmp_path.chmod(0o755)
     with pytest.raises(ValueError, match="CLOSURE_TIMEOUT_S"):
         hc.measure(wheel, ["cryptography"], "python@3.14")
+    assert len(removals) == 1, "the container a timed-out client left running was not removed"
 
 
 def test_a_failed_run_is_a_failure_with_the_tail(tmp_path, monkeypatch):

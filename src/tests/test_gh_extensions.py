@@ -8,8 +8,6 @@ the fake answers the way the measurement did. AAA throughout.
 """
 from __future__ import annotations
 
-import subprocess
-
 import pytest
 import yaml
 
@@ -273,10 +271,21 @@ def test_an_install_that_fails_with_a_token_is_still_failed():
 
 def test_a_hanging_install_is_failed_not_waited_on():
     # arrange
-    fake = FakeGh(answers={("extension", "install"): subprocess.TimeoutExpired(["gh"], 600)})
+    fake = FakeGh(answers={("extension", "install"): Result(-9, "", "", timed_out=True)})
 
     # act
     [(_, outcome)] = gh.ensure_extensions(STACK_PINNED, runner=fake)
 
     # assert
     assert outcome.state is State.FAILED and "timed out" in outcome.detail
+
+
+def test_a_gh_that_is_not_there_is_failed_with_the_reason(monkeypatch):
+    # arrange: the real `run`, and a PATH that holds no gh (si#653: a value, not an exception)
+    monkeypatch.setenv("PATH", "/nonexistent")
+
+    # act
+    [(_, outcome)] = gh.ensure_extensions(STACK_PINNED)
+
+    # assert
+    assert outcome.state is State.FAILED and "No such file or directory" in outcome.detail

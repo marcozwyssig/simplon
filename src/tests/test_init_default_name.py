@@ -274,7 +274,7 @@ def test_git_vanishing_between_the_two_calls_is_still_a_message_and_not_a_traceb
     def _vanishing(argv, **kwargs):
         calls.append(argv)
         if len(calls) > 1:
-            raise FileNotFoundError(2, "No such file or directory: 'git'")
+            return real(["no-such-git-si653", *argv[1:]], **kwargs)
         return real(argv, **kwargs)
 
     monkeypatch.setattr(bootstrap, "run", _vanishing)

@@ -104,7 +104,6 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -878,10 +877,10 @@ def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int,
     """
     name, lifecycle = docker.lifecycle()
     command = ["docker", "run", "--rm", *options, *lifecycle, ref, *shlex.split(argv)]
-    try:
-        with docker.stopped_on_interrupt(name):
-            result = run(command, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    with docker.stopped_on_interrupt(name):
+        result = run(command, timeout=timeout)
+    if result.timed_out:
+        docker.remove(name)
         log.error(f"{ref} gave no answer within {timeout} s; its container {name} was removed. An image whose "
                   f"command does not exit (a server) needs an `argv` that does, or a longer `timeout:`")
         return (1, None)
@@ -1472,10 +1471,10 @@ def host_runs(platform: str) -> tuple[bool | None, str]:
 
     name, lifecycle_flags = docker.lifecycle()
     argv = ["docker", "run", "--rm", "--platform", platform, *lifecycle_flags, imagefile.FILE_TEST_IMAGE, "true"]
-    try:
-        with docker.stopped_on_interrupt(name):
-            result = run(argv, timeout=PROBE_TIMEOUT)
-    except subprocess.TimeoutExpired:
+    with docker.stopped_on_interrupt(name):
+        result = run(argv, timeout=PROBE_TIMEOUT)
+    if result.timed_out:
+        docker.remove(name)
         return None, f"no answer within {PROBE_TIMEOUT} s"
     if result.ok:
         return True, ""
