@@ -12,9 +12,16 @@ settings `containers.environment.DOCKER_CONTEXT`, `docker.environment.DOCKER_CON
 `docker.context`, then the env DOCKER_CONTEXT, then `docker context ls`; a `context ls` that throws
 becomes `default`. `docker.host` is read only when the context came out `default`.
 `dev.containers.dockerSocketPath` is not read by that check at all. And VS Code started from the Dock
-inherits no shell export. So the editor part asks docker WITHOUT DOCKER_HOST and DOCKER_CONTEXT, and the
-one way out it names is `"docker.context": "<name>"` in the VS Code user settings: read first, kept
-across a reboot, no path in it.
+inherits no shell export. So the editor part asks docker WITHOUT DOCKER_HOST and DOCKER_CONTEXT.
+
+THE WAY OUT IS TWO WAYS IN (si#689). firn#1304 then ran it on a Mac with Colima (Dev Containers 0.473.0,
+VS Code 1.146.0): `"docker.context": "<name>"` in the user settings is read only in the "Reopen in
+Container" command's setup. A window opened by `code --folder-uri vscode-remote://dev-container+<hex>`
+whose authority is the hex of the bare folder path gets `DOCKER_CONTEXT=default` whatever the setting
+says, and failed; with the authority the hex of JSON `{"hostPath": ..., "settings": {"context": ...}}`
+(the form the extension builds itself) the same window connected. So the advice names the setting for
+"Reopen in Container", the JSON authority for a window opened by URI, and the socket at
+/var/run/docker.sock as what makes both moot.
 
 This runs no `sudo` and writes nothing into the editor's configuration: it says, the user decides.
 """
@@ -124,22 +131,21 @@ def _devcontainer(terminal: host.DockerContext) -> int:
                  "it, so what follows is what the extension sees without it")
     seen = host.context_endpoint(host.without_docker_overrides())
     if seen is None:
-        advice = (f"add {_setting('docker.context', terminal.name)} to the VS Code user settings"
-                  if terminal.name != "default" else "check `docker context ls`")
+        advice = (_context_advice(terminal.name) if terminal.name != "default"
+                  else "check `docker context ls`")
         log.warn("docker could not name the context VS Code would get, so the Dev Containers extension may "
                  f"fall back to `default`; {advice}")
         return 0
     if seen.name != "default":
         log.warn(f"the Dev Containers extension falls back to `default` when its `docker context ls` fails "
-                 f"(firn#287); add {_setting('docker.context', seen.name)} to the VS Code user settings, "
-                 "which it reads first")
+                 f"(firn#287); {_context_advice(seen.name)}")
         return 0
     if _local_socket_exists(seen.endpoint):
         log.ok(f"VS Code's Dev Containers extension finds docker on the default context ({seen.endpoint})")
         return 0
     if terminal.name != "default":
-        log.warn(f"VS Code would use the default context, and nothing listens on {seen.endpoint}; add "
-                 f"{_setting('docker.context', terminal.name)} to the VS Code user settings")
+        log.warn(f"VS Code would use the default context, and nothing listens on {seen.endpoint}; "
+                 f"{_context_advice(terminal.name)}")
     elif _local_socket_exists(terminal.endpoint):
         log.warn(f"VS Code would use the default context, and nothing listens on {seen.endpoint}; add "
                  f"{_setting('docker.host', terminal.endpoint)} to the VS Code user settings")
@@ -152,6 +158,17 @@ def _devcontainer(terminal: host.DockerContext) -> int:
 
 def _setting(key: str, value: str) -> str:
     return f'"{key}": "{value}"'
+
+
+def _context_advice(name: str) -> str:
+    """The two ways the Dev Containers extension can be handed context `name` (si#689, measured in firn#1304
+    on 0.473.0): the user setting reaches "Reopen in Container" only; a window opened by URI reads the
+    context from the authority or not at all."""
+    return (f"add {_setting('docker.context', name)} to the VS Code user settings, which \"Reopen in "
+            f"Container\" reads first. A window opened by URI (`code --folder-uri "
+            f"vscode-remote://dev-container+<hex>/...`) does not read that setting: its authority has to be "
+            f'the hex of {{"hostPath": "<folder>", "settings": {{"context": "{name}"}}}} rather than of the '
+            f"bare folder path - or this host needs docker's socket at /var/run/docker.sock")
 
 
 def _local_socket_exists(endpoint: str) -> bool:
