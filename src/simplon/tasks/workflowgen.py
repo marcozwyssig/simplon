@@ -1204,7 +1204,7 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
     steps[lifted:lifted] = cut
     steps.insert(0, Step(verbatim={"name": "Provision the launcher before any step holds a token",
-                                   "run": f"{launcher(product)} help >/dev/null"},
+                                   "run": f"{launcher(product)} help"},
                          note=PROVISION_NOTE))
     if workflow.emulates:
         from simplon.adapters.labhost import BINFMT_IMAGE

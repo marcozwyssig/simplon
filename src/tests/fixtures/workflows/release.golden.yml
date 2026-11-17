@@ -52,7 +52,7 @@ jobs:
       # nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
       # manifest and prints the command list; a launcher that cannot provision is red here, before the cut.
       - name: Provision the launcher before any step holds a token
-        run: ./app.sh help >/dev/null
+        run: ./app.sh help
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: exec ./app.sh release check -- "$RELEASE_VERSION"
