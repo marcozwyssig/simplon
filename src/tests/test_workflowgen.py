@@ -2498,6 +2498,38 @@ def test_release_names_an_aggregate_by_group_and_name(value):
                                                  "runner": {"kind": "self-hosted-debian", "labels": "ghr-8"}}}})
 
 
+def test_the_derived_release_job_has_the_default_time_limit_not_githubs():
+    """si#720: with no `timeout_minutes:` the derived job carries the kernel's default, not GitHub's 360."""
+    job = yaml.safe_load(_release_text())["jobs"]["release"]
+    assert job["timeout-minutes"] == workflowgen.RELEASE_TIMEOUT_MINUTES
+    assert 0 < workflowgen.RELEASE_TIMEOUT_MINUTES < 360
+
+
+def test_timeout_minutes_beside_release_renders_onto_the_derived_job():
+    """si#720: the key is the product's; it reaches the derived job and not the workflow."""
+    doc = yaml.safe_load(_release_text(workflows=_RELEASE_WORKFLOWS.replace(
+        "    release: release all\n", "    release: release all\n    timeout_minutes: 45\n")))
+    assert doc["jobs"]["release"]["timeout-minutes"] == 45
+    assert "timeout_minutes" not in doc and "timeout-minutes" not in doc
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "'60'", "1.5", "true"])
+def test_a_timeout_that_is_not_a_positive_integer_is_refused_at_load(value):
+    with pytest.raises(ValueError, match="`timeout_minutes:` is the derived release job's time limit"):
+        _release_parsed(f"timeout_minutes: {value}\n")
+
+
+def test_timeout_minutes_without_release_is_refused():
+    with pytest.raises(ValueError, match="`timeout_minutes:` is read only beside `release:`"):
+        workflowgen.parse(_section("""
+        workflows:
+          ci:
+            on: [push]
+            timeout_minutes: 30
+            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
+        """))
+
+
 def test_a_hand_written_workflow_may_not_declare_a_release():
     with pytest.raises(ValueError, match="cannot also declare release"):
         workflowgen.parse({"workflows": {"rel": {"handwritten": "ours", "release": "release all"}}})
