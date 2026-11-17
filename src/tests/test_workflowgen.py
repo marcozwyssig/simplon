@@ -2810,8 +2810,9 @@ def test_without_the_check_first_the_cut_still_comes_first():
     steps = [step for step in _release_steps(_release_text(product))
              if not str(step.get("uses", "")).startswith("actions/checkout")]
 
-    # assert
-    assert steps[0].get("name") == "Cut the tag in this checkout"
+    # assert: after the token-less provisioning (si#718), which runs no member
+    assert steps[0].get("name") == "Provision the launcher before any step holds a token"
+    assert steps[1].get("name") == "Cut the tag in this checkout"
 
 
 def test_a_leaf_that_cannot_run_unattended_is_refused():
@@ -2894,6 +2895,37 @@ def test_a_release_job_on_a_self_hosted_runner_keeps_the_runners_disk_steps():
                                                              "runner: { kind: self-hosted-debian, labels: ghr-8 }"))
     job = text[text.index("\n  release:"):text.index("\n  announce:")]
     assert "si#327" in job
+
+
+# --- si#718: the launcher is provisioned in a step that holds no token -------------------------------------
+
+_SUPPORT_PROBES = """support:
+  commands:
+    ci-docker-preflight: { task: "support:ci-docker-preflight" }
+    ci-disk-preflight: { task: "support:ci-disk-preflight" }
+    ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+"""
+
+
+@pytest.mark.parametrize("runner, product", [
+    ("{ kind: github-ubuntu }", _RELEASE_PRODUCT),
+    ("{ kind: self-hosted-debian, labels: ghr-8 }", _RELEASE_PRODUCT),
+    ("{ kind: self-hosted-debian, labels: ghr-8 }", _RELEASE_PRODUCT + _SUPPORT_PROBES),
+], ids=["github-ubuntu", "self-hosted-debian", "self-hosted-debian-with-probes"])
+def test_the_first_launcher_step_of_the_release_job_holds_no_token(runner, product):
+    """si#718: the first launcher call bootstraps the venv - a pip install from PyPI - so it must not run
+    beside the run's GITHUB_TOKEN. On github-ubuntu that call used to be `release check`, a `token: github`
+    step."""
+    # act
+    steps = _release_steps(_release_text(product=product, workflows=_RELEASE_WORKFLOWS.replace(
+        "runner: { kind: github-ubuntu }", f"runner: {runner}")))
+
+    # assert
+    launching = [s for s in steps if "./app.sh" in str(s.get("run", ""))]
+    assert launching, "the release job runs the launcher"
+    first = launching[0]
+    assert "GITHUB_TOKEN" not in yaml.safe_dump(first) and "secrets." not in yaml.safe_dump(first)
+    assert any("token" in str(s.get("env", "")).lower() for s in steps[steps.index(first) + 1:])
 
 
 # --- si#570: `emulates:` - the derived release job registers emulation before anything runs ------------

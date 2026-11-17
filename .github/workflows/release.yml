@@ -61,6 +61,12 @@ jobs:
         with:
           image: tonistiigi/binfmt:qemu-v10.2.3
           platforms: linux/arm64
+      # si#718: the launcher's first run in a fresh checkout builds its venv - a pip install of the
+      # kernel and its dependencies from PyPI. Here it happens in a step with no token in its environment, so
+      # nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
+      # manifest and prints the command list; a launcher that cannot provision is red here, before the cut.
+      - name: Provision the launcher before any step holds a token
+        run: ./simplon.sh help >/dev/null
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: exec ./simplon.sh release check -- "$RELEASE_VERSION"

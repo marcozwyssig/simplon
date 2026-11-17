@@ -1086,7 +1086,9 @@ What the kernel writes:
 - **`concurrency:`** One release per version, never cancelled in progress.
 - **One job, `release`.** It cuts the tag in the checkout, checks that `git describe` is the version, runs
   the aggregate's leaves **in the plan's own order**, and ends with a dry-run step that prints the notes.
-  The order is what rule 8 already checked at load, so the workflow orders nothing itself.
+  The order is what rule 8 already checked at load, so the workflow orders nothing itself. Its first
+  launcher step is `<launcher> help`, with no token in its environment (si#718): the launcher's first run
+  builds its venv from PyPI, and that install no longer runs beside the token a `token: github` step gets.
 - **Emulation, when you ask for it.** `emulates: [linux/arm64]` beside `release:` makes the job's first
   step register those platforms (buildx's `<os>/<arch>[/<variant>]` spelling) through
   `docker/setup-qemu-action`, pinned by commit, with the kernel's own binfmt image (si#570). The job is
