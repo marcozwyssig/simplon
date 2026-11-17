@@ -28,8 +28,7 @@ on:
         type: boolean
         default: true
 permissions:
-  contents: write
-  packages: write
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.version }}
   cancel-in-progress: false
@@ -38,6 +37,9 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     timeout-minutes: 120
     env:
       RELEASE_VERSION: ${{ inputs.version }}
@@ -237,7 +239,7 @@ jobs:
   # skipped `docs` and `image` with it (run 42514180931, v0.43.0). Here it fails red and alone. No tag
   # steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
   # still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
-  # written with the App's, and the workflow's `contents: write` is the release job's, not this one's.
+  # written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
   homebrew-tap:
     runs-on: ubuntu-latest
     permissions:

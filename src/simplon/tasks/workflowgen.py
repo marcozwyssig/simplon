@@ -437,8 +437,11 @@ _RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
     "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
                 "required": True, "type": "boolean", "default": True}}}}
 #: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
-#: to push an image. A product may ADD scopes (simplon's PyPI publish needs `id-token: write`), never lower these.
+#: to push an image. They are the derived release job's own (si#719), never the workflow's.
 _RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+#: si#719: the workflow default when the product declares none - what a job needs to check the repository
+#: out, and nothing it could write with.
+_WORKFLOW_DEFAULT_PERMISSIONS: Mapping[str, str] = {"contents": "read"}
 _RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",
                                               "cancel-in-progress": False}
 
@@ -522,25 +525,29 @@ def _release_timeout(body: Mapping[object, object], where: str, release: str) ->
 
 
 def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
-    """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
+    """The workflow default `permissions`, the derived `concurrency`, then the product's own extras.
 
-    `permissions:` is MERGED rather than refused (ruling of si#490 Task 2, measured): simplon's own release
-    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible.
-    Lowering `contents`/`packages` stays refused, and that refusal is an EXPRESSION rule: a release with no
-    tag, no GitHub Release and no package push would have worked without them."""
+    si#719: the write scopes the release needs are the derived JOB's (`_release_job_permissions`), not the
+    workflow's, so every other job no longer inherits them. The workflow-level `permissions:` is the
+    default of every job without its own block: the product's, as written, or `contents: read`, the
+    least a job needs to check the repository out. Nothing a product declares here can take the release
+    job's scopes away, so the refusal that once guarded them (an EXPRESSION rule) is gone."""
     own = _workflow_extras(body)
-    declared = own.pop("permissions", None) or {}
+    declared = own.pop("permissions", None) or dict(_WORKFLOW_DEFAULT_PERMISSIONS)
     if not isinstance(declared, Mapping):
         raise ValueError(
-            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, which is added "
-            f"to the scopes the release needs; got '{declared}'")
-    for scope, level in _RELEASE_PERMISSIONS.items():
-        if scope in declared and declared[scope] != level:
-            raise ValueError(
-                f"{where}: `permissions:` sets `{scope}: {declared[scope]}`, and `{scope}: {level}` is what "
-                f"the release needs - leave {scope} out, it is derived")
-    return {"permissions": {**_RELEASE_PERMISSIONS, **{str(k): v for k, v in declared.items()}},
+            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, the default of "
+            f"every job without its own block; got '{declared}'")
+    return {"permissions": {str(k): v for k, v in declared.items()},
             "concurrency": dict(_RELEASE_CONCURRENCY), **own}
+
+
+def _release_job_permissions(workflow: "Workflow") -> dict[str, object]:
+    """si#719: the derived job's own block. A job-level block REPLACES the workflow's, so a scope the product
+    declared there (simplon's PyPI publish once needed `id-token: write` in this job, si#490 Task 2) is
+    carried over, and the scopes the release needs win over a lower default."""
+    declared = workflow.extras.get("permissions")
+    return {**(declared if isinstance(declared, Mapping) else {}), **_RELEASE_PERMISSIONS}
 
 
 class Stage(NamedTuple):
@@ -1203,7 +1210,8 @@ def _release(workflow: "Workflow", manifest: Manifest,
     steps.extend(archive)
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
                 note=unarchived,
-                extras={"timeout-minutes": workflow.timeout_minutes,
+                extras={"permissions": _release_job_permissions(workflow),
+                        "timeout-minutes": workflow.timeout_minutes,
                         "env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 

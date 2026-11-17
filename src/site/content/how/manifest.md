@@ -1078,8 +1078,11 @@ What the kernel writes:
 
 - **The trigger.** `on: workflow_dispatch` with `version` (required) and `dry_run` (default **true**).
   There is no tag trigger: a release is started by a person who types the version.
-- **`permissions:`** `contents: write` and `packages: write`. A product's own `permissions:` adds scopes,
-  such as `id-token: write` for PyPI's Trusted Publishing, but it may not lower those two.
+- **`permissions:`** `contents: write` and `packages: write` on the `release` job's own block, and only
+  there (si#719). The workflow-level `permissions:` is the default of every other job without its own
+  block: the product's `permissions:` beside `release:` as written, or `contents: read` when it declares
+  none. A scope the product declares there, such as `id-token: write`, also reaches the `release` job,
+  whose block replaces the workflow's.
 - **`concurrency:`** One release per version, never cancelled in progress.
 - **One job, `release`.** It cuts the tag in the checkout, checks that `git describe` is the version, runs
   the aggregate's leaves **in the plan's own order**, and ends with a dry-run step that prints the notes.
