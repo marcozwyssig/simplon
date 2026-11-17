@@ -258,7 +258,7 @@ def render(manifest: Manifest, *, source: str, product: str,
             # own (`support` above `support.git`). It still needs a sub-app for its children to hang
             # from, and it renders its OWN `help:` like any other group - the gap this branch used to
             # record ("not carried on TaxonomyNode today") is closed by si#75.
-            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, "
+            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, cls=_Group, "
                         f"help={help_text!r})")
         elif tax.is_group_default_command(group):
             # #592 D4: the bare token runs the namesake member as the group's DEFAULT action, so
@@ -271,7 +271,7 @@ def render(manifest: Manifest, *, source: str, product: str,
             body.append("    if ctx.invoked_subcommand is None:")
             body.append(f"        {funcs[(group, group)]}()")
         else:
-            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, "
+            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, cls=_Group, "
                         f"help={help_text!r})")
 
     for group, var in apps.items():
