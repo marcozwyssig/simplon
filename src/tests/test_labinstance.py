@@ -99,6 +99,52 @@ def test_a_flag_value_is_stripped_of_surrounding_whitespace(monkeypatch, tmp_pat
     assert labinstance.resolve("  a1  ") == "a1"
 
 
+
+# --- si#665: an explicit id is held to the budget the derived one already fits ----------------------------
+
+@pytest.mark.parametrize("value", ["abc", "a-", "A1"], ids=["too-long", "outside-alphabet", "upper-case"])
+def test_a_flag_outside_the_id_rule_is_refused_naming_the_flag_the_value_and_the_limit(monkeypatch, tmp_path,
+                                                                                      value):
+    # arrange
+    _register(monkeypatch, tmp_path)
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        labinstance.resolve(value, worktree=None)
+
+    # assert: where it came from, what it was and what would have been accepted
+    said = str(refused.value)
+    assert "--instance" in said and repr(value) in said
+    assert "1-2" in said and "[a-z0-9]" in said
+
+
+@pytest.mark.parametrize("value", ["abc", "a-", "A1"], ids=["too-long", "outside-alphabet", "upper-case"])
+def test_an_env_value_outside_the_id_rule_is_refused_naming_the_variable_the_value_and_the_limit(
+        monkeypatch, tmp_path, value):
+    # arrange
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setenv(_SPEC["env_var"], value)
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        labinstance.resolve(worktree=None)
+
+    # assert
+    said = str(refused.value)
+    assert _SPEC["env_var"] in said and repr(value) in said
+    assert "1-2" in said and "[a-z0-9]" in said
+
+
+def test_the_reserved_default_is_accepted_from_the_flag_and_the_env_although_it_is_over_the_budget(
+        monkeypatch, tmp_path):
+    # arrange: `dev` is three characters against a two-character budget, and it is the reserved id
+    _register(monkeypatch, tmp_path)
+
+    # act / assert: naming the default explicitly is not an error
+    assert labinstance.resolve("dev", worktree=None) == "dev"
+    monkeypatch.setenv(_SPEC["env_var"], "dev")
+    assert labinstance.resolve(worktree=None) == "dev"
+
 def test_a_whitespace_only_env_value_is_treated_as_unset(monkeypatch, tmp_path):
     # arrange: an env var set to blanks is semantically empty -> falls through to the default
     _register(monkeypatch, tmp_path)
