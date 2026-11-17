@@ -8,6 +8,8 @@ delegates to - the manifest supplies only the name, the help, the presentation a
 commands stay outside this file.
 """
 import typer
+# A group called without a subcommand prints its help on stderr and exits 2 (si#716), the kernel's way.
+from simplon.cli import GroupNeedsACommand as _Group
 {% if uses_bound %}
 from simplon.manifest import bound as _bound
 {% endif %}
