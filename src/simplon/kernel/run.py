@@ -47,6 +47,8 @@ from dataclasses import dataclass
 from types import FrameType
 from typing import Any, Callable, Mapping
 
+from simplon.kernel import log
+
 #: How long the reader waits for a line to FINISH before handing over what it already has.
 #:
 #: The measurement that chose it (si#144), on `./simplon.sh test all` - this kernel's own longest step.
@@ -84,6 +86,10 @@ _STOPS = ("SIGINT", "SIGTERM")
 #: SIGTERM, 2.5 s, then kill) and a kernel killed while it waits would leave the orphan this exists against.
 _STOP_GRACE = 9.0
 
+#: The rc of a child that never started (si#653): the shell's "command not found". Only a number for a
+#: caller that prints rc; `Result.not_started` is the answer, and `ok` is false either way.
+NOT_STARTED_RC = 127
+
 
 class _Stopped(BaseException):
     """Raised by `run`'s handler on the FIRST stop signal, only to leave the unbounded wait for a bounded one."""
@@ -112,15 +118,26 @@ def _terminal_sent_it() -> bool:
 
 @dataclass(frozen=True)
 class Result:
-    """The outcome of one subprocess: the real return code and (optionally captured) streams."""
+    """The outcome of one subprocess: the real return code and (optionally captured) streams.
+
+    THREE WAYS A CHILD CAN FAIL, AND EACH HAS ITS OWN VALUE (si#653). It answered no (`rc` non-zero); it
+    did not answer within its time limit and was killed (`timed_out`, `rc` is the killed child's); or it
+    never started (`not_started` is why, the OS's own words, and `err` carries the same text so a caller
+    that prints `err` says it). They used to travel on two channels, an rc and an exception, and every
+    caller with a timeout re-implemented the catch that merged them. Not started is any `OSError` from
+    the start, not only a missing binary: a binary on a `noexec` mount (`PermissionError`, measured on
+    ghr-8, see `docker._daemon_reachable`) is the same answer to "did it run".
+    """
 
     rc: int
     out: str
     err: str
+    timed_out: bool = False
+    not_started: str = ""
 
     @property
     def ok(self) -> bool:
-        return self.rc == 0
+        return self.rc == 0 and not self.timed_out and not self.not_started
 
     @property
     def answered(self) -> bool:
@@ -149,8 +166,8 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     """Run `argv` (a list, never a shell string) and return a Result with the real rc.
 
     capture=True returns stdout/stderr as text; capture=False streams them to the terminal (used by the
-    interactive flows). check=True raises CalledProcessError on a non-zero rc (use sparingly - the point
-    of this wrapper is to inspect rc explicitly, not to let it explode). input_text, when given, is fed to
+    interactive flows). check=True raises CalledProcessError on any failure, rc or not (use sparingly - the
+    point of this wrapper is to inspect rc explicitly, not to let it explode). input_text, when given, is fed to
     the process's stdin (e.g. `tee`-ing a script into the VM). cwd runs the process from that directory
     (e.g. pytest from the test dir so conftest.py is importable). env, when given, is ADDED to this
     process's environment for the child alone (si#507: a credential one git call needs and no other).
@@ -171,22 +188,31 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     `docker.stopped_on_interrupt` installed. A cancelled run still looks cancelled; what changed is that
     it no longer leaves its child behind.
 
-    Only on POSIX and on the main thread, the one place a handler may be installed. Elsewhere this is the
-    plain `subprocess.run` it was, and the child is as unprotected as before.
+    Only on POSIX and on the main thread, the one place a handler may be installed. Elsewhere the child is
+    started and waited for the same way, with no handler, and is as unprotected as before.
+
+    A CHILD PAST `timeout` OR ONE THAT NEVER STARTED IS A RESULT, NOT AN EXCEPTION (si#653): `timed_out`
+    and `not_started` say which, and `ok` is false for both. A child past its limit is killed and what it
+    had said is kept. A child that never started has its reason in `err` and `not_started`; with
+    capture=False the reason is also written to stderr, where the child's own words would have gone, so a
+    caller that streams and reports only the rc does not swallow it.
     """
     full_env = {**os.environ, **env} if env else None
-    stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)]
-    if os.name != "posix" or threading.current_thread() is not threading.main_thread():
-        done = subprocess.run(argv, capture_output=capture, text=True, encoding="utf-8", errors="replace",
-                              timeout=timeout, check=check, input=input_text, cwd=cwd, env=full_env)
-        return Result(rc=done.returncode,
-                      out=(done.stdout or "") if capture else "",
-                      err=(done.stderr or "") if capture else "")
-
+    guarded = os.name == "posix" and threading.current_thread() is threading.main_thread()
+    stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)] if guarded else []
     pipe = subprocess.PIPE if capture else None
-    proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else None,
-                            stdout=pipe, stderr=pipe, text=True, encoding="utf-8", errors="replace",
-                            cwd=cwd, env=full_env)
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else None,
+                                stdout=pipe, stderr=pipe, text=True, encoding="utf-8", errors="replace",
+                                cwd=cwd, env=full_env)
+    except OSError as error:
+        why = str(error)
+        if not capture:
+            log.error(f"{argv[0]} could not be started: {why}")
+        refused = Result(rc=NOT_STARTED_RC, out="", err=why, not_started=why)
+        if check:
+            raise subprocess.CalledProcessError(refused.rc, argv, "", why) from error
+        return refused
     received: list[int] = []
 
     def hand_on(signum: int, frame: object) -> None:
@@ -197,6 +223,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
             raise _Stopped(signum)              # out of the unbounded wait; later ones are only handed on
 
     waiting = True
+    timed_out = False
     previous: dict[int, Callable[[int, FrameType | None], Any] | int | signal.Handlers] = {}
     try:
         try:
@@ -219,9 +246,9 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
                 out, err = proc.communicate()
         except subprocess.TimeoutExpired:
             waiting = False
+            timed_out = True
             proc.kill()                         # what `subprocess.run` does with its own timeout
-            proc.communicate()
-            raise
+            out, err = proc.communicate()       # what the child said before it was killed
         except BaseException:
             waiting = False
             proc.kill()
@@ -233,9 +260,11 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     if received:
         # Delivered to the handler that was there before, which is what makes the caller's unwind its own.
         signal.raise_signal(received[0])
-    if check and proc.returncode != 0:
+    result = Result(rc=proc.returncode, out=(out or "") if capture else "", err=(err or "") if capture else "",
+                    timed_out=timed_out)
+    if check and not result.ok:
         raise subprocess.CalledProcessError(proc.returncode, argv, out, err)
-    return Result(rc=proc.returncode, out=(out or "") if capture else "", err=(err or "") if capture else "")
+    return result
 
 
 def stream(argv: list[str], *, cwd: str | None = None) -> int:

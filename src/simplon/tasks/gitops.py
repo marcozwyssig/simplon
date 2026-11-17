@@ -92,9 +92,9 @@ def require_git() -> None:
     """The tool gate as a PUBLIC name, for a caller outside this module.
 
     The commands below reach `_require` directly, but `simplon.tasks.release` composes the primitives
-    itself and needs the same gate - and `run()` does not turn a missing binary into a return code, it
-    raises FileNotFoundError from inside a wrapper the reader did not write. One named entry point beats
-    either a second `shutil.which` or a sibling module reaching for a private.
+    itself and needs the same gate - and `run()` returns a missing binary as a Result whose `not_started`
+    only a caller that asks reads (si#653), so without the gate a missing git reads as a git that said no.
+    One named entry point beats either a second `shutil.which` or a sibling module reaching for a private.
     """
     _require("git")
 

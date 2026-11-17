@@ -17,6 +17,7 @@ from simplon.kernel import run
 class _Result:
     def __init__(self, rc=0, out="", err=""):
         self.rc, self.out, self.err = rc, out, err
+        self.timed_out, self.not_started = False, ""
 
 
 @pytest.fixture
@@ -103,9 +104,11 @@ def test_a_login_without_token_or_gh_is_a_package_error_and_runs_no_client(monke
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     ran = []
 
+    real_run = run.run
+
     def no_such_binary(argv, **kwargs):
         ran.append(argv)
-        raise FileNotFoundError(2, "No such file or directory", argv[0])
+        return real_run(["no-such-binary-si653"], **kwargs)
 
     monkeypatch.setattr(run, "run", no_such_binary)
 

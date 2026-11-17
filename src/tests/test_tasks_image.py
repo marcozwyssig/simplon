@@ -1219,14 +1219,14 @@ def test_expand_tag_replaces_every_tag_placeholder():
 # --- si#554: a bounded run, and the environment it starts in ------------------------------------------
 
 def _timeouts(monkeypatch, *, hangs: bool = False) -> list:
-    """The `timeout` every `docker run` was handed; with `hangs`, the run raises as `subprocess.run` does."""
+    """The `timeout` every `docker run` was handed; with `hangs`, the run comes back timed out, as `run` does."""
     seen: list = []
 
     def fake(argv, **kwargs):
         if argv[:2] == ["docker", "run"]:
             seen.append(kwargs.get("timeout"))
             if hangs:
-                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+                return Result(rc=-9, out="", err="", timed_out=True)
         return Result(rc=0, out="", err="")
     monkeypatch.setattr(image, "run", fake)
     return seen
@@ -3025,3 +3025,15 @@ def test_a_release_logs_in_and_publishes_inside_a_docker_config_that_ends_with_i
     assert [what for what, _ in seen] == ["login", "verify"]
     assert seen[0][1] == seen[1][1] != str(tmp_path / "operator")
     assert os.environ["DOCKER_CONFIG"] == str(tmp_path / "operator")
+
+
+def test_a_platform_probe_past_its_limit_is_no_verdict_and_its_container_is_removed(monkeypatch, removals):
+    # arrange: si#653 - `run` returns the timeout, so it no longer unwinds through stopped_on_interrupt
+    monkeypatch.setattr(image, "run", lambda argv, **kw: Result(-9, "", "", timed_out=True))
+
+    # act
+    verdict = image.host_runs("linux/s390x")
+
+    # assert
+    assert verdict == (None, f"no answer within {image.PROBE_TIMEOUT} s")
+    assert len(removals) == 1

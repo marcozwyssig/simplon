@@ -488,12 +488,13 @@ def test_a_tracker_that_never_answers_is_a_problem_and_not_a_walk_that_never_ret
     """"Nothing in here raises at the caller" is a promise about the PROCESS and not only about the exit
     code: a `gh` blocked on a stalled connection is not refused, it is a walk that never ends, and the
     record is written after this."""
-    # arrange
-    import subprocess
+    # arrange: a real child that outlives a short limit; si#653 brings the timeout back as a value
+    real_run = run.run
 
     def _hang(argv, **kwargs):
-        raise subprocess.TimeoutExpired(argv, tracker.TIMEOUT)
+        return real_run(["sleep", "30"], **kwargs)
 
+    monkeypatch.setattr(tracker, "TIMEOUT", 0.3)
     monkeypatch.setattr(run, "run", _hang)
 
     # act
@@ -505,11 +506,8 @@ def test_a_tracker_that_never_answers_is_a_problem_and_not_a_walk_that_never_ret
 
 
 def test_a_gh_that_vanished_between_the_lookup_and_the_call_is_a_problem_too(monkeypatch, gh):
-    # arrange: `shutil.which` said yes and the PATH changed under it
-    def _gone(argv, **kwargs):
-        raise FileNotFoundError(2, "No such file or directory", "gh")
-
-    monkeypatch.setattr(run, "run", _gone)
+    # arrange: `shutil.which` said yes and the PATH changed under it; the real `run` meets no gh
+    monkeypatch.setenv("PATH", "/nonexistent")
 
     # act
     ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),

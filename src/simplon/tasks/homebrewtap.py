@@ -35,7 +35,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import unquote, urlparse
@@ -258,12 +257,12 @@ def audit(text: str, name: str, online: bool) -> tuple[int, int]:
     container, lifecycle = docker.lifecycle()
     argv = ["docker", "run", "--rm", "-i", "--network", "bridge", *lifecycle, BREW_IMAGE,
             "bash", "-c", script(name, online)]
-    try:
-        with docker.stopped_on_interrupt(container):
-            result = run(argv, timeout=AUDIT_TIMEOUT_S, input_text=text)
-    except subprocess.TimeoutExpired as e:
+    with docker.stopped_on_interrupt(container):
+        result = run(argv, timeout=AUDIT_TIMEOUT_S, input_text=text)
+    if result.timed_out:
+        docker.remove(container)
         raise ValueError(f"auditing {name} in {BREW_IMAGE} took longer than AUDIT_TIMEOUT_S ({AUDIT_TIMEOUT_S} s) "
-                         f"and was stopped; rerun it, and raise AUDIT_TIMEOUT_S if brew is that slow") from e
+                         f"and was stopped; rerun it, and raise AUDIT_TIMEOUT_S if brew is that slow")
     if result.out:
         log.info(result.out.rstrip("\n"))
     rcs = parse(result.out, result.err)

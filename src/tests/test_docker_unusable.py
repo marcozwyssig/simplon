@@ -22,19 +22,25 @@ import pytest
 
 import conftest
 from simplon.adapters import docker
+from simplon.kernel import run as run_module
+
+#: Taken before any test patches `simplon.kernel.run.run`, so a stand-in can still reach the real one.
+_REAL_RUN = run_module.run
 
 
 class _Unexecutable:
     """A `docker` that is on PATH and cannot be exec'd, which is what a noexec mount produces."""
 
-    def __init__(self, path: str = "/mnt/noexec/docker") -> None:
+    def __init__(self, path: str = "/") -> None:
         self.path = path
 
     def which(self, _name: str) -> str:
         return self.path
 
-    def run(self, _argv, **_kw):
-        raise PermissionError(13, "Permission denied", "docker")
+    def run(self, argv, **kw):
+        """The REAL `run`, aimed at something that exists and cannot be exec'd: a directory is EACCES, the
+        errno the noexec mount gave. Since si#653 `run` answers that with a Result, not an exception."""
+        return _REAL_RUN([self.path, *argv[1:]], **kw)
 
 
 def test_the_kernel_answers_not_reachable_instead_of_raising(monkeypatch) -> None:
@@ -86,16 +92,17 @@ def test_a_working_docker_is_still_yes(monkeypatch) -> None:
     assert conftest.docker_is_usable() is True
 
 
-@pytest.mark.parametrize("error", [PermissionError(13, "Permission denied"), OSError("exec format error")])
-def test_every_way_the_exec_can_fail_answers_no(monkeypatch, error) -> None:
+@pytest.mark.parametrize("unrunnable", ["directory", "not-a-binary"])
+def test_every_way_the_exec_can_fail_answers_no(monkeypatch, tmp_path, unrunnable) -> None:
     """`noexec` is the one that was measured; a wrong-architecture binary and a broken interpreter reach
-    the same place. The guard is written against OSError rather than against the one subclass that
-    happened to be seen."""
+    the same place. Real execs: a directory is EACCES, an executable file that is no binary is ENOEXEC."""
     # arrange
-    def raising(*_a, **_k):
-        raise error
-
-    monkeypatch.setattr(docker, "run", raising)
+    target = tmp_path
+    if unrunnable == "not-a-binary":
+        target = tmp_path / "docker"
+        target.write_bytes(b"\x00\x01 not an executable\n")
+        target.chmod(0o755)
+    monkeypatch.setattr(docker, "run", _Unexecutable(str(target)).run)
 
     # act / assert
     assert docker._daemon_reachable() is False

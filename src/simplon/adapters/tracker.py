@@ -63,7 +63,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -410,15 +409,16 @@ def _gh(argv: list[str], *, input_text: str | None = None) -> tuple[run.Result |
     ONE PLACE, because "nothing in here raises at the caller" is a promise about the process and not only
     about the exit code. A `gh` that hangs on a stalled connection never returns at all, and a `gh` the
     PATH lost between `shutil.which` and here raises `FileNotFoundError` - neither is an rc, and both
-    would reach a walk whose answers are on disk and whose record has not been written.
+    would reach a walk whose answers are on disk and whose record has not been written. Since si#653 both
+    come back from `run` as values, so this only reads them.
     """
-    try:
-        return run.run(argv, timeout=TIMEOUT, input_text=input_text), ""
-    except subprocess.TimeoutExpired:
+    result = run.run(argv, timeout=TIMEOUT, input_text=input_text)
+    if result.timed_out:
         return None, (f"the tracker did not answer within {TIMEOUT:.0f}s, so this refusal was not filed "
                       f"and the walk went on rather than waiting on it")
-    except OSError as exc:
-        return None, f"`gh` could not be run ({exc})"
+    if result.not_started:
+        return None, f"`gh` could not be run ({result.not_started})"
+    return result, ""
 
 
 def _github_find(destination: Destination, ident: str) -> tuple[str, str]:

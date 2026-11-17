@@ -18,7 +18,6 @@ import os
 import re
 import shlex
 import stat
-import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
@@ -157,13 +156,13 @@ def measure(wheel: Path, depends_on: Sequence[str], python: str) -> tuple[Dist, 
     argv = ["docker", "run", "--rm", "--network", "bridge", *lifecycle,
             "-v", f"{hostpath.translate(wheel.parent)}:/w:ro",
             BREW_IMAGE, "bash", "-c", bash]
-    try:
-        with docker.stopped_on_interrupt(container):
-            result = run(argv, timeout=CLOSURE_TIMEOUT_S)
-    except subprocess.TimeoutExpired as e:
+    with docker.stopped_on_interrupt(container):
+        result = run(argv, timeout=CLOSURE_TIMEOUT_S)
+    if result.timed_out:
+        docker.remove(container)
         raise ValueError(f"measuring the closure of {wheel.name} in {BREW_IMAGE} took longer than "
                          f"CLOSURE_TIMEOUT_S ({CLOSURE_TIMEOUT_S} s) and was stopped; rerun it, and raise "
-                         f"CLOSURE_TIMEOUT_S if the bottle downloads are that slow") from e
+                         f"CLOSURE_TIMEOUT_S if the bottle downloads are that slow")
     if not result.ok:
         both = result.err.rstrip("\n") + "\n" + result.out
         raise ValueError(f"measuring the closure of {wheel.name} in {BREW_IMAGE} failed (rc {result.rc}); "

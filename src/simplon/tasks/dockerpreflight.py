@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 from simplon.adapters import docker, host
@@ -48,9 +47,8 @@ def preflight(editor: str = "") -> int:
     if shutil.which("docker") is None:
         log.error("no `docker` on PATH: install docker, or Colima on macOS (https://github.com/abiosoft/colima)")
         return 1
-    try:
-        answered = run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=VERSION_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
+    answered = run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=VERSION_TIMEOUT_S)
+    if answered.timed_out:
         log.error(f"docker did not answer within {VERSION_TIMEOUT_S:g} s; check that its daemon runs and "
                   "that `docker context ls` marks one this host can reach")
         return 1
@@ -93,9 +91,8 @@ def ci_preflight() -> int:
         log.error("no `docker` on PATH, so no job step here can start a container")
         return 1
     argv = ["docker", "run", "--rm", "--network", "none", PROBE_IMAGE, "true"]
-    try:
-        result = run(argv, timeout=PROBE_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
+    result = run(argv, timeout=PROBE_TIMEOUT_S)
+    if result.timed_out:
         log.error(f"`docker run {PROBE_IMAGE}` did not finish within {PROBE_TIMEOUT_S:g} s; the daemon or the "
                   "registry is not answering")
         return 1

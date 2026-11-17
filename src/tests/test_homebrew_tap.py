@@ -270,3 +270,14 @@ def test_a_read_back_that_fails_after_the_commit_names_the_commit(product, capsy
     said = _said(capsys)
     assert "refused: " in said and commit in said
     assert "written" not in said
+
+
+def test_an_audit_past_its_limit_is_a_refusal_and_its_container_is_removed(monkeypatch, removals):
+    # arrange: si#653 - `run` returns the timeout, so it no longer unwinds through stopped_on_interrupt
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(homebrewtap, "run", lambda argv, **kw: Result(-9, "", "", timed_out=True))
+
+    # act / assert
+    with pytest.raises(ValueError, match="AUDIT_TIMEOUT_S"):
+        homebrewtap.audit("class Simplon < Formula\nend\n", "simplon", False)
+    assert len(removals) == 1
