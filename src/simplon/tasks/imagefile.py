@@ -48,7 +48,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from simplon.adapters import docker, githubpackages, hostpath
-from simplon.kernel import log
+from simplon.kernel import limits, log
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context
 from simplon.manifest import results as results_mod
@@ -85,7 +85,9 @@ FILE_TEST_IMAGE = docker.pinned_image(
     "simplon.tasks.imagefile")
 
 #: Seconds the warm-up pull of `FILE_TEST_IMAGE` may take: a pull is a download, not the file's answer, so it is
-#: outside `timeout`, and bounded so a hung registry cannot hang the test.
+#: outside `timeout`, and bounded so a hung registry cannot hang the test. Shorter than the class default
+#: `limits.DOCKER_PULL` (si#654), which is sized for a product's image: this one is a small busybox, and a
+#: failed warm-up is only a warning.
 PULL_TIMEOUT = 300
 
 #: Where the file is mounted, read-only, inside `FILE_TEST_IMAGE`.
@@ -208,7 +210,7 @@ def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path:
     source = published_reference(cfg, tag, platform)
     if source is None:
         return 1
-    pulled = run(["docker", "pull", source])
+    pulled = run(["docker", "pull", source], timeout=limits.DOCKER_PULL)
     if not pulled.ok:
         log.error(f"`docker pull {source}` failed, so nothing was copied: "
                   f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}.\n"
@@ -242,7 +244,8 @@ def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None
     `linux/arm64`, as in `image.missing_platforms`.
     """
     ref = image.reference(cfg, tag)
-    fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref])
+    fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref],
+                  timeout=limits.ORAS)
     if not fetched.ok:
         log.error(f"{ref} could not be read from the registry, so nothing was pulled: "
                   f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"

@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
-from simplon.kernel import log, run
+from simplon.kernel import limits, log, run
 from simplon.adapters import oras
 from simplon.manifest.context import TaskRefused
 
@@ -99,7 +99,7 @@ def token() -> str:
     if from_env:
         return from_env
 
-    result = run.run(["gh", "auth", "token"], capture=True)
+    result = run.run(["gh", "auth", "token"], capture=True, timeout=limits.GH)
     if result.not_started:
         raise PackageError(
             f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({result.not_started}). "
@@ -300,7 +300,7 @@ def tags(registry: str, repository: str) -> list:
     """
     require_oras()
     result = run.run(["oras", "repo", "tags", f"{registry.rstrip('/')}/{repository.strip('/')}"],
-                     capture=True)
+                     capture=True, timeout=limits.ORAS)
     if result.rc != 0:
         raise PackageError(
             f"could not list tags of {repository}: {result.err or result.out}\n"
