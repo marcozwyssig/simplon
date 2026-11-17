@@ -55,6 +55,23 @@ jobs:
           # si#622: the job's token is not left in .git/config for every step, build and tests
           # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
           persist-credentials: false
+      # si#574: 'release homebrew-tap' mints a GitHub App token from these secrets. A dry run skips that step, so
+      # without this check it is green with a secret missing, and the real run stops at the token step - after the
+      # steps before it have published what cannot be taken back (v0.37.0: tag and PyPI, then no formula). The
+      # expression `secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too.
+      - name: 'Check the secrets every `token: app` step needs'
+        env:
+          SET_HOMEBREW_TAP_CLIENT_ID: ${{ secrets.HOMEBREW_TAP_CLIENT_ID != '' }}
+          SET_HOMEBREW_TAP_APP_KEY: ${{ secrets.HOMEBREW_TAP_APP_KEY != '' }}
+        run: |
+          missing=""
+          [ "$SET_HOMEBREW_TAP_CLIENT_ID" = true ] || missing="$missing HOMEBREW_TAP_CLIENT_ID"
+          [ "$SET_HOMEBREW_TAP_APP_KEY" = true ] || missing="$missing HOMEBREW_TAP_APP_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not set in this repository's Actions secrets:$missing - a \`token: app\` step mints its GitHub App token from them (si#574); store them before releasing"
+            exit 1
+          fi
+          echo "set: HOMEBREW_TAP_CLIENT_ID HOMEBREW_TAP_APP_KEY"
       # si#570: the workflow's `emulates:`, registered before anything in the job runs.
       - name: Register emulation for linux/arm64
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1

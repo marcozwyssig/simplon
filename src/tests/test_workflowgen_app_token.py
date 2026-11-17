@@ -199,3 +199,93 @@ def test_the_note_mentions_the_if_only_when_one_is_copied():
     guarded = _render("- command: release tap\n  if: ${{ !inputs.dry_run }}\n")
     assert "carries the leaf's `if:`" not in plain
     assert "carries the leaf's `if:`" in guarded
+
+
+# --- si#574: the release's dry run is red when a secret a `token: app` step needs is not set -----------------
+
+_TAP_TASK = ('tasks:\n  tap: { impl: "test_workflowgen_app_token:tap", help: "Tap.", '
+             "token: app, unattended: true, publishes: true }\nci:\n")
+_TAP_COMMAND = "      tap: { task: tap, with: { repository: marcozwyssig/homebrew-tap } }\n      all:\n"
+_CHECK_NAME = "Check the secrets every `token: app` step needs"
+
+_TAP_JOB = """      tap-job:
+        runs-on: ubuntu-latest
+        needs: release
+        steps: [{ command: release tap }]
+"""
+
+
+def _release_with_tap(*, in_release: bool, job: str = "") -> str:
+    """The release workflow with a `token: app` leaf: a member of the aggregate (the derived job runs it), or
+    the one step of a product job beside the derived one, which is simplon's own homebrew-tap shape."""
+    product = _RELEASE_PRODUCT.replace("ci:\n", _TAP_TASK, 1).replace("      all:\n", _TAP_COMMAND, 1)
+    if in_release:
+        product = product.replace("tag, gh-publish]", "tag, gh-publish, tap]")
+    return _render_release(product, _RELEASE_WORKFLOWS + job)
+
+
+def _render_release(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> str:
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = {**yaml.safe_load(product), **yaml.safe_load(workflows)}
+    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+                              artifacts=artifactsection.declared(data))
+
+
+def _check(text: str) -> "tuple[int, dict] | None":
+    found = [(at, step) for at, step in enumerate(_steps(text, "release")) if step.get("name") == _CHECK_NAME]
+    return found[0] if found else None
+
+
+@pytest.mark.parametrize("in_release, job", [(True, ""), (False, _TAP_JOB)],
+                         ids=["leaf-in-the-derived-job", "leaf-in-a-product-job"])
+def test_the_release_job_checks_the_app_secrets_first_and_on_a_dry_run_too(in_release, job):
+    """si#574: v0.37.0's dry run was green because it skips the one step that needs the secrets; the real run
+    then stopped after PyPI. The check reads `secrets.X != ''`, never the value, and carries no `if:`."""
+    # act
+    text = _release_with_tap(in_release=in_release, job=job)
+
+    # assert
+    found = _check(text)
+    assert found is not None
+    at, step = found
+    steps = _steps(text, "release")
+    cut = next(i for i, s in enumerate(steps) if s.get("name") == "Cut the tag in this checkout")
+    assert at < cut
+    assert "if" not in step
+    assert step["env"] == {"SET_HOMEBREW_TAP_CLIENT_ID": "${{ secrets.HOMEBREW_TAP_CLIENT_ID != '' }}",
+                           "SET_HOMEBREW_TAP_APP_KEY": "${{ secrets.HOMEBREW_TAP_APP_KEY != '' }}"}
+    assert "secrets." not in step["run"]
+
+
+def test_a_release_with_no_app_leaf_checks_no_secret():
+    assert _check(_render_release()) is None
+
+
+def test_a_leaf_in_a_job_with_an_environment_is_not_checked_and_the_file_says_so():
+    """An environment's secrets are visible only to a job that names it, so the release job cannot read them:
+    a check there would be red with the secret set. Not checked, and said in the release job."""
+    # act
+    text = _release_with_tap(in_release=False, job=_TAP_JOB + "        environment: tap\n")
+
+    # assert
+    assert _check(text) is None
+    release_job = text.split("\njobs:")[1].split("\n  announce:")[0]      # its note stands above it
+    assert "si#574" in release_job and "tap-job" in release_job and "environment" in release_job
+
+
+@pytest.mark.parametrize("client, key, rc", [("true", "true", 0), ("false", "true", 1), ("false", "false", 1)])
+def test_the_check_is_red_naming_each_secret_that_is_not_set(client, key, rc):
+    """The step's own `run:` text, run by a real bash with the values GitHub's expression gives."""
+    import subprocess
+    _, step = _check(_release_with_tap(in_release=True))
+    env = {"PATH": "/usr/bin:/bin", "SET_HOMEBREW_TAP_CLIENT_ID": client, "SET_HOMEBREW_TAP_APP_KEY": key}
+
+    # act
+    done = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True, text=True)
+
+    # assert
+    assert done.returncode == rc
+    if rc:
+        assert "::error::" in done.stdout
+        assert ("HOMEBREW_TAP_CLIENT_ID" in done.stdout) == (client == "false")
+        assert ("HOMEBREW_TAP_APP_KEY" in done.stdout) == (key == "false")
