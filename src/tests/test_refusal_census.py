@@ -1049,6 +1049,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # a list of platforms reaches setup-qemu-action and fails there or registers nothing.
     ("workflowgen", "_emulates", "is read only beside"): DIAGNOSIS,
     ("workflowgen", "_emulates", "is a non-empty list of platforms"): DIAGNOSIS,
+    # si#720, the same two reasons: beside no `release:` the key reaches GitHub as a workflow key, which it
+    # refuses; a value that is not a positive whole number is refused by GitHub, or as 0 ends the job.
+    ("workflowgen", "_release_timeout", "is read only beside"): DIAGNOSIS,
+    ("workflowgen", "_release_timeout", "is the derived release job's time limit"): DIAGNOSIS,
     ("workflowgen", "_release_extras", "is a mapping of scope -> level"): DIAGNOSIS,
     # An EXPRESSION rule, not a diagnosis (final review of si#490): a release with no tag, no GitHub
     # Release and no package push would have worked with `contents: read` - the spec lets an aggregate
