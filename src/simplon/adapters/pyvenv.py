@@ -31,7 +31,13 @@ from simplon.adapters import fetch
 from simplon.kernel import log
 from simplon.kernel.run import run
 
-GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+# get-pip.py, PINNED (si#668): pypa/get-pip at one commit, checked against its sha256 before it runs.
+# bootstrap.pypa.io/get-pip.py is that repository's public/get-pip.py at its head, and moves. Source of the
+# digest: measured, by downloading GET_PIP_URL on 2026-11-17; on that day the head served by
+# bootstrap.pypa.io was byte-identical to it. Bump the commit and the digest together, deliberately.
+GET_PIP_COMMIT = "8c427468071b5d15717839ffd76c53a96df8b703"  # 2026-11-03
+GET_PIP_SHA256 = "356e0d0de21cdc348c3394084d90939b85e4246c4d14c76aee6ca4f46646ea98"
+GET_PIP_URL = f"https://raw.githubusercontent.com/pypa/get-pip/{GET_PIP_COMMIT}/public/get-pip.py"
 
 
 def _require_host_python(venv: Path) -> None:
@@ -70,7 +76,10 @@ def ensure_venv(venv: Path) -> Path:
         log.info(f"python3 lacks ensurepip; bootstrapping pip into {venv.name} via get-pip.py")
         run(["python3", "-m", "venv", "--without-pip", str(venv)])
         script = venv / "get-pip.py"
-        fetch.download(GET_PIP_URL, script, label="get-pip.py")
+        try:
+            fetch.download(GET_PIP_URL, script, label="get-pip.py", sha256=GET_PIP_SHA256)
+        except fetch.DownloadError as exc:
+            log.die(f"could not provision pip into {venv}: {exc} Nothing was run.")
         run([str(venv / "bin" / "python"), str(script), "-q"])
         script.unlink(missing_ok=True)
     if not os.access(pip, os.X_OK):

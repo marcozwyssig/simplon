@@ -25,6 +25,7 @@ import shutil
 import signal
 import sys
 import tarfile
+import tempfile
 import threading
 import uuid
 from collections.abc import Iterable, Iterator
@@ -38,10 +39,31 @@ from simplon.kernel import log
 from simplon.adapters import tools
 from simplon.kernel.run import Result, run
 
-# Pinned static-CLI release (download.docker.com/linux/static/stable); bump deliberately.
+# Pinned static-CLI release (download.docker.com/linux/static/stable); bump the version AND the digests
+# together, deliberately.
 DOCKER_CLI_VERSION = "29.6.1"
 # platform.machine() spellings -> docker's static-download arch directory names.
 _ARCHES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+# The sha256 of each pinned bundle (si#668). Source: measured, by downloading docker-29.6.1.tgz from
+# download.docker.com/linux/static/stable/<arch>/ on 2026-11-17. Docker publishes no checksum file
+# beside the static bundles (`<bundle>.sha256` answers 404), so the measurement is the only source.
+_STATIC_CLI_SHA256 = {
+    "x86_64": "b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f",
+    "aarch64": "917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881",
+}
+
+# Docker's engine install script, PINNED (si#668). This used to be `curl -fsSL https://get.docker.com
+# | sh`: unpinned, unchecked, and outside fetch's https-only redirect rule. get.docker.com serves
+# install.sh from the head of docker/docker-install; this is the same file at one commit, checked against
+# its sha256 before it runs, and run as a file rather than from a pipe. Measured 2026-11-17: the file
+# served by get.docker.com and the raw file at this commit differ in one line only, SCRIPT_COMMIT_SHA,
+# which the served copy has filled in and the raw copy leaves as a placeholder; the script only prints
+# it. Source of the digest: measured, by downloading ENGINE_INSTALL_URL on 2026-11-17. Bump the commit
+# and the digest together, deliberately.
+ENGINE_INSTALL_COMMIT = "8ad27bd3ac871feabe62f1d926c4067800c1732f"  # 2026-11-06
+ENGINE_INSTALL_SHA256 = "77f623a9f23857ebc45a50e37696fc406e3a60bda4ef17399444f792ecf8895d"
+ENGINE_INSTALL_URL = (f"https://raw.githubusercontent.com/docker/docker-install/{ENGINE_INSTALL_COMMIT}"
+                      f"/install.sh")
 # Kernel-namespaced opt-in toggle (the DELIVERY_* namespace, netctl#592); a product's ci.yml sets it.
 DOCKER_BOOTSTRAP_ENV = "DELIVERY_DOCKER_BOOTSTRAP"
 
@@ -60,6 +82,27 @@ def static_cli_url(machine: str, version: str = DOCKER_CLI_VERSION) -> str:
     return f"https://download.docker.com/linux/static/stable/{arch}/docker-{version}.tgz"
 
 
+def static_cli_sha256(machine: str) -> str:
+    """The pinned sha256 of the static bundle for a platform.machine() string. Pure; dies like
+    `static_cli_url` on an architecture docker does not publish static binaries for."""
+    arch = _ARCHES.get(machine.lower())
+    if arch is None:
+        log.die(f"docker bootstrap: no static docker CLI for architecture '{machine}'")
+    return _STATIC_CLI_SHA256[arch]
+
+
+def run_engine_installer(*, sudo: bool) -> Result:
+    """Run Docker's pinned engine install script (`sudo -E sh <script>` when `sudo`), and return its result.
+
+    Raises `fetch.DownloadError`, having run nothing, when the script cannot be fetched or is not the
+    pinned file. The caller says what that means for its own command.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        script = Path(scratch) / "install.sh"
+        fetch.download(ENGINE_INSTALL_URL, script, label="Docker install.sh", sha256=ENGINE_INSTALL_SHA256)
+        return run([*(["sudo", "-E"] if sudo else []), "sh", str(script)], capture=False)
+
+
 def tools_bin() -> Path:
     """Product-owned tool directory the bootstrap installs into (wiped by `clean` with build/).
 
@@ -72,12 +115,17 @@ def tools_bin() -> Path:
 def _fetch_static_cli(dest: Path) -> None:
     """Download the pinned bundle and extract ONLY the client binary to dest (the bundle also carries
     the engine binaries, which are useless in a container and stay out of the tool dir)."""
-    url = static_cli_url(platform.machine())
+    machine = platform.machine()
+    url = static_cli_url(machine)
     log.info(f"docker missing; fetching the static docker CLI {DOCKER_CLI_VERSION} "
              f"(client only, no root; the daemon must come from the host's socket)")
     dest.parent.mkdir(parents=True, exist_ok=True)
     bundle = dest.parent / "docker.tgz"
-    fetch.download(url, bundle, label=f"docker CLI {DOCKER_CLI_VERSION}")
+    try:
+        fetch.download(url, bundle, label=f"docker CLI {DOCKER_CLI_VERSION}",
+                       sha256=static_cli_sha256(machine))
+    except fetch.DownloadError as exc:
+        log.die(f"docker bootstrap: {exc}")
     try:
         with tarfile.open(bundle) as tar:
             member = tar.getmember("docker/docker")
@@ -146,12 +194,15 @@ def _join_docker_group(pfx: list) -> None:
 
 
 def _install_engine(pfx: list) -> None:
-    """Install the docker ENGINE via the official installer (#488; the same pipe-into-shell pattern
-    as hostsetup._install_linux, never $(...)), enable+start the service, and establish the group
+    """Install the docker ENGINE via Docker's pinned install script (#488; si#668 pinned it and stopped
+    piping it into a shell), enable+start the service, and establish the group
     membership that makes the socket reachable afterwards (si#87). Needs root/sudo."""
-    log.info("docker missing; installing the engine via get.docker.com (root/sudo available)")
-    shell = "sudo -E sh" if pfx else "sh"
-    run(["bash", "-c", f"curl -fsSL https://get.docker.com | {shell}"], capture=False)
+    log.info("docker missing; installing the engine with Docker's pinned install script "
+             "(root/sudo available)")
+    try:
+        run_engine_installer(sudo=bool(pfx))
+    except fetch.DownloadError as exc:
+        log.die(f"docker bootstrap: {exc} Nothing was run.")
     run([*pfx, "systemctl", "enable", "--now", "docker"])
     _join_docker_group(pfx)
 

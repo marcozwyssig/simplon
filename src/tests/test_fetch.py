@@ -1300,3 +1300,56 @@ def test_a_fetched_file_has_the_mode_a_plain_open_gives_with_or_without_resume(b
     # assert
     modes = {name: (tmp_path / name).stat().st_mode & 0o777 for name in ("plain", "staged.bin", "resumed.bin")}
     assert modes == {"plain": 0o644, "staged.bin": 0o644, "resumed.bin": 0o644}
+
+
+# --- a pinned sha256 (si#668) -------------------------------------------------------------------------
+
+
+def test_a_body_that_matches_its_pinned_sha256_lands(base, tmp_path):
+    # arrange
+    import hashlib
+    dest = tmp_path / "tool.tgz"
+
+    # act
+    with _capture(tty=False):
+        fetch.download(f"{base}/whole", dest, sha256=hashlib.sha256(BODY).hexdigest())
+
+    # assert
+    assert dest.read_bytes() == BODY
+
+
+def test_a_body_that_does_not_match_its_pinned_sha256_writes_nothing_and_says_what_it_got(base, tmp_path):
+    """The whole of the pin: a tampered body is refused before anything can read it under the final name,
+    and the refusal names the file, the URL, what was expected and what arrived."""
+    # arrange
+    import hashlib
+    dest = tmp_path / "tool.tgz"
+    pinned = "0" * 64
+
+    # act
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError) as refused:
+            fetch.download(f"{base}/whole", dest, sha256=pinned)
+
+    # assert
+    said = str(refused.value)
+    assert f"{base}/whole" in said and str(dest) in said
+    assert pinned in said and hashlib.sha256(BODY).hexdigest() in said
+    assert list(tmp_path.iterdir()) == [], "a body that failed its pin was left on disk"
+
+
+def test_a_resumed_body_that_does_not_match_its_pin_keeps_no_part_to_resume_from(base, tmp_path, versioned):
+    """A part that ends in a wrong file is not worth resuming: the next call would complete it into the
+    same refusal, forever."""
+    # arrange
+    dest = tmp_path / "big.iso"
+
+    # act
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True, sha256="0" * 64)
+        with pytest.raises(fetch.DownloadError, match="sha256"):
+            fetch.download(f"{base}/resumable", dest, resume=True, sha256="0" * 64)
+
+    # assert
+    assert list(tmp_path.iterdir()) == [], "a part that can only complete into a refusal was kept"

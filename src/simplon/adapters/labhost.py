@@ -24,7 +24,7 @@ import shutil
 import time
 from typing import Callable
 
-from simplon.adapters import diskguard, docker
+from simplon.adapters import diskguard, docker, fetch
 from simplon.kernel import log
 from simplon.adapters import host as host_mod     # module-level, so a test can monkeypatch the socket probe
 from simplon.adapters.host import Host
@@ -336,10 +336,14 @@ def install_host(*, os_name: str | None = None,
 def _install_linux() -> int:
     # Docker is installed automatically for parity with the macOS path (#468, where brew provisions
     # colima + docker). The official convenience script handles Ubuntu/Debian/RHEL alike and enables
-    # the service; same pipe-into-shell pattern as the containerlab installer below (never $(...)).
+    # the service; si#668 pinned it and checks its sha256 before it runs (see docker.ENGINE_INSTALL_URL).
     if not _have("docker"):
-        log.info("installing Docker (official get.docker.com installer, uses sudo)")
-        res = run(["bash", "-c", "curl -fsSL https://get.docker.com | sudo -E sh"], capture=False)
+        log.info("installing Docker (Docker's pinned install script, uses sudo)")
+        try:
+            res = docker.run_engine_installer(sudo=True)
+        except fetch.DownloadError as exc:
+            log.die(f"Docker install refused: {exc} Nothing was run.")
+            return 1
         if not res.ok:
             log.die(f"Docker install failed (rc {res.rc}); install it manually (apt install docker.io, "
                     f"or Docker's official repo) and re-run install")

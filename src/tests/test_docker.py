@@ -249,6 +249,14 @@ def test_bootstrap_installs_the_engine_when_privileged(monkeypatch, tmp_path):
     assert installed == [[]]
 
 
+def _serve_engine_script(monkeypatch, body: bytes = b"echo the pinned docker install script\n"):
+    """The real download of the engine's install script, answered from memory and pinned to `body`."""
+    import hashlib
+    import servedbytes
+    servedbytes.serve(monkeypatch, body)
+    monkeypatch.setattr(docker, "ENGINE_INSTALL_SHA256", hashlib.sha256(body).hexdigest())
+
+
 def test_the_engine_install_puts_the_invoking_user_in_the_docker_group(monkeypatch):
     # arrange (si#87): a non-root caller with sudo. get.docker.com creates the `docker` group but puts
     # nobody in it, and a long-lived service - a CI runner agent - inherits its groups at START, so the
@@ -257,6 +265,7 @@ def test_the_engine_install_puts_the_invoking_user_in_the_docker_group(monkeypat
     calls = []
     monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
     monkeypatch.setattr(docker, "_invoking_user", lambda: "runner")
+    _serve_engine_script(monkeypatch)
 
     # act
     docker._install_engine(["sudo", "-n"])
@@ -273,6 +282,7 @@ def test_the_engine_install_does_not_put_root_in_the_docker_group(monkeypatch):
     calls = []
     monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
     monkeypatch.setattr(docker, "_invoking_user", lambda: "root")
+    _serve_engine_script(monkeypatch)
 
     # act
     docker._install_engine([])
@@ -668,3 +678,49 @@ def test_the_system_socket_under_another_spelling_is_still_granted(monkeypatch, 
 
     # assert
     assert ["join"] in calls and any(argv[2:3] == ["setfacl"] for argv in calls)
+
+
+# --- the pinned downloads (si#668) -------------------------------------------------------------------
+
+def test_every_static_cli_arch_has_a_pinned_sha256():
+    assert len(docker.static_cli_sha256("x86_64")) == 64
+    assert len(docker.static_cli_sha256("aarch64")) == 64
+
+
+def test_a_tampered_static_cli_bundle_is_refused_and_writes_no_client(monkeypatch, tmp_path):
+    # arrange: the real download, serving bytes that are not the pinned bundle
+    import servedbytes
+    asked = servedbytes.serve(monkeypatch, b"not the docker bundle")
+    monkeypatch.setattr(docker.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(docker.log, "die", _boom)
+    dest = tmp_path / "bin" / "docker"
+
+    # act
+    with pytest.raises(SystemExit) as refused:
+        docker._fetch_static_cli(dest)
+
+    # assert
+    said = str(refused.value)
+    assert asked == [docker.static_cli_url("x86_64")] and asked[0] in said
+    assert docker.static_cli_sha256("x86_64") in said
+    assert list(dest.parent.iterdir()) == []
+
+
+def test_a_tampered_engine_install_script_is_refused_and_never_run(monkeypatch):
+    # arrange: get.docker.com used to be piped into sh unchecked; now the pinned script is fetched and
+    # checked first, and a body that is not it runs nothing
+    import servedbytes
+    from simplon.kernel.run import Result as R
+    asked = servedbytes.serve(monkeypatch, b"echo not the docker install script\n")
+    calls = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker.log, "die", _boom)
+
+    # act
+    with pytest.raises(SystemExit) as refused:
+        docker._install_engine(["sudo", "-n"])
+
+    # assert
+    assert asked == [docker.ENGINE_INSTALL_URL]
+    assert docker.ENGINE_INSTALL_SHA256 in str(refused.value)
+    assert calls == []

@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import IO, Any
 from urllib.parse import urlsplit
 
+from simplon.adapters import checksum
 from simplon.kernel import filelock, log
 
 #: How long a single socket operation may take. It bounds the connect AND every individual read, which
@@ -586,7 +587,7 @@ def _sink(part: Path, opened: IO[bytes] | None, offset: int) -> IO[bytes]:
 
 
 def download(url: str, dest: str | Path, *, label: str = "",
-             timeout: float = DEFAULT_TIMEOUT_S, resume: bool = False) -> Path:
+             timeout: float = DEFAULT_TIMEOUT_S, resume: bool = False, sha256: str = "") -> Path:
     """Fetch `url` to `dest`, saying how far along it is, and return `dest`.
 
     `label` is what the progress line calls the thing; it defaults to the last segment of the URL,
@@ -604,6 +605,12 @@ def download(url: str, dest: str | Path, *, label: str = "",
 
     A server with no range support is downloaded AGAIN, whole, inside the same call: the partial file is
     truncated first, so the fallback is a fresh download and never an append.
+
+    `sha256` (si#668) pins the body: the whole file is hashed before it takes the name `dest`, and a
+    digest that is not the pinned one is a `DownloadError` naming the file, the URL, the expected and the
+    received digest, with nothing written - not under `dest`, and no part kept to resume from, because a
+    part that completes into the wrong file would complete into the same refusal on every later call.
+    Empty, the default, checks nothing; every pinned download in this kernel passes one.
 
     Raises `DownloadError` - and only `DownloadError` - for a refused scheme, an HTTP error, a timeout,
     a truncated body or any transport failure, with the original exception attached as its cause.
@@ -671,6 +678,13 @@ def download(url: str, dest: str | Path, *, label: str = "",
                     "the partial file was discarded.") +
                 f" A truncated body is not an error urllib reports - the read simply ends - so this is "
                 f"the check between a short download and a file the next run would treat as cached.")
+        if sha256:
+            got = checksum.sha256_of(temporary)
+            if got != sha256:
+                keep = False
+                raise DownloadError(
+                    f"{url} is not the pinned file: its sha256 is {got}, expected {sha256}. Nothing was "
+                    f"written to {dest}.")
         os.replace(temporary, dest)
         keep = False          # the part IS the file now; the sweep below takes the sidecar with it
     except DownloadError:
