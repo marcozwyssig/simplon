@@ -1135,8 +1135,15 @@ def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: i
     return token, step._replace(modifiers={**step.modifiers, "env": leaf_env})
 
 
-def _release(workflow: "Workflow", manifest: Manifest,
-             artifacts: "Mapping[str, artifactsection.Declared]", reports: "str | None" = None) -> "tuple[Job, ...]":
+#: si#718: said above the step, because a reader asks why the release job starts with `help`.
+PROVISION_NOTE = """si#718: the launcher's first run in a fresh checkout builds its venv - a pip install of the
+kernel and its dependencies from PyPI. Here it happens in a step with no token in its environment, so
+nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
+manifest and prints the command list; a launcher that cannot provision is red here, before the cut."""
+
+
+def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, artifactsection.Declared]",
+             reports: "str | None" = None, product: str = "") -> "tuple[Job, ...]":
     """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
 
     NOTHING HERE ORDERS ANYTHING. `plan_for` returns the leaves in an order rule 8 accepted at load
@@ -1196,6 +1203,9 @@ def _release(workflow: "Workflow", manifest: Manifest,
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
     steps[lifted:lifted] = cut
+    steps.insert(0, Step(verbatim={"name": "Provision the launcher before any step holds a token",
+                                   "run": f"{launcher(product)} help"},
+                         note=PROVISION_NOTE))
     if workflow.emulates:
         from simplon.adapters.labhost import BINFMT_IMAGE
         steps.insert(0, Step(
@@ -1469,7 +1479,7 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     lines.append("jobs:")
     if workflow.release and artifacts is None:
         artifacts = artifactsection.declared(context.current().manifest_data())
-    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports), *workflow.jobs)
+    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports, product), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")

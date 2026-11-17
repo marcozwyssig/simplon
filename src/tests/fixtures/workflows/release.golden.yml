@@ -47,6 +47,12 @@ jobs:
           # si#622: the job's token is not left in .git/config for every step, build and tests
           # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
           persist-credentials: false
+      # si#718: the launcher's first run in a fresh checkout builds its venv - a pip install of the
+      # kernel and its dependencies from PyPI. Here it happens in a step with no token in its environment, so
+      # nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
+      # manifest and prints the command list; a launcher that cannot provision is red here, before the cut.
+      - name: Provision the launcher before any step holds a token
+        run: ./app.sh help
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: exec ./app.sh release check -- "$RELEASE_VERSION"
