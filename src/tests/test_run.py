@@ -410,3 +410,48 @@ def test_run_still_feeds_input_and_captures_both_streams():
 
     # assert
     assert (res.rc, res.out, res.err) == (4, "fed\n", "err\n")
+
+
+# --- decoding (si#652) --------------------------------------------------------------------------------
+# `run` decodes as UTF-8 with `errors="replace"`, the contract `run_stream` already had: a byte that is not
+# UTF-8 is shown as U+FFFD, never raised on, whatever the locale says.
+
+_NOT_UTF8 = ["sh", "-c", "printf 'a\\377b'; printf 'c\\377d' >&2"]
+
+
+def test_run_shows_a_byte_that_is_not_utf8_as_a_replacement_character():
+    # act
+    res = run_module.run(_NOT_UTF8)
+
+    # assert
+    assert (res.rc, res.out, res.err) == (0, "a�b", "c�d")
+
+
+def test_run_off_the_main_thread_decodes_the_same_way():
+    # arrange: off the main thread `run` takes its other path, which must keep the same contract
+    got: list[Result] = []
+
+    # act
+    thread = threading.Thread(target=lambda: got.append(run_module.run(_NOT_UTF8)))
+    thread.start()
+    thread.join(30)
+
+    # assert
+    assert [(r.out, r.err) for r in got] == [("a�b", "c�d")]
+
+
+def test_run_decodes_as_utf8_under_a_c_locale():
+    # arrange: a kernel whose locale codec is ASCII, so even a valid e-acute would fail a strict decode
+    kernel = ("from simplon.kernel import run as r\n"
+              "res = r.run(['sh', '-c', \"printf 'a\\\\303\\\\251\\\\377b'\"])\n"
+              "print(ascii(res.out))\n")
+    src = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(run_module.__file__))))
+    env = {**os.environ, "PYTHONUTF8": "0", "LC_ALL": "C", "LANG": "C",
+           "PYTHONPATH": os.pathsep.join([src, *filter(None, [os.environ.get("PYTHONPATH")])])}
+
+    # act
+    done = subprocess.run([sys.executable, "-c", kernel], capture_output=True, text=True, env=env,
+                          timeout=60, check=False)
+
+    # assert
+    assert (done.returncode, done.stdout.strip(), done.stderr) == (0, ascii("aé�b"), "")

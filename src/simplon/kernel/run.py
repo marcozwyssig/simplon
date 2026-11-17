@@ -155,6 +155,11 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     (e.g. pytest from the test dir so conftest.py is importable). env, when given, is ADDED to this
     process's environment for the child alone (si#507: a credential one git call needs and no other).
 
+    Output is decoded as UTF-8 with `errors="replace"`, whatever the locale says (si#652): the contract
+    `run_stream` has, output is shown, never raised on. A strict decode in the locale's codec made one
+    byte that is not UTF-8 in git, docker or gh output a `UnicodeDecodeError` from inside this wrapper,
+    and under `LC_ALL=C` even an e-acute.
+
     A STOP THAT REACHES THIS PROCESS REACHES THE CHILD (si#649). `subprocess.run` hands neither SIGINT nor
     SIGTERM on, and measured with a sleeping pytest as the child: a SIGTERM killed this python at once and
     left pytest running, reparented to init, with no junit; a SIGINT became a KeyboardInterrupt here and a
@@ -172,15 +177,16 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     full_env = {**os.environ, **env} if env else None
     stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)]
     if os.name != "posix" or threading.current_thread() is not threading.main_thread():
-        done = subprocess.run(argv, capture_output=capture, text=True, timeout=timeout, check=check,
-                              input=input_text, cwd=cwd, env=full_env)
+        done = subprocess.run(argv, capture_output=capture, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, check=check, input=input_text, cwd=cwd, env=full_env)
         return Result(rc=done.returncode,
                       out=(done.stdout or "") if capture else "",
                       err=(done.stderr or "") if capture else "")
 
     pipe = subprocess.PIPE if capture else None
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else None,
-                            stdout=pipe, stderr=pipe, text=True, cwd=cwd, env=full_env)
+                            stdout=pipe, stderr=pipe, text=True, encoding="utf-8", errors="replace",
+                            cwd=cwd, env=full_env)
     received: list[int] = []
 
     def hand_on(signum: int, frame: object) -> None:
