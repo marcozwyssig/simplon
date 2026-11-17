@@ -618,6 +618,10 @@ instead.
   - **failed:** the plugin is named.
 - **Exit codes:** the launcher never fails a command over a plugin; `support install` is rc 1 on a
   failure.
+- **The container route provisions nothing** (si#710). Inside the kernel container `support install`
+  skips brew, gh, the gh extensions and the plugins, each with one line saying to run it on the venv
+  route, and the skip is rc 0. Until then the gates saw the image's own gh and installed into the
+  throwaway container.
 
 **And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the
 si#95 design's own command table had put at `test unit` and `test analyse`. The split the kernel keeps is

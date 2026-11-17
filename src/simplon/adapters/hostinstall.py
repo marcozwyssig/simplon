@@ -72,10 +72,26 @@ def report(name: str, outcome: Outcome) -> None:
         log.error(f"{name}: install failed: {outcome.detail}")
 
 
+#: Why the container route provisions nothing, and where to go instead (si#710). One wording for every gate
+#: `support install` drives, the claude plugins included.
+CONTAINER_ROUTE_SKIP = ("the container route installs nothing on the host; run support install on the venv "
+                        "route")
+
+
+def container_route(env: Mapping[str, str]) -> bool:
+    """Whether this kernel runs in the container the launcher started (si#710).
+
+    `DELIVERY_ROUTE=inside` is the launcher's own statement: it passes it into the kernel container and a
+    user never types it. Without this, every gate below provisioned the throwaway container and reported
+    it as the host (measured by firn on 0.44.0: gh PRESENT, gh-stack `installed` on every run).
+    """
+    return env.get("DELIVERY_ROUTE") == "inside"
+
+
 def machine_skip_reason(env: Mapping[str, str], container: bool) -> str:
     """Why this machine is not one to provision, or "" when it is."""
     if container:
-        return "the container route: host tools are installed on the host"
+        return CONTAINER_ROUTE_SKIP
     for variable in ("CI", "GITHUB_ACTIONS"):
         if env.get(variable, "").lower() == "true":
             return f"{variable}=true: host tools are for a machine somebody develops on"

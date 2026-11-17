@@ -465,6 +465,23 @@ def test_a_complete_plugin_set_with_every_required_tool_present_is_still_nothing
     assert any(level == "ok" and "nothing to do" in msg for level, msg in lines)
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_support_claude_plugins_on_the_container_route_is_skipped_and_says_where_to_go(
+        monkeypatch, tmp_path, dry_run):
+    """si#710: the dry run passed `container=False` literally and the run passed nothing, so inside the
+    kernel container both planned against the container's own `claude`. The route is the launcher's
+    `DELIVERY_ROUTE=inside`."""
+    lines = _machine(monkeypatch, tmp_path, requires=[], on_path=["gh"])
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+
+    rc = claudeplugins.install(dry_run=dry_run)
+
+    assert rc == 0
+    assert ("info", "Claude Code plugins skipped: the container route installs nothing on the host; run "
+                    "support install on the venv route") in lines
+    assert not any("install" in msg and "skipped" not in msg and "would" in msg for _, msg in lines)
+
+
 
 # --- si#581: a product's marketplace replaces the default of the same name ---------------------------
 
