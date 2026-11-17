@@ -72,8 +72,8 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 270 | nothing - the declaration had no working meaning |
-| expression rule | 43 | something it could otherwise have said |
-| **all load-time refusals** | **313** | |
+| expression rule | 42 | something it could otherwise have said |
+| **all load-time refusals** | **312** | |
 
 si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
 `env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus
@@ -155,6 +155,12 @@ environment and nothing under `ci:` does, so there is no second spelling left to
 a product may not declare `transparent:` on a group, and nothing under `ci:` may declare `env_first:`.
 One deleted, two added: the expression-rule count went up by one, from 28 to 29, not down.
 
+si#719 struck an expression rule: a `permissions:` beside `release:` that set `contents` or `packages`
+below `write` was refused, because the workflow-level block was where the release got its write scopes,
+so every other job inherited them. The derived release job now carries those scopes in its own block, a
+lower workflow default takes nothing from it, and the rule had nothing left to guard. si#720 added two
+diagnoses for `timeout_minutes:` beside `release:`.
+
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
 different population with a different cost, and are not counted here.
@@ -193,7 +199,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 36 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 35 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
