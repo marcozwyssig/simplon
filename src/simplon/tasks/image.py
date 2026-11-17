@@ -114,7 +114,7 @@ from simplon.model import artifactschema
 from simplon.model.command import TaskCommand
 from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
-from simplon.kernel import log
+from simplon.kernel import limits, log
 from simplon.adapters.labhost import BINFMT_IMAGE
 from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import Result, run, stream
@@ -601,7 +601,7 @@ def published(ref: str) -> bool:
     publish.
     """
     githubpackages.require_oras()
-    return run(["oras", "manifest", "fetch", "--descriptor", ref]).ok
+    return run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS).ok
 
 
 def present_locally(ref: str) -> bool:
@@ -1752,7 +1752,7 @@ def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mappin
         return rc
     try:
         githubpackages.require_oras()
-        fetched = run(["oras", "manifest", "fetch", ref])
+        fetched = run(["oras", "manifest", "fetch", ref], timeout=limits.ORAS)
     except githubpackages.PackageError as failure:
         log.error(f"{ref} was pushed, but the publish could not be verified: {failure}")
         return 1

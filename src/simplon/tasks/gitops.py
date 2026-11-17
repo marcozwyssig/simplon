@@ -37,7 +37,7 @@ import shutil
 from pathlib import Path
 from typing import Sequence
 
-from simplon.kernel import log
+from simplon.kernel import limits, log
 from simplon.kernel.run import Result, run
 
 ROOT = Path.cwd()
@@ -50,11 +50,16 @@ def configure(root: Path | str) -> None:
 
 
 def _git(args: list[str], *, capture: bool = True, remote: bool = False):
-    """`remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does."""
+    """`remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does.
+
+    An operation that talks to a remote (`limits.GIT_REMOTE_OPS`) runs under `limits.GIT_REMOTE` whether
+    or not it carries the credential (si#654): a hung remote is a hung run either way.
+    """
+    timeout = limits.GIT_REMOTE if args and args[0] in limits.GIT_REMOTE_OPS else None
     auth = remote_auth() if remote else {}
     if auth:
-        return run(["git", "-C", str(ROOT), *args], capture=capture, env=auth)
-    return run(["git", "-C", str(ROOT), *args], capture=capture)
+        return run(["git", "-C", str(ROOT), *args], capture=capture, env=auth, timeout=timeout)
+    return run(["git", "-C", str(ROOT), *args], capture=capture, timeout=timeout)
 
 
 def remote_auth() -> dict[str, str]:
@@ -221,8 +226,11 @@ def push() -> int:
     if not branch:
         log.die("not a git repository")
     log.info(f"pull --rebase + push ({branch})")
-    if not _git(["pull", "--rebase"], capture=False).ok:
+    pulled = _git(["pull", "--rebase"], capture=False)
+    if not pulled.ok:
         _git(["rebase", "--abort"])
+        if pulled.timed_out:            # `run` has said which call and after how long; it was no conflict
+            log.die("pull --rebase got no answer from the remote; nothing was pushed")
         log.die("pull --rebase failed (conflicts?); resolve them, then re-run the push")
     if not _git(["push"], capture=False).ok:
         log.die("git push failed")
@@ -310,7 +318,7 @@ def _pr_heads(state: str) -> set[str] | None:
     if shutil.which("gh") is None:
         return None
     res = run(["gh", "pr", "list", "--state", state, "--limit", "300",
-               "--json", "headRefName", "-q", ".[].headRefName"])
+               "--json", "headRefName", "-q", ".[].headRefName"], timeout=limits.GH)
     if not res.ok:
         return None
     return {ln.strip() for ln in (res.out or "").splitlines() if ln.strip()}
@@ -480,7 +488,7 @@ def parse_scopes(status_text: str) -> tuple[str, ...]:
 def gh_scopes(host: str = "github.com") -> tuple[str, ...]:
     """The scopes the stored gh token actually carries."""
     _require("gh")
-    result = run(["gh", "auth", "status", "-h", host])
+    result = run(["gh", "auth", "status", "-h", host], timeout=limits.GH)
     return parse_scopes(f"{result.out}\n{result.err}")
 
 

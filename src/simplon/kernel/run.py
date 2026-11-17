@@ -192,8 +192,8 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     started and waited for the same way, with no handler, and is as unprotected as before.
 
     A CHILD PAST `timeout` OR ONE THAT NEVER STARTED IS A RESULT, NOT AN EXCEPTION (si#653): `timed_out`
-    and `not_started` say which, and `ok` is false for both. A child past its limit is killed and what it
-    had said is kept. A child that never started has its reason in `err` and `not_started`; with
+    and `not_started` say which, and `ok` is false for both. A child past its limit is killed, what it
+    had said is kept, and `err` ends with a line naming the tool, the operation and the limit (si#654). A child that never started has its reason in `err` and `not_started`; with
     capture=False the reason is also written to stderr, where the child's own words would have gone, so a
     caller that streams and reports only the rc does not swallow it.
     """
@@ -223,7 +223,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
             raise _Stopped(signum)              # out of the unbounded wait; later ones are only handed on
 
     waiting = True
-    timed_out = False
+    timed_out = held = False
     previous: dict[int, Callable[[int, FrameType | None], Any] | int | signal.Handlers] = {}
     try:
         try:
@@ -248,7 +248,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
             waiting = False
             timed_out = True
             proc.kill()                         # what `subprocess.run` does with its own timeout
-            out, err = proc.communicate()       # what the child said before it was killed
+            out, err, held = _drain_killed(proc)
         except BaseException:
             waiting = False
             proc.kill()
@@ -260,11 +260,60 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     if received:
         # Delivered to the handler that was there before, which is what makes the caller's unwind its own.
         signal.raise_signal(received[0])
-    result = Result(rc=proc.returncode, out=(out or "") if capture else "", err=(err or "") if capture else "",
-                    timed_out=timed_out)
+    err = (err or "") if capture else ""
+    if timed_out:
+        # Which tool, which operation, which limit (si#654): not a bare non-zero. Into `err` for a caller
+        # that prints what the child said; to stderr when the child's own words went there.
+        stopped = f"`{shown(argv)}` gave no answer within {timeout:g} s and was stopped"
+        if held:
+            stopped += "; a process it started still held its output and was left running"
+        if capture:
+            err += ("" if not err or err.endswith("\n") else "\n") + stopped + "\n"
+        else:
+            log.error(stopped)
+    result = Result(rc=proc.returncode, out=(out or "") if capture else "", err=err, timed_out=timed_out)
     if check and not result.ok:
         raise subprocess.CalledProcessError(proc.returncode, argv, out, err)
     return result
+
+
+def _drain_killed(proc: subprocess.Popen) -> tuple[str, str, bool]:
+    """What a child killed for its timeout had said, and whether a process it started still holds its pipes.
+
+    MEASURED (si#654): `git ls-remote` against a remote that accepts and never answers is two processes,
+    and killing `git` leaves `git-remote-http` blocked on the socket with git's stdout in hand. A plain
+    `communicate()` - which is also what `subprocess.run` does after its own timeout - then waits for THAT
+    process, and the timeout bought nothing: the run still hung. So the drain is bounded, and past it the
+    pipes are closed here and the verdict is returned. The descendant is not killed: it is in this
+    process's group, and nothing here knows its pid without walking the process table.
+    """
+    try:
+        out, err = proc.communicate(timeout=_UNWIND_GRACE)
+        return out or "", err or "", False
+    except subprocess.TimeoutExpired:
+        for pipe in (proc.stdout, proc.stderr):
+            if pipe is not None:
+                pipe.close()
+        proc.wait()
+        return "", "", True
+
+
+def shown(argv: list[str]) -> str:
+    """The tool and its operation, for a sentence about a call: `git ls-remote origin`, `gh pr list`.
+
+    The program's name and the first two words that are not options, `-C <dir>` and `-c <key=value>`
+    skipped with their values - enough to tell which of a tool's calls it was without quoting a token or
+    a path a whole argv might carry.
+    """
+    words: list[str] = []
+    rest = list(argv[1:])
+    while rest and len(words) < 2:
+        word = rest.pop(0)
+        if word in ("-C", "-c"):
+            rest = rest[1:]
+        elif not word.startswith("-"):
+            words.append(word)
+    return " ".join([os.path.basename(argv[0]), *words])
 
 
 def stream(argv: list[str], *, cwd: str | None = None) -> int:

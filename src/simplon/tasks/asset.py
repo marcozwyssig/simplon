@@ -22,7 +22,7 @@ from __future__ import annotations
 import shutil
 
 from simplon.manifest import context
-from simplon.kernel import log, run
+from simplon.kernel import limits, log, run
 
 SECTION = "assets"
 
@@ -85,7 +85,7 @@ def publish(name: str = "", tag: str = "") -> int:
     # refuses where it does not, so a cell would hang or fail on a flag the manifest never mentioned.
     told = ["--title", spec.get("title", "") or resolved, "--notes", spec.get("notes", "")]
 
-    created = run.run(["gh", "release", "create", resolved, *told, *where])
+    created = run.run(["gh", "release", "create", resolved, *told, *where], timeout=limits.GH)
     if not created.ok and not _already_there(created):
         raise RuntimeError(f"could not create release {resolved}: {_said(created)}")
 

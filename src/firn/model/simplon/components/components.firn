@@ -20,6 +20,9 @@ kernel typeOf simplon.architecture.Component {
   module m_kernel_run typeOf simplon.architecture.Module {
     path = "kernel.run"
   }
+  module m_kernel_limits typeOf simplon.architecture.Module {
+    path = "kernel.limits"
+  }
   module m_kernel_awake typeOf simplon.architecture.Module {
     path = "kernel.awake"
   }
