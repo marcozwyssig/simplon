@@ -116,6 +116,52 @@ def _terminal_sent_it() -> bool:
     return False
 
 
+def _has_terminal() -> bool:
+    """True when this process has a controlling terminal, which is the only thing a child could prompt on."""
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+    os.close(fd)
+    return True
+
+
+def _own_group(terminal: bool) -> bool:
+    """Whether a child starts in a process group of its own (si#739, decided by Marco 2026-11-18).
+
+    ONLY A CHILD THAT NEEDS NO TERMINAL. A killed child leaves behind what it started: measured, a
+    `git ls-remote` against a remote that never answers is three processes, and killing `git` left
+    `git remote-http` and `git-remote-http` alive, reparented to init, for as long as the remote held the
+    connection (past 600 s against a silent one, 136 s against an unroutable address). In a group of its
+    own the whole tree is killed at once (`killpg`), and nothing was left a second later.
+
+    The price is the terminal, measured on a real pty: a child in its own group does NOT get the Ctrl-C
+    typed there (only the foreground group does), and a child that reads the terminal is STOPPED (SIGTTIN,
+    state T) until its limit. So the group is chosen only where neither can matter, by a test that is sure
+    rather than a guess: the caller declares `terminal=False`, or this process has no controlling terminal
+    at all, and then no child can use one. Everything else - sudo, `gh auth refresh`, Homebrew's prompt, a
+    git credential prompt - keeps the shared group it always had. Never on Windows, which has no groups.
+    """
+    return os.name == "posix" and (not terminal or not _has_terminal())
+
+
+def _signal(proc: subprocess.Popen, signum: int, group: bool) -> None:
+    """`signum` to the child, and to everything it started when it leads a group of its own."""
+    if group:
+        try:
+            os.killpg(proc.pid, signum)
+        except (ProcessLookupError, PermissionError):
+            pass                                # the whole group has already ended
+    proc.send_signal(signum)                    # a no-op once the child has been reaped
+
+
+def _kill(proc: subprocess.Popen, group: bool) -> None:
+    if group:
+        _signal(proc, signal.SIGKILL, group)
+    else:
+        proc.kill()
+
+
 @dataclass(frozen=True)
 class Result:
     """The outcome of one subprocess: the real return code and (optionally captured) streams.
@@ -162,7 +208,7 @@ class Result:
 
 def run(argv: list[str], *, check: bool = False, capture: bool = True,
         timeout: float | None = None, input_text: str | None = None,
-        cwd: str | None = None, env: Mapping[str, str] | None = None) -> Result:
+        cwd: str | None = None, env: Mapping[str, str] | None = None, terminal: bool = True) -> Result:
     """Run `argv` (a list, never a shell string) and return a Result with the real rc.
 
     capture=True returns stdout/stderr as text; capture=False streams them to the terminal (used by the
@@ -196,15 +242,21 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     had said is kept, and `err` ends with a line naming the tool, the operation and the limit (si#654). A child that never started has its reason in `err` and `not_started`; with
     capture=False the reason is also written to stderr, where the child's own words would have gone, so a
     caller that streams and reports only the rc does not swallow it.
+
+    `terminal=False` declares that the child needs no terminal, and it then runs in a process group of its
+    own (si#739, see `_own_group`), as it does whenever this process has no terminal at all. A stop, the
+    limit and the kill then reach the whole tree, and the stop is handed on always, a terminal's Ctrl-C
+    included: the terminal sent it to this group, not to the child's.
     """
     full_env = {**os.environ, **env} if env else None
     guarded = os.name == "posix" and threading.current_thread() is threading.main_thread()
     stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)] if guarded else []
     pipe = subprocess.PIPE if capture else None
+    group = _own_group(terminal)
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else None,
                                 stdout=pipe, stderr=pipe, text=True, encoding="utf-8", errors="replace",
-                                cwd=cwd, env=full_env)
+                                cwd=cwd, env=full_env, process_group=0 if group else None)
     except OSError as error:
         why = str(error)
         if not capture:
@@ -216,8 +268,8 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     received: list[int] = []
 
     def hand_on(signum: int, frame: object) -> None:
-        if not (signum == signal.SIGINT and _terminal_sent_it()):
-            proc.send_signal(signum)            # a no-op once the child has been reaped
+        if group or not (signum == signal.SIGINT and _terminal_sent_it()):
+            _signal(proc, signum, group)
         received.append(signum)
         if len(received) == 1 and waiting:
             raise _Stopped(signum)              # out of the unbounded wait; later ones are only handed on
@@ -242,16 +294,20 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
             try:
                 out, err = proc.communicate(timeout=_STOP_GRACE)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                _kill(proc, group)
                 out, err = proc.communicate()
+            if group:
+                # What outlived the child in its own group is an orphan of a cancelled run: a shell's
+                # background job, which starts with SIGINT ignored, survives a Ctrl-C its shell ended on.
+                _kill(proc, group)
         except subprocess.TimeoutExpired:
             waiting = False
             timed_out = True
-            proc.kill()                         # what `subprocess.run` does with its own timeout
+            _kill(proc, group)                  # what `subprocess.run` does with its own timeout
             out, err, held = _drain_killed(proc)
         except BaseException:
             waiting = False
-            proc.kill()
+            _kill(proc, group)
             proc.wait()
             raise
     finally:
@@ -284,8 +340,9 @@ def _drain_killed(proc: subprocess.Popen) -> tuple[str, str, bool]:
     and killing `git` leaves `git-remote-http` blocked on the socket with git's stdout in hand. A plain
     `communicate()` - which is also what `subprocess.run` does after its own timeout - then waits for THAT
     process, and the timeout bought nothing: the run still hung. So the drain is bounded, and past it the
-    pipes are closed here and the verdict is returned. The descendant is not killed: it is in this
-    process's group, and nothing here knows its pid without walking the process table.
+    pipes are closed here and the verdict is returned. A descendant of a child that shares this process's
+    group is not killed, because nothing here knows its pid without walking the process table; a child in
+    a group of its own (si#739) was killed with its whole tree, and the drain is instant.
     """
     try:
         out, err = proc.communicate(timeout=_UNWIND_GRACE)
@@ -344,7 +401,7 @@ def chain(*commands: list[str], cwd: str | None = None) -> int:
 
 
 def run_stream(argv: list[str], on_line: Callable[[str], None],
-               *, flush_after: float = LIVE_FLUSH) -> int:
+               *, flush_after: float = LIVE_FLUSH, terminal: bool = True) -> int:
     """Run `argv` and feed each output SEGMENT (stdout+stderr merged) to `on_line` AS IT IS PRODUCED,
     then return the real exit code. This is what lets the TUI show a long step's output live
     (build/up/seed) instead of only on completion.
@@ -373,8 +430,14 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
     `call_from_thread` assumes. The loop ends on a zero-length read and NOT on `proc.poll()`: today's
     reader runs until the pipe closes, so a child that hands stdout to something it spawned is still
     waited for, and ending on the exit status would drop that output silently.
+
+    `terminal` is `run`'s (si#739): a child that needs no terminal, or any child when this process has
+    none, runs in a group of its own, and an abandoned run kills the whole group - the grandchild of an
+    `sh -c "a; b"` included, which killing the shell alone left running (si#743).
     """
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    group = _own_group(terminal)
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+                            process_group=0 if group else None)
     assert proc.stdout is not None
     fd = proc.stdout.fileno()
     chunks: queue.Queue[bytes] = queue.Queue()
@@ -428,7 +491,7 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
         # read. Either way the caller has abandoned this run, and without the kill the child KEEPS
         # RUNNING and is never reaped - measured on both this reader and the one it replaces, `ps
         # --ppid` still showing the child after the exception had propagated.
-        proc.kill()
+        _kill(proc, group)
         proc.wait()
         raise
     finally:
