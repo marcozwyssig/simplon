@@ -270,7 +270,7 @@ test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
 test_generated typeOf simplon.pipeline.CatalogueTask {
   key = "test:generated"
   body = "simplon.tasks.generated:check"
-  help = "Fail if a committed generated file is not what its own command produces."
+  help = "Fail if regenerating a generated file changes it, or leaves a file git does not track."
   unattended = true
 }
 test_release_notes typeOf simplon.pipeline.CatalogueTask {

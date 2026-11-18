@@ -586,6 +586,10 @@ suites:
 # edit" at the top - which is a promise to a reader and, until this section existed, a promise nothing
 # checked. `src/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
 # gitignored and produced on every build, so there is no committed copy to go stale.
+# `test generated` rules on what REGENERATING CHANGES under each path (si#746, Marco's decision of
+# 2026-11-18), not on how the tree differs from HEAD: an uncommitted hand-written module beside the task
+# classes, or a regeneration not yet committed, is not stale. A clean CI checkout gets the same verdict
+# either way, so a regenerated file nobody committed is still red there.
 generated:
   completion:
     path: deploy/completions/simplon.bash
