@@ -310,3 +310,73 @@ def test_spec_rejects_a_length_budget_below_one(monkeypatch, tmp_path):
     # act / assert
     with pytest.raises(ValueError, match="max_id_len"):
         labinstance.spec()
+
+
+# --- si#742: the transcript header tells "not declared" from "invalid" from "could not be read" -----------
+
+def test_declared_id_names_the_resolved_instance(monkeypatch, tmp_path):
+    # arrange
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setenv(_SPEC["env_var"], "a1")
+
+    # act / assert
+    assert labinstance.declared_id() == "a1"
+
+
+@pytest.mark.parametrize("document", [{"product": "sample"}, {"instance": None}], ids=["absent", "null"])
+def test_declared_id_says_not_declared_only_for_a_manifest_with_no_instance_section(monkeypatch, tmp_path,
+                                                                                     document):
+    # arrange
+    _register(monkeypatch, tmp_path, data=document)
+
+    # act / assert
+    assert labinstance.declared_id() == "not declared"
+
+
+def test_declared_id_says_not_declared_when_no_product_is_registered(monkeypatch):
+    # arrange: a pipeline run outside a product CLI - nothing declared anything
+    monkeypatch.setattr(context, "_current", None)
+
+    # act / assert
+    assert labinstance.declared_id() == "not declared"
+
+
+def test_declared_id_says_invalid_and_why_for_an_invalid_env_value(monkeypatch, tmp_path):
+    """si#665 refuses this value; the transcript must not report the refusal as "nothing declared"."""
+    # arrange
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setenv(_SPEC["env_var"], "abc")
+
+    # act
+    said = labinstance.declared_id()
+
+    # assert: the word and the refusal's own sentence, which names the variable and the value
+    assert said.startswith("invalid")
+    assert _SPEC["env_var"] in said and "'abc'" in said
+
+
+@pytest.mark.parametrize("document", [{"instance": 5}, {"instance": {"env_var": "SAMPLE_INSTANCE"}}],
+                         ids=["not a mapping", "a key missing"])
+def test_declared_id_says_invalid_for_a_declared_but_broken_section(monkeypatch, tmp_path, document):
+    # arrange
+    _register(monkeypatch, tmp_path, data=document)
+
+    # act / assert
+    assert labinstance.declared_id().startswith("invalid")
+
+
+def test_declared_id_names_any_other_failure_as_unknown_with_its_cause(monkeypatch, tmp_path):
+    # arrange: a manifest that cannot be read at all
+    _register(monkeypatch, tmp_path)
+
+    def _unreadable(self):
+        raise RuntimeError("simplon: cannot read manifest sample.yaml")
+
+    monkeypatch.setattr(ProductContext, "manifest_data", _unreadable)
+
+    # act
+    said = labinstance.declared_id()
+
+    # assert
+    assert said.startswith("unknown")
+    assert "cannot read manifest" in said

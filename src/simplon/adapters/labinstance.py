@@ -165,9 +165,24 @@ def declared_id() -> str:
     `resolve` fails loudly on a manifest with no `instance:` section, which is right for a lab command - a
     typo there silently targets the wrong tenant - and wrong here. simplon's own manifest declares none,
     and a transcript that refuses to be written because the run had no lab would be a courtesy that
-    raises. Every other failure degrades the same way and for the same reason.
+    raises. Every other failure degrades too, but NOT TO THE SAME PHRASE (si#742): before, an `--instance`
+    or env value that si#665 refuses read in the transcript as "not declared", which is the one thing it
+    was not. So three answers besides the id itself, each with its own value:
+
+    - `not declared`: no product is registered, or its manifest has no `instance:` section at all;
+    - `invalid (<refusal>)`: the section or the explicit value is declared and `spec`/`resolve` refuse it;
+    - `unknown (<cause>)`: anything else, an unreadable manifest first among them.
     """
     try:
-        return resolve()
-    except Exception:  # noqa: BLE001 - a missing/invalid section, an unreadable manifest, no product
+        ctx = context.current()
+    except RuntimeError:  # no product registered: nothing declared anything
         return "not declared"
+    try:
+        found = context.section(ctx.manifest_data(), MANIFEST_SECTION)
+        if found.blame and found.got is None:
+            return "not declared"
+        return resolve()
+    except ValueError as exc:  # spec's and _explicit's refusals
+        return f"invalid ({exc})"
+    except Exception as exc:  # noqa: BLE001 - a header is a courtesy, but it says what failed
+        return f"unknown ({type(exc).__name__}: {exc})"
