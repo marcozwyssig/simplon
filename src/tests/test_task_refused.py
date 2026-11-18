@@ -30,8 +30,8 @@ def product(tmp_path):
     bootstrap.write("fooctl", tmp_path)
     cli = tmp_path / PKG / "cli.py"
     text = cli.read_text()
-    build = '    log.info("fooctl: build (placeholder) - wire me up in ' + PKG + '/cli.py")\n'
-    check = '    log.info("fooctl: check (placeholder) - wire me up in ' + PKG + '/cli.py")\n'
+    build = '    return _placeholder("build")\n'
+    check = '    return _placeholder("check")\n'
     assert build in text and check in text
     text = text.replace(build, "    from simplon.manifest.context import TaskRefused\n"
                                f"    secret = 'hun' + 'ter2'\n    raise TaskRefused({SAID!r})\n")
@@ -87,7 +87,7 @@ def a_product_that_needs_a_token(tmp_path):
     bootstrap.write("fooctl", tmp_path)
     cli = tmp_path / PKG / "cli.py"
     text = cli.read_text()
-    build = '    log.info("fooctl: build (placeholder) - wire me up in ' + PKG + '/cli.py")\n'
+    build = '    return _placeholder("build")\n'
     assert build in text
     cli.write_text(text.replace(build, "    from simplon.adapters import githubpackages\n"
                                        "    githubpackages.token()\n"))
