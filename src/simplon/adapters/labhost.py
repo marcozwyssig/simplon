@@ -21,7 +21,9 @@ import json
 import os
 import platform
 import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import Callable
 
 from simplon.adapters import diskguard, docker, fetch
@@ -316,6 +318,34 @@ def disk_guard(host: Host | None = None, *, enabled: bool = True, min_free_pct: 
 
 # --- host install (docker + containerlab; the Colima stack on macOS) --------------------------------
 
+# containerlab's install script, PINNED (si#744). This used to be `curl -sL https://get.containerlab.dev
+# | sudo -E bash`: unpinned, unchecked, and installing whatever release was latest. get.containerlab.dev
+# redirects to get.sh at the head of srl-labs/containerlab; this is the same file at one commit, checked
+# against its sha256 before it runs, and run as a file rather than from a pipe. Measured 2026-11-18: the
+# file served by get.containerlab.dev and the raw file at this commit are byte-identical. Source of the
+# digest: measured, by downloading CONTAINERLAB_INSTALL_URL on 2026-11-18. The script then fetches the
+# release package itself; `--version` pins which one, and `--verify-checksum` makes the script check the
+# package against that release's checksums.txt (it checks nothing by default). Bump the commit, the
+# digest and the version together, deliberately.
+CONTAINERLAB_INSTALL_COMMIT = "b397842f51fbf90c140007376889d395c030558e"  # 2026-10-22, last get.sh change
+CONTAINERLAB_INSTALL_SHA256 = "9d2e9b1d12b95001f57586153cc120dadb949bb50c18df2b656c5be35b79d192"
+CONTAINERLAB_INSTALL_URL = (f"https://raw.githubusercontent.com/srl-labs/containerlab/"
+                            f"{CONTAINERLAB_INSTALL_COMMIT}/get.sh")
+CONTAINERLAB_VERSION = "0.83.0"   # the latest release on 2026-11-18
+_CONTAINERLAB_INSTALL_ARGS = ["--version", CONTAINERLAB_VERSION, "--verify-checksum"]
+# Where the checked script lands inside the Colima VM (the host's temp dir is not mounted there).
+_VM_CONTAINERLAB_INSTALLER = "/tmp/simplon-containerlab-get.sh"
+
+
+def _fetch_containerlab_installer(dest: Path) -> None:
+    """Download the pinned containerlab install script to `dest`, or die having run nothing."""
+    try:
+        fetch.download(CONTAINERLAB_INSTALL_URL, dest, label="containerlab get.sh",
+                       sha256=CONTAINERLAB_INSTALL_SHA256)
+    except fetch.DownloadError as exc:
+        log.die(f"containerlab install refused: {exc} Nothing was run.")
+
+
 def install_host(*, os_name: str | None = None,
                  extra_macos_tooling: Callable[[], object] | None = None,
                  min_host_mem_gb: int = 8) -> int:
@@ -360,10 +390,12 @@ def _install_linux() -> int:
     if _have("containerlab"):
         log.ok("containerlab already installed")
         return 0
-    log.info("installing containerlab (official installer, uses sudo)")
-    # Pipe the installer into bash; do NOT wrap it in $(...), or bash runs the downloaded
-    # script TEXT as a command and chokes on the "#!/bin/bash" shebang. Mirrors the VM path below.
-    res = run(["bash", "-c", "curl -sL https://get.containerlab.dev | sudo -E bash"], capture=False)
+    log.info(f"installing containerlab {CONTAINERLAB_VERSION} (containerlab's pinned install script, "
+             f"uses sudo)")
+    with tempfile.TemporaryDirectory() as scratch:
+        script = Path(scratch) / "get.sh"
+        _fetch_containerlab_installer(script)
+        res = run(["sudo", "-E", "bash", str(script), *_CONTAINERLAB_INSTALL_ARGS], capture=False)
     if not res.ok:
         log.die(f"containerlab install failed (rc {res.rc})")
         return res.rc
@@ -432,14 +464,25 @@ def _install_macos(*, extra_tooling: Callable[[], object] | None = None, min_hos
     if not run(colima_start_argv(vm_cpu, vm_mem, rosetta=rosetta), capture=False).ok:
         log.warn(f"colima start returned non-zero (it may already be running; resize needs: "
                  f"colima stop && colima start --cpu {vm_cpu} --memory {vm_mem})")
-    log.info("installing containerlab inside the Colima VM")
-    run(["colima", "ssh", "--", "bash", "-lc", "curl -sL https://get.containerlab.dev | sudo -E bash"], capture=False)
+    _install_containerlab_in_vm()
     log.ok("containerlab installed inside the Colima VM")
     log.warn("macOS notes:")
     log.warn(" - build uses the Colima Docker context; up/down/seed run inside the VM.")
     log.warn(" - keep this project under your home dir so its path resolves in the VM.")
     log.warn(" - x86 nodes run under Rosetta (slower). For native ARM speed, use an ARM image.")
     return 0
+
+
+def _install_containerlab_in_vm() -> None:
+    """Fetch and check the pinned containerlab install script on the host, copy it into the Colima VM and
+    run it there as a file (si#744)."""
+    log.info(f"installing containerlab {CONTAINERLAB_VERSION} inside the Colima VM")
+    with tempfile.TemporaryDirectory() as scratch:
+        script = Path(scratch) / "get.sh"
+        _fetch_containerlab_installer(script)
+        run(["colima", "ssh", "--", "tee", _VM_CONTAINERLAB_INSTALLER], input_text=script.read_text())
+    run(["colima", "ssh", "--", "sudo", "-E", "bash", _VM_CONTAINERLAB_INSTALLER, *_CONTAINERLAB_INSTALL_ARGS],
+        capture=False)
 
 
 def remove_colima() -> None:
