@@ -104,10 +104,7 @@ def runs(tool: str, env: Mapping[str, str] | None = None) -> bool:
     found = shutil.which(tool, path=path)
     if found is None:
         return False
-    try:
-        return run([found, "--version"], timeout=VERSION_TIMEOUT_S).rc == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return run([found, "--version"], timeout=VERSION_TIMEOUT_S).ok
 
 
 def reachable_later(tool: str) -> bool:

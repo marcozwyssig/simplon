@@ -148,12 +148,10 @@ def _daemon_reachable() -> bool:
     Letting it propagate was worse than useless: it came out of `ensure_docker`, the one function in
     this module whose entire purpose is to die naming the fixes, as a bare traceback naming none of
     them. A third state that crashes the function that exists to classify states is this repository's
-    recurring defect wearing the module's own clothes.
+    recurring defect wearing the module's own clothes. Since si#653 `run` returns such a start as a
+    Result with `not_started`, whose `ok` is false, so the catch this needed is gone.
     """
-    try:
-        return run(["docker", "version"]).ok
-    except OSError:
-        return False
+    return run(["docker", "version"]).ok
 
 
 def _sudo_prefix() -> list | None:
@@ -613,7 +611,7 @@ RUN_LABEL = "simplon.run"
 INSTANCE_LABEL = "simplon.instance"
 
 #: How long removing an abandoned container may take before the unwind gives up on it. `docker rm -f`
-#: is a SIGKILL and a removal, so this is generous; it only ever runs on the exception path.
+#: is a SIGKILL and a removal, so this is generous; it runs on the exception path and after a timeout.
 _REMOVE_GRACE = 30.0
 
 
@@ -742,7 +740,7 @@ def stopped_on_interrupt(name: str) -> Iterator[None]:
     try:
         yield
     except BaseException as abandoned:
-        _remove(name)
+        remove(name)
         if isinstance(abandoned, _Terminated):
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             catch_term = False
@@ -753,9 +751,18 @@ def stopped_on_interrupt(name: str) -> Iterator[None]:
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
-def _remove(name: str) -> None:
-    """Kill and remove the container called `name`, ignoring "no such container" - the unwind's half."""
+def remove(name: str) -> None:
+    """Kill and remove the container called `name`, ignoring "no such container" - the unwind's half.
+
+    PUBLIC for the other half (si#653): a `run` past its timeout comes back as a Result with `timed_out`,
+    not as an exception, so it no longer unwinds through `stopped_on_interrupt`, and the client `run`
+    killed stopped nothing (see there). A caller that ran a container with a timeout calls this itself.
+    """
     try:
-        run(["docker", "rm", "-f", name], timeout=_REMOVE_GRACE)
+        removed = run(["docker", "rm", "-f", name], timeout=_REMOVE_GRACE)
     except Exception as error:          # the unwind must not replace the interruption it is unwinding
         log.warn(f"could not remove container {name}: {error}")
+        return
+    if removed.timed_out or removed.not_started:
+        log.warn(f"could not remove container {name}: "
+                 + (removed.not_started or f"`docker rm -f` gave no answer within {_REMOVE_GRACE:g} s"))

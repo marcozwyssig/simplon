@@ -212,10 +212,13 @@ def _git(args: list[str], *, cwd: Path) -> str | None:
     call it a success. Every caller here wants a non-empty string or nothing, and there is no third
     meaning for either of them to carry.
 
-    OSError (no git on PATH at all) is deliberately NOT caught: it is a different condition and gets its
-    own sentence at the call site.
+    No git on PATH at all is a different condition and gets its own sentence at the call site, so it is
+    raised as OSError. `run` returns it as `not_started` since si#653; this turns it back into the
+    exception the call site answers, because "no answer" is not what it is.
     """
     result = run(["git", "-C", str(cwd), *args])
+    if result.not_started:
+        raise OSError(result.not_started)
     return (result.out.strip() or None) if result.ok else None
 
 

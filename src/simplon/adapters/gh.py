@@ -67,7 +67,6 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -269,12 +268,11 @@ def _at_pin(listed: str, pin: str) -> bool:
 
 def _gh(runner: Callable[..., Result], argv: list[str], timeout_s: float) -> str:
     """Run one gh command; "" on success, else why, with gh's own last words."""
-    try:
-        result = runner(["gh", *argv], timeout=timeout_s)
-    except subprocess.TimeoutExpired:
+    result = runner(["gh", *argv], timeout=timeout_s)
+    if result.timed_out:
         return f"gh {argv[0]} {argv[1]} timed out after {timeout_s:g} s"
-    except OSError as exc:
-        return f"gh could not be started: {exc}"
+    if result.not_started:
+        return f"gh could not be started: {result.not_started}"
     if result.rc == 0:
         return ""
     said = (result.err or result.out).strip().splitlines()
@@ -292,17 +290,19 @@ def ensure_extensions(extensions: tuple[Extension, ...], *,
         return []
     runner = runner or run
     timeout_s = hostinstall.INSTALL_TIMEOUT_S
-    try:
-        listing = runner(["gh", "extension", "list"], timeout=LIST_TIMEOUT_S)
-        if listing.rc == NOT_LOGGED_IN_RC:
-            # Neither "nothing installed" nor a failure (Marco, 2026-11-11): the machine is provisioned, the
-            # person has not logged in yet. Only the PROBE's rc 4 means this; an install that fails later,
-            # with a token, is still FAILED.
-            return [(extension, Outcome(State.SKIPPED, NOT_LOGGED_IN)) for extension in extensions]
-        listed_ok = listing.rc == 0
+    listing = runner(["gh", "extension", "list"], timeout=LIST_TIMEOUT_S)
+    if listing.rc == NOT_LOGGED_IN_RC and not listing.timed_out:
+        # Neither "nothing installed" nor a failure (Marco, 2026-11-11): the machine is provisioned, the
+        # person has not logged in yet. Only the PROBE's rc 4 means this; an install that fails later,
+        # with a token, is still FAILED.
+        return [(extension, Outcome(State.SKIPPED, NOT_LOGGED_IN)) for extension in extensions]
+    listed_ok = listing.ok
+    if listing.timed_out:
+        why = f"gh extension list failed: timed out after {LIST_TIMEOUT_S:g} s"
+    elif listing.not_started:
+        why = f"gh extension list failed: {listing.not_started}"
+    else:
         why = "" if listed_ok else f"gh extension list exited {listing.rc}: {(listing.err or '').strip()}"
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        listed_ok, why = False, f"gh extension list failed: {exc}"
     if not listed_ok:
         # Without the list nothing is known to be installed or not: a failed probe is not an empty result.
         return [(extension, Outcome(State.FAILED, why)) for extension in extensions]

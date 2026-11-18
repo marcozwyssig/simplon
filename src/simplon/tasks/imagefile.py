@@ -44,12 +44,11 @@ import os
 import pwd
 import shlex
 import shutil
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
 from simplon.adapters import docker, githubpackages, hostpath
-from simplon.kernel import log
+from simplon.kernel import limits, log
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context
 from simplon.manifest import results as results_mod
@@ -86,7 +85,9 @@ FILE_TEST_IMAGE = docker.pinned_image(
     "simplon.tasks.imagefile")
 
 #: Seconds the warm-up pull of `FILE_TEST_IMAGE` may take: a pull is a download, not the file's answer, so it is
-#: outside `timeout`, and bounded so a hung registry cannot hang the test.
+#: outside `timeout`, and bounded so a hung registry cannot hang the test. Shorter than the class default
+#: `limits.DOCKER_PULL` (si#654), which is sized for a product's image: this one is a small busybox, and a
+#: failed warm-up is only a warning.
 PULL_TIMEOUT = 300
 
 #: Where the file is mounted, read-only, inside `FILE_TEST_IMAGE`.
@@ -209,7 +210,7 @@ def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path:
     source = published_reference(cfg, tag, platform)
     if source is None:
         return 1
-    pulled = run(["docker", "pull", source])
+    pulled = run(["docker", "pull", source], timeout=limits.DOCKER_PULL)
     if not pulled.ok:
         log.error(f"`docker pull {source}` failed, so nothing was copied: "
                   f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}.\n"
@@ -243,7 +244,8 @@ def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None
     `linux/arm64`, as in `image.missing_platforms`.
     """
     ref = image.reference(cfg, tag)
-    fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref])
+    fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref],
+                  timeout=limits.ORAS)
     if not fetched.ok:
         log.error(f"{ref} could not be read from the registry, so nothing was pulled: "
                   f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"
@@ -405,13 +407,12 @@ def _warm_up(platform: str) -> None:
     image already held, the pull still asks the registry, about 3 s.
     """
     command = ["docker", "pull", *(["--platform", platform] if platform else []), FILE_TEST_IMAGE]
-    try:
-        pulled = run(command, timeout=PULL_TIMEOUT)
-    except subprocess.TimeoutExpired:
+    pulled = run(command, timeout=PULL_TIMEOUT)
+    if pulled.ok:
+        return
+    if pulled.timed_out:
         reason = f"no answer within {PULL_TIMEOUT} s"
     else:
-        if pulled.ok:
-            return
         reason = (pulled.err or pulled.out).strip() or "(it said nothing)"
     log.warn(f"`{' '.join(command)}` failed: {reason}; the run goes on with whatever the daemon holds")
 
@@ -421,16 +422,16 @@ def _run_file(path: str, platform: str, mount: list[str], argv: str, stdin_text:
     """One `docker run` of the mounted file: its verdict and the container's own rc, None when it gave none.
 
     Stdin is always a pipe, empty without `stdin`, so `-i` never hands the run the caller's terminal. A run
-    past `timeout` is stopped by name: `subprocess` kills only the client, and `stopped_on_interrupt` answers
-    the exception with `docker rm -f` before it reaches here.
+    past `timeout` is stopped by name: `run` kills only the client and returns `timed_out` (si#653), so this
+    removes the container itself with `docker rm -f`.
     """
     name, lifecycle = docker.lifecycle()
     command = ["docker", "run", "--rm", "-i", "--pull", "never", *(["--platform", platform] if platform else []),
                "--network", "none", *lifecycle, *mount, FILE_TEST_IMAGE, MOUNTED, *shlex.split(argv)]
-    try:
-        with docker.stopped_on_interrupt(name):
-            result = run(command, timeout=timeout, input_text=stdin_text)
-    except subprocess.TimeoutExpired:
+    with docker.stopped_on_interrupt(name):
+        result = run(command, timeout=timeout, input_text=stdin_text)
+    if result.timed_out:
+        docker.remove(name)
         log.error(f"{path} gave no answer within {timeout} s; its container {name} was removed")
         return (1, None)
     if result.rc != rc:

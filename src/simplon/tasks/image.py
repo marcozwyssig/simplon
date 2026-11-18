@@ -104,7 +104,6 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -115,7 +114,7 @@ from simplon.model import artifactschema
 from simplon.model.command import TaskCommand
 from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
-from simplon.kernel import log
+from simplon.kernel import limits, log
 from simplon.adapters.labhost import BINFMT_IMAGE
 from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import Result, run, stream
@@ -602,7 +601,7 @@ def published(ref: str) -> bool:
     publish.
     """
     githubpackages.require_oras()
-    return run(["oras", "manifest", "fetch", "--descriptor", ref]).ok
+    return run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS).ok
 
 
 def present_locally(ref: str) -> bool:
@@ -878,10 +877,10 @@ def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int,
     """
     name, lifecycle = docker.lifecycle()
     command = ["docker", "run", "--rm", *options, *lifecycle, ref, *shlex.split(argv)]
-    try:
-        with docker.stopped_on_interrupt(name):
-            result = run(command, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    with docker.stopped_on_interrupt(name):
+        result = run(command, timeout=timeout)
+    if result.timed_out:
+        docker.remove(name)
         log.error(f"{ref} gave no answer within {timeout} s; its container {name} was removed. An image whose "
                   f"command does not exit (a server) needs an `argv` that does, or a longer `timeout:`")
         return (1, None)
@@ -1472,10 +1471,10 @@ def host_runs(platform: str) -> tuple[bool | None, str]:
 
     name, lifecycle_flags = docker.lifecycle()
     argv = ["docker", "run", "--rm", "--platform", platform, *lifecycle_flags, imagefile.FILE_TEST_IMAGE, "true"]
-    try:
-        with docker.stopped_on_interrupt(name):
-            result = run(argv, timeout=PROBE_TIMEOUT)
-    except subprocess.TimeoutExpired:
+    with docker.stopped_on_interrupt(name):
+        result = run(argv, timeout=PROBE_TIMEOUT)
+    if result.timed_out:
+        docker.remove(name)
         return None, f"no answer within {PROBE_TIMEOUT} s"
     if result.ok:
         return True, ""
@@ -1753,7 +1752,7 @@ def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mappin
         return rc
     try:
         githubpackages.require_oras()
-        fetched = run(["oras", "manifest", "fetch", ref])
+        fetched = run(["oras", "manifest", "fetch", ref], timeout=limits.ORAS)
     except githubpackages.PackageError as failure:
         log.error(f"{ref} was pushed, but the publish could not be verified: {failure}")
         return 1

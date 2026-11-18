@@ -680,6 +680,21 @@ def test_the_system_socket_under_another_spelling_is_still_granted(monkeypatch, 
     assert ["join"] in calls and any(argv[2:3] == ["setfacl"] for argv in calls)
 
 
+# --- si#653: a timeout is a Result, so the removal it needs is asked for by name ----------------------
+
+def test_a_removal_that_times_out_says_so(monkeypatch, capsys):
+    # arrange
+    from simplon.kernel.run import Result
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: Result(rc=-9, out="", err="", timed_out=True))
+
+    # act
+    docker.remove("c1")
+
+    # assert: a warning naming the container, not silence
+    out = capsys.readouterr().out
+    assert "could not remove container c1" in out and "no answer within" in out
+
+
 # --- the pinned downloads (si#668) -------------------------------------------------------------------
 
 def test_every_static_cli_arch_has_a_pinned_sha256():

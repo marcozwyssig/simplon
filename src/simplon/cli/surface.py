@@ -217,7 +217,7 @@ PACKAGES = frozenset({"tasks"})
 INTERNAL = frozenset({
     "adapters.brew", "adapters.diskguard", "adapters.gh", "adapters.github", "adapters.hostinstall", "adapters.oras", "adapters.pypi", "adapters.repofile", "adapters.tools", "cli.bootstrap",
     "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
-    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "kernel.limits", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
     "ui.clipboard",
 })
 

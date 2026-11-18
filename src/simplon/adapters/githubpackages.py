@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
-from simplon.kernel import log, run
+from simplon.kernel import limits, log, run
 from simplon.adapters import oras
 from simplon.manifest.context import TaskRefused
 
@@ -91,20 +91,20 @@ def token() -> str:
     NEVER from a config file. A token committed to one leaked into a product repository's history once,
     and the fix was to leave no field a secret could be written into.
 
-    A host without `gh` is the same answer as a `gh` without a login, a PackageError (si#656): `run`
-    raises OSError for a missing binary, and that reached every caller but adapters.github as a traceback.
+    A host without `gh` is the same answer as a `gh` without a login, a PackageError (si#656): `run` raised
+    OSError for a missing binary, and that reached every caller but adapters.github as a traceback. Since
+    si#653 `run` returns it as `not_started`, which is read here.
     """
     from_env = os.getenv("GITHUB_TOKEN", "").strip()
     if from_env:
         return from_env
 
-    try:
-        result = run.run(["gh", "auth", "token"], capture=True)
-    except OSError as no_gh:
+    result = run.run(["gh", "auth", "token"], capture=True, timeout=limits.GH)
+    if result.not_started:
         raise PackageError(
-            f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). Either export "
-            "GITHUB_TOKEN, or install gh and run `gh auth login`. In GitHub Actions, pass "
-            "`secrets.GITHUB_TOKEN` in the step's `env:` - Actions sets it for no step on its own.") from None
+            f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({result.not_started}). "
+            "Either export GITHUB_TOKEN, or install gh and run `gh auth login`. In GitHub Actions, pass "
+            "`secrets.GITHUB_TOKEN` in the step's `env:` - Actions sets it for no step on its own.")
     if result.rc == 0 and result.out.strip():
         log.info("using the token from `gh auth token` (GITHUB_TOKEN is not set)")
         return result.out.strip()
@@ -300,7 +300,7 @@ def tags(registry: str, repository: str) -> list:
     """
     require_oras()
     result = run.run(["oras", "repo", "tags", f"{registry.rstrip('/')}/{repository.strip('/')}"],
-                     capture=True)
+                     capture=True, timeout=limits.ORAS)
     if result.rc != 0:
         raise PackageError(
             f"could not list tags of {repository}: {result.err or result.out}\n"
