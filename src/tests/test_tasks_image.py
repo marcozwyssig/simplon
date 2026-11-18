@@ -964,6 +964,22 @@ def test_a_probe_that_cannot_answer_is_not_a_publish(monkeypatch):
     assert image.published("ghcr.io/owner/demo-app:1.0") is False
 
 
+@pytest.mark.parametrize("unasked", [
+    image.Result(-9, "", "`oras manifest fetch` gave no answer within 120 s and was stopped\n", timed_out=True),
+    image.Result(127, "", "[Errno 2] No such file or directory: 'oras'",
+                 not_started="[Errno 2] No such file or directory: 'oras'"),
+], ids=["timed-out", "not-started"])
+def test_a_registry_that_could_not_be_asked_is_not_read_as_not_published(monkeypatch, unasked):
+    # arrange (si#740): no wording is parsed - the Result itself says the client never answered, and
+    # "could not ask" is not "the registry does not serve it" (a deploy would say exactly that)
+    monkeypatch.setattr(githubpackages, "require_oras", lambda: None)
+    monkeypatch.setattr(image, "run", lambda argv, **kw: unasked)
+
+    # act / assert: the client's own words travel with the refusal
+    with pytest.raises(githubpackages.PackageError, match=re.escape(unasked.err.strip())):
+        image.published("ghcr.io/owner/demo-app:1.0")
+
+
 def test_the_probe_provides_oras_rather_than_assuming_it(monkeypatch):
     # arrange: the gate INSTALLS oras where it can; a host where even that failed must not have the
     # missing binary surface as a FileNotFoundError out of subprocess

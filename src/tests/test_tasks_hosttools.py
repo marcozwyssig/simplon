@@ -274,6 +274,28 @@ def test_extensions_are_skipped_when_an_installed_gh_does_not_run_here(extension
     assert "gh extensions skipped" in out.out + out.err
 
 
+def test_a_gh_that_gives_no_answer_fails_the_extensions_rather_than_skipping_them(extensions, tmp_path,
+                                                                                 monkeypatch, capsys):
+    # arrange (si#740): the gate found gh PRESENT, then its second `gh --version` gave no answer. That is
+    # "could not ask", not "no gh here": the extensions are not installed, and the command must say so red.
+    _, answers, asked = extensions
+    answers["gh"] = Outcome(State.PRESENT)
+
+    def silent(tool, env=None):
+        raise hostinstall.NoAnswer("`gh --version` gave no answer within 30 s and was stopped")
+    monkeypatch.setattr(hostinstall, "runs", silent)
+    _declare_extensions(tmp_path, ["gh"], ["github/gh-stack"])
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    assert rc == 1 and asked == []
+    out = capsys.readouterr()
+    assert "gave no answer within 30 s" in out.out + out.err
+    assert "not installed: github/gh-stack" in out.out + out.err
+
+
 def test_no_gh_section_says_nothing_about_extensions(extensions, tmp_path, capsys):
     # arrange
     order, _, _ = extensions

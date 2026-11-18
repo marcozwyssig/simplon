@@ -433,11 +433,17 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
             deleted += 1
             if reason == "unmerged":
                 unproven.append(b)
-            if remote and _git(["ls-remote", "--exit-code", "--heads", "origin", b]).ok:
-                if _git(["push", "origin", "--delete", b]).ok:
-                    log.ok(f"deleted origin/{b}")
-                else:
-                    log.warn(f"could not delete origin/{b}")
+            if remote:
+                there = _git(["ls-remote", "--exit-code", "--heads", "origin", b])
+                if there.ok:
+                    if _git(["push", "origin", "--delete", b]).ok:
+                        log.ok(f"deleted origin/{b}")
+                    else:
+                        log.warn(f"could not delete origin/{b}")
+                elif there.rc != 2 or there.timed_out:
+                    # 2 is ls-remote's own "no such ref"; anything else is "could not ask" (si#740)
+                    log.warn(f"could not ask origin whether {b} is there; origin/{b} left as it is: "
+                             f"{there.err.strip()}")
         else:
             log.warn(f"could not delete {b} (left in place)")
 
@@ -489,6 +495,9 @@ def gh_scopes(host: str = "github.com") -> tuple[str, ...]:
     """The scopes the stored gh token actually carries."""
     _require("gh")
     result = run(["gh", "auth", "status", "-h", host], timeout=limits.GH)
+    if result.timed_out or result.not_started:
+        # Could not ask (si#740): `()` would read as "no scopes" and start the interactive refresh.
+        log.die(f"could not read the gh token's scopes: {result.err.strip()}")
     return parse_scopes(f"{result.out}\n{result.err}")
 
 
