@@ -132,6 +132,19 @@ def test_an_archive_that_is_not_there_says_which_command_writes_one(pushed, _pro
         conan.publish(name="cpplib")
 
 
+def test_an_archive_that_is_not_there_is_a_refusal_naming_the_path_key_too(pushed, _product):
+    """si#745: a TaskRefused, so it reaches the terminal as its message alone with rc 1 rather than a
+    traceback, and it names the other way out: the manifest's `path:` pointing at another file."""
+    (_product / "build" / "conan" / "demo.tgz").unlink()
+
+    with pytest.raises(TaskRefused) as refused:
+        conan.publish(name="cpplib")
+
+    assert "demo.tgz" in str(refused.value)
+    assert "`path:`" in str(refused.value)
+    assert pushed == []
+
+
 def test_a_registry_that_is_not_githubs_is_not_logged_into_with_a_github_token(pushed, capsys):
     """image.py's rule, kept here: a GitHub token goes to GitHub and nowhere else, and the push then
     uses whatever credential the operator's own `oras login` stored."""
