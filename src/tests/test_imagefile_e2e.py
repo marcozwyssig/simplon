@@ -54,6 +54,13 @@ REGISTRY_IMAGE = "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58a
 #: Stamped into the image as VERSION, and so the tag the build resolves and `hello --version` answers with.
 VERSION = "v0.0.1-si552"
 
+#: This run's own segment in every repository it builds into or pushes to (si#743). Two runs on one host -
+#: parallel lanes, or a lane beside CI - used to share `localhost:5999/si552e2e/hello:<VERSION>`: one run's
+#: load collided with the other's (`AlreadyExists`) and one run's cleanup removed the image the other had
+#: just built. The TAG stays `VERSION`, because it is stamped into the binary and `hello --version` answers
+#: with it; a reference is unique once its repository is.
+RUN = uuid.uuid4().hex[:8]
+
 PLATFORMS = ("linux/amd64", "linux/arm64")
 
 #: ELF `e_machine` (offset 18, little-endian) per platform: proves the bytes are the platform's own, not the
@@ -107,8 +114,9 @@ def _remove_everything_of(product: str, references: list[str]) -> None:
 @pytest.fixture(scope="module")
 def built(tmp_path_factory) -> Iterator[ProductContext]:
     """The fixture image, built for both platforms by the kernel's own `build:image`."""
-    ctx = _product(tmp_path_factory.mktemp("built"), "localhost:5999/si552e2e")
-    ref = f"localhost:5999/si552e2e/hello:{VERSION}"
+    registry = f"localhost:5999/si552e2e-{RUN}"
+    ctx = _product(tmp_path_factory.mktemp("built"), registry)
+    ref = f"{registry}/hello:{VERSION}"
     previous, path = context._current, os.environ.get("PATH", "")
     context._current = ctx
     try:
@@ -148,7 +156,7 @@ def published(built, tmp_path_factory) -> Iterator[tuple[ProductContext, str]]:
 
     Depends on `built` only so the builder exists and the layers are cached."""
     port = _free_port()
-    registry = f"localhost:{port}/si552e2e"
+    registry = f"localhost:{port}/si552e2e-{RUN}"
     ctx = _product(tmp_path_factory.mktemp("published"), registry)
     repository = f"{registry}/hello"
     path = os.environ.get("PATH", "")
@@ -173,7 +181,11 @@ def published(built, tmp_path_factory) -> Iterator[tuple[ProductContext, str]]:
         yield ctx, repository
     finally:
         os.environ["PATH"] = path
-        pulled = run(["docker", "image", "ls", "-q", repository]).out.split()
+        # By REFERENCE, never by id (si#743): `tag:` pulls `repository@<digest>`, the same image a `built`
+        # loaded under its own name - this run's or another's - and `docker image rm -f <id>` untags every
+        # name the id carries, which removed a parallel run's image under it.
+        pulled = run(["docker", "image", "ls", "--digests", "--format", "{{.Repository}}@{{.Digest}}",
+                      repository]).out.split()
         _remove_everything_of(ctx.name, sorted(set(pulled)))
         run(["docker", "rm", "-f", container])
 

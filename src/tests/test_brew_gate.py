@@ -82,6 +82,23 @@ def test_brew_on_path_is_present(host):
     assert outcome.state is State.PRESENT
 
 
+def test_a_brew_that_gives_no_answer_is_failed_not_installed_over(host, monkeypatch):
+    # arrange (si#740): a brew on PATH that hangs on `--version`. A timed-out probe is "could not ask",
+    # not "brew is missing": install.sh must not run over it.
+    path_dir, _ = host
+    _tool(path_dir, "brew", "exec /bin/sleep 30")
+    monkeypatch.setattr(hostinstall, "VERSION_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(brew, "_install", lambda where, interactive: pytest.fail("install.sh was run"))
+
+    # act
+    outcome = _ensure()
+
+    # assert
+    assert outcome.state is State.FAILED
+    assert "gave no answer within 0.3 s" in outcome.detail
+    assert hostinstall.rc(outcome) == 1
+
+
 def test_brew_at_the_prefix_but_off_path_is_present_and_put_on_path(host, capsys):
     # arrange
     _, prefix = host

@@ -74,7 +74,14 @@ def _gh_extensions(extensions: tuple[gh.Extension, ...], gate: hostinstall.Outco
     container route) is not a failure. False when any extension FAILED."""
     if not extensions:
         return True
-    usable = gate.state in (hostinstall.State.PRESENT, hostinstall.State.INSTALLED) and hostinstall.runs("gh")
+    try:
+        usable = (gate.state in (hostinstall.State.PRESENT, hostinstall.State.INSTALLED)
+                  and hostinstall.runs("gh"))
+    except hostinstall.NoAnswer as silent:
+        # A gh that could not be asked is not "no gh here" (si#740): the extensions are not installed, red.
+        log.error(f"gh extensions: gh could not be asked ({silent}); not installed: "
+                  f"{', '.join(str(extension) for extension in extensions)}")
+        return False
     if not usable:
         why = (gate.detail if gate.state is hostinstall.State.SKIPPED
                else f"the gh gate left no gh that runs here ({gate.state.value})")

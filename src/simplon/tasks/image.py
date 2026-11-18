@@ -599,9 +599,19 @@ def published(ref: str) -> bool:
     `require_oras` PROVIDES the tool rather than demanding it, and raises `PackageError` when even that
     could not - which the caller turns into a red release, because a push nobody could verify is not a
     publish.
+
+    COULD NOT ASK IS NOT "NOT PUBLISHED" (si#740). An oras that timed out or never started said nothing
+    about the registry, and False would let `deploy` report "does not serve" for a tag that may well be
+    there. Those two come back as `PackageError`, told apart by the Result rather than by oras' wording;
+    a non-zero answer stays False, whether the tag is missing or the registry refused (see
+    `test_a_probe_that_cannot_answer_is_not_a_publish`).
     """
     githubpackages.require_oras()
-    return run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS).ok
+    result = run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS)
+    if result.timed_out or result.not_started:
+        raise githubpackages.PackageError(f"could not ask the registry whether it serves {ref}: "
+                                          f"{result.err.strip()}")
+    return result.ok
 
 
 def present_locally(ref: str) -> bool:
