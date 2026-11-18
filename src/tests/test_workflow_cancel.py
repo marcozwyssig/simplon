@@ -18,6 +18,7 @@ import sys
 import time
 
 import pytest
+from procalive import alive
 import yaml
 
 from simplon.kernel import run as run_module
@@ -70,13 +71,6 @@ def test_slow():
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX signals; actions/runner on Linux")
 
 
-def _alive(pid: int) -> bool:
-    """Running, as opposed to gone or a zombie waiting for init to reap it."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
-        return False
 
 
 def _generated_run_line() -> str:
@@ -136,10 +130,10 @@ def test_a_cancelled_generated_step_lets_pytest_write_its_junit_and_leaves_nothi
         time.sleep(1)
 
         # assert
-        assert not _alive(child), "the step ended and the kernel's pytest is still running"
+        assert not alive(child), "the step ended and the kernel's pytest is still running"
         assert (tmp_path / "junit.xml").exists(), "pytest was stopped before it could write its junit"
         assert step.returncode != 0, "a cancelled step must not end green"
     finally:
         for marker in (tmp_path / "kernel.pid", pidfile):
-            if marker.exists() and _alive(int(marker.read_text())):
+            if marker.exists() and alive(int(marker.read_text())):
                 os.kill(int(marker.read_text()), signal.SIGKILL)
