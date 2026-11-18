@@ -50,14 +50,22 @@ def configure(root: Path | str) -> None:
     ROOT = Path(root)
 
 
-#: What git says when it needed a credential and was not allowed to ask for one. Measured on git 2.47:
-#: `fatal: could not read Username for '<url>': terminal prompts disabled`.
-_NOT_ASKED = "terminal prompts disabled"
+#: What git and ssh say when they needed an answer from a person and were not allowed to ask (si#760).
+#: Measured on git 2.47 and OpenSSH 10.0: `fatal: could not read Username for '<url>': terminal prompts
+#: disabled` (HTTPS), `Host key verification failed.` (an unknown host key) and `Permission denied (publickey,
+#: ...)` (a key with a passphrase and no agent).
+_NOT_ASKED = ("terminal prompts disabled", "Host key verification failed", "Permission denied (")
 
 #: The way out of a remote operation that needed a credential (si#760).
-NO_CREDENTIAL = ("git needed a credential for the remote, and a remote operation here does not prompt for one "
-                 "(si#760): configure a credential helper (`gh auth setup-git` does it for GitHub), "
-                 "or use an SSH remote")
+NO_CREDENTIAL = ("git needed a credential for the remote, and a remote operation here asks nobody for one "
+                 "(si#760): over HTTPS, configure a credential helper (`gh auth setup-git` does it for "
+                 "GitHub); over SSH, put the host in known_hosts (`ssh-keyscan`) and the key in ssh-agent "
+                 "(`ssh-add`)")
+
+
+def _not_asked(result: Result) -> bool:
+    """Whether a failed remote operation failed because it needed an answer it was not allowed to ask for."""
+    return not result.ok and any(said in result.err for said in _NOT_ASKED)
 
 
 def _git(args: list[str], *, capture: bool = True, remote: bool = False):
@@ -69,13 +77,16 @@ def _git(args: list[str], *, capture: bool = True, remote: bool = False):
     It also needs no terminal (si#760, decided by Marco 2026-11-18): `terminal=False`, so its limit kills
     the remote helpers it started (si#739), and `GIT_TERMINAL_PROMPT=0`, because a credential prompt from a
     group of its own is stopped (SIGTTIN) until the limit. A missing credential then fails at once, in git's
-    own words, and `NO_CREDENTIAL` says the way out. A credential helper and an askpass program still
-    answer as before; only the terminal prompt is gone.
+    own words, and `NO_CREDENTIAL` says the way out. A credential helper and git's own askpass program
+    (`GIT_ASKPASS`, `core.askpass`) still answer as before; only the terminal prompt is gone.
 
-    WHAT IT DOES NOT COVER, measured on OpenSSH 10.0: ssh asks on /dev/tty itself, and
-    `GIT_TERMINAL_PROMPT` does not reach it. Over an SSH remote whose host key is unknown the operation is
-    stopped until `limits.GIT_REMOTE` and ends as a timeout, not with ssh's question (a key passphrase asked
-    the same way is expected to behave alike; not measured). Left open on si#760 for Marco's decision.
+    SSH IS ASKED NOTHING EITHER (Marco, 2026-11-18, option 2). ssh asks on /dev/tty itself, which
+    `GIT_TERMINAL_PROMPT` does not reach: measured on OpenSSH 10.0, an unknown host key and a key with a
+    passphrase and no agent both stopped the operation until its limit. `SSH_ASKPASS=false`, forced by
+    `SSH_ASKPASS_REQUIRE=force`, makes ssh ask a program that says no, and it fails at once (`Host key
+    verification failed.`, `Permission denied (publickey, ...)`). In the child's environment only; it
+    replaces a person's own `SSH_ASKPASS` for these calls. `SSH_ASKPASS_REQUIRE` needs OpenSSH 8.4 or
+    newer: an older ssh ignores it, asks on the terminal, and the operation ends at its limit.
 
     Such an operation is always captured, because the kernel has to read git's words to know a refused
     credential (a refused `pull --rebase` and a conflicting one both exit 1). `capture=False` hands back
@@ -84,14 +95,15 @@ def _git(args: list[str], *, capture: bool = True, remote: bool = False):
     argv = ["git", "-C", str(ROOT), *args]
     if not (args and args[0] in limits.GIT_REMOTE_OPS):
         return run(argv, capture=capture)
-    env = {"GIT_TERMINAL_PROMPT": "0", **(remote_auth() if remote else {})}
+    env = {"GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS": "false", "SSH_ASKPASS_REQUIRE": "force",
+           **(remote_auth() if remote else {})}
     result = run(argv, env=env, timeout=limits.GIT_REMOTE, terminal=False)
     if not capture:
         sys.stdout.write(result.out)
         sys.stderr.write(result.err)
         sys.stdout.flush()
         sys.stderr.flush()
-    if not result.ok and _NOT_ASKED in result.err:
+    if _not_asked(result):
         log.error(NO_CREDENTIAL)
     return result
 
@@ -265,7 +277,7 @@ def push() -> int:
         _git(["rebase", "--abort"])
         if pulled.timed_out:            # `run` has said which call and after how long; it was no conflict
             log.die("pull --rebase got no answer from the remote; nothing was pushed")
-        if _NOT_ASKED in pulled.err:    # `_git` has said the way out; it was no conflict either (si#760)
+        if _not_asked(pulled):          # `_git` has said the way out; it was no conflict either (si#760)
             log.die("pull --rebase could not authenticate to the remote; nothing was pushed")
         log.die("pull --rebase failed (conflicts?); resolve them, then re-run the push")
     if not _git(["push"], capture=False).ok:

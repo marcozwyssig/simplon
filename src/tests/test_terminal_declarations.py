@@ -18,7 +18,9 @@ import json
 import os
 import pty
 import select
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -162,6 +164,64 @@ def test_a_declared_remote_git_operation_leaves_no_descendant_at_its_limit_on_a_
     assert _gone_within(_pids_running(silent_remote), 2), "a remote helper outlived the limit"
 
 
+_SSHD = shutil.which("sshd") or ("/usr/sbin/sshd" if os.path.exists("/usr/sbin/sshd") else None)
+
+
+@pytest.fixture
+def ssh_remote(tmp_path):
+    """A throwaway sshd on 127.0.0.1 with a host key of its own, which nobody's known_hosts carries: ssh asks
+    on /dev/tty whether to trust it, and `GIT_TERMINAL_PROMPT` does not reach that question."""
+    if _SSHD is None:
+        pytest.skip("no sshd on this machine to stand in for an SSH remote")
+    where = tmp_path / "sshd"
+    where.mkdir()
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(where / "hostkey")], check=True)
+    (where / "sshd_config").write_text(f"HostKey {where / 'hostkey'}\nListenAddress 127.0.0.1\n"
+                                       f"PidFile {where / 'pid'}\nUsePAM no\n")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    sshd = subprocess.Popen([_SSHD, "-D", "-e", "-f", str(where / "sshd_config"), "-p", str(port)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                assert sshd.poll() is None, "sshd did not start"
+                assert time.monotonic() < deadline, "sshd never listened"
+                time.sleep(0.05)
+        yield f"ssh://git@127.0.0.1:{port}/product.git"
+    finally:
+        sshd.kill()
+        sshd.wait()
+
+
+def test_an_ssh_remote_with_an_unknown_host_key_fails_at_once_on_a_terminal(clone, ssh_remote):
+    """Marco, 2026-11-18 (si#760, option 2): ssh is asked nothing either - `SSH_ASKPASS=false` forced by
+    `SSH_ASKPASS_REQUIRE=force` (OpenSSH 8.4+). Without it, measured, a declared operation stops (SIGTTIN) on
+    ssh's host-key question until its limit."""
+    # arrange
+    repo, env = clone
+    # ssh reads the passwd entry's home, not $HOME: nobody's own ssh config, keys or known_hosts take part
+    env = {k: v for k, v in env.items() if k not in ("SSH_AUTH_SOCK", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE")}
+    env["GIT_SSH_COMMAND"] = (f"ssh -F /dev/null -o UserKnownHostsFile={repo.parent / 'known_hosts'} "
+                              "-o GlobalKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o IdentityFile=none")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", ssh_remote], check=True, env=env)
+
+    # act
+    said = _on_a_terminal(_LS_REMOTE.format(limit=10.0, root=str(repo)), env)
+
+    # assert: ssh's own refusal at once, and the way out
+    verdict = _verdict(said)
+    assert not verdict["timed_out"], f"ssh waited on the terminal instead of failing; it said:\n{said}"
+    assert verdict["rc"] == 128
+    assert "Host key verification failed" in verdict["err"]
+    assert gitops.NO_CREDENTIAL in said
+
+
 _PUSH = """
 import sys
 from simplon.kernel import limits, run
@@ -203,7 +263,8 @@ def test_every_remote_git_operation_is_declared_and_asks_nobody_and_no_local_one
     # assert
     for op, kw in seen[:-1]:
         assert kw.get("terminal") is False, op
-        assert (kw.get("env") or {}).get("GIT_TERMINAL_PROMPT") == "0", op
+        assert {k: (kw.get("env") or {}).get(k) for k in ("GIT_TERMINAL_PROMPT", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE")} \
+            == {"GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS": "false", "SSH_ASKPASS_REQUIRE": "force"}, op
     op, kw = seen[-1]
     assert kw.get("terminal", True) is True and not (kw.get("env") or {}), "a local git call is undeclared"
 
