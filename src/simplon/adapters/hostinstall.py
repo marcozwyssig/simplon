@@ -98,13 +98,27 @@ def machine_skip_reason(env: Mapping[str, str], container: bool) -> str:
     return ""
 
 
+class NoAnswer(RuntimeError):
+    """`<tool> --version` gave no answer within its limit: the tool is there and could not be asked (si#740).
+
+    Not False, because every caller reads False as "missing, so install it" and would install over a tool
+    that merely hung. The message is the run's own line naming the tool and the limit.
+    """
+
+
 def runs(tool: str, env: Mapping[str, str] | None = None) -> bool:
-    """True when `tool --version` exits 0 within the time limit, with `env`'s PATH (default: this process')."""
+    """True when `tool --version` exits 0 within the time limit, with `env`'s PATH (default: this process').
+
+    False when it is not on that PATH, did not start, or answered non-zero; `NoAnswer` when it timed out.
+    """
     path = (env if env is not None else os.environ).get("PATH")
     found = shutil.which(tool, path=path)
     if found is None:
         return False
-    return run([found, "--version"], timeout=VERSION_TIMEOUT_S).ok
+    result = run([found, "--version"], timeout=VERSION_TIMEOUT_S)
+    if result.timed_out:
+        raise NoAnswer(result.err.strip())
+    return result.ok
 
 
 def reachable_later(tool: str) -> bool:

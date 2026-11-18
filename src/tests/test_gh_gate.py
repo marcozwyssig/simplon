@@ -100,6 +100,23 @@ def test_a_gh_on_path_that_does_not_run_is_not_present(host):
     assert outcome.state is State.NO_ROUTE
 
 
+def test_a_gh_that_gives_no_answer_is_failed_not_installed_over(host, monkeypatch):
+    # arrange (si#740): a gh that hangs on `--version`, and a brew that would install one. A timed-out
+    # probe is "could not ask", not "gh is missing": nothing may be installed over it.
+    path_dir, calls = host
+    _tool(path_dir, "gh", "exec /bin/sleep 30")
+    _tool(path_dir, "brew", f'echo "brew $*" >> {calls}')
+    monkeypatch.setattr(hostinstall, "VERSION_TIMEOUT_S", 0.3)
+
+    # act
+    outcome = _ensure()
+
+    # assert
+    assert outcome.state is State.FAILED
+    assert "gave no answer within 0.3 s" in outcome.detail
+    assert not calls.exists()
+
+
 def test_no_route_names_the_manual_link(host):
     # act
     outcome = _ensure()

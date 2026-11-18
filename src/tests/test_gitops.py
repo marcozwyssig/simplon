@@ -159,6 +159,18 @@ def test_init_submodule_returns_1_when_git_fails(monkeypatch, tmp_path):
 
 # --- the gh token's scopes --------------------------------------------------------------------------
 
+def test_a_gh_that_gave_no_answer_is_not_a_token_without_scopes(monkeypatch, capsys):
+    # arrange (si#740): `()` means "the token carries no scopes" and sends `vcs auth-scopes` into the
+    # interactive device flow; a timed-out `gh auth status` could not say anything about the token
+    monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/gh")
+    monkeypatch.setattr(gitops, "run", lambda argv, **kw: gitops.Result(
+        -9, "", "`gh auth status` gave no answer within 60 s and was stopped\n", timed_out=True))
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        gitops.gh_scopes()
+    assert "gave no answer within 60 s" in capsys.readouterr().err
+
 def test_the_reported_scopes_are_read_off_the_status_line():
     status = ("github.com\n"
               "  - Active account: true\n"
@@ -244,6 +256,31 @@ def test_remote_deletes_a_merged_branch_that_exists_only_on_origin(_repos):
     assert gitops.prune_branches(remote=True) == 0
 
     assert _origin_heads(origin) == {"main", "wip"}
+
+
+def test_an_origin_that_could_not_be_asked_about_a_branch_is_said_not_read_as_absent(_repos, monkeypatch,
+                                                                                    capsys):
+    # arrange (si#740): `done` is local and merged, so --remote deletes it locally and then asks origin
+    # whether it is there. A timed-out `ls-remote` is "could not ask", not "origin has no such branch".
+    clone, origin = _repos
+    _sh(clone, "branch", "done", "origin/done")
+    real = gitops._git
+
+    def silent_ls_remote(args, **kw):
+        if args[0] == "ls-remote":
+            return gitops.Result(-9, "", "`git ls-remote origin` gave no answer within 300 s and was stopped\n",
+                                 timed_out=True)
+        return real(args, **kw)
+    monkeypatch.setattr(gitops, "_git", silent_ls_remote)
+
+    # act
+    gitops.prune_branches(remote=True)
+
+    # assert: the local copy went, origin's stays, and the run says why
+    out = capsys.readouterr()
+    assert "could not ask origin whether done is there" in out.out + out.err
+    assert "gave no answer within 300 s" in out.out + out.err
+    assert "done" in _origin_heads(origin)
 
 
 def test_a_dry_run_names_the_origin_branch_and_deletes_nothing(_repos, capsys):

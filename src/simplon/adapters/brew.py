@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Mapping
 
 from simplon.adapters import fetch, tools
-from simplon.adapters.hostinstall import Outcome, State, act, machine_skip_reason, runs
+from simplon.adapters.hostinstall import NoAnswer, Outcome, State, act, machine_skip_reason, runs
 from simplon.kernel import log
 
 INSTALL_COMMIT = "8ab1549dfa1189fd4d818a2116592d8f0ee06d8c"  # 2026-10-07
@@ -104,6 +104,16 @@ def _install(where: str | None, interactive: bool) -> Outcome:
 def ensure(*, env: Mapping[str, str] | None = None, container: bool = False, system: str | None = None,
            machine: str | None = None, euid: int | None = None, interactive: bool | None = None) -> Outcome:
     """Homebrew PRESENT, INSTALLED, or why not. Every parameter defaults to this host; tests pass them."""
+    try:
+        return _ensure(env=env, container=container, system=system, machine=machine, euid=euid,
+                       interactive=interactive)
+    except NoAnswer as silent:
+        # Could not ask (si#740): not "brew is missing", so nothing is installed over it.
+        return Outcome(State.FAILED, str(silent))
+
+
+def _ensure(*, env: Mapping[str, str] | None = None, container: bool = False, system: str | None = None,
+            machine: str | None = None, euid: int | None = None, interactive: bool | None = None) -> Outcome:
     env = os.environ if env is None else env
     system = system or platform.system()
     machine = machine or platform.machine()

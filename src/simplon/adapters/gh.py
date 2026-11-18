@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from simplon.adapters import fetch, hostinstall
-from simplon.adapters.hostinstall import Outcome, State, machine_skip_reason, privileged, runs
+from simplon.adapters.hostinstall import NoAnswer, Outcome, State, machine_skip_reason, privileged, runs
 from simplon.kernel import log
 from simplon.kernel.run import Result, run
 
@@ -146,6 +146,15 @@ def _reachable(outcome: Outcome) -> Outcome:
 def ensure(*, env: Mapping[str, str] | None = None, container: bool = False, system: str | None = None,
            euid: int | None = None) -> Outcome:
     """gh PRESENT, INSTALLED, or why not. Every parameter defaults to this host; tests pass them."""
+    try:
+        return _ensure(env=env, container=container, system=system, euid=euid)
+    except NoAnswer as silent:
+        # Could not ask (si#740): not "gh is missing", so nothing is installed over it.
+        return Outcome(State.FAILED, str(silent))
+
+
+def _ensure(*, env: Mapping[str, str] | None = None, container: bool = False, system: str | None = None,
+            euid: int | None = None) -> Outcome:
     env = os.environ if env is None else env
     system = system or platform.system()
     skip = machine_skip_reason(env, container)
