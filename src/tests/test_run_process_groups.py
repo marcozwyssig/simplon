@@ -8,6 +8,7 @@ terminal at all (`_has_terminal` patched, because whether the test run has one d
 """
 from __future__ import annotations
 
+import io
 import os
 import pty
 import signal
@@ -19,7 +20,7 @@ import time
 
 import pytest
 import procalive
-from procalive import alive
+from procalive import alive, kill_if_alive
 
 from simplon.kernel import run as run_module
 from simplon.kernel.run import run_stream
@@ -48,6 +49,36 @@ def test_a_process_that_ends_between_open_and_read_reads_as_gone(monkeypatch):
 
     # act / assert
     assert alive(proc.pid) is False
+
+
+def test_a_process_being_released_reads_as_gone(monkeypatch):
+    # arrange: a reaped process shows state X (EXIT_DEAD) while its parent releases it - after Z, so a
+    # check that only knew Z read "gone" and then "running" again (CI on #774, the cleanup kill then ESRCH)
+    proc = subprocess.Popen(["sleep", "30"])
+    real_open = open
+
+    def open_dead(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        line = handle.read()
+        head, tail = line.rsplit(")", 1)
+        return io.StringIO(head + ") X " + tail.split(None, 1)[1])
+
+    monkeypatch.setattr(procalive, "open", open_dead, raising=False)
+    try:
+        # act / assert
+        assert alive(proc.pid) is False
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_killing_a_process_that_is_already_gone_is_not_an_error():
+    # arrange: a process ended and reaped, as one is between a cleanup's check and its kill
+    proc = subprocess.Popen(["true"])
+    proc.wait()
+
+    # act / assert: no ProcessLookupError
+    procalive.kill_if_alive(proc.pid)
 
 
 def _pids_running(needle: str) -> list[int]:
@@ -100,7 +131,7 @@ def silent_remote():
         yield url
     finally:
         for pid in _pids_running(url):      # what the red run left behind
-            os.kill(pid, signal.SIGKILL)
+            kill_if_alive(pid)
         stop.set()
         thread.join(5)
         for conn in held:
@@ -187,8 +218,7 @@ def test_an_abandoned_run_stream_kills_the_grandchild_too(monkeypatch, declared)
     try:
         assert _gone_within([grandchild], 2), "the shell's grandchild outlived the abandoned run"
     finally:
-        if alive(grandchild):
-            os.kill(grandchild, signal.SIGKILL)
+        kill_if_alive(grandchild)
 
 
 # --- a stop: handed on to the whole group, always ---------------------------------------------------------
@@ -235,8 +265,7 @@ def test_a_SIGTERM_to_the_kernel_reaches_what_its_child_started(tmp_path):
         assert rc == -signal.SIGTERM
         assert _gone_within([grandchild], 2), "the stop reached the child but not what it started"
     finally:
-        if alive(grandchild):
-            os.kill(grandchild, signal.SIGKILL)
+        kill_if_alive(grandchild)
 
 
 def test_a_ctrl_c_typed_at_the_terminal_still_reaches_a_child_in_its_own_group(tmp_path):
@@ -264,6 +293,6 @@ def test_a_ctrl_c_typed_at_the_terminal_still_reaches_a_child_in_its_own_group(t
         assert os.waitstatus_to_exitcode(status) != 0
         assert _gone_within([grandchild], 2), "a typed Ctrl-C never reached the child's own group"
     finally:
-        if grandchild and alive(grandchild):
-            os.kill(grandchild, signal.SIGKILL)
+        if grandchild:
+            kill_if_alive(grandchild)
         os.close(fd)

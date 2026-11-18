@@ -11,7 +11,7 @@ import time
 from unittest import mock
 
 import pytest
-from procalive import alive
+from procalive import alive, kill_if_alive
 
 from simplon.kernel import run as run_module
 from simplon.kernel.run import Result, chain, run_stream, stream
@@ -352,8 +352,7 @@ def test_a_SIGTERM_to_the_kernel_does_not_leave_its_child_running(tmp_path, slow
         assert _gone_within(child, 5), "the kernel ended and its child is still running"
         assert rc == -signal.SIGTERM
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 @posix_only
@@ -375,8 +374,7 @@ def test_a_SIGINT_to_the_kernel_lets_its_pytest_child_write_the_junit(tmp_path, 
         assert not alive(child)
         assert rc == -signal.SIGINT
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 @posix_only
@@ -397,8 +395,7 @@ def test_a_child_that_ignores_the_stop_is_killed_once_the_grace_is_over(tmp_path
         assert time.monotonic() - started < 10
         assert rc == -signal.SIGTERM
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 def test_run_still_kills_the_child_on_its_own_timeout():

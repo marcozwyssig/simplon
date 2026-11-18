@@ -6,11 +6,23 @@ every PR after #759.
 """
 from __future__ import annotations
 
+import contextlib
+import os
+import signal
+
 
 def alive(pid: int) -> bool:
-    """Running, as opposed to gone or a zombie waiting to be reaped."""
+    """Running, as opposed to gone, a zombie waiting to be reaped (Z) or one being released (X)."""
     try:
         with open(f"/proc/{pid}/stat") as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+            return f.read().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
     except (FileNotFoundError, ProcessLookupError):  # gone before the open, or between the open and the read
         return False
+
+
+def kill_if_alive(pid: int) -> None:
+    """A test's cleanup: SIGKILL `pid` if it still runs. It can end between the check and the kill, so a
+    process that is gone by then is not an error."""
+    if alive(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
