@@ -87,13 +87,14 @@ def container_route(env: Mapping[str, str]) -> bool:
     return env.get("DELIVERY_ROUTE") == "inside"
 
 
-def machine_skip_reason(env: Mapping[str, str], container: bool) -> str:
-    """Why this machine is not one to provision, or "" when it is."""
+def machine_skip_reason(env: Mapping[str, str], container: bool, what: str = "host tools") -> str:
+    """Why this machine is not one to provision, or "" when it is. `what` is what the gate installs, for the
+    sentence: every gate `support install` drives asks this one rule (#670 item 15)."""
     if container:
         return CONTAINER_ROUTE_SKIP
     for variable in ("CI", "GITHUB_ACTIONS"):
         if env.get(variable, "").lower() == "true":
-            return f"{variable}=true: host tools are for a machine somebody develops on"
+            return f"{variable}=true: {what} are for a machine somebody develops on"
     return ""
 
 

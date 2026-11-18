@@ -108,6 +108,20 @@ def test_skipped_in_ci(machine, variable):
     assert machine.argv() == []
 
 
+def test_the_ci_and_container_skip_is_hostinstalls_one_rule(monkeypatch):
+    """#670 item 15: one CI detection for every gate `support install` drives, not a second loop here."""
+    # arrange
+    asked: list = []
+    monkeypatch.setattr(claudeplugins.hostinstall, "machine_skip_reason",
+                        lambda env, container, what="host tools": asked.append(what) or "the shared rule")
+
+    # act
+    reason = claudeplugins._skip_reason({"PATH": ""}, False)
+
+    # assert
+    assert (reason, asked) == ("the shared rule", ["plugins"])
+
+
 def test_skipped_on_the_container_route(machine):
     # act
     outcome = claudeplugins.step(env=machine.env(), container=True)
