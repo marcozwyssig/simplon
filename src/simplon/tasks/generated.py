@@ -1,4 +1,4 @@
-"""IS THE COMMITTED GENERATED FILE WHAT REGENERATING PRODUCES? (si#240)
+"""IS THE GENERATED FILE IN THE TREE WHAT REGENERATING PRODUCES? (si#240, si#746)
 
 A generated artefact that is committed has two copies of one fact: the source it is generated from, and
 the bytes in the tree. They drift, silently, and the drift is only visible to somebody who regenerates -
@@ -26,6 +26,16 @@ IT REGENERATES INTO THE WORKING TREE, deliberately. Generating into a temporary 
 two files the product's own command never produced side by side - the command writes where it writes, and
 a gate that reroutes it is testing something else. A CI checkout is disposable; a developer gets told
 that the tree was touched.
+
+IT RULES ON WHAT REGENERATING CHANGED, NOT ON HOW THE TREE DIFFERS FROM HEAD (si#746, Marco's decision
+of 2026-11-18). Until then it ran `git diff` against HEAD after regenerating, which on a dirty tree said
+three false things: an uncommitted edit to a hand-written module beside the generated task classes was
+"not what `build model` produces" (no command could fix it); a file regenerated and not yet committed,
+byte for byte what its command writes, was "not what its command produces"; and a hand edit that
+regeneration overwrote back to HEAD's bytes was green. So the files under each entry are read before
+the command runs and again after, and only a file the command wrote differently, created or removed is
+stale - plus any file it leaves that git does not track, as before. On a clean checkout, which is what
+CI has, both readings give the same verdict.
 """
 from __future__ import annotations
 
@@ -103,8 +113,25 @@ def _untracked(root: Path, path: str) -> list[str]:
     return [line for line in listed.out.splitlines() if line.strip()]
 
 
-def _differs(root: Path, path: str) -> bool:
-    return not run.run(["git", "-C", str(root), "diff", "--exit-code", "--", path]).ok
+def _snapshot(root: Path, path: str) -> dict[str, bytes | None]:
+    """The bytes of every file under `path` that git tracks or would track (ignored files, such as the
+    bytecode running the generator leaves, are not the generator's output). A tracked file missing from
+    disk is None. A listing git could not make is a ValueError, never an empty snapshot: an empty one
+    before and after would read as "regeneration changed nothing"."""
+    listed = run.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                      "--", path])
+    if not listed.ok:
+        raise ValueError(f"`git ls-files --cached --others` failed (rc {listed.rc}): {listed.err.strip()}")
+    files: dict[str, bytes | None] = {}
+    for name in sorted({n for n in listed.out.split("\0") if n}):
+        file = root / name
+        files[name] = file.read_bytes() if file.is_file() else None
+    return files
+
+
+def _changed(before: dict[str, bytes | None], after: dict[str, bytes | None]) -> list[str]:
+    """Every file regeneration wrote differently, created or removed."""
+    return [name for name in sorted(before.keys() | after.keys()) if before.get(name) != after.get(name)]
 
 
 def check() -> int:
@@ -124,6 +151,12 @@ def check() -> int:
                       f"the staleness it exists to catch, not an exemption from it")
             stale.append(entry.name)
             continue
+        try:
+            before = _snapshot(root, entry.path)
+        except ValueError as e:
+            log.error(f"{entry.name}: {e}, so what {entry.path} carried before `{entry.by}` is unknown")
+            stale.append(entry.name)
+            continue
         rc = _regenerate(entry, root)
         if rc != 0:
             log.error(f"{entry.name}: `{entry.by}` exited {rc}, so {entry.path} was NOT regenerated and "
@@ -141,9 +174,15 @@ def check() -> int:
                       f"(or, if no template should write it, find out why one does)")
             stale.append(entry.name)
             continue
-        if _differs(root, entry.path):
-            log.error(f"{entry.name}: {entry.path} is not what `{entry.by}` produces. Run it and commit "
-                      f"the result")
+        try:
+            changed = _changed(before, _snapshot(root, entry.path))
+        except ValueError as e:
+            log.error(f"{entry.name}: {e}, so what `{entry.by}` changed is unknown")
+            stale.append(entry.name)
+            continue
+        if changed:
+            log.error(f"{entry.name}: `{entry.by}` changed {', '.join(changed)}, so the tree did not carry "
+                      f"what it produces. Its output is in the tree now: commit it")
             stale.append(entry.name)
     if stale:
         log.warn(f"{len(stale)}/{len(entries)} generated file(s) stale: {', '.join(stale)}")

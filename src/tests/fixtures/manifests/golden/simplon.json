@@ -152,7 +152,7 @@
       },
       "generated": {
         "depends_on": [],
-        "help": "Fail if a committed generated file is not what its own command produces.",
+        "help": "Fail if regenerating a generated file changes it, or leaves a file git does not track.",
         "impl": "simplon.tasks.test_generated:TestGenerated"
       },
       "release-notes": {

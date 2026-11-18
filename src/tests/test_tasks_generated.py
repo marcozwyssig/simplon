@@ -1,4 +1,4 @@
-"""IS THE COMMITTED GENERATED FILE WHAT REGENERATING PRODUCES? (si#240)
+"""IS THE GENERATED FILE IN THE TREE WHAT REGENERATING PRODUCES? (si#240, si#746)
 
 The question has been invented TWICE in this family of repositories, independently, and it has drawn
 blood once. biz-cockpit wrote `verify_spec` - `git diff --exit-code` over its OpenAPI contract - and
@@ -17,6 +17,10 @@ untracked one is a failure with its own sentence rather than a silent pass.
 THE GATE HAS SIDE EFFECTS AND SAYS SO. It regenerates into the working tree, because that is what makes
 the comparison real - a regeneration into a temporary directory would compare two things the product's
 own command never produced side by side. A CI checkout is disposable; a developer is told.
+
+IT RULES ON WHAT REGENERATING CHANGED (si#746, Marco, 2026-11-18), not on how the tree differs from
+HEAD: an uncommitted edit regeneration leaves alone is not staleness. On a clean checkout the two
+readings agree; the dirty-tree cases are pinned at the end of this file.
 
 AAA throughout.
 """
@@ -218,9 +222,121 @@ def test_a_listing_git_could_not_make_is_stale_not_clean(tmp_path, monkeypatch, 
     monkeypatch.setattr(generated, "_regenerate", _writes_both)
     real = generated.run.run
     monkeypatch.setattr(generated.run, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: broken")
-                        if "--others" in argv else real(argv, **kw))
+                        if "--others" in argv and "--cached" not in argv else real(argv, **kw))
     # Act
     rc = generated.check()
     # Assert
     assert rc == 1
     assert "fatal: broken" in capsys.readouterr().err
+
+
+# --- the tree as it stands (si#746) --------------------------------------------------------------------
+#
+# Marco's decision on 2026-11-18: the gate rules on what REGENERATING CHANGES, not on how the tree differs
+# from HEAD. An uncommitted edit regeneration leaves alone is not staleness, and was called "not what
+# `build model` produces" for a hand-written module beside the generated classes and for a file that was
+# exactly what its command writes. A clean CI checkout gets the same verdict from either reading.
+
+
+def test_an_uncommitted_hand_written_file_beside_a_directory_entrys_output_is_not_stale(tmp_path, monkeypatch):
+    # Arrange: M2 - the generated classes committed, a hand-written module beside them edited and not
+    # committed, and a regeneration that does not touch it
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    (root / "out" / "tasks" / "taskgen.py").write_text("X = 1\n", encoding="utf-8")
+    _commit(root)
+    (root / "out" / "tasks" / "taskgen.py").write_text("X = 2\n", encoding="utf-8")
+    monkeypatch.setattr(generated, "_regenerate", _writes_both)
+    # Act / Assert
+    assert generated.check() == 0
+
+
+def test_a_fresh_uncommitted_regeneration_is_not_stale(tmp_path, monkeypatch):
+    # Arrange: M4 - the source moved, the file was regenerated, and nothing is committed yet: the tree
+    # carries exactly what the command writes
+    root = _repo(tmp_path)
+    (root / "out").mkdir()
+    (root / "out" / "completion.sh").write_text("# old\n", encoding="utf-8")
+    _product(root, monkeypatch, _MANIFEST)
+    _commit(root)
+    (root / "out" / "completion.sh").write_text("# new\n", encoding="utf-8")
+    monkeypatch.setattr(generated, "_regenerate",
+                        lambda entry, root: (root / entry.path).write_text("# new\n", encoding="utf-8") and 0)
+    # Act / Assert
+    assert generated.check() == 0
+
+
+def test_an_uncommitted_file_that_regeneration_changes_is_stale_and_named(tmp_path, monkeypatch, capsys):
+    # Arrange: M6 on a dirty tree - an uncommitted edit regeneration does NOT leave alone
+    root = _repo(tmp_path)
+    (root / "out").mkdir()
+    (root / "out" / "completion.sh").write_text("# fresh\n", encoding="utf-8")
+    _product(root, monkeypatch, _MANIFEST)
+    _commit(root)
+    (root / "out" / "completion.sh").write_text("# hand edit\n", encoding="utf-8")
+    monkeypatch.setattr(generated, "_regenerate",
+                        lambda entry, root: (root / entry.path).write_text("# fresh\n", encoding="utf-8") and 0)
+    # Act
+    rc = generated.check()
+    # Assert
+    assert rc == 1
+    assert "out/completion.sh" in capsys.readouterr().err
+
+
+def test_a_file_regeneration_deletes_under_a_directory_entry_is_stale(tmp_path, monkeypatch, capsys):
+    # Arrange: a committed class for a task that no longer exists, which regeneration removes
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    (root / "out" / "tasks" / "gone.py").write_text("G = 1\n", encoding="utf-8")
+    _commit(root)
+
+    def _writes_both_and_deletes(entry, root):
+        (root / entry.path / "gone.py").unlink()
+        return _writes_both(entry, root)
+
+    monkeypatch.setattr(generated, "_regenerate", _writes_both_and_deletes)
+    # Act
+    rc = generated.check()
+    # Assert
+    assert rc == 1
+    assert "out/tasks/gone.py" in capsys.readouterr().err
+
+
+def test_an_ignored_file_regeneration_rewrites_is_not_stale(tmp_path, monkeypatch):
+    # Arrange: running the generator writes bytecode beside the classes; git ignores it, so does the gate
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    (root / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    _commit(root)
+
+    def _writes_both_and_bytecode(entry, root):
+        (root / entry.path / "a.pyc").write_bytes(b"\x00new")
+        return _writes_both(entry, root)
+
+    monkeypatch.setattr(generated, "_regenerate", _writes_both_and_bytecode)
+    # Act / Assert
+    assert generated.check() == 0
+
+
+def test_a_snapshot_git_could_not_make_is_stale_not_clean(tmp_path, monkeypatch, capsys):
+    # Arrange: the before/after listing failing must not read as "regeneration changed nothing"
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    _commit(root)
+    monkeypatch.setattr(generated, "_regenerate", _writes_both)
+    real = generated.run.run
+    monkeypatch.setattr(generated.run, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: snap")
+                        if "--cached" in argv else real(argv, **kw))
+    # Act
+    rc = generated.check()
+    # Assert
+    assert rc == 1
+    assert "fatal: snap" in capsys.readouterr().err
