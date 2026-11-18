@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Mapping
@@ -143,12 +142,15 @@ def privileged(argv: list[str], *, euid: int | None = None,
 
 
 def act(argv: list[str], timeout_s: float = INSTALL_TIMEOUT_S, env: Mapping[str, str] | None = None) -> str:
-    """Run one install command uncaptured; "" on success, else why, in words a person can act on."""
-    try:
-        code = subprocess.run(argv, env=None if env is None else dict(env), timeout=timeout_s,
-                              check=False).returncode
-    except subprocess.TimeoutExpired:
+    """Run one install command uncaptured; "" on success, else why, in words a person can act on.
+
+    `env` is ADDED to this process's environment for the command, as `run` takes it. Through `run` (#670
+    item 7), so a stop reaches the command (si#649) instead of leaving an installer running under init. It
+    stays on the terminal's process group: a sudo password or Homebrew's RETURN prompt may need it (si#760).
+    """
+    result = run(argv, capture=False, timeout=timeout_s, env=env)
+    if result.timed_out:
         return f"{argv[0]} timed out after {timeout_s:g} s"
-    except OSError as exc:
-        return f"{argv[0]} could not be started: {exc}"
-    return "" if code == 0 else f"{argv[0]} exited {code}"
+    if result.not_started:
+        return f"{argv[0]} could not be started: {result.not_started}"
+    return "" if result.ok else f"{argv[0]} exited {result.rc}"
