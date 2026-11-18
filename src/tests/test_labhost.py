@@ -424,23 +424,96 @@ def test_macos_install_aborts_when_colima_missing_after_brew_install(monkeypatch
         labhost._install_macos()
 
 
-def test_linux_install_pipes_the_installer_into_bash_not_command_substitution(monkeypatch):
-    # arrange: docker present, containerlab absent so ONLY the clab install path runs; capture the argv
+def _serve_clab_script(monkeypatch, body: bytes = b"echo the pinned containerlab install script\n"):
+    """The real download of containerlab's get.sh, answered from memory and pinned to `body` (si#744)."""
+    import hashlib
+    import servedbytes
+    asked = servedbytes.serve(monkeypatch, body)
+    monkeypatch.setattr(labhost, "CONTAINERLAB_INSTALL_SHA256", hashlib.sha256(body).hexdigest())
+    return asked
+
+
+def test_linux_install_runs_the_pinned_containerlab_installer_as_a_file(monkeypatch):
+    # arrange (si#744): docker present, containerlab absent so ONLY the clab install path runs
     monkeypatch.setattr(labhost, "_have", lambda tool: tool == "docker")
-    captured = {}
+    body = b"echo the pinned containerlab install script\n"
+    asked = _serve_clab_script(monkeypatch, body)
+    calls = []
 
     def fake_run(argv, **kwargs):
-        captured["argv"] = argv
+        script = argv[3]
+        calls.append((argv, open(script, "rb").read()))
         return Result(rc=0, out="", err="")
 
     monkeypatch.setattr(labhost, "run", fake_run)
     # act
     rc = labhost._install_linux()
-    # assert: the installer is PIPED into bash (never $(...), the footgun that broke the Ubuntu install)
-    cmd = captured["argv"][-1]
+    # assert: the pinned URL was fetched, and the checked bytes run as a file at the pinned version with
+    # the installer's own package checksum on - never `curl ... | sudo -E bash`
     assert rc == 0
-    assert "| sudo -E bash" in cmd
-    assert "$(" not in cmd
+    assert asked == [labhost.CONTAINERLAB_INSTALL_URL]
+    [(argv, ran)] = calls
+    assert argv[:3] == ["sudo", "-E", "bash"]
+    assert argv[3].endswith("get.sh")
+    assert argv[4:] == ["--version", labhost.CONTAINERLAB_VERSION, "--verify-checksum"]
+    assert ran == body
+
+
+def test_a_tampered_containerlab_install_script_is_refused_and_never_run(monkeypatch):
+    # arrange (si#744): docker present, and the served script is not the pinned one
+    import servedbytes
+    servedbytes.serve(monkeypatch, b"echo not the containerlab install script\n")
+    calls = []
+    monkeypatch.setattr(labhost, "_have", lambda tool: tool == "docker")
+    monkeypatch.setattr(labhost, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+
+    def die(msg):
+        raise SystemExit(msg)
+    monkeypatch.setattr(labhost.log, "die", die)
+
+    # act
+    with pytest.raises(SystemExit) as refused:
+        labhost._install_linux()
+
+    # assert: nothing ran, and the refusal names the URL and the pin
+    assert calls == []
+    assert labhost.CONTAINERLAB_INSTALL_URL in str(refused.value)
+    assert labhost.CONTAINERLAB_INSTALL_SHA256 in str(refused.value)
+
+
+def test_the_vm_install_copies_the_checked_containerlab_installer_in_and_runs_it(monkeypatch):
+    # arrange (si#744): the macOS path installs containerlab INSIDE the Colima VM
+    body = b"echo the pinned containerlab install script\n"
+    _serve_clab_script(monkeypatch, body)
+    calls = []
+    monkeypatch.setattr(labhost, "run",
+                        lambda argv, **kw: calls.append((argv, kw.get("input_text"))) or Result(0, "", ""))
+    # act
+    labhost._install_containerlab_in_vm()
+    # assert: the checked bytes are written into the VM, then run there as a file at the pinned version
+    [(copy, text), (install, _)] = calls
+    assert copy[:4] == ["colima", "ssh", "--", "tee"]
+    assert text == body.decode()
+    assert install == ["colima", "ssh", "--", "sudo", "-E", "bash", copy[4],
+                       "--version", labhost.CONTAINERLAB_VERSION, "--verify-checksum"]
+
+
+def test_a_tampered_containerlab_install_script_never_reaches_the_vm(monkeypatch):
+    # arrange (si#744)
+    import servedbytes
+    servedbytes.serve(monkeypatch, b"echo not the containerlab install script\n")
+    calls = []
+    monkeypatch.setattr(labhost, "run", lambda argv, **kw: calls.append(argv) or Result(0, "", ""))
+
+    def die(msg):
+        raise SystemExit(msg)
+    monkeypatch.setattr(labhost.log, "die", die)
+    # act
+    with pytest.raises(SystemExit) as refused:
+        labhost._install_containerlab_in_vm()
+    # assert
+    assert calls == []
+    assert labhost.CONTAINERLAB_INSTALL_URL in str(refused.value)
 
 
 def _serve_engine_script(monkeypatch, body: bytes = b"echo the pinned docker install script\n"):
@@ -466,13 +539,14 @@ def test_linux_install_installs_docker_before_containerlab_when_missing(monkeypa
     monkeypatch.setattr(labhost, "run", fake_run)
     monkeypatch.setattr(labhost.docker, "run", fake_run)
     _serve_engine_script(monkeypatch)
+    _serve_clab_script(monkeypatch, b"echo the pinned docker install script\n")
     # act
     rc = labhost._install_linux()
     # assert: docker installs FIRST, from the pinned script run as a file (si#668: no longer piped from
     # get.docker.com), then containerlab
     assert rc == 0
     docker_cmd = next(c for c in calls if c[:3] == ["sudo", "-E", "sh"])
-    clab_cmd = next(c for c in calls if "get.containerlab.dev" in c[-1])
+    clab_cmd = next(c for c in calls if c[:3] == ["sudo", "-E", "bash"])
     assert docker_cmd[3].endswith("install.sh")
     assert calls.index(docker_cmd) < calls.index(clab_cmd)
 
