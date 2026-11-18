@@ -11,6 +11,7 @@ import time
 from unittest import mock
 
 import pytest
+from procalive import alive
 
 from simplon.kernel import run as run_module
 from simplon.kernel.run import Result, chain, run_stream, stream
@@ -295,18 +296,11 @@ time.sleep(60)
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX signals; the Windows path is unchanged")
 
 
-def _alive(pid: int) -> bool:
-    """Running, as opposed to gone or a zombie waiting for init to reap it."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
-        return False
 
 
 def _gone_within(pid: int, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
-    while _alive(pid):
+    while alive(pid):
         if time.monotonic() > deadline:
             return False
         time.sleep(0.05)
@@ -358,7 +352,7 @@ def test_a_SIGTERM_to_the_kernel_does_not_leave_its_child_running(tmp_path, slow
         assert _gone_within(child, 5), "the kernel ended and its child is still running"
         assert rc == -signal.SIGTERM
     finally:
-        if _alive(child):
+        if alive(child):
             os.kill(child, signal.SIGKILL)
 
 
@@ -378,10 +372,10 @@ def test_a_SIGINT_to_the_kernel_lets_its_pytest_child_write_the_junit(tmp_path, 
 
         # assert
         assert junit.exists(), "the child was stopped before it could write its junit"
-        assert not _alive(child)
+        assert not alive(child)
         assert rc == -signal.SIGINT
     finally:
-        if _alive(child):
+        if alive(child):
             os.kill(child, signal.SIGKILL)
 
 
@@ -399,11 +393,11 @@ def test_a_child_that_ignores_the_stop_is_killed_once_the_grace_is_over(tmp_path
         rc = kernel.wait(30)
 
         # assert
-        assert not _alive(child)
+        assert not alive(child)
         assert time.monotonic() - started < 10
         assert rc == -signal.SIGTERM
     finally:
-        if _alive(child):
+        if alive(child):
             os.kill(child, signal.SIGKILL)
 
 
