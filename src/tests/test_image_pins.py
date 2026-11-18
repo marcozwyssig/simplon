@@ -142,6 +142,29 @@ def test_every_module_level_image_constant_in_the_kernel_is_pinned():
     assert len(ruled) >= 2, f"the image constants disappeared rather than being pinned: {sorted(ruled)}"
 
 
+def test_every_image_constant_is_validated_where_it_is_declared():
+    """`docker.pinned_image`'s own docstring says the images the kernel names itself are validated WHERE
+    THEY ARE DECLARED, at import. The sweep above rules on their values in a test run; this holds the
+    declaration to the gate, so an unpinned one cannot be imported at all. si#670 found `tasks/carrier`
+    declaring three as plain strings - two gated at the call site, one (Portainer's) at no call site."""
+    # arrange
+    sources = sorted(SRC.rglob("*.py"))
+
+    # act: a module-level `IMAGE` or `*_IMAGE` assigned a bare string literal is one no gate saw at import
+    bare = []
+    for path in sources:
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+                continue
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if any(n == "IMAGE" or n.endswith("_IMAGE") for n in names) and isinstance(node.value.value, str):
+                bare.append(f"{path.relative_to(ROOT)}:{node.lineno}: {names[0]}")
+
+    # assert
+    assert bare == [], f"declare it as `docker.pinned_image(<ref>, <module>)`: {bare}"
+    assert len(sources) > 40
+
+
 # --- and no way around them -----------------------------------------------------------------------------
 
 

@@ -61,14 +61,15 @@ from pathlib import Path
 
 from simplon.manifest import artifactsection, context, outputs
 from simplon.model import artifactschema
-from simplon.adapters import docker, githubpackages, hostpath
+from simplon.adapters import docker, githubpackages
 from simplon.kernel import log
 from simplon.kernel.run import stream
-# The CREDENTIAL helper is imported and not copied, deliberately, and it is the one thing here that is.
-# `_env_file` writes a 0600 file and removes it in a `finally`; two copies of that is how one of them loses
-# the `finally` on the day somebody edits the other. The SECTION READER below is copied instead - see its
+# The CREDENTIAL helper and the container line are imported and not copied, deliberately. `_env_file`
+# writes a 0600 file and removes it in a `finally`; two copies of that is how one of them loses the
+# `finally` on the day somebody edits the other. `docker_argv` was a copy until si#670 and differed only
+# in its `-e` flags, which is why it now takes them as an argument. The SECTION READER below is copied instead - see its
 # own docstring for why the asymmetry is the right way round.
-from simplon.tasks.nuget import _env_file, _inside_the_output_root
+from simplon.tasks.nuget import WORKDIR, _env_file, _inside_the_output_root, docker_argv
 
 #: The manifest section this module reads - the same one `tasks/artifact`, `tasks/asset`, `tasks/nuget` and
 #: `tasks/conan` read. si#127's reasoning, applied a fourth time: a registry, a package and a scope are the
@@ -79,14 +80,15 @@ SECTION = "artifacts"
 #: needs are the generated schema's.
 ENTRY = artifactschema.MavenEntry
 
-#: The container's view of the product tree - `/work`, the mount point `toolchain:run` and
-#: `release:nuget` both use, so a path printed by one command means the same thing in another.
-WORKDIR = "/work"
-
 #: Where Gradle may keep its per-user state. Inside the mounted tree because that is the one directory a
 #: container running as the caller can always write, and under `build/` because that is what a product
 #: gitignores. See the module head for why this is `GRADLE_USER_HOME` and not `HOME`.
 GRADLE_HOME = "build/gradle-home"
+
+#: What the gradle line sets on top of `nuget.docker_argv`'s shared line, which this module borrows for
+#: `_env_file`'s reason (si#670). si#325: the JVM ignores $HOME when the uid has a passwd entry, so this
+#: variable - not HOME - is what keeps gradle out of a directory it cannot write.
+GRADLE_ENV = {"GRADLE_USER_HOME": f"{WORKDIR}/{GRADLE_HOME}"}
 
 #: What the read-back can honestly say. Three values because `401` and `404` are different answers and
 #: were one value in every hand-written publish this replaces.
@@ -273,25 +275,6 @@ def may_publish(registry: str, group: str, modules: "Sequence[str]", version: st
     return True, ""
 
 
-def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
-                lifecycle: Sequence[str] = ()) -> list[str]:
-    """The container line for one gradle invocation. PURE: it assembles, it runs nothing.
-
-    Pure for `nuget.docker_argv`'s reason: whose uid, which mount, where gradle may write and how the
-    credential arrives are exactly the decisions a test should be able to read with no docker daemon in
-    the room. `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in because the name in them is
-    fresh per call - choosing it here would make the line impure.
-    """
-    return ["docker", "run", "--rm", *lifecycle,
-            *docker.user_args(),
-            "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
-            "--env-file", str(env_file),
-            # si#325: the JVM ignores $HOME when the uid has a passwd entry, so this variable - not HOME -
-            # is what keeps gradle out of a directory it cannot write.
-            "-e", f"GRADLE_USER_HOME={WORKDIR}/{GRADLE_HOME}",
-            image, *argv]
-
-
 def _status(url: str, token: str) -> int:
     """The HTTP status of a GET against `url`, or 0 when the request could not be made at all.
 
@@ -453,7 +436,8 @@ def pack(name: str = "", tag: str = "") -> int:
         # si#412: named, labelled, and removed if this run is interrupted.
         container, lifecycle = docker.lifecycle()
         with docker.stopped_on_interrupt(container):
-            rc = stream(docker_argv(pinned, root, env_file, pack_argv(resolved), lifecycle))
+            rc = stream(docker_argv(pinned, root, env_file, pack_argv(resolved), lifecycle,
+                                    env=GRADLE_ENV))
     if rc != 0:
         log.error(f"`gradle {STAGE_TASK}` failed (rc={rc}; see output above)")
         return rc
