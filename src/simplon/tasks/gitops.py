@@ -34,6 +34,7 @@ import base64
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -49,17 +50,50 @@ def configure(root: Path | str) -> None:
     ROOT = Path(root)
 
 
+#: What git says when it needed a credential and was not allowed to ask for one. Measured on git 2.47:
+#: `fatal: could not read Username for '<url>': terminal prompts disabled`.
+_NOT_ASKED = "terminal prompts disabled"
+
+#: The way out of a remote operation that needed a credential (si#760).
+NO_CREDENTIAL = ("git needed a credential for the remote, and a remote operation here does not prompt for one "
+                 "(si#760): configure a credential helper (`gh auth setup-git` does it for GitHub), "
+                 "or use an SSH remote")
+
+
 def _git(args: list[str], *, capture: bool = True, remote: bool = False):
     """`remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does.
 
     An operation that talks to a remote (`limits.GIT_REMOTE_OPS`) runs under `limits.GIT_REMOTE` whether
     or not it carries the credential (si#654): a hung remote is a hung run either way.
+
+    It also needs no terminal (si#760, decided by Marco 2026-11-18): `terminal=False`, so its limit kills
+    the remote helpers it started (si#739), and `GIT_TERMINAL_PROMPT=0`, because a credential prompt from a
+    group of its own is stopped (SIGTTIN) until the limit. A missing credential then fails at once, in git's
+    own words, and `NO_CREDENTIAL` says the way out. A credential helper and an askpass program still
+    answer as before; only the terminal prompt is gone.
+
+    WHAT IT DOES NOT COVER, measured on OpenSSH 10.0: ssh asks on /dev/tty itself, and
+    `GIT_TERMINAL_PROMPT` does not reach it. Over an SSH remote whose host key is unknown the operation is
+    stopped until `limits.GIT_REMOTE` and ends as a timeout, not with ssh's question (a key passphrase asked
+    the same way is expected to behave alike; not measured). Left open on si#760 for Marco's decision.
+
+    Such an operation is always captured, because the kernel has to read git's words to know a refused
+    credential (a refused `pull --rebase` and a conflicting one both exit 1). `capture=False` hands back
+    what git said after it ended, instead of while it ran.
     """
-    timeout = limits.GIT_REMOTE if args and args[0] in limits.GIT_REMOTE_OPS else None
-    auth = remote_auth() if remote else {}
-    if auth:
-        return run(["git", "-C", str(ROOT), *args], capture=capture, env=auth, timeout=timeout)
-    return run(["git", "-C", str(ROOT), *args], capture=capture, timeout=timeout)
+    argv = ["git", "-C", str(ROOT), *args]
+    if not (args and args[0] in limits.GIT_REMOTE_OPS):
+        return run(argv, capture=capture)
+    env = {"GIT_TERMINAL_PROMPT": "0", **(remote_auth() if remote else {})}
+    result = run(argv, env=env, timeout=limits.GIT_REMOTE, terminal=False)
+    if not capture:
+        sys.stdout.write(result.out)
+        sys.stderr.write(result.err)
+        sys.stdout.flush()
+        sys.stderr.flush()
+    if not result.ok and _NOT_ASKED in result.err:
+        log.error(NO_CREDENTIAL)
+    return result
 
 
 def remote_auth() -> dict[str, str]:
@@ -231,6 +265,8 @@ def push() -> int:
         _git(["rebase", "--abort"])
         if pulled.timed_out:            # `run` has said which call and after how long; it was no conflict
             log.die("pull --rebase got no answer from the remote; nothing was pushed")
+        if _NOT_ASKED in pulled.err:    # `_git` has said the way out; it was no conflict either (si#760)
+            log.die("pull --rebase could not authenticate to the remote; nothing was pushed")
         log.die("pull --rebase failed (conflicts?); resolve them, then re-run the push")
     if not _git(["push"], capture=False).ok:
         log.die("git push failed")
@@ -318,7 +354,7 @@ def _pr_heads(state: str) -> set[str] | None:
     if shutil.which("gh") is None:
         return None
     res = run(["gh", "pr", "list", "--state", state, "--limit", "300",
-               "--json", "headRefName", "-q", ".[].headRefName"], timeout=limits.GH)
+               "--json", "headRefName", "-q", ".[].headRefName"], timeout=limits.GH, terminal=False)
     if not res.ok:
         return None
     return {ln.strip() for ln in (res.out or "").splitlines() if ln.strip()}
@@ -494,7 +530,7 @@ def parse_scopes(status_text: str) -> tuple[str, ...]:
 def gh_scopes(host: str = "github.com") -> tuple[str, ...]:
     """The scopes the stored gh token actually carries."""
     _require("gh")
-    result = run(["gh", "auth", "status", "-h", host], timeout=limits.GH)
+    result = run(["gh", "auth", "status", "-h", host], timeout=limits.GH, terminal=False)
     if result.timed_out or result.not_started:
         # Could not ask (si#740): `()` would read as "no scopes" and start the interactive refresh.
         log.die(f"could not read the gh token's scopes: {result.err.strip()}")

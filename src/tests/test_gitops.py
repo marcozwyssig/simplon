@@ -113,13 +113,14 @@ def test_a_provably_merged_branch_keeps_its_own_reason_under_the_flag():
 class _FakeResult:
     def __init__(self, ok):
         self.ok = ok
+        self.err = ""
 
 
 def test_init_submodule_runs_git_submodule_update_init_at_the_configured_root(monkeypatch, tmp_path):
     # arrange
     gitops.configure(tmp_path)
     calls = []
-    monkeypatch.setattr(gitops, "run", lambda args, capture=True, timeout=None: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(gitops, "run", lambda args, **kw: calls.append(args) or _FakeResult(True))
     monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act
@@ -134,7 +135,7 @@ def test_init_submodule_honours_a_custom_path(monkeypatch, tmp_path):
     # arrange
     gitops.configure(tmp_path)
     calls = []
-    monkeypatch.setattr(gitops, "run", lambda args, capture=True, timeout=None: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(gitops, "run", lambda args, **kw: calls.append(args) or _FakeResult(True))
     monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act
@@ -147,7 +148,7 @@ def test_init_submodule_honours_a_custom_path(monkeypatch, tmp_path):
 def test_init_submodule_returns_1_when_git_fails(monkeypatch, tmp_path):
     # arrange
     gitops.configure(tmp_path)
-    monkeypatch.setattr(gitops, "run", lambda args, capture=True, timeout=None: _FakeResult(False))
+    monkeypatch.setattr(gitops, "run", lambda args, **kw: _FakeResult(False))
     monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act

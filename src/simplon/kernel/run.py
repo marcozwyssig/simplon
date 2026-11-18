@@ -139,8 +139,10 @@ def _own_group(terminal: bool) -> bool:
     typed there (only the foreground group does), and a child that reads the terminal is STOPPED (SIGTTIN,
     state T) until its limit. So the group is chosen only where neither can matter, by a test that is sure
     rather than a guess: the caller declares `terminal=False`, or this process has no controlling terminal
-    at all, and then no child can use one. Everything else - sudo, `gh auth refresh`, Homebrew's prompt, a
-    git credential prompt - keeps the shared group it always had. Never on Windows, which has no groups.
+    at all, and then no child can use one. Everything else - sudo, `gh auth refresh`, Homebrew's prompt -
+    keeps the shared group it always had. Never on Windows, which has no groups. Who declares, and why each
+    caller that does reads no terminal, is si#760 (`tests/test_terminal_declarations.py`): git's remote
+    operations among them, which ask for no credential (`GIT_TERMINAL_PROMPT=0`).
     """
     return os.name == "posix" and (not terminal or not _has_terminal())
 
