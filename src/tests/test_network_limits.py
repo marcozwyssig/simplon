@@ -176,3 +176,32 @@ def test_gitops_gives_every_remote_operation_the_git_default(monkeypatch):
     # assert
     assert seen == [(op, limits.GIT_REMOTE) for op in sorted(limits.GIT_REMOTE_OPS)] + [("status", None)]
 
+
+
+def test_init_submodule_against_a_silent_remote_times_out(tmp_path, monkeypatch, silent_remote):
+    # arrange: a checkout that names a submodule whose remote never answers (si#741)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "-f", ".gitmodules",
+                    "submodule.lib/platform.path", "lib/platform"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "-f", ".gitmodules",
+                    "submodule.lib/platform.url", silent_remote], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "update-index", "--add", "--cacheinfo",
+                    f"160000,{'1' * 40},lib/platform"], check=True)
+    monkeypatch.setattr(limits, "GIT_REMOTE", 1.0)
+    monkeypatch.setattr(gitops, "ROOT", tmp_path)
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+    seen: list = []
+    real_run = gitops.run
+    monkeypatch.setattr(gitops, "run", lambda argv, **kw: seen.append(real_run(argv, **kw)) or seen[-1])
+    got: list = []
+
+    # act: in a thread, so the red run (no limit: it hangs) fails here rather than hanging the suite
+    worker = threading.Thread(target=lambda: got.append(gitops.init_submodule()), daemon=True)
+    worker.start()
+    worker.join(20)
+
+    # assert: the verdict came, and it is a timeout, not a plain git failure
+    assert got, "git submodule update --init against a silent remote did not return within 20 s"
+    assert got == [1]
+    assert seen[-1].timed_out
+    assert "`git submodule update` gave no answer within 1 s" in seen[-1].err
