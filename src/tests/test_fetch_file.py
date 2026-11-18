@@ -124,6 +124,23 @@ def test_a_file_with_its_checksum_and_no_recorded_url_is_fetched_again(product, 
     assert (product / "build/dist/plain.bin.url").read_text(encoding="utf-8") == "https://example.org/plain.bin\n"
 
 
+def test_a_concurrent_runs_staged_bytes_are_left_alone(product, served):
+    # arrange: si#670 item 8. Another run fetching the same file is between its download and its rename;
+    # a FIXED staging name (`<dest>.unverified`) was one both runs wrote, hashed and renamed
+    in_flight = product / "build/dist/gradle.zip.unverified"
+    in_flight.parent.mkdir(parents=True)
+    in_flight.write_bytes(b"the other run's bytes")
+
+    # act
+    rc = fetchfile.fetch(name="gradle-dist")
+
+    # assert: this run staged under a name of its own, and left nothing of its own behind
+    assert rc == 0
+    assert (product / "build/dist/gradle.zip").read_bytes() == ARCHIVE
+    assert in_flight.read_bytes() == b"the other run's bytes"
+    assert not [p for p in in_flight.parent.iterdir() if p.name.endswith(fetchfile.STAGING) and p != in_flight]
+
+
 def test_a_download_with_another_checksum_fails_and_stores_nothing(product, served, capsys):
     # arrange: the server sends other bytes - a moved version, or a tampered mirror
     _, state = served

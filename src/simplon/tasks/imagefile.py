@@ -38,16 +38,16 @@ uploads the file can compare what it uploads with what was tested (si#553).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import pwd
 import shlex
 import shutil
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from simplon.adapters import docker, githubpackages, hostpath
+from simplon.adapters import checksum, docker, githubpackages, hostpath
 from simplon.kernel import limits, log
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context
@@ -68,7 +68,7 @@ ENTRY = artifactschema.ImageEntry
 #: The kind the `file` param binds: the entry written, and the one that names the platform.
 FILE_ENTRY = artifactschema.FileEntry
 
-#: The suffix the copied bytes carry until they are known to be a regular file.
+#: The suffix of the staging directory the copied bytes sit in until they are known to be a regular file.
 STAGING = ".partial"
 
 #: The command `docker create` is given and never runs: the container is only copied out of, and an image
@@ -288,13 +288,27 @@ def _built_reference(cfg: image.Image, name: str, platform: str, root: Path) -> 
 def copy_out(reference: str, inside: str, dest: Path) -> bool:
     """Copy the regular file `inside` out of the daemon's `reference` to `dest`, mode 0755, or say why not.
 
-    `dest` holds the new bytes or is left as it was: they land at `<dest>.partial` first and replace `dest`
-    only once they are a regular file. The container is NAMED before it is created, so an interrupt between
-    the create and the rm still removes it (si#416, `docker.stopped_on_interrupt`).
+    `dest` holds the new bytes or is left as it was: they land in a staging directory beside it first and
+    replace `dest` only once they are a regular file. The container is NAMED before it is created, so an
+    interrupt between the create and the rm still removes it (si#416, `docker.stopped_on_interrupt`).
+
+    THE STAGING NAME IS THIS RUN'S OWN (si#670): a fixed `<dest>.partial` was one two runs copying the same
+    file shared, and each removed the other's before copying onto it. A DIRECTORY rather than
+    `fetch.unique_file`'s file, because `docker cp` needs a target that does not exist yet: measured with
+    docker 29.9.3, copying a directory onto an existing file fails with "cannot copy directory", which would
+    turn the refusal below - the one that tells the reader to name the file with `inside:` - into docker's
+    bare error.
     """
-    staged = dest.with_name(dest.name + STAGING)
-    _remove(staged)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f"{dest.name}.", suffix=STAGING, dir=dest.parent))
+    try:
+        return _copied(reference, inside, dest, staging / dest.name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _copied(reference: str, inside: str, dest: Path, staged: Path) -> bool:
+    """`copy_out`'s body, with `staged` a path in this run's own staging directory."""
     container, lifecycle = docker.lifecycle()
     with docker.stopped_on_interrupt(container):
         created = run(["docker", "create", *lifecycle, reference, NEVER_STARTED])
@@ -308,26 +322,16 @@ def copy_out(reference: str, inside: str, dest: Path) -> bool:
         finally:
             run(["docker", "rm", container])
     if not copied.ok:
-        _remove(staged)
         log.error(f"copying {inside} out of {reference} failed, so nothing was written to {dest}: "
                   f"{(copied.err or copied.out).strip() or '(it said nothing)'}")
         return False
     if staged.is_symlink() or not staged.is_file():
-        _remove(staged)
         log.error(f"{inside} in {reference} is not a regular file (a directory?), so nothing was written to "
                   f"{dest}; name the file itself with `inside:`")
         return False
     staged.chmod(0o755)
     os.replace(staged, dest)
     return True
-
-
-def _remove(path: Path) -> None:
-    """Remove whatever is at `path` - a file, a symlink or a directory a `docker cp` made - if anything is."""
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
 
 
 def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: str = "", stdin: str = "",
@@ -378,7 +382,7 @@ def check(file: str = "", argv: str = "", expect: str = "", rc: int = 0, tag: st
                       f"above says why); pass `tag:`")
             return 1
         expected = image.expand_tag(expect, resolved)
-    subject = "sha256:" + hashlib.sha256((root / path).read_bytes()).hexdigest()
+    subject = "sha256:" + checksum.sha256_of(root / path)
     docker.ensure_docker()
     try:
         mount = hostpath.mount_argv(root, path, MOUNTED, readonly=True, must_exist=False)

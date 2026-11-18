@@ -15,7 +15,6 @@ answered.
 from __future__ import annotations
 
 import email
-import hashlib
 import re
 import shlex
 import zipfile
@@ -23,7 +22,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.adapters import pypi
+from simplon.adapters import checksum, pypi
 from simplon.kernel import log
 from simplon.manifest import artifactsection, context
 from simplon.model import artifactschema
@@ -107,7 +106,7 @@ def wheel_meta(path: Path) -> WheelMeta:
         license=field("License-Expression", "; the legacy `License:` field is not read, declare `license = "
                                             "\"<SPDX>\"` in pyproject.toml"),
         command=_console_command(entry_points, path.name), filename=path.name,
-        sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        sha256=checksum.sha256_of(path))
 
 
 def _console_command(entry_points: str, wheel: str) -> str:
