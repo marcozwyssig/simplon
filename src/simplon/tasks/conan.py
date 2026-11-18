@@ -124,9 +124,11 @@ def publish(name: str = "", tag: str = "") -> int:
     """
     registry, ref, archive, media_type = _reference(name, tag, "release:conan")
     if not archive.is_file():
-        raise ValueError(
+        # A TaskRefused (si#745), like the pull's (si#709): a red run with its reason, never a traceback.
+        raise TaskRefused(
             f"nothing to publish: {archive} does not exist. The archive is written by the product's own "
-            f"`conan cache save --file <path> '<pattern>'`, not by this task - this only moves it")
+            f"`conan cache save --file <path> '<pattern>'`, not by this task - this only moves it. Run that "
+            f"first, or set the manifest's `path:` to the file it wrote")
 
     # si#443: a login made here lives as long as this push, not in the runner's own docker config.
     with _scope(registry):
