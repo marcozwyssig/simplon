@@ -127,6 +127,15 @@ def test_a_coordinate_written_twice_in_the_catalogue_is_refused_rather_than_the_
         catalogue.loads(text)
 
 
+def test_a_catalogue_that_is_not_a_mapping_is_named_rather_than_an_attribute_error():
+    # arrange: a list at the top - `.get` on it was an AttributeError traceback before si#670
+    text = "- vcs:commit\n"
+
+    # act / assert
+    with pytest.raises(ValueError, match="a catalogue is a mapping"):
+        catalogue.loads(text)
+
+
 def test_a_catalogue_file_with_a_coordinate_written_twice_is_refused(tmp_path):
     # arrange: the file path reads the text a second time for its own `impl:` check; it refuses the same way
     path = tmp_path / "catalogue.yaml"

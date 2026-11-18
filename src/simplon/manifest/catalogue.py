@@ -117,6 +117,9 @@ def loads(text: str) -> Catalogue:
     """Parse a catalogue from YAML, rejecting a declaration a manifest could not have made either."""
     # si#670: `yamlkeys`, so a coordinate written twice is refused rather than the first copy dropped.
     data = yamlkeys.load(text) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"a catalogue is a mapping with 'tasks', 'taxonomy' and 'groups', not a "
+                         f"{type(data).__name__}")
     tasks = data.get("tasks") or {}
     if not isinstance(tasks, dict):
         raise ValueError("catalogue 'tasks' must be a mapping of '<namespace>:<name>' to a declaration")
@@ -155,8 +158,9 @@ def load(path: Path | str = DEFAULT_PATH) -> Catalogue:
     # si#400 4c, here and not in loads() for the reason below: in a catalogue FILE each task's body lives in
     # its generated class, seeded by the model's `body`, and an `impl:` written beside it would be a second
     # source of that body - which one runs?
-    written = sorted(c for c, spec in ((yamlkeys.load(text) or {}).get("tasks") or {}).items()
-                     if isinstance(spec, dict) and "impl" in spec)
+    data = yamlkeys.load(text)
+    declared = (data.get("tasks") if isinstance(data, dict) else None) or {}   # loads() refused any other shape
+    written = sorted(c for c, spec in declared.items() if isinstance(spec, dict) and "impl" in spec)
     if written:
         raise ValueError(f"catalogue {path}: `impl:` is written on {', '.join(written)}; a task's body lives in "
                          f"its task class ({task.class_ref(written[0])}, ...), so delete the line")
