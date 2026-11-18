@@ -18,6 +18,8 @@ import threading
 import time
 
 import pytest
+import procalive
+from procalive import alive
 
 from simplon.kernel import run as run_module
 from simplon.kernel.run import run_stream
@@ -27,13 +29,25 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups are P
 _SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(run_module.__file__))))
 
 
-def _alive(pid: int) -> bool:
-    """Running, as opposed to gone or a zombie waiting to be reaped."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
-        return False
+
+
+
+def test_a_process_that_ends_between_open_and_read_reads_as_gone(monkeypatch):
+    # arrange: /proc/<pid>/stat opened while the process lives, and the process reaped before the read -
+    # the read then raises ESRCH, not FileNotFoundError (seen in CI on every PR after #759)
+    proc = subprocess.Popen(["sleep", "30"])
+    real_open = open
+
+    def open_then_end(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        proc.kill()
+        proc.wait()
+        return handle
+
+    monkeypatch.setattr(procalive, "open", open_then_end, raising=False)
+
+    # act / assert
+    assert alive(proc.pid) is False
 
 
 def _pids_running(needle: str) -> list[int]:
@@ -47,14 +61,14 @@ def _pids_running(needle: str) -> list[int]:
                 cmdline = f.read().replace(b"\0", b" ").decode(errors="replace")
         except OSError:
             continue
-        if needle in cmdline and _alive(int(entry)):
+        if needle in cmdline and alive(int(entry)):
             found.append(int(entry))
     return found
 
 
 def _gone_within(pids: list[int], seconds: float) -> bool:
     deadline = time.monotonic() + seconds
-    while any(_alive(pid) for pid in pids):
+    while any(alive(pid) for pid in pids):
         if time.monotonic() > deadline:
             return False
         time.sleep(0.05)
@@ -173,7 +187,7 @@ def test_an_abandoned_run_stream_kills_the_grandchild_too(monkeypatch, declared)
     try:
         assert _gone_within([grandchild], 2), "the shell's grandchild outlived the abandoned run"
     finally:
-        if _alive(grandchild):
+        if alive(grandchild):
             os.kill(grandchild, signal.SIGKILL)
 
 
@@ -221,7 +235,7 @@ def test_a_SIGTERM_to_the_kernel_reaches_what_its_child_started(tmp_path):
         assert rc == -signal.SIGTERM
         assert _gone_within([grandchild], 2), "the stop reached the child but not what it started"
     finally:
-        if _alive(grandchild):
+        if alive(grandchild):
             os.kill(grandchild, signal.SIGKILL)
 
 
@@ -250,6 +264,6 @@ def test_a_ctrl_c_typed_at_the_terminal_still_reaches_a_child_in_its_own_group(t
         assert os.waitstatus_to_exitcode(status) != 0
         assert _gone_within([grandchild], 2), "a typed Ctrl-C never reached the child's own group"
     finally:
-        if grandchild and _alive(grandchild):
+        if grandchild and alive(grandchild):
             os.kill(grandchild, signal.SIGKILL)
         os.close(fd)
