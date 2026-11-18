@@ -47,10 +47,10 @@ THE REFUSALS HERE ARE RUN-TIME, and that is a deliberate placement rather than a
 load-time refusal is added and the kernel's refusal census keeps its counts. A product meets these
 messages only by asking for the gate.
 
-GIT IS RUN DIRECTLY HERE rather than through `tasks.gitops`, following `tasks.image`. `gitops` keeps a
-module-global `ROOT` that a caller configures, which is state this module has no use for: every function
-below takes the root it reads, so two repositories can be asked about in one process - which is exactly
-what this module's own tests do.
+GIT GOES THROUGH `gitops.git(root, ...)` WITH THE ROOT NAMED (#670 item 13), never through `gitops`'
+module-global `ROOT`, which is state this module has no use for: every function below takes the root it
+reads, so two repositories can be asked about in one process - which is exactly what this module's own
+tests do. What a failure means here (it raises) stays here, in `_git`.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ from pathlib import Path
 from simplon.model import artifactschema
 from simplon.manifest import artifactsection, context
 from simplon.kernel import log
-from simplon.kernel.run import run
+from simplon.tasks import gitops
 from simplon.tasks import release
 
 #: The manifest section this task reads. Three values, and a product that declares none of them does not
@@ -231,7 +231,7 @@ def _git(root: Path, *args: str, must_answer: bool = False) -> str:
     to its fallback, reporting a merge's ticket as {94} where the author had written si#92 - a green run
     away from a release note about the wrong number.
     """
-    result = run(["git", "-C", str(root), *args])
+    result = gitops.git(root, *args)
     if not result.ok:
         raise RuntimeError(f"`git {' '.join(args)}` failed in {root} (rc={result.rc}): "
                            f"{result.err.strip() or 'no output'}")

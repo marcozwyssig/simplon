@@ -80,7 +80,7 @@ from pathlib import Path
 import simplon
 from simplon.manifest import launcherenv, layout
 from simplon.manifest.layout import validate_relative_dir
-from simplon.kernel.run import run
+from simplon.tasks import gitops
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
 # the LAUNCH_PRODUCT diagnostic token and the `<PRODUCT>_ENV` variable stem. The package itself is the FIXED
@@ -216,7 +216,7 @@ def _git(args: list[str], *, cwd: Path) -> str | None:
     raised as OSError. `run` returns it as `not_started` since si#653; this turns it back into the
     exception the call site answers, because "no answer" is not what it is.
     """
-    result = run(["git", "-C", str(cwd), *args])
+    result = gitops.git(cwd, *args)
     if result.not_started:
         raise OSError(result.not_started)
     return (result.out.strip() or None) if result.ok else None
