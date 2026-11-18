@@ -50,6 +50,7 @@ from simplon.kernel import log
 from simplon.model.artifactschema import PORTS
 from simplon.manifest.artifactsection import READERS, REFINES
 from simplon.manifest.treeform import DOCS_SITE_KEYS
+from simplon.manifest import yamllines
 from simplon.manifest.yamlkeys import UniqueKeyLoader, duplicates
 
 #: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
@@ -74,19 +75,17 @@ def _blocks(lines: list[str], key_re: re.Pattern, indent: int) -> list[tuple[str
     """Split `lines` into (key, lines) blocks at `indent`. Comment and blank lines directly above a key
     line belong to that key's block; anything before the first key is a (None, lines) preamble.
 
-    "Directly above" is read by POSITION, not by exact indent: a comment at the key's indent OR LESS
-    counts. firn writes a column-0 banner inside `groups:` above `  deploy:`, and it announces deploy -
-    read by exact indent, it became the tail of `support:`, which cannot then be dedented. A comment
-    indented DEEPER than the key is still the previous block's content (a commented-out command)."""
+    "Directly above" is `yamllines.leads`, read by POSITION, not by exact indent: read by exact indent,
+    firn's column-0 banner above `  deploy:` became the tail of `support:`, which cannot then be
+    dedented."""
     blocks: list[tuple[str | None, list[str]]] = [(None, [])]
     pending: list[str] = []
     for line in lines:
         match = key_re.match(line)
-        stripped = line.strip()
         if match:
             blocks.append((match.group("key"), pending + [line]))
             pending = []
-        elif not stripped or (stripped.startswith("#") and len(line) - len(line.lstrip()) <= indent):
+        elif yamllines.leads(line, indent):
             pending.append(line)
         else:
             if pending:
@@ -248,38 +247,11 @@ def _duplicates(text: str) -> list[tuple[str, int, int, int]]:
             for found in duplicates(yaml.compose(text, Loader=yaml.SafeLoader))]
 
 
-def _span(lines: list[str], at: int, indent: int) -> tuple[int, int]:
-    """The half-open line range of the block whose key line is `at`: the comment and blank lines directly
-    above it (`_blocks`' rule - a comment at the key's indent or less), the key line, and every line under
-    it up to the next content line indented no deeper than the key - except a `- ` item at the key's own
-    column, which YAML reads as the key's value (PyYAML's own dump style). Trailing comments and blank lines
-    belong to whatever comes next, as they do in `_blocks`. Read by indentation: a block value's end mark
-    sits on the NEXT key's line (measured on cleon), so it cannot say where this one ends."""
-    def is_comment_or_blank(line: str) -> bool:
-        return not line.strip() or line.lstrip().startswith("#")
-
-    def is_own_item(line: str) -> bool:
-        return len(line) - len(line.lstrip()) == indent and (line.lstrip() == "-" or line.lstrip().startswith("- "))
-
-    end = at + 1
-    while end < len(lines) and (is_comment_or_blank(lines[end]) or is_own_item(lines[end])
-                                or len(lines[end]) - len(lines[end].lstrip()) > indent):
-        end += 1
-    while end > at + 1 and is_comment_or_blank(lines[end - 1]):
-        end -= 1
-    top = at
-    while top > 0 and (not lines[top - 1].strip()
-                       or (lines[top - 1].lstrip().startswith("#")
-                           and len(lines[top - 1]) - len(lines[top - 1].lstrip()) <= indent)):
-        top -= 1
-    return top, end
-
-
 def _as_written(block: list[str], indent: int) -> list[str]:
     """A copy's non-blank lines with the key's column taken off - so two copies at the same place compare
     with their structure (review minor 2: `c:` beside `b:` and `c:` under it are different copies), and a
     comment above the key, which may stand left of it, compares by its text."""
-    return [line[min(indent, len(line) - len(line.lstrip())):].rstrip() for line in block if line.strip()]
+    return [line[min(indent, yamllines.indent(line)):].rstrip() for line in block if line.strip()]
 
 
 def _dedupe(text: str) -> Migration:
@@ -304,8 +276,8 @@ def _dedupe(text: str) -> Migration:
         if first == second or lines[first][:indent].strip() or lines[second][:indent].strip():
             return refused(f"{path} is written twice where the splice cannot cut a copy out - inside a flow "
                            f"mapping or a sequence item (line {second + 1}) - merge the two by hand, and run again")
-        a0, a1 = _span(lines, first, indent)
-        b0, b1 = _span(lines, second, indent)
+        a0, a1 = yamllines.span(lines, first, indent)
+        b0, b1 = yamllines.span(lines, second, indent)
         if _as_written(lines[a0:a1], indent) != _as_written(lines[b0:b1], indent):
             return refused(f"{path} is written twice, on lines {first + 1} and {second + 1}, and the two copies "
                            "differ - YAML keeps only the second, so merge them into one by hand, and run again")
@@ -398,10 +370,10 @@ def _rewrite_entry(child: list[str], kind: str | None,
                 f"with its `kind:` (`{key}: {{ kind: image, local: \"<reference>\" }}`), or the image reference "
                 f"as a quoted string (`{key}: \"<reference>\"`)")
     body = [i for i in range(at + 1, len(child))
-            if child[i].strip() and not child[i].lstrip().startswith("#")]
+            if not yamllines.skippable(child[i])]
     if not body:
         return f"{key} holds nothing - an entry needs at least its `kind:`"
-    indent = len(child[body[0]]) - len(child[body[0]].lstrip())
+    indent = yamllines.indent(child[body[0]])
     removed: list[str] = []
     added: list[str] = []
     for i in body:
@@ -429,7 +401,7 @@ def _deploy_source(block: list[str]) -> tuple[list[str], list[str], list[str]] |
             return lines, [line], [lines[i]]
         for j in range(i + 1, len(block)):
             inner = block[j]
-            if inner.strip() and not inner.lstrip().startswith("#") and len(inner) - len(inner.lstrip()) <= 2:
+            if not yamllines.skippable(inner) and yamllines.indent(inner) <= 2:
                 break
             if re.match(r"^\s{4,}images\s*:", inner):
                 lines[j] = inner.replace("images", "artifacts", 1)
@@ -658,14 +630,10 @@ def _bound(node: object) -> object:
     return out
 
 
-def _indent(line: str) -> int:
-    return len(line) - len(line.lstrip(" "))
-
-
 def _siblings(lines: list[str], at: int, width: int) -> tuple[int, int]:
     """[first, last) of the mapping the key on line `at`, `width` spaces in, stands in."""
     def inside(line: str) -> bool:
-        return not line.strip() or line.lstrip().startswith("#") or _indent(line) >= width
+        return yamllines.skippable(line) or yamllines.indent(line) >= width
     first, last = at, at + 1
     while first > 0 and inside(lines[first - 1]):
         first -= 1
@@ -696,16 +664,14 @@ def _with_flow(match: re.Match, port: str, key: str) -> list[str] | None:
 def _with_block(lines: list[str], at: int, match: re.Match, port: str, key: str) -> tuple[int, list[str]] | None:
     """The `with:` block on line `at`, rewritten: (the line after it, its new lines), or None."""
     width = len(match["indent"])
-    end = at + 1
-    while end < len(lines) and (not lines[end].strip() or _indent(lines[end]) > width):
-        end += 1
+    _, end = yamllines.span(lines, at, width)
     body = lines[at + 1:end]
-    keys = [line for line in body if line.strip() and not line.lstrip().startswith("#")]
+    keys = [line for line in body if not yamllines.skippable(line)]
     if not keys:
         return None
-    child = _indent(keys[0])
-    names = [n for n, line in enumerate(body) if _indent(line) == child and _NAME_LINE.match(line)]
-    own = [line for line in keys if _indent(line) == child]
+    child = yamllines.indent(keys[0])
+    names = [n for n, line in enumerate(body) if yamllines.indent(line) == child and _NAME_LINE.match(line)]
+    own = [line for line in keys if yamllines.indent(line) == child]
     if len(names) != 1 or any(line.lstrip().startswith("<<") for line in own):
         return None
     found = _NAME_LINE.match(body[names[0]])
@@ -741,7 +707,7 @@ def _bind(text: str) -> Migration:
         width = len(task["indent"])
         first, last = _siblings(lines, number, width)
         for at in range(first, last):
-            if _indent(lines[at]) != width:
+            if yamllines.indent(lines[at]) != width:
                 continue
             flow, block = _WITH_FLOW.match(lines[at]), _WITH_BLOCK.match(lines[at])
             new = _with_flow(flow, port, key) if flow else None
@@ -837,9 +803,9 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
         # that `_CHILD` sees no section in, and the refusal it then earned ("does not parse back: ci")
         # named a symptom; this names the cause.
         body = next(((n, line) for n, line in enumerate(block[at + 1:], number + 1)
-                     if line.strip() and not line.lstrip().startswith("#")), None)
+                     if not yamllines.skippable(line)), None)
         if body is not None and body[1].startswith(" "):
-            indent = len(body[1]) - len(body[1].lstrip())
+            indent = yamllines.indent(body[1])
             if indent != 2:
                 return refused(f"groups: indents its sections by {indent} spaces (line {body[0]}); the "
                                "splice moves a manifest indented by two spaces per level, the way `simplon "
@@ -861,7 +827,7 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
                 shallow = next((i for i, line in enumerate(child)
                                 if line.strip() and not line.startswith("  ")), None)
                 if shallow is not None:
-                    column = len(child[shallow]) - len(child[shallow].lstrip())
+                    column = yamllines.indent(child[shallow])
                     return refused(f"groups: support carries line {starts + shallow} at column {column} "
                                    f"({child[shallow].strip()[:40]!r}); support: moves to the top level by "
                                    "removing two spaces from each of its lines, and that line has only "

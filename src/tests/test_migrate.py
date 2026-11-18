@@ -486,6 +486,32 @@ def test_a_list_written_at_its_keys_own_indent_twice_identically_keeps_one_copy(
     assert result.text == "product: demo\nl:\n- x\n- y\n"
 
 
+def test_a_key_led_by_a_no_break_space_is_not_read_as_the_copy_above_it():
+    # arrange: si#670 item 11 - ` z` is a key at column 0 (YAML reads U+00A0 as content), and
+    # Python's `lstrip()` measured it one column in, so it became part of the first `y:` copy
+    text = "product: demo\ny: 1\n z: 2\ny: 1\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == "product: demo\ny: 1\n z: 2\n"
+
+
+def test_a_quoted_value_continued_on_a_tab_led_line_moves_with_its_key():
+    # arrange: si#670 item 11 - the one valid line that starts with a tab continues a quoted scalar, so
+    # it belongs to the key above; measured by spaces alone it stood at column 0 and ended the block
+    text = 'product: demo\ny: "one\n\ttwo"\nother: 1\ny: "one\n\ttwo"\n'
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == 'product: demo\ny: "one\n\ttwo"\nother: 1\n'
+
+
 def test_copies_that_differ_only_in_indentation_are_said_to_differ():
     # arrange: review minor 2 - `c` is a sibling of `b` in one copy and its child in the other
     text = "product: demo\na:\n  b:\n  c: 1\na:\n  b:\n    c: 1\n"
@@ -1169,6 +1195,21 @@ def test_a_block_with_holding_more_keeps_the_rest_under_with():
     # assert
     assert ("        produces:\n          image: k\n        with:\n          platform: linux/amd64\n"
             in result.text)
+
+
+def test_a_column_0_comment_inside_a_block_with_does_not_end_it():
+    # arrange: si#670 item 11 - the `with:` block ended at the comment, so `platform:` was left behind
+    # under the `produces:` written above it, and a sound manifest was refused
+    text = _commands('      image:\n        task: "build:image"\n        with:\n          name: k\n'
+                     "# the platform\n          platform: linux/amd64\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert ("        produces:\n          image: k\n        with:\n# the platform\n"
+            "          platform: linux/amd64\n" in result.text)
 
 
 @pytest.mark.parametrize("written,expected", [

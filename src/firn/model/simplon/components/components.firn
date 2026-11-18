@@ -88,6 +88,10 @@ manifest typeOf simplon.architecture.Component {
   module m_manifest_yamlkeys typeOf simplon.architecture.Module {
     path = "manifest.yamlkeys"
   }
+  // si#670 item 11: the one line-based block reader the manifest's text splices share.
+  module m_manifest_yamllines typeOf simplon.architecture.Module {
+    path = "manifest.yamllines"
+  }
   module m_manifest_artifactsection typeOf simplon.architecture.Module {
     path = "manifest.artifactsection"
   }
