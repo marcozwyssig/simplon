@@ -17,6 +17,7 @@ from simplon.cli import bootstrap
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import environments as env_mod
 from simplon.manifest import load as manifest
+from simplon.manifest import yamlkeys
 
 
 def _load_scaffold(name: str = "fooctl"):
@@ -140,7 +141,7 @@ def test_generated_env_matrix_parses_with_the_local_backend():
     text = bootstrap.manifest_yaml("fooctl")
 
     # act: the env provider parses the manifest's environments/default sections
-    registry = env_mod.parse(text, ("local",))
+    registry = env_mod.parse_data(yamlkeys.load(text), ("local",))
 
     # assert: a single local `dev` environment, and it is the default
     assert registry.default == "dev"

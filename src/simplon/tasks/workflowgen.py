@@ -336,7 +336,7 @@ class Report(NamedTuple):
 def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     """The `workflows:` section of a raw manifest, validated.
 
-    Loud on every defect, like `simplon.manifest.environments.parse` and every other section parser here: a
+    Loud on every defect, like `simplon.manifest.environments.parse_data` and every other section parser here: a
     manifest that says something this module cannot render is a manifest defect, and the message names
     the workflow it is talking about.
     """

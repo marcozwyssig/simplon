@@ -21,9 +21,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-import yaml
-
 from simplon.model import task
+from simplon.manifest import yamlkeys
 from simplon.manifest.load import _CommandSpecModel
 
 # The catalogue file belongs to the kernel, so it travels INSIDE the package. This used to read
@@ -116,7 +115,8 @@ def _kinds(data: dict) -> dict[str, str]:
 
 def loads(text: str) -> Catalogue:
     """Parse a catalogue from YAML, rejecting a declaration a manifest could not have made either."""
-    data = yaml.safe_load(text) or {}
+    # si#670: `yamlkeys`, so a coordinate written twice is refused rather than the first copy dropped.
+    data = yamlkeys.load(text) or {}
     tasks = data.get("tasks") or {}
     if not isinstance(tasks, dict):
         raise ValueError("catalogue 'tasks' must be a mapping of '<namespace>:<name>' to a declaration")
@@ -155,7 +155,7 @@ def load(path: Path | str = DEFAULT_PATH) -> Catalogue:
     # si#400 4c, here and not in loads() for the reason below: in a catalogue FILE each task's body lives in
     # its generated class, seeded by the model's `body`, and an `impl:` written beside it would be a second
     # source of that body - which one runs?
-    written = sorted(c for c, spec in ((yaml.safe_load(text) or {}).get("tasks") or {}).items()
+    written = sorted(c for c, spec in ((yamlkeys.load(text) or {}).get("tasks") or {}).items()
                      if isinstance(spec, dict) and "impl" in spec)
     if written:
         raise ValueError(f"catalogue {path}: `impl:` is written on {', '.join(written)}; a task's body lives in "

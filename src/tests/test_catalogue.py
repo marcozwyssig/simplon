@@ -17,6 +17,7 @@ import pytest
 from simplon.manifest import catalogue
 from simplon.manifest import load as manifest
 from simplon.manifest import treeform
+from simplon.manifest import yamlkeys
 from conftest import ROOT
 
 _CATALOGUE = """
@@ -114,6 +115,27 @@ def test_a_catalogue_task_with_an_empty_impl_is_rejected():
     # act / assert
     with pytest.raises(ValueError, match="impl"):
         catalogue.loads(text)
+
+
+def test_a_coordinate_written_twice_in_the_catalogue_is_refused_rather_than_the_first_lost():
+    # arrange: si#670 item 5. `yaml.safe_load` kept the SECOND `vcs:commit` and dropped the first without
+    # a word - the defect `yamlkeys` exists for, in the one YAML the kernel writes itself
+    text = _CATALOGUE + '  vcs:commit: { impl: "simplon.test_impls:nullary", help: "Again." }\n'
+
+    # act / assert
+    with pytest.raises(yamlkeys.DuplicateKeyError, match="vcs:commit"):
+        catalogue.loads(text)
+
+
+def test_a_catalogue_file_with_a_coordinate_written_twice_is_refused(tmp_path):
+    # arrange: the file path reads the text a second time for its own `impl:` check; it refuses the same way
+    path = tmp_path / "catalogue.yaml"
+    path.write_text("tasks:\n  vcs:commit: { help: Commit. }\n  vcs:commit: { help: Again. }\n",
+                    encoding="utf-8")
+
+    # act / assert
+    with pytest.raises(yamlkeys.DuplicateKeyError, match="vcs:commit"):
+        catalogue.load(path)
 
 
 def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports():
