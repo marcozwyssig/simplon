@@ -59,7 +59,7 @@ import re
 import shlex
 import textwrap
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -437,8 +437,11 @@ _RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
     "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
                 "required": True, "type": "boolean", "default": True}}}}
 #: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
-#: to push an image. A product may ADD scopes (simplon's PyPI publish needs `id-token: write`), never lower these.
+#: to push an image. They are the derived release job's own (si#719), never the workflow's.
 _RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+#: si#719: the workflow default when the product declares none - what a job needs to check the repository
+#: out, and nothing it could write with.
+_WORKFLOW_DEFAULT_PERMISSIONS: Mapping[str, str] = {"contents": "read"}
 _RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",
                                               "cancel-in-progress": False}
 
@@ -522,25 +525,29 @@ def _release_timeout(body: Mapping[object, object], where: str, release: str) ->
 
 
 def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
-    """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
+    """The workflow default `permissions`, the derived `concurrency`, then the product's own extras.
 
-    `permissions:` is MERGED rather than refused (ruling of si#490 Task 2, measured): simplon's own release
-    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible.
-    Lowering `contents`/`packages` stays refused, and that refusal is an EXPRESSION rule: a release with no
-    tag, no GitHub Release and no package push would have worked without them."""
+    si#719: the write scopes the release needs are the derived JOB's (`_release_job_permissions`), not the
+    workflow's, so every other job no longer inherits them. The workflow-level `permissions:` is the
+    default of every job without its own block: the product's, as written, or `contents: read`, the
+    least a job needs to check the repository out. Nothing a product declares here can take the release
+    job's scopes away, so the refusal that once guarded them (an EXPRESSION rule) is gone."""
     own = _workflow_extras(body)
-    declared = own.pop("permissions", None) or {}
+    declared = own.pop("permissions", None) or dict(_WORKFLOW_DEFAULT_PERMISSIONS)
     if not isinstance(declared, Mapping):
         raise ValueError(
-            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, which is added "
-            f"to the scopes the release needs; got '{declared}'")
-    for scope, level in _RELEASE_PERMISSIONS.items():
-        if scope in declared and declared[scope] != level:
-            raise ValueError(
-                f"{where}: `permissions:` sets `{scope}: {declared[scope]}`, and `{scope}: {level}` is what "
-                f"the release needs - leave {scope} out, it is derived")
-    return {"permissions": {**_RELEASE_PERMISSIONS, **{str(k): v for k, v in declared.items()}},
+            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, the default of "
+            f"every job without its own block; got '{declared}'")
+    return {"permissions": {str(k): v for k, v in declared.items()},
             "concurrency": dict(_RELEASE_CONCURRENCY), **own}
+
+
+def _release_job_permissions(workflow: "Workflow") -> dict[str, object]:
+    """si#719: the derived job's own block. A job-level block REPLACES the workflow's, so a scope the product
+    declared there (simplon's PyPI publish once needed `id-token: write` in this job, si#490 Task 2) is
+    carried over, and the scopes the release needs win over a lower default."""
+    declared = workflow.extras.get("permissions")
+    return {**(declared if isinstance(declared, Mapping) else {}), **_RELEASE_PERMISSIONS}
 
 
 class Stage(NamedTuple):
@@ -1063,7 +1070,57 @@ def secret_prefix(repository: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "_", repository.rpartition("/")[2]).upper()
 
 
-APP_TOKEN_NOTE = """{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
+APP_SECRETS_CHECK_NAME = "Check the secrets every `token: app` step needs"
+
+APP_SECRETS_NOTE = """si#574: {needs} mints a GitHub App token from these secrets. A dry run skips that step, so
+without this check it is green with a secret missing, and the real run stops at the token step - after the
+steps before it have published what cannot be taken back (v0.37.0: tag and PyPI, then no formula). The
+expression `secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too."""
+
+APP_SECRETS_UNCHECKED = """si#574: not checked before the cut - the secrets of {needs}: each runs in a job that names
+an `environment:`, whose secrets only that job can read, so a check in this job would be red with them set."""
+
+
+def _app_secrets_check(jobs: "Sequence[Job]", expanded: "Mapping[str, Sequence[Step]]", manifest: Manifest,
+                       where: str) -> "tuple[Step | None, str]":
+    """si#574: the release job's step that is red when a secret a `token: app` leaf of this workflow needs is
+    not set, and the note naming the leaves it cannot check. (None, "") when the workflow mints no App token.
+
+    Every job's leaves count, not only the derived job's: simplon's own tap is a product job beside it. A
+    leaf in a job with an `environment:` is left out and said, never checked against secrets it cannot see.
+    A repository `_app_token` refuses is skipped here; rendering that step raises with the reason."""
+    prefixes: dict[str, list[str]] = {}
+    unchecked: list[str] = []
+    for job in jobs:
+        for at, step in enumerate(expanded[job.name]):
+            for words, leaf in _leaves(manifest, step, f"{where}, job '{job.name}', step {at + 1}"):
+                repository = leaf.with_.get("repository")
+                if leaf.token != "app" or not isinstance(repository, str) or "/" not in repository:
+                    continue
+                if job.extras.get("environment") is not None:
+                    unchecked.append(f"'{words}' (job '{job.name}')")
+                    continue
+                prefixes.setdefault(secret_prefix(repository), []).append(f"'{words}'")
+    note = APP_SECRETS_UNCHECKED.format(needs=", ".join(unchecked)) if unchecked else ""
+    if not prefixes:
+        return None, note
+    names = [f"{prefix}_{suffix}" for prefix in prefixes for suffix in ("CLIENT_ID", "APP_KEY")]
+    script = ['missing=""',
+              *(f'[ "$SET_{name}" = true ] || missing="$missing {name}"' for name in names),
+              'if [ -n "$missing" ]; then',
+              '  echo "::error::not set in this repository\'s Actions secrets:$missing - a \\`token: app\\` step '
+              'mints its GitHub App token from them (si#574); store them before releasing"',
+              "  exit 1",
+              "fi",
+              f'echo "set: {" ".join(names)}"']
+    needs = ", ".join(words for words_of in prefixes.values() for words in words_of)
+    return Step(verbatim={"name": APP_SECRETS_CHECK_NAME,
+                          "env": {f"SET_{name}": f"${{{{ secrets.{name} != '' }}}}" for name in names},
+                          "run": "\n".join(script) + "\n"},
+                note=APP_SECRETS_NOTE.format(needs=needs)), note
+
+
+APP_TOKEN_NOTE ="""{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
 token for {repository} and nothing else, with contents: write, from the secrets {prefix}_CLIENT_ID
 and {prefix}_APP_KEY. The leaf below reads it as ${env} from its own `env:`; no `run:` line
 carries the token or a secret."""
@@ -1128,8 +1185,15 @@ def _app_token(step: Step, leaves: "Sequence[tuple[str, TaskCommand]]", index: i
     return token, step._replace(modifiers={**step.modifiers, "env": leaf_env})
 
 
-def _release(workflow: "Workflow", manifest: Manifest,
-             artifacts: "Mapping[str, artifactsection.Declared]", reports: "str | None" = None) -> "tuple[Job, ...]":
+#: si#718: said above the step, because a reader asks why the release job starts with `help`.
+PROVISION_NOTE = """si#718: the launcher's first run in a fresh checkout builds its venv - a pip install of the
+kernel and its dependencies from PyPI. Here it happens in a step with no token in its environment, so
+nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
+manifest and prints the command list; a launcher that cannot provision is red here, before the cut."""
+
+
+def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, artifactsection.Declared]",
+             reports: "str | None" = None, product: str = "") -> "tuple[Job, ...]":
     """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
 
     NOTHING HERE ORDERS ANYTHING. `plan_for` returns the leaves in an order rule 8 accepted at load
@@ -1189,6 +1253,9 @@ def _release(workflow: "Workflow", manifest: Manifest,
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
     steps[lifted:lifted] = cut
+    steps.insert(0, Step(verbatim={"name": "Provision the launcher before any step holds a token",
+                                   "run": f"{launcher(product)} help"},
+                         note=PROVISION_NOTE))
     if workflow.emulates:
         from simplon.adapters.labhost import BINFMT_IMAGE
         steps.insert(0, Step(
@@ -1203,7 +1270,8 @@ def _release(workflow: "Workflow", manifest: Manifest,
     steps.extend(archive)
     return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
                 note=unarchived,
-                extras={"timeout-minutes": workflow.timeout_minutes,
+                extras={"permissions": _release_job_permissions(workflow),
+                        "timeout-minutes": workflow.timeout_minutes,
                         "env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 
@@ -1461,8 +1529,15 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     lines.append("jobs:")
     if workflow.release and artifacts is None:
         artifacts = artifactsection.declared(context.current().manifest_data())
-    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports), *workflow.jobs)
+    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}, reports, product), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
+    if workflow.release:
+        check, unchecked = _app_secrets_check(jobs, expanded, manifest, f"workflow '{workflow.key}'")
+        if check is not None:
+            expanded[RELEASE_JOB].insert(0, check)
+        if unchecked:
+            jobs = tuple(replace(job, note="\n\n".join(p for p in (job.note, unchecked) if p))
+                         if job.name == RELEASE_JOB else job for job in jobs)
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")
                               for at, step in enumerate(expanded[job.name])),

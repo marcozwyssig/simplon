@@ -2458,25 +2458,55 @@ def test_release_derives_the_dispatch_trigger():
 
 
 def test_release_derives_permissions_and_concurrency():
+    """si#719: the workflow default the kernel derives is `contents: read`; the write scopes are the job's."""
     parsed = _release_parsed()
     assert list(parsed.extras)[:2] == ["permissions", "concurrency"]
-    assert parsed.extras["permissions"] == {"contents": "write", "packages": "write"}
+    assert parsed.extras["permissions"] == {"contents": "read"}
     assert parsed.extras["concurrency"] == {"group": "${{ github.workflow }}-${{ inputs.version }}",
                                             "cancel-in-progress": False}
     assert parsed.release == "release all"
 
 
-def test_a_product_permission_beside_release_is_added_to_the_derived_ones():
-    """Ruling of si#490 Task 2: merged, not refused - simplon's own release needs `id-token: write` for
-    PyPI's Trusted Publishing, and a closed set of scopes would make it inexpressible (si#491)."""
+def test_a_product_permission_beside_release_is_the_workflow_default():
+    """si#719: the product's `permissions:` is the default of every job without its own block, as written."""
     parsed = _release_parsed("permissions: { id-token: write }\n")
-    assert parsed.extras["permissions"] == {"contents": "write", "packages": "write", "id-token": "write"}
+    assert parsed.extras["permissions"] == {"id-token": "write"}
 
 
 @pytest.mark.parametrize("scope", ["contents", "packages"])
-def test_a_product_permission_may_not_lower_what_the_release_needs(scope):
-    with pytest.raises(ValueError, match=f"`{scope}: write` is what the release needs"):
-        _release_parsed(f"permissions: {{ {scope}: read }}\n")
+def test_a_workflow_default_below_what_the_release_needs_is_no_longer_refused(scope):
+    """si#719: the refusal guarded the workflow-level grant; the release job now carries its own."""
+    parsed = _release_parsed(f"permissions: {{ {scope}: read }}\n")
+    assert parsed.extras["permissions"] == {scope: "read"}
+
+
+def _with_workflow_permissions(permissions: str) -> str:
+    return _RELEASE_WORKFLOWS.replace("    release: release all\n",
+                                      f"    release: release all\n    permissions: {permissions}\n")
+
+
+def test_write_scopes_sit_on_the_release_job_only():
+    """si#719: a generated release workflow grants write only to the derived job; a product job without
+    its own block gets the workflow default, which is read."""
+    doc = yaml.safe_load(_release_text())
+    assert doc["permissions"] == {"contents": "read"}
+    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write"}
+    assert "permissions" not in doc["jobs"]["announce"]
+
+
+def test_a_lower_workflow_default_leaves_the_release_job_its_write_scopes():
+    doc = yaml.safe_load(_release_text(workflows=_with_workflow_permissions("{ contents: read }")))
+    assert doc["permissions"] == {"contents": "read"}
+    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write"}
+
+
+def test_a_scope_the_product_adds_reaches_the_release_job_too():
+    """si#490 Task 2's case, kept: a scope a product declares beside `release:` (simplon's PyPI publish
+    once needed `id-token: write` there) still reaches the release job, whose own block replaces the
+    workflow's."""
+    doc = yaml.safe_load(_release_text(workflows=_with_workflow_permissions("{ id-token: write }")))
+    assert doc["jobs"]["release"]["permissions"] == {"id-token": "write", "contents": "write",
+                                                     "packages": "write"}
 
 
 @pytest.mark.parametrize("extra, complaint", [
@@ -2780,8 +2810,9 @@ def test_without_the_check_first_the_cut_still_comes_first():
     steps = [step for step in _release_steps(_release_text(product))
              if not str(step.get("uses", "")).startswith("actions/checkout")]
 
-    # assert
-    assert steps[0].get("name") == "Cut the tag in this checkout"
+    # assert: after the token-less provisioning (si#718), which runs no member
+    assert steps[0].get("name") == "Provision the launcher before any step holds a token"
+    assert steps[1].get("name") == "Cut the tag in this checkout"
 
 
 def test_a_leaf_that_cannot_run_unattended_is_refused():
@@ -2864,6 +2895,37 @@ def test_a_release_job_on_a_self_hosted_runner_keeps_the_runners_disk_steps():
                                                              "runner: { kind: self-hosted-debian, labels: ghr-8 }"))
     job = text[text.index("\n  release:"):text.index("\n  announce:")]
     assert "si#327" in job
+
+
+# --- si#718: the launcher is provisioned in a step that holds no token -------------------------------------
+
+_SUPPORT_PROBES = """support:
+  commands:
+    ci-docker-preflight: { task: "support:ci-docker-preflight" }
+    ci-disk-preflight: { task: "support:ci-disk-preflight" }
+    ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+"""
+
+
+@pytest.mark.parametrize("runner, product", [
+    ("{ kind: github-ubuntu }", _RELEASE_PRODUCT),
+    ("{ kind: self-hosted-debian, labels: ghr-8 }", _RELEASE_PRODUCT),
+    ("{ kind: self-hosted-debian, labels: ghr-8 }", _RELEASE_PRODUCT + _SUPPORT_PROBES),
+], ids=["github-ubuntu", "self-hosted-debian", "self-hosted-debian-with-probes"])
+def test_the_first_launcher_step_of_the_release_job_holds_no_token(runner, product):
+    """si#718: the first launcher call bootstraps the venv - a pip install from PyPI - so it must not run
+    beside the run's GITHUB_TOKEN. On github-ubuntu that call used to be `release check`, a `token: github`
+    step."""
+    # act
+    steps = _release_steps(_release_text(product=product, workflows=_RELEASE_WORKFLOWS.replace(
+        "runner: { kind: github-ubuntu }", f"runner: {runner}")))
+
+    # assert
+    launching = [s for s in steps if "./app.sh" in str(s.get("run", ""))]
+    assert launching, "the release job runs the launcher"
+    first = launching[0]
+    assert "GITHUB_TOKEN" not in yaml.safe_dump(first) and "secrets." not in yaml.safe_dump(first)
+    assert any("token" in str(s.get("env", "")).lower() for s in steps[steps.index(first) + 1:])
 
 
 # --- si#570: `emulates:` - the derived release job registers emulation before anything runs ------------

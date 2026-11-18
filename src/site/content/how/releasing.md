@@ -260,7 +260,9 @@ declares `token: app`, and the workflow derives a step before it that mints a Gi
 `marcozwyssig/homebrew-tap` and nothing else. The App is created once by the maintainer: contents
 read/write on `marcozwyssig/homebrew-tap` only, installed on that repository. Its Client ID and private key
 are stored as the repository secrets `HOMEBREW_TAP_CLIENT_ID` and `HOMEBREW_TAP_APP_KEY` in `simplon`; the
-`HOMEBREW_TAP` prefix comes from the repository name. A dry run skips the step and needs neither secret.
+`HOMEBREW_TAP` prefix comes from the repository name. A dry run skips the mint step, but not the check
+the derived `release` job runs before the cut (si#574): it is red when either secret is not set, so a dry
+run that is green has both, and the real run cannot stop at the tap after PyPI for want of them.
 
 **Rerun the failed job, never a second tag, also when the formula step failed.** That holds as long as the
 rerun builds with the same toolchain: `build wheel` sets `SOURCE_DATE_EPOCH` from HEAD's commit time, so

@@ -1078,12 +1078,17 @@ What the kernel writes:
 
 - **The trigger.** `on: workflow_dispatch` with `version` (required) and `dry_run` (default **true**).
   There is no tag trigger: a release is started by a person who types the version.
-- **`permissions:`** `contents: write` and `packages: write`. A product's own `permissions:` adds scopes,
-  such as `id-token: write` for PyPI's Trusted Publishing, but it may not lower those two.
+- **`permissions:`** `contents: write` and `packages: write` on the `release` job's own block, and only
+  there (si#719). The workflow-level `permissions:` is the default of every other job without its own
+  block: the product's `permissions:` beside `release:` as written, or `contents: read` when it declares
+  none. A scope the product declares there, such as `id-token: write`, also reaches the `release` job,
+  whose block replaces the workflow's.
 - **`concurrency:`** One release per version, never cancelled in progress.
 - **One job, `release`.** It cuts the tag in the checkout, checks that `git describe` is the version, runs
   the aggregate's leaves **in the plan's own order**, and ends with a dry-run step that prints the notes.
-  The order is what rule 8 already checked at load, so the workflow orders nothing itself.
+  The order is what rule 8 already checked at load, so the workflow orders nothing itself. Its first
+  launcher step is `<launcher> help`, with no token in its environment (si#718): the launcher's first run
+  builds its venv from PyPI, and that install no longer runs beside the token a `token: github` step gets.
 - **Emulation, when you ask for it.** `emulates: [linux/arm64]` beside `release:` makes the job's first
   step register those platforms (buildx's `<os>/<arch>[/<variant>]` spelling) through
   `docker/setup-qemu-action`, pinned by commit, with the kernel's own binfmt image (si#570). The job is
@@ -1121,7 +1126,10 @@ declared on the task, so a catalogue task brings its own and a task of your own 
   a digit or with `GITHUB_`), a step whose `env:` is not a mapping or sets `GH_APP_TOKEN` itself, and an
   aggregate step whose plan holds such a
   leaf among others, because one `run:` line would hand the token to all of them. Run the leaf as its own
-  step.
+  step. In a `release:` workflow the derived `release` job checks, before the cut and on a dry run too,
+  that every such secret of the workflow's `token: app` leaves is set, reading `secrets.X != ''` and never
+  the value (si#574). A leaf in a job that names an `environment:` is not checked, because the release job
+  cannot see that environment's secrets; the generated file says so above the `release` job.
 
 Refused beside `release:`:
 
