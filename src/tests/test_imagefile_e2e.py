@@ -181,7 +181,11 @@ def published(built, tmp_path_factory) -> Iterator[tuple[ProductContext, str]]:
         yield ctx, repository
     finally:
         os.environ["PATH"] = path
-        pulled = run(["docker", "image", "ls", "-q", repository]).out.split()
+        # By REFERENCE, never by id (si#743): `tag:` pulls `repository@<digest>`, the same image a `built`
+        # loaded under its own name - this run's or another's - and `docker image rm -f <id>` untags every
+        # name the id carries, which removed a parallel run's image under it.
+        pulled = run(["docker", "image", "ls", "--digests", "--format", "{{.Repository}}@{{.Digest}}",
+                      repository]).out.split()
         _remove_everything_of(ctx.name, sorted(set(pulled)))
         run(["docker", "rm", "-f", container])
 
