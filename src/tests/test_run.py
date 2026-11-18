@@ -179,7 +179,11 @@ def test_run_stream_reaps_the_child_when_the_sink_raises():
     """A leak the rewrite was the chance to close, and it was there before it too: when `on_line` raises
     - in the TUI it is a `call_from_thread`, which can - the exception used to propagate with the child
     never killed and never waited for. Measured on both readers: `ps --ppid` still showed the `sh`
-    process alive after the exception had reached the caller."""
+    process alive after the exception had reached the caller.
+
+    The sleeper is the child ITSELF (`exec`), not the shell's grandchild (si#743): `run_stream` kills the
+    process it started and nothing below it, so `echo one; sleep 30` left a `sleep 30` reparented to init
+    for half a minute after this test, and held the pump on the unwind grace on the way out."""
     # arrange: a child that would outlive the run by a mile, and a sink that refuses its first line
     proc_holder: dict[str, object] = {}
     real_popen = subprocess.Popen
@@ -193,14 +197,19 @@ def test_run_stream_reaps_the_child_when_the_sink_raises():
         raise RuntimeError("the sink is gone")
 
     # act
+    started = time.monotonic()
     with mock.patch.object(subprocess, "Popen", remember):
         with pytest.raises(RuntimeError, match="the sink is gone"):
-            run_stream(["sh", "-c", "echo one; sleep 30"], refuse)
+            run_stream(["sh", "-c", "echo one; exec sleep 30"], refuse)
+    took = time.monotonic() - started
 
     # assert: the child is dead and reaped, not left behind holding a terminal
     proc = proc_holder["proc"]
     assert proc.returncode is not None, "the child was never waited for"
     assert proc.poll() is not None
+    # ... and KILLED rather than waited out: without the kill, `proc.wait()` sits out the whole sleep and
+    # the two assertions above still hold
+    assert proc.returncode == -signal.SIGKILL and took < 10, f"rc {proc.returncode} after {took:.1f}s"
 
 
 def test_run_stream_raises_when_the_pipe_could_not_be_read():
