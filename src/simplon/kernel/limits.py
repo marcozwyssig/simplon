@@ -18,10 +18,12 @@ transfer somebody is watching, and its length is the size of what it carries.
 """
 from __future__ import annotations
 
-#: git operations that talk to a remote. `gitops._git` gives each of them `GIT_REMOTE`.
-GIT_REMOTE_OPS = frozenset({"clone", "fetch", "ls-remote", "pull", "push"})
+#: git operations that talk to a remote. `gitops._git` gives each of them `GIT_REMOTE`. `submodule` is here
+#: for `submodule update --init`, which clones (si#741); a local `submodule` subcommand under the same
+#: generous bound loses nothing.
+GIT_REMOTE_OPS = frozenset({"clone", "fetch", "ls-remote", "pull", "push", "submodule"})
 
-#: A git operation against a remote: fetch, pull, push, ls-remote.
+#: A git operation against a remote: fetch, pull, push, ls-remote, submodule update.
 GIT_REMOTE = 300.0
 
 #: One `gh` call (an API request, not an upload).
