@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 
 from simplon import cli as simplon_cli
+from simplon.kernel import log
 from simplon.kernel.product import StepFactoryContext
 from simplon.kernel.run import run
 from simplon.tasks import gitops, release
@@ -75,9 +76,8 @@ def build_wheel() -> int:
     if not os.environ.get("SOURCE_DATE_EPOCH"):
         stamp = _head_commit_time()
         if stamp is None:
-            print(f"build wheel: git could not give HEAD's commit time in {ROOT}, so the wheel would not be "
-                  f"reproducible (SOURCE_DATE_EPOCH). Build from a git checkout, or set SOURCE_DATE_EPOCH.",
-                  file=sys.stderr)
+            log.error(f"build wheel: git could not give HEAD's commit time in {ROOT}, so the wheel would not be "
+                      f"reproducible (SOURCE_DATE_EPOCH). Build from a git checkout, or set SOURCE_DATE_EPOCH.")
             return 1
         env["SOURCE_DATE_EPOCH"] = stamp
     return run([sys.executable, "-m", "build", "--wheel"], capture=False, cwd=str(ROOT), env=env).rc
@@ -118,9 +118,9 @@ def doctor() -> int:
         try:
             __import__(mod)
         except ImportError:
-            print(f"missing: {mod}", file=sys.stderr)
+            log.error(f"missing: {mod}")
             ok = False
-    print(f"python {sys.version.split()[0]}")
+    log.info(f"python {sys.version.split()[0]}")
     return 0 if ok else 1
 
 
@@ -135,7 +135,7 @@ def push_pin(tag: str = "") -> int:
     """
     # The release a pin branch is named after, by the kernel's one version rule (si#660).
     if not release.VERSION.fullmatch(tag):
-        print(f"push-pin: '{tag}' is not a release tag vX.Y.Z, so nothing is pushed", file=sys.stderr)
+        log.error(f"push-pin: '{tag}' is not a release tag vX.Y.Z, so nothing is pushed")
         return 2
     branch = f"pin/kernel-image-{tag}"
     gitops.configure(ROOT)
@@ -144,8 +144,7 @@ def push_pin(tag: str = "") -> int:
         if stream.strip():
             print(stream.rstrip(), flush=True)
     if not pushed.ok:
-        print(f"push-pin: git could not push {branch} to origin (rc {pushed.rc}); what git said is above",
-              file=sys.stderr)
+        log.error(f"push-pin: git could not push {branch} to origin (rc {pushed.rc}); what git said is above")
         return 1
     return 0
 
@@ -155,8 +154,8 @@ def _canary_path(file: str, verb: str) -> Path | None:
     entry = (paths.CONTEXT.manifest_data().get("artifacts") or {}).get(file) if file else None
     path = entry.get("path") if isinstance(entry, dict) else None
     if not isinstance(path, str) or not path:
-        print(f"handoff-canary {verb}: '{file}' is no `artifacts:` entry with a `path:` "
-              f"(bind it with `{'produces' if verb == 'write' else 'consumes'}:`)", file=sys.stderr)
+        log.error(f"handoff-canary {verb}: '{file}' is no `artifacts:` entry with a `path:` "
+                  f"(bind it with `{'produces' if verb == 'write' else 'consumes'}:`)")
         return None
     return ROOT / path
 
@@ -167,8 +166,7 @@ def _canary_line() -> str | None:
     done = run(["git", "rev-parse", "HEAD"], cwd=str(ROOT))
     sha = done.out.strip()
     if not done.answered:
-        print(f"handoff-canary: git could not name HEAD in {ROOT}: {done.err.strip() or f'rc {done.rc}'}",
-              file=sys.stderr)
+        log.error(f"handoff-canary: git could not name HEAD in {ROOT}: {done.err.strip() or f'rc {done.rc}'}")
         return None
     return f"simplon hand-off canary: commit {sha}, run {os.environ.get('GITHUB_RUN_ID') or 'local'}\n"
 
@@ -184,7 +182,7 @@ def handoff_canary_write(file: str = "") -> int:
         return 1
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(line, encoding="utf-8")
-    print(f"handoff-canary write: {path.relative_to(ROOT)}: {line.rstrip()}")
+    log.ok(f"handoff-canary write: {path.relative_to(ROOT)}: {line.rstrip()}")
     return 0
 
 
@@ -196,15 +194,13 @@ def handoff_canary_check(file: str = "") -> int:
     if path is None or line is None:
         return 1
     if not path.is_file():
-        print(f"handoff-canary check: {path.relative_to(ROOT)} is not there - nothing handed it over",
-              file=sys.stderr)
+        log.error(f"handoff-canary check: {path.relative_to(ROOT)} is not there - nothing handed it over")
         return 1
     found = path.read_text(encoding="utf-8")
     if found != line:
-        print(f"handoff-canary check: {path.relative_to(ROOT)} holds {found!r}, expected {line!r}",
-              file=sys.stderr)
+        log.error(f"handoff-canary check: {path.relative_to(ROOT)} holds {found!r}, expected {line!r}")
         return 1
-    print(f"handoff-canary check: {path.relative_to(ROOT)}: {line.rstrip()}")
+    log.ok(f"handoff-canary check: {path.relative_to(ROOT)}: {line.rstrip()}")
     return 0
 
 

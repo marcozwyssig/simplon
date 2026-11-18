@@ -7,6 +7,7 @@ missing from PATH was a sentence, while `_canary_line` did not, so the same mach
 
 AAA; the name states the behaviour under test.
 """
+import re
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -29,9 +30,18 @@ def test_the_canary_without_git_on_path_says_so_rather_than_raising(no_git, caps
     # Act
     line = cli._canary_line()
 
-    # Assert
+    # Assert: and said as the kernel says an error (si#670 item 14)
     assert line is None
-    assert "git could not name HEAD" in capsys.readouterr().err
+    assert re.match(r"\[\d\d:\d\d:\d\d\] ERR handoff-canary: git could not name HEAD", capsys.readouterr().err)
+
+
+def test_a_tag_that_is_no_release_is_a_log_error(capsys):
+    # Act
+    rc = cli.push_pin("main")
+
+    # Assert
+    assert rc == 2
+    assert re.match(r"\[\d\d:\d\d:\d\d\] ERR push-pin: 'main' is not a release tag", capsys.readouterr().err)
 
 
 def test_the_canary_with_git_names_head():

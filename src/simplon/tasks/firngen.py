@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 
 from simplon.adapters import docker, hostpath
+from simplon.kernel import log
 from simplon.kernel.run import Result
 from simplon.manifest import context
 from simplon.tasks import toolchain
@@ -72,11 +73,11 @@ def name_rc(rc: int, *, who: str, meanings: dict[int, str] | None = None) -> Non
         return
     meaning = (meanings or {}).get(rc) or FIRN_CODES.get(rc)
     if meaning:
-        print(f"{who}: firn exited {rc}, {meaning}", file=sys.stderr)
+        log.error(f"{who}: firn exited {rc}, {meaning}")
     elif rc in DOCKER_CODES:
-        print(f"{who}: rc {rc} is docker's, not firn's: {DOCKER_CODES[rc]}", file=sys.stderr)
+        log.error(f"{who}: rc {rc} is docker's, not firn's: {DOCKER_CODES[rc]}")
     else:
-        print(f"{who}: rc {rc} is unknown - not one of firn's codes (v0.6.0) nor docker's", file=sys.stderr)
+        log.error(f"{who}: rc {rc} is unknown - not one of firn's codes (v0.6.0) nor docker's")
 
 
 _WORKDIR = "/workspace"
@@ -143,11 +144,11 @@ def model_binary(ctx: typer.Context, image: str = "", cwd: str | None = None, ne
         return 1
     result = docker.run_container(*got, capture=False)
     if result.rc != 0:
-        print(f"{where}: gradle firnBinary exited {result.rc}; its output is above", file=sys.stderr)
+        log.error(f"{where}: gradle firnBinary exited {result.rc}; its output is above")
         return result.rc
     if not (context.current().root / (cwd or "") / BINARY).is_file():
-        print(f"{where}: gradle was green and left no {BINARY} under {cwd or '.'} - nothing to run "
-              "(simplon's verdict, rc 1)", file=sys.stderr)
+        log.error(f"{where}: gradle was green and left no {BINARY} under {cwd or '.'} - nothing to run "
+                  "(simplon's verdict, rc 1)")
         return 1
     got = toolchain.invocation(where, image=image, argv=["--version"], workdir=same, env=None, caches=None,
                                network=network or "none", cwd=cwd, extra=[], entrypoint=built)
@@ -181,8 +182,8 @@ def _run(where: str, image: str, argv: list[str], cwd: str | None, network: str 
     if binary:
         on_host = context.current().root / (cwd or "") / binary
         if not on_host.is_file():
-            print(f"{where}: {binary} is not there under {cwd or '.'} - build the product's own firn first, with "
-                  f"a command on `build:model-binary`", file=sys.stderr)
+            log.error(f"{where}: {binary} is not there under {cwd or '.'} - build the product's own firn first, with "
+                      f"a command on `build:model-binary`")
             return None
         entrypoint = posixpath.join(_WORKDIR, cwd or "", binary)
     got = toolchain.invocation(where, image=image, argv=argv, workdir=_WORKDIR, env=None, caches=None,
@@ -204,8 +205,7 @@ def verdict(rc: int, out: str, root: Path) -> int:
         report = json.loads(out)
         diagnostics, files = report["diagnostics"], report["files"]
     except (ValueError, KeyError, TypeError):
-        print(f"build:model: firn's output is not its JSON report (rc {rc}), so nothing can be ruled on:\n{out}",
-              file=sys.stderr)
+        log.error(f"build:model: firn's output is not its JSON report (rc {rc}), so nothing can be ruled on:\n{out}")
         return rc or 1
     for d in diagnostics:
         print(f"firn {d.get('code')}: {d.get('message')}", file=sys.stderr)
@@ -215,23 +215,22 @@ def verdict(rc: int, out: str, root: Path) -> int:
         return rc
     bad = 0
     for path in files.get("kept", []):
-        print(f"build:model: firn kept {path}, which no template produces any more but which holds a protected "
-              f"region. It still defines what it defined - move its region's content where it belongs, then "
-              f"delete the file (simplon's verdict, rc {KEPT_RC}: firn said 0)", file=sys.stderr)
+        log.error(f"build:model: firn kept {path}, which no template produces any more but which holds a protected "
+                  f"region. It still defines what it defined - move its region's content where it belongs, then "
+                  f"delete the file (simplon's verdict, rc {KEPT_RC}: firn said 0)")
         bad = KEPT_RC
     refused = sorted({str(d.get("code")) for d in diagnostics if d.get("code") in REFUSED})
     if refused:
-        print(f"build:model: {', '.join(refused)} - firn left a protected region no template produces, with "
-              f"rc 0; see above (simplon's verdict, rc {KEPT_RC})", file=sys.stderr)
+        log.error(f"build:model: {', '.join(refused)} - firn left a protected region no template produces, with "
+                  f"rc 0; see above (simplon's verdict, rc {KEPT_RC})")
         bad = KEPT_RC
     # si#713: firn counts only the templates that resolve, so a templates entry that matches nothing (W105)
     # also gives `run.templates` 0. Any W105 is red, whatever the other targets produced (the maintainer's
     # decision); the warning is identified by its sentence's prefix, which is all firn's report carries.
     unresolved = [w for w in report.get("warnings") or [] if str(w.get("sentence", "")).startswith("W105")]
     if unresolved:
-        print("build:model: a templates entry in firn.toml names no template (W105 above), so what it was meant "
-              "to generate is not generated - fix the name in firn.toml (simplon's verdict, rc 1: firn said 0)",
-              file=sys.stderr)
+        log.error("build:model: a templates entry in firn.toml names no template (W105 above), so what it was meant "
+                  "to generate is not generated - fix the name in firn.toml (simplon's verdict, rc 1: firn said 0)")
         bad = bad or 1
     produced = [*files.get("written", []), *files.get("unchanged", []), *files.get("upToDate", [])]
     if not produced:
@@ -241,19 +240,18 @@ def verdict(rc: int, out: str, root: Path) -> int:
         if templates == 0 and unresolved:
             return bad
         if templates == 0:
-            print("build:model: firn ran no template - the project selects none, so there is nothing to generate "
-                  "(firn said 0)", file=sys.stderr)
+            log.warn("build:model: firn ran no template - the project selects none, so there is nothing to "
+                     "generate (firn said 0)")
             return bad
         unknown = ("" if templates is not None else "; this firn does not say how many templates it ran (v0.9.0 "
                    "on does), so a project with none cannot be told from one whose templates wrote nothing")
-        print("build:model: firn reported no file at all - nothing was generated, which is not done "
-              f"(simplon's verdict, rc 1: firn said 0){unknown}", file=sys.stderr)
+        log.error("build:model: firn reported no file at all - nothing was generated, which is not done "
+                  f"(simplon's verdict, rc 1: firn said 0){unknown}")
         return 1
     for name in produced:
         path = root / name
         if not path.is_file():
-            print(f"build:model: firn reported {name}, and it is not there (simplon's verdict, rc 1)",
-                  file=sys.stderr)
+            log.error(f"build:model: firn reported {name}, and it is not there (simplon's verdict, rc 1)")
             bad = bad or 1
             continue
         path.chmod(0o644)
