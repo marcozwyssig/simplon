@@ -68,7 +68,7 @@ def test_host_wraps_interactive_argv_via_wrap_on_darwin(monkeypatch):
 _STALE_RECORD = 'level=fatal msg="colima not running"'
 
 
-def _routing_refuses(_argv, capture=True):
+def _routing_refuses(_argv, **_kw):
     """The routed `docker ps -q` as it failed in the netctl#1002 incident: colima's ssh hop refuses,
     quoting the stale status record."""
     return Result(rc=1, out="", err=f"{_STALE_RECORD}\n")
@@ -114,7 +114,7 @@ def test_the_probe_never_asks_colima_list_or_colima_status(monkeypatch):
     # arrange: record every argv the probe runs, with the routing refusing so the fallback path runs too
     seen: list[list[str]] = []
 
-    def record(argv, capture=True):
+    def record(argv, **_kw):
         seen.append(argv)
         return Result(rc=1, out="", err=f"{_STALE_RECORD}\n")
 
@@ -125,8 +125,10 @@ def test_the_probe_never_asks_colima_list_or_colima_status(monkeypatch):
     host.Host(os_name="Darwin").probe()
 
     # assert: NOTHING in the classification reads colima's status record - not `colima status`, not
-    # `colima list`; the only subprocess is the read-only routed `docker ps -q`
-    assert seen == [["colima", "ssh", "--", "docker", "ps", "-q"]]
+    # `colima list`; the subprocesses are the read-only routed `docker ps -q` and the socket lookup's
+    # `docker context inspect` (which ran past this stub through `subprocess.run` until #670 item 10)
+    assert seen[0] == ["colima", "ssh", "--", "docker", "ps", "-q"]
+    assert [argv[1:3] for argv in seen[1:]] == [["context", "inspect"]]
     assert not [argv for argv in seen if "list" in argv or "status" in argv]
 
 
@@ -147,7 +149,7 @@ def test_a_healthy_host_is_classified_routed_without_ever_opening_the_socket(mon
 
 def test_a_routed_failure_without_any_message_still_names_a_cause(monkeypatch):
     # arrange: docker exits non-zero and prints nothing at all, socket silent too
-    monkeypatch.setattr(host, "run", lambda argv, capture=True: Result(rc=127, out="", err=""))
+    monkeypatch.setattr(host, "run", lambda argv, **_kw: Result(rc=127, out="", err=""))
     monkeypatch.setattr(host, "socket_answers", lambda path, timeout=2.0: False)
 
     # act
@@ -387,3 +389,21 @@ def test_the_probe_asks_the_lab_socket_only_when_the_routed_command_failed(monke
 
     # assert: a healthy host still costs one docker call
     assert asked == []
+
+
+def test_context_endpoint_runs_in_the_environment_it_is_given_not_this_processs(tmp_path, monkeypatch):
+    """#670 item 10: through `run`, the environment it is given is still the child's WHOLE environment: a
+    DOCKER_HOST this process carries must not come back through `run`'s merge."""
+    # arrange
+    bindir = docker_on_path(tmp_path, 'echo "default|${DOCKER_HOST:-none}"\n')
+    monkeypatch.setenv("DOCKER_HOST", "unix:///from-this-process.sock")
+    seen: list = []
+    real = host.run
+    monkeypatch.setattr(host, "run", lambda argv, **kw: seen.append(kw) or real(argv, **kw))
+
+    # act
+    found = host.context_endpoint(host.without_docker_overrides({"PATH": str(bindir)}))
+
+    # assert: asked through run(), and the child saw no DOCKER_HOST
+    assert [kw.get("inherit") for kw in seen] == [False]
+    assert found == host.DockerContext("default", "none")

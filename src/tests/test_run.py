@@ -518,3 +518,29 @@ def test_run_decodes_as_utf8_under_a_c_locale():
 
     # assert
     assert (done.returncode, done.stdout.strip(), done.stderr) == (0, ascii("aé�b"), "")
+
+
+def test_inherit_false_makes_env_the_childs_whole_environment(monkeypatch):
+    """#670 item 10: a caller that must REMOVE a variable (`host.context_endpoint` without DOCKER_HOST)
+    hands `run` the whole environment; `env` alone only adds to this one."""
+    # arrange
+    monkeypatch.setenv("SI670_THIS_PROCESS", "here")
+
+    # act
+    res = run_module.run(["/bin/sh", "-c", 'echo "${SI670_THIS_PROCESS:-gone}/${SI670_GIVEN:-gone}"'],
+                         env={"SI670_GIVEN": "given"}, inherit=False)
+
+    # assert
+    assert res.out.strip() == "gone/given"
+
+
+def test_env_still_adds_to_this_process_environment_by_default(monkeypatch):
+    # arrange
+    monkeypatch.setenv("SI670_THIS_PROCESS", "here")
+
+    # act
+    res = run_module.run(["/bin/sh", "-c", 'echo "${SI670_THIS_PROCESS:-gone}/${SI670_GIVEN:-gone}"'],
+                         env={"SI670_GIVEN": "given"})
+
+    # assert
+    assert res.out.strip() == "here/given"
