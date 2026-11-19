@@ -46,7 +46,7 @@ from github import GithubException
 from github.GitRelease import GitRelease
 from github.Repository import Repository
 
-from simplon.adapters import github
+from simplon.adapters import checksum, github
 from simplon.kernel import log
 from simplon.manifest import artifactsection, bound, context, outputs
 from simplon.manifest import results as results_mod
@@ -304,7 +304,7 @@ def _planned(tag: str) -> list[_Upload] | None:
         if not path.is_file():
             problems.append(f"'{name}' has nothing at {relative}: run the command that produces it first")
             continue
-        planned.append(_Upload(name, path, relative, asset, hashlib.sha256(path.read_bytes()).hexdigest()))
+        planned.append(_Upload(name, path, relative, asset, checksum.sha256_of(path)))
     # every name a run puts on the draft: each file's own and its sidecar's, so `tool` beside `tool.sha256`
     # (whose sidecar would overwrite the second file) is refused with the rest
     by_name: dict[str, list[tuple[str, str]]] = {}
