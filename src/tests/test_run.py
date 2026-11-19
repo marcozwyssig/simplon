@@ -11,7 +11,7 @@ import time
 from unittest import mock
 
 import pytest
-from procalive import alive
+from procalive import alive, kill_if_alive
 
 from simplon.kernel import run as run_module
 from simplon.kernel.run import Result, chain, run_stream, stream
@@ -352,8 +352,7 @@ def test_a_SIGTERM_to_the_kernel_does_not_leave_its_child_running(tmp_path, slow
         assert _gone_within(child, 5), "the kernel ended and its child is still running"
         assert rc == -signal.SIGTERM
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 @posix_only
@@ -375,8 +374,7 @@ def test_a_SIGINT_to_the_kernel_lets_its_pytest_child_write_the_junit(tmp_path, 
         assert not alive(child)
         assert rc == -signal.SIGINT
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 @posix_only
@@ -397,8 +395,7 @@ def test_a_child_that_ignores_the_stop_is_killed_once_the_grace_is_over(tmp_path
         assert time.monotonic() - started < 10
         assert rc == -signal.SIGTERM
     finally:
-        if alive(child):
-            os.kill(child, signal.SIGKILL)
+        kill_if_alive(child)
 
 
 def test_run_still_kills_the_child_on_its_own_timeout():
@@ -512,3 +509,29 @@ def test_run_decodes_as_utf8_under_a_c_locale():
 
     # assert
     assert (done.returncode, done.stdout.strip(), done.stderr) == (0, ascii("aé�b"), "")
+
+
+def test_inherit_false_makes_env_the_childs_whole_environment(monkeypatch):
+    """#670 item 10: a caller that must REMOVE a variable (`host.context_endpoint` without DOCKER_HOST)
+    hands `run` the whole environment; `env` alone only adds to this one."""
+    # arrange
+    monkeypatch.setenv("SI670_THIS_PROCESS", "here")
+
+    # act
+    res = run_module.run(["/bin/sh", "-c", 'echo "${SI670_THIS_PROCESS:-gone}/${SI670_GIVEN:-gone}"'],
+                         env={"SI670_GIVEN": "given"}, inherit=False)
+
+    # assert
+    assert res.out.strip() == "gone/given"
+
+
+def test_env_still_adds_to_this_process_environment_by_default(monkeypatch):
+    # arrange
+    monkeypatch.setenv("SI670_THIS_PROCESS", "here")
+
+    # act
+    res = run_module.run(["/bin/sh", "-c", 'echo "${SI670_THIS_PROCESS:-gone}/${SI670_GIVEN:-gone}"'],
+                         env={"SI670_GIVEN": "given"})
+
+    # assert
+    assert res.out.strip() == "here/given"

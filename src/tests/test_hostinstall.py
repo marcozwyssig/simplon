@@ -6,11 +6,17 @@ reading alike, or a "cannot here" exiting 0. AAA throughout.
 """
 from __future__ import annotations
 
+import os
+import signal
 import stat
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
+from conftest import ROOT
 from simplon.adapters import hostinstall
 from simplon.adapters.hostinstall import Outcome, State
 
@@ -104,6 +110,70 @@ def test_act_is_empty_on_success():
 
     # assert
     assert reason == ""
+
+
+def test_act_adds_its_env_to_this_process_environment(monkeypatch):
+    """#670 item 7: `env` is what the command needs ADDED (Homebrew's NONINTERACTIVE), as `run(env=...)` takes
+    it, not a whole environment to replace this one with."""
+    # arrange
+    monkeypatch.setenv("SI670_INHERITED", "kept")
+
+    # act
+    reason = hostinstall.act(["sh", "-c", 'test "$SI670_INHERITED/$SI670_ADDED" = kept/added'],
+                             env={"SI670_ADDED": "added"})
+
+    # assert
+    assert reason == ""
+
+
+_KERNEL = """
+import sys
+from simplon.adapters import hostinstall
+from simplon.kernel import run
+run._STOP_GRACE = 5.0
+hostinstall.act([sys.executable, "-c",
+                 "import os, sys, time; open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(60)",
+                 sys.argv[1]])
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM is POSIX")
+def test_a_stop_to_the_kernel_reaches_the_install_command(tmp_path):
+    """#670 item 7: through `run()` the install command gets the stop (si#649). Through `subprocess.run` it
+    did not, and an install the kernel was told to stop ran on, reparented to init."""
+    # arrange
+    pidfile = tmp_path / "install.pid"
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT / "src"),
+                                                        *filter(None, [os.environ.get("PYTHONPATH")])])}
+    kernel = subprocess.Popen([sys.executable, "-c", _KERNEL, str(pidfile)], env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 30
+    while not (pidfile.exists() and pidfile.read_text().strip()):
+        assert kernel.poll() is None, "the kernel ended before the install command started"
+        assert time.monotonic() < deadline, "the install command never started"
+        time.sleep(0.05)
+    child = int(pidfile.read_text())
+    try:
+        # act
+        kernel.send_signal(signal.SIGTERM)
+        kernel.wait(30)
+
+        # assert
+        deadline = time.monotonic() + 2
+        while _running(child):
+            assert time.monotonic() < deadline, "the install command outlived the stop"
+            time.sleep(0.05)
+    finally:
+        if _running(child):
+            os.kill(child, signal.SIGKILL)
+
+
+def _running(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (FileNotFoundError, ProcessLookupError):      # gone, or gone between the open and the read
+        return False
 
 
 def _tool(directory: Path, name: str, body: str) -> None:

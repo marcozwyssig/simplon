@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from simplon.adapters import fetch
 from simplon.manifest import context, manifestmodel, outputs
 from simplon.kernel import log
 
@@ -41,14 +42,18 @@ def model(output: str = "") -> int:
         log.error(f"no model written: {exc}")
         return 1
     path = Path(output) if output else outputs.root() / "model" / f"{name}.firn"
-    tmp = path.with_name(path.name + ".tmp")
+    tmp: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # si#670: a name of its own, so two runs writing the same model never rename each other's file.
+        handle, tmp = fetch.unique_file(path.parent, f"{path.name}.", ".tmp")
+        os.close(handle)
         _write(tmp, text)
         os.replace(tmp, path)
     except OSError as exc:
         try:
-            tmp.unlink(missing_ok=True)
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
         except OSError:  # the directory itself is the problem; the reason logged below is the one that matters
             pass
         log.error(f"no model written: cannot write {path}: {exc}")

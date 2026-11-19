@@ -80,7 +80,7 @@ VERSION = "{version}"
 #: The two keys `version_from:` takes.
 VERSION_FROM_KEYS = ("file", "key")
 
-#: The suffix the bytes carry until their checksum is known.
+#: The suffix the bytes carry until their checksum is known, after a random part (`fetch.unique_file`).
 STAGING = ".unverified"
 
 #: The suffix of the record beside a fetched file and beside a cache entry: the url its bytes were
@@ -288,7 +288,19 @@ def fetch(name: str = "") -> int:
     cached = cache / spec.sha256 / dest.name if cache is not None else None
     if cached is not None and _restore(cached, spec, dest, url):
         return 0
-    staged = dest.with_name(dest.name + STAGING)
+    # si#670: a name of its own, so two runs fetching the same file never hash or rename each other's bytes.
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    handle, staged = transfer.unique_file(dest.parent, f"{dest.name}.", STAGING)
+    os.close(handle)
+    try:
+        return _verified(name, spec, url, version, dest, staged, cached)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def _verified(name: str, spec: File, url: str, version: str, dest: Path, staged: Path,
+              cached: Path | None) -> int:
+    """Download into `staged`, and move it to `dest` only when its sha256 is the declared one."""
     try:
         transfer.download(url, staged, label=dest.name)
     except transfer.DownloadError as failure:
@@ -296,7 +308,6 @@ def fetch(name: str = "") -> int:
         return 1
     found = checksum.sha256_of(staged)
     if found != spec.sha256:
-        staged.unlink(missing_ok=True)
         log.error(f"{name}: {url} sent a file with sha256 {found}, and `{SECTION}.{name}.sha256` declares "
                   f"{spec.sha256}. Nothing was stored."
                   + (f"\n  the url's version {version} is read from '{spec.version_key}' in "

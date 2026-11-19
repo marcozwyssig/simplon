@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from conftest import docker_is_usable
-from firnrun import firn_rc
+from firnrun import firn_rc, firn_result, said
 
 SRC_FIRN = Path(__file__).resolve().parents[1] / "firn"
 DEMO = Path(__file__).resolve().parent / "fixtures" / "firn" / "pipeline_demo"
@@ -37,10 +37,10 @@ def demo(tmp_path):
 @needs_docker
 def test_simplons_own_firn_project_checks_clean():
     # arrange / act
-    rc, _ = firn_rc(SRC_FIRN.parents[1], "validate", cwd="src")
+    result = firn_result(SRC_FIRN.parents[1], "validate", cwd="src")
 
     # assert
-    assert rc == 0
+    assert result.rc == 0, said(result)
 
 
 @needs_docker
@@ -48,10 +48,22 @@ def test_the_demo_checks_clean(demo):
     # arrange / act: `query` answers over a model `validate` refuses (measured 2026-10-14: the demo still
     # composed its artifacts under `produces` after C.2 made it an Association - E009 - and every query
     # below stayed green), so a demo that has drifted from the metamodel is red here and not nowhere
-    rc, out = firn_rc(demo, "validate")
+    result = firn_result(demo, "validate")
 
     # assert
-    assert rc == 0, out
+    assert result.rc == 0, said(result)
+
+
+@needs_docker
+def test_a_failed_firn_run_says_what_firn_said(tmp_path):
+    # arrange: no firn.toml - firn refuses with E107, on stderr and with stdout empty (measured)
+    # act
+    result = firn_result(tmp_path, "validate")
+
+    # assert: the message an `assert rc == 0` prints carries the refusal; stdout alone was empty (CI on #768)
+    assert result.rc != 0
+    assert "E107" not in result.out
+    assert "E107" in said(result)
 
 
 @needs_docker

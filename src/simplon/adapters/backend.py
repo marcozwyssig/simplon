@@ -106,7 +106,7 @@ def resolve(env: Environment, backends: Mapping[str, Backend]) -> Backend:
     instance); the kernel names no backend. Fails loud (a `ValueError` naming the tag and the known
     backends) when a manifest env references a backend with no registered implementation, so the mistake
     dies here at selection time, not deep inside a deployment - the same fail-loud discipline as
-    `environments.parse`.
+    `environments.parse_data`.
     """
     try:
         return backends[env.backend]

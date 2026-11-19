@@ -15,7 +15,6 @@ import os
 import platform
 import shutil
 import socket
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from dataclasses import dataclass
@@ -119,13 +118,11 @@ def context_endpoint(environ: Mapping[str, str] | None = None) -> DockerContext 
     docker = shutil.which("docker", path=env.get("PATH", ""))
     if docker is None:
         return None
-    try:
-        done = subprocess.run([docker, "context", "inspect", "--format", _CONTEXT_FORMAT], env=env,
-                              capture_output=True, text=True, timeout=_CONTEXT_TIMEOUT_S, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    name, sep, endpoint = done.stdout.strip().partition("|")
-    if done.returncode != 0 or not sep or not name or not endpoint:
+    # The WHOLE environment, `inherit=False`: a DOCKER_HOST this process carries must not come back (#670).
+    done = run([docker, "context", "inspect", "--format", _CONTEXT_FORMAT], env=env, inherit=False,
+               timeout=_CONTEXT_TIMEOUT_S)
+    name, sep, endpoint = done.out.strip().partition("|")
+    if not done.ok or not sep or not name or not endpoint:
         return None
     return DockerContext(name, endpoint)
 

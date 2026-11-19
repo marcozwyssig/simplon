@@ -10,7 +10,7 @@ group-scoped keys `test.all` / `deploy.all` it needed because `all` collides acr
 namespace) is gone - the collision is resolved by NESTING instead.
 
 The engine is PURE and framework-free: it parses + validates the manifest (loudly, like
-simplon.manifest.environments.parse), resolves an impl reference to the real callable, and builds the shared
+simplon.manifest.environments.parse_data), resolves an impl reference to the real callable, and builds the shared
 CommandTaxonomy (the env-gate) from the manifest so that logic is reused, not copied. It deliberately
 imports no CLI framework: registering Typer commands / sub-apps / help panels is the PRODUCT's job (the
 engine must not bind to one CLI framework). "One source, two outputs": the same manifest assembles the

@@ -47,11 +47,10 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon.manifest import context, launcherenv, layout, outputs
+from simplon.manifest import context, launcherenv, layout, outputs, yamllines
 from simplon.adapters import docker, hostpath, labinstance
 from simplon.kernel import log
 from simplon.tasks import profiles
-from simplon.tasks.migrate import _span
 
 
 @dataclass(frozen=True)
@@ -588,9 +587,9 @@ def _toolchains_spliced(text: str, name: str, where: str) -> str:
             ending = lines[at][len(lines[at].rstrip("\r\n")):]
             lines[at] = f"toolchains:{flow.group('pre')}{joined}{flow.group('post')}{ending}"
         elif not rest.split("#")[0].strip():
-            # The block's extent is migrate's rule (si#662), so the two line readers agree on where a
-            # key's value ends - an item at the key's own column included.
-            _, end = _span([line.rstrip("\r\n") for line in lines], at, 0)
+            # The block's extent is the one line reader's (si#662, si#670 item 11), the one migrate
+            # reads by - an item at the key's own column included.
+            _, end = yamllines.span([line.rstrip("\r\n") for line in lines], at, 0)
             items = [i for i in range(at + 1, end) if _ITEM.match(lines[i])]
             if not items:
                 log.die(f"{where}: 'toolchains:' has no list under it; write `toolchains: [{name}]`")
@@ -670,26 +669,30 @@ def _spliced(text: str, additions: Mapping[str, object], where: str, phase: str 
 
 def _place(lines: list[str], phase: str = "build") -> tuple[int, bool, int, int] | None:
     """Where the new commands go: (the `commands:` line, whether it holds an empty `{}`, the line to
-    insert before, the indent to write them at). None when the shape is not the one this can splice."""
+    insert before, the indent to write them at). None when the shape is not the one this can splice.
+
+    Where each block ends is `yamllines.span`, the rule `manifest migrate` reads blocks by (si#670 item 11).
+    Its end is one past the last line that carries data, so the commands go below the last command and a
+    trailing comment introducing the next sibling keeps the sibling it belongs to."""
     groups = _find(lines, _AREA, 0, len(lines), 0)
     if groups is None or groups[1]:
         return None
-    _, groups_end = _extent(lines, groups[0] + 1, 0, len(lines))
-    group_indent = _child_indent(lines, groups[0] + 1, groups_end)
+    _, groups_end = yamllines.span(lines, groups[0], 0)
+    group_indent = yamllines.child_indent(lines, groups[0] + 1, groups_end)
     if group_indent is None:
         return None
     build = _find(lines, phase, groups[0] + 1, groups_end, group_indent)
     if build is None or build[1]:
         return None
-    _, build_end = _extent(lines, build[0] + 1, group_indent, groups_end)
-    key_indent = _child_indent(lines, build[0] + 1, build_end)
+    _, build_end = yamllines.span(lines, build[0], group_indent)
+    key_indent = yamllines.child_indent(lines, build[0] + 1, build_end)
     if key_indent is None:
         return None
     commands = _find(lines, "commands", build[0] + 1, build_end, key_indent)
     if commands is None or commands[1] not in ("", "{}"):
         return None
-    insert_at, commands_end = _extent(lines, commands[0] + 1, key_indent, build_end)
-    entry_indent = _child_indent(lines, commands[0] + 1, commands_end)
+    _, insert_at = yamllines.span(lines, commands[0], key_indent)
+    entry_indent = yamllines.child_indent(lines, commands[0] + 1, insert_at)
     if entry_indent is None:  # nothing in there yet, so the block's own step decides
         entry_indent = key_indent + 2
     return commands[0], commands[1] == "{}", insert_at, entry_indent
@@ -699,48 +702,13 @@ def _find(lines: list[str], key: str, start: int, end: int, indent: int) -> tupl
     """The line index of `key:` at exactly `indent` within [start, end), and what stands after its colon
     (empty when it opens a block, so a caller can tell a block from a flow value)."""
     for i in range(start, end):
-        if _skippable(lines[i]):
+        if yamllines.skippable(lines[i]):
             continue
         match = _KEY.match(lines[i])
         if match and len(match["indent"]) == indent and match["key"] == key:
             value = match["rest"].strip()
             return i, "" if value.startswith("#") else value
     return None
-
-
-def _extent(lines: list[str], start: int, indent: int, limit: int) -> tuple[int, int]:
-    """(insert-before, end) of the block whose children are indented deeper than `indent`.
-
-    The two differ on purpose. `end` closes the block; the insertion point is one past the last line
-    that carries DATA, so a trailing comment introducing the next sibling keeps the sibling it belongs
-    to instead of ending up under the commands spliced in above it.
-    """
-    insert_at = end = start
-    for i in range(start, limit):
-        if not lines[i].strip():
-            continue
-        if _line_indent(lines[i]) <= indent:
-            break
-        end = i + 1
-        if not lines[i].lstrip().startswith("#"):
-            insert_at = i + 1
-    return insert_at, end
-
-
-def _child_indent(lines: list[str], start: int, end: int) -> int | None:
-    """The indent the block's own entries are written at, taken from the first one; None when empty."""
-    for i in range(start, end):
-        if not _skippable(lines[i]):
-            return _line_indent(lines[i])
-    return None
-
-
-def _skippable(line: str) -> bool:
-    return not line.strip() or line.lstrip().startswith("#")
-
-
-def _line_indent(line: str) -> int:
-    return len(line) - len(line.lstrip(" "))
 
 
 def _newline(raw: list[str], index: int) -> str:

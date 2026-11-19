@@ -260,6 +260,23 @@ def test_extract_copies_from_the_platform_reference_and_writes_0755(product, cli
     assert sorted(p.name for p in out.parent.iterdir()) == ["firn-linux-arm64"]
 
 
+def test_extract_leaves_a_concurrent_runs_staged_copy_alone(product, cli, built):
+    # arrange: si#670 item 8. Another run copying the same file out is between its `docker cp` and its
+    # rename; a FIXED staging name (`<dest>.partial`) was one this run removed before copying onto it
+    in_flight = product / "build/firn-linux-arm64.partial"
+    in_flight.parent.mkdir(parents=True, exist_ok=True)
+    in_flight.write_bytes(b"the other run's copy")
+
+    # act
+    rc = imagefile.extract(name="firn-image", file="firn-arm64", inside="/firn")
+
+    # assert: this run staged under a name of its own, and left nothing of its own behind
+    assert rc == 0
+    assert (product / "build/firn-linux-arm64").read_bytes() == b"\x7fELF firn"
+    assert in_flight.read_bytes() == b"the other run's copy"
+    assert sorted(p.name for p in in_flight.parent.iterdir()) == ["firn-linux-arm64", in_flight.name]
+
+
 def test_extract_refuses_a_directory_and_leaves_nothing(product, cli, built, capsys):
     # arrange
     cli.copied = "dir"

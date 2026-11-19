@@ -1464,8 +1464,8 @@ def _borrowers() -> dict[str, tuple[str, ...]]:
 # answer (si#346's final review measured `deployment._entry` dropping both of its reads this way).
 #
 # What this cannot see, said rather than discovered: a manifest TEXT parsed somewhere other than the two
-# seams (`environments.parse`, `tasks/toolchain.py`'s splice) - measured on the day this was written to
-# read `cd` and `ci` only, both found here through the seams anyway - and a pydantic validator's own reads,
+# seams (`environments.parse`, since deleted by si#670, and `tasks/toolchain.py`'s splice) - measured on
+# the day this was written to read `cd` and `ci` only, both found here through the seams anyway - and a pydantic validator's own reads,
 # because a model reads its FIELDS and a before-validator that tests for a key the model does not carry
 # (`_reject_removed_composites`) is refusing it by construction. Three more, named by si#346's final
 # review and not followed:

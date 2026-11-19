@@ -10,8 +10,6 @@ from __future__ import annotations
 import os
 from typing import Iterable, Mapping, NamedTuple
 
-import yaml
-
 from simplon.model import carrierspec
 
 
@@ -107,12 +105,6 @@ class Environment(NamedTuple):
 class Registry(NamedTuple):
     environments: dict[str, "Environment"]
     default: str
-
-
-def parse(text: str, valid_backends: Iterable[str]) -> Registry:
-    """Parse a manifest TEXT into the registry (pure; unit-tested), reading the matrix under `cd:` as
-    `matrix_section` does. Thin wrapper over parse_data; the validation lives in parse_data."""
-    return parse_data(yaml.safe_load(text) or {}, valid_backends)
 
 
 def _repository(raw: object, where: str) -> "Repository | None":

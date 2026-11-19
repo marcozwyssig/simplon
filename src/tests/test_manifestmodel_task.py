@@ -91,6 +91,22 @@ def test_a_failed_write_leaves_no_partial_model(tmp_path, monkeypatch, product_c
     assert rc == 1 and not target.exists() and list(tmp_path.glob("*.tmp")) == []
 
 
+def test_a_concurrent_runs_temp_file_is_left_alone(tmp_path, product_context):
+    # arrange: si#670 item 8. Another run writing the same model is between its write and its rename; a
+    # FIXED temp name (`<model>.tmp`) was one both runs wrote and renamed
+    target = tmp_path / "p.firn"
+    in_flight = tmp_path / "p.firn.tmp"
+    in_flight.write_text("the other run's model", encoding="utf-8")
+
+    # act
+    rc = task.model(output=str(target))
+
+    # assert: this run wrote under a name of its own, and left nothing of its own behind
+    assert rc == 0 and target.exists()
+    assert in_flight.read_text(encoding="utf-8") == "the other run's model"
+    assert sorted(p.name for p in tmp_path.glob("p.firn*")) == ["p.firn", "p.firn.tmp"]
+
+
 def test_the_catalogue_places_it_beside_migrate():
     # act
     cat = catalogue.load()
