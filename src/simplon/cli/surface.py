@@ -209,6 +209,8 @@ PACKAGES = frozenset({"tasks"})
 #: has a reason to import it, so it is not promised.
 #: `yamlkeys` (si#344 B2) is the loader both manifest seams parse with; a product reads its manifest
 #: through `context.manifest_data`, which uses it, and has no reason to import it.
+#: `yamllines` (si#670) is the line reader `toolchain scaffold` and `manifest migrate` splice a manifest by;
+#: a product edits its manifest through those commands, not by importing it.
 #: `taskkeys` (si#561) is generated from the M2 for `treeform`, which re-exports both lists; a product that
 #: wants them has `treeform`, which is promised.
 #: `provenance` and `runhost` (si#391) are the kernel's side of two seams the cli used to be reached for
@@ -217,7 +219,7 @@ PACKAGES = frozenset({"tasks"})
 INTERNAL = frozenset({
     "adapters.brew", "adapters.diskguard", "adapters.gh", "adapters.github", "adapters.hostinstall", "adapters.oras", "adapters.pypi", "adapters.repofile", "adapters.tools", "cli.bootstrap",
     "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
-    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "kernel.limits", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "manifest.yamllines", "kernel.limits", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
     "ui.clipboard",
 })
 

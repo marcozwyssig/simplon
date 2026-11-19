@@ -314,6 +314,43 @@ def test_a_missing_phase_group_is_refused_and_nothing_is_written(manifest, monke
     assert "ci: test: commands:" in out and "task: test:model" in out
 
 
+@pytest.mark.parametrize("text", [
+    "product: demo\nci:\n# the build phase\n  build:\n    commands: {}\n",
+    "product: demo\nci:\n  build:\n# what it runs\n    commands: {}\n",
+])
+def test_a_column_0_comment_inside_ci_does_not_end_it(tmp_path, monkeypatch, text):
+    # arrange: si#670 item 11 - firn writes column-0 banners inside a section (si#406); migrate reads one
+    # as the next key's, and the splice read it as the end of `ci:` and refused a manifest it could place
+    path = tmp_path / "product.yaml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(toolchain, "_manifest_path", lambda: path)
+
+    # act
+    rc = toolchain.scaffold("cpp", version="19")
+
+    # assert: placed, and the banner is still where it was written
+    after = path.read_text(encoding="utf-8").replace("toolchains: [cpp]\n", "")
+    assert rc == 0
+    assert "compile" in yaml.safe_load(after)["ci"]["build"]["commands"]
+    assert after.startswith(text.replace(" {}", ""))
+
+
+def test_a_comment_between_commands_keeps_the_command_below_it(tmp_path, monkeypatch):
+    # arrange: si#670 item 11 - the new commands go after the last one, not between `a:` and the column-0
+    # comment that introduces `b:`
+    text = ("product: demo\nci:\n  build:\n    commands:\n      a: { task: wheel }\n# b is next\n"
+            "      b: { task: wheel }\n")
+    path = tmp_path / "product.yaml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(toolchain, "_manifest_path", lambda: path)
+
+    # act
+    toolchain.scaffold("cpp", version="19")
+
+    # assert
+    assert path.read_text(encoding="utf-8").replace("toolchains: [cpp]\n", "").startswith(text)
+
+
 # --- si#525: every toolchain is named in `toolchains:`, the host ones too --------------------------
 
 def test_host_toolchain_adds_only_the_list_entry(manifest, capsys):
