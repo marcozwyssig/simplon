@@ -18,7 +18,7 @@ import sys
 import time
 
 import pytest
-from procalive import alive
+from procalive import alive, kill_if_alive
 import yaml
 
 from simplon.kernel import run as run_module
@@ -135,5 +135,5 @@ def test_a_cancelled_generated_step_lets_pytest_write_its_junit_and_leaves_nothi
         assert step.returncode != 0, "a cancelled step must not end green"
     finally:
         for marker in (tmp_path / "kernel.pid", pidfile):
-            if marker.exists() and alive(int(marker.read_text())):
-                os.kill(int(marker.read_text()), signal.SIGKILL)
+            if marker.exists():
+                kill_if_alive(int(marker.read_text()))
