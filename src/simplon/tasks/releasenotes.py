@@ -295,6 +295,8 @@ def tickets_of(root: Path, sha: str, subject: str) -> set[int]:
     """
     if not _GITHUB_PR_MERGE.fullmatch(subject):
         return tickets_in(subject)
+    if brought_nothing(root, sha, subject):
+        return set()
     # `^1..^2` names the first two parents, so an octopus merge's third branch would be invisible here.
     # That is an accepted assumption rather than an oversight: this branch is reached only for a subject
     # GitHub's own merge button composed, and that button produces a two-parent merge and nothing else.
@@ -306,6 +308,32 @@ def tickets_of(root: Path, sha: str, subject: str) -> set[int]:
     # ranges honest - several merges from before the convention name nothing in their commits either, and
     # dropping them would excuse work rather than describe it.
     return written or tickets_in(subject)
+
+
+def brought_nothing(root: Path, sha: str, subject: str) -> bool:
+    """True when GitHub's button merged a branch whose own commits had already landed elsewhere.
+
+    si#274 reads an empty `--no-merges <sha>^1..<sha>^2` as "git did not answer", on the premise that a
+    merge's second parent brought at least one commit of its own. It need not (si#779, measured on main
+    at 8722597): #768's branch contained #767's and merged first; #767's branch then had main merged into
+    it, so its second parent was that sync merge, and the button merged a range holding merges and no
+    work - which stopped the 0.46.0 notes. The work is named through the merge that carried it, so this
+    one names nothing.
+
+    Only git's own word counts, so the si#274 refusal stands for every other empty read: the range read
+    WITH merges is non-empty (git answered, and every commit in it is a merge), or it is empty and
+    `merge-base --is-ancestor <sha>^2 <sha>^1` proves the second parent was already in (rc 0). rc 1 there
+    is "no proof", and any other rc is a failed question, not a no.
+    """
+    if not _GITHUB_PR_MERGE.fullmatch(subject):
+        return False
+    if _git(root, "log", "--format=%H", f"{sha}^1..{sha}^2").strip():
+        return not _git(root, "log", "--no-merges", "--format=%H", f"{sha}^1..{sha}^2").strip()
+    result = gitops.git(root, "merge-base", "--is-ancestor", f"{sha}^2", f"{sha}^1")
+    if result.rc in (0, 1):
+        return result.rc == 0
+    raise RuntimeError(f"`git merge-base --is-ancestor {sha}^2 {sha}^1` failed in {root} (rc={result.rc}): "
+                       f"{result.err.strip() or 'no output'}")
 
 
 def fell_back_to_the_pull_request(root: Path, sha: str, subject: str) -> bool:
@@ -322,7 +350,7 @@ def fell_back_to_the_pull_request(root: Path, sha: str, subject: str) -> bool:
     work a release carries, and completeness is still the point - only the spelling it asks for, `#262`
     rather than `si#262`, which is true and which `tickets_in` has always accepted.
     """
-    if not _GITHUB_PR_MERGE.fullmatch(subject):
+    if not _GITHUB_PR_MERGE.fullmatch(subject) or brought_nothing(root, sha, subject):
         return False
     return not {number
                 for line in _git(root, "log", "--no-merges", "--format=%s",
@@ -574,7 +602,8 @@ def _assess(root: Path, spec: Declared) -> int:
     body_of = sections(body)
     for version, (start, end) in sorted(ranges.items()):
         merges = merges_in(root, start, end)
-        silent = [subject for sha, subject in merges if not tickets_of(root, sha, subject)]
+        silent = [subject for sha, subject in merges
+                  if not tickets_of(root, sha, subject) and not brought_nothing(root, sha, subject)]
         merged = {number for sha, subject in merges for number in tickets_of(root, sha, subject)}
         # si#270 cause A: on a `pull_request` run the branch's own commits are in range and are not
         # merges, so nothing read them and the branch could not fail on its own ticket.
