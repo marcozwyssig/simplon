@@ -8,6 +8,7 @@ those becomes an answer. The cases of the `whole-files` task it replaces (si#344
 AAA; the name states the behaviour under test.
 """
 import json
+import re
 import shutil
 import stat
 from pathlib import Path
@@ -21,6 +22,9 @@ from simplon.tasks import firngen
 
 SRC = Path(__file__).resolve().parents[1]
 needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to run firn in")
+
+#: `simplon.kernel.log.error`'s prefix, uncoloured as it is on a pipe (si#670 item 14).
+LOG_ERROR = re.compile(r"^\[\d\d:\d\d:\d\d\] ERR ", re.M)
 
 
 def _out(written=(), unchanged=(), kept=(), codes=(), deleted=(), templates=None, warnings=None):
@@ -162,10 +166,32 @@ def test_a_run_of_no_template_is_rc_0_nothing_to_generate(tmp_path, capsys):
     # act
     rc = firngen.verdict(0, _out(templates=0), tmp_path)
 
-    # assert
-    err = capsys.readouterr().err
+    # assert: rc 0, so a warning on stdout and not an error (si#670 item 14)
+    said = capsys.readouterr()
     assert rc == 0
-    assert "no template" in err and "nothing to generate" in err
+    assert "no template" in said.out and "nothing to generate" in said.out and said.err == ""
+
+
+def test_the_kernels_own_sentences_are_log_errors_and_firns_own_words_are_relayed_bare(tmp_path, capsys):
+    """si#670 item 14: what simplon rules goes through `kernel/log`; firn's report is firn's and is relayed."""
+    # arrange
+    _file(tmp_path, "a.py")
+
+    # act
+    firngen.verdict(0, _out(written=["a.py"], kept=["tasks/old.py"], codes=["W301"]), tmp_path)
+
+    # assert
+    lines = capsys.readouterr().err.splitlines()
+    assert "firn W301: W301 message" in lines
+    assert [line for line in lines if "firn kept tasks/old.py" in line and LOG_ERROR.match(line)]
+
+
+def test_name_rc_is_a_log_error(capsys):
+    # act
+    firngen.name_rc(4, who="build model")
+
+    # assert
+    assert LOG_ERROR.match(capsys.readouterr().err)
 
 
 def test_templates_that_wrote_nothing_stay_rc_1(tmp_path, capsys):

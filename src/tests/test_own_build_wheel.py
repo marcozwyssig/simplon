@@ -8,12 +8,14 @@ copies with different mtimes gave different digests, and the same digest with SO
 
 AAA; the name states the behaviour under test.
 """
+import os
 import subprocess
 import sys
 
 import pytest
 
 from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
+from simplon.kernel.run import Result
 
 sys.path.insert(0, str(ROOT / "deploy" / "orchestrator" / "src" / "python"))
 from orchestrator import cli  # noqa: E402 - the product's own module, only reachable from here
@@ -23,15 +25,15 @@ from orchestrator import cli  # noqa: E402 - the product's own module, only reac
 def spawned(monkeypatch):
     """What `build_wheel` hands its build subprocess, with no build run; git still answers."""
     calls = []
-    real = subprocess.run
+    real = cli.run
 
     def run(argv, **kwargs):
         if argv[0] != sys.executable:
             return real(argv, **kwargs)
         calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, 0)
+        return Result(rc=0, out="", err="")
 
-    monkeypatch.setattr(cli.subprocess, "run", run)
+    monkeypatch.setattr(cli, "run", run)
     return calls
 
 
@@ -61,8 +63,10 @@ def test_a_preset_epoch_is_kept(monkeypatch, spawned):
     # Act
     rc = cli.build_wheel()
 
-    # Assert
-    assert rc == 0 and len(spawned) == 1 and spawned[0][1]["env"]["SOURCE_DATE_EPOCH"] == "1761000000"
+    # Assert: `run` adds `env` to this process's environment, so the child sees what it would inherit
+    assert rc == 0 and len(spawned) == 1
+    seen = {**os.environ, **(spawned[0][1].get("env") or {})}
+    assert seen["SOURCE_DATE_EPOCH"] == "1761000000"
 
 
 def test_without_a_commit_time_nothing_is_built(monkeypatch, spawned, capsys):
