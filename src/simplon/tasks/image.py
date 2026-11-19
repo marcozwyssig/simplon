@@ -115,6 +115,7 @@ from simplon.model.command import TaskCommand
 from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import limits, log
+from simplon.tasks import gitops
 from simplon.adapters.labhost import BINFMT_IMAGE
 from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import Result, run, stream
@@ -502,7 +503,7 @@ def provenance(root: Path) -> dict[str, str]:
         log.warn("git is not on PATH, so the image is built without VERSION/REVISION build arguments; "
                  "the Dockerfile's own ARG defaults apply")
         return {}
-    toplevel = run(["git", "-C", str(root), "rev-parse", "--show-toplevel"])
+    toplevel = gitops.git(root, "rev-parse", "--show-toplevel")
     if not toplevel.ok:
         log.warn(f"{root} is not a git checkout, so the image is built without VERSION/REVISION build "
                  f"arguments; the Dockerfile's own ARG defaults apply")
@@ -524,8 +525,8 @@ def provenance(root: Path) -> dict[str, str]:
                  f"VERSION/REVISION; declare them in the image's `build_args:` if that repository is "
                  f"in fact this product's")
         return {}
-    described = run(["git", "-C", str(root), "describe", "--tags", "--always", "--dirty"])
-    revision = run(["git", "-C", str(root), "rev-parse", "HEAD"])
+    described = gitops.git(root, "describe", "--tags", "--always", "--dirty")
+    revision = gitops.git(root, "rev-parse", "HEAD")
     if not (described.ok and revision.ok):
         log.warn(f"{root} is a git checkout with no commit yet, so the image is built without "
                  f"VERSION/REVISION build arguments; the Dockerfile's own ARG defaults apply")

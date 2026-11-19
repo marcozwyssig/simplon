@@ -45,6 +45,7 @@ from typing import NamedTuple
 
 from simplon.manifest import context
 from simplon.kernel import log, run
+from simplon.tasks import gitops
 
 #: The manifest section this gate reads: one entry per generated artefact that is committed.
 SECTION = "generated"
@@ -93,7 +94,7 @@ def entries_of(document: dict, where: str) -> list[Entry]:
 
 def _tracked(root: Path, path: str) -> bool:
     """Whether git tracks this path. The check the borrowed implementation did not have."""
-    return run.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", path]).ok
+    return gitops.git(root, "ls-files", "--error-unmatch", "--", path).ok
 
 
 def _regenerate(entry: Entry, root: Path) -> int:
@@ -107,7 +108,7 @@ def _untracked(root: Path, path: str) -> list[str]:
     `git diff` cannot see one, so without this a directory entry (si#400 4b) is green over exactly that
     staleness - the untracked-file defect `_tracked` closes for a single file, one level down. A listing git
     could not make is a ValueError, never an empty answer: "could not look" is not "nothing there"."""
-    listed = run.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "--", path])
+    listed = gitops.git(root, "ls-files", "--others", "--exclude-standard", "--", path)
     if not listed.ok:
         raise ValueError(f"`git ls-files --others` failed (rc {listed.rc}): {listed.err.strip()}")
     return [line for line in listed.out.splitlines() if line.strip()]
@@ -118,8 +119,7 @@ def _snapshot(root: Path, path: str) -> dict[str, bytes | None]:
     bytecode running the generator leaves, are not the generator's output). A tracked file missing from
     disk is None. A listing git could not make is a ValueError, never an empty snapshot: an empty one
     before and after would read as "regeneration changed nothing"."""
-    listed = run.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-                      "--", path])
+    listed = gitops.git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", path)
     if not listed.ok:
         raise ValueError(f"`git ls-files --cached --others` failed (rc {listed.rc}): {listed.err.strip()}")
     files: dict[str, bytes | None] = {}

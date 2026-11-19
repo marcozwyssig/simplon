@@ -1038,14 +1038,14 @@ def test_a_toplevel_that_answers_nothing_is_told_apart_from_one_that_answers_els
     """
     # arrange: a real checkout, and a git whose --show-toplevel succeeds and says nothing
     root = _checkout(tmp_path / "product")
-    real = image.run
+    real = image.gitops.run
 
     def mute(argv, **kwargs):
         if "--show-toplevel" in argv:
             return Result(rc=0, out="\n", err="")
         return real(argv, **kwargs)
 
-    monkeypatch.setattr(image, "run", mute)
+    monkeypatch.setattr(image.gitops, "run", mute)
 
     # act
     derived = image.provenance(root)
@@ -1064,14 +1064,14 @@ def test_a_describe_that_answers_nothing_does_not_stamp_an_empty_version(tmp_pat
     that is present, empty and wrong, which a reader cannot tell from a build that declined to say."""
     # arrange
     root = _checkout(tmp_path / "product")
-    real = image.run
+    real = image.gitops.run
 
     def mute(argv, **kwargs):
         if "describe" in argv:
             return Result(rc=0, out="", err="")
         return real(argv, **kwargs)
 
-    monkeypatch.setattr(image, "run", mute)
+    monkeypatch.setattr(image.gitops, "run", mute)
 
     # act
     derived = image.provenance(root)

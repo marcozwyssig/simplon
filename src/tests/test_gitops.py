@@ -1,5 +1,9 @@
 """Unit tests for gitops.prune_verdict - the squash-aware keep/delete decision behind prune-branches.
 No git, no subprocess; AAA throughout. Moved here from netctl - the git wrappers are platform's now."""
+import ast
+from pathlib import Path
+
+from conftest import ROOT
 from simplon.tasks import gitops
 
 
@@ -265,14 +269,14 @@ def test_an_origin_that_could_not_be_asked_about_a_branch_is_said_not_read_as_ab
     # whether it is there. A timed-out `ls-remote` is "could not ask", not "origin has no such branch".
     clone, origin = _repos
     _sh(clone, "branch", "done", "origin/done")
-    real = gitops._git
+    real = gitops.git
 
-    def silent_ls_remote(args, **kw):
+    def silent_ls_remote(root, *args, **kw):
         if args[0] == "ls-remote":
             return gitops.Result(-9, "", "`git ls-remote origin` gave no answer within 300 s and was stopped\n",
                                  timed_out=True)
-        return real(args, **kw)
-    monkeypatch.setattr(gitops, "_git", silent_ls_remote)
+        return real(root, *args, **kw)
+    monkeypatch.setattr(gitops, "git", silent_ls_remote)
 
     # act
     gitops.prune_branches(remote=True)
@@ -319,3 +323,36 @@ def test_without_the_open_pr_list_no_origin_only_branch_is_deleted(_repos, monke
 
     assert "done" in _origin_heads(origin)
     assert "open pull requests" in capsys.readouterr().out
+
+
+# --- one git wrapper (#670 item 13) ----------------------------------------------------------------------
+
+def test_git_runs_in_the_root_it_is_given_not_the_configured_one(tmp_path, monkeypatch):
+    # arrange: ROOT points somewhere else entirely
+    subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
+    monkeypatch.setattr(gitops, "ROOT", tmp_path / "elsewhere")
+
+    # act
+    res = gitops.git(tmp_path / "repo", "rev-parse", "--show-toplevel")
+
+    # assert
+    assert res.ok and Path(res.out.strip()).resolve() == (tmp_path / "repo").resolve()
+
+
+def test_no_module_runs_git_but_the_one_wrapper():
+    """Before #670 item 13 there were three git wrappers and ad-hoc `run(["git", "-C", ...])` calls in
+    three more modules. A git call that does not go through `gitops.git` is a second copy of it."""
+    # act
+    found = []
+    src = ROOT / "src" / "simplon"
+    for path in sorted(src.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.List)):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            first = node.args[0].elts[:1]
+            if name == "run" and first and isinstance(first[0], ast.Constant) and first[0].value == "git":
+                found.append(f"{path.relative_to(src).as_posix()}:{node.lineno}")
+
+    # assert: the wrapper builds its argv in a variable, so nothing literal is left anywhere
+    assert found == []

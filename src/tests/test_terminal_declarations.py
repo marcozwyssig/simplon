@@ -124,7 +124,7 @@ assert run._has_terminal(), "the kernel is not on a terminal"
 limits.GIT_REMOTE = {limit}
 gitops.configure(sys.argv[1] if len(sys.argv) > 1 else {root!r})
 started = time.monotonic()
-res = gitops._git(["ls-remote", "origin"])
+res = gitops.git(gitops.ROOT, "ls-remote", "origin")
 print("VERDICT " + json.dumps(dict(timed_out=res.timed_out, rc=res.rc, err=res.err,
                                    secs=time.monotonic() - started)), flush=True)
 """
@@ -257,8 +257,8 @@ def test_every_remote_git_operation_is_declared_and_asks_nobody_and_no_local_one
 
     # act
     for op in sorted(gitops.limits.GIT_REMOTE_OPS):
-        gitops._git([op])
-    gitops._git(["status"])
+        gitops.git(gitops.ROOT, op)
+    gitops.git(gitops.ROOT, "status")
 
     # assert
     for op, kw in seen[:-1]:

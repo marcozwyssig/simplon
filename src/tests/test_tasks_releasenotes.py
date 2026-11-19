@@ -493,14 +493,14 @@ def test_a_branch_read_that_answers_nothing_is_refused_rather_than_read_as_no_ti
     _commit(root, "chore: the root commit")
     subject = "Merge pull request #94 from marcozwyssig/docs/92-the-notes"
     sha = _merge(root, "docs/92-the-notes", ["docs(#92): the notes"], subject)
-    real = releasenotes.run
+    real = releasenotes.gitops.run
 
     def mute(argv, **kwargs):
         if any("^1.." in str(part) for part in argv):
             return Result(rc=0, out="", err="")
         return real(argv, **kwargs)
 
-    monkeypatch.setattr(releasenotes, "run", mute)
+    monkeypatch.setattr(releasenotes.gitops, "run", mute)
 
     # act
     with pytest.raises(RuntimeError) as refused:

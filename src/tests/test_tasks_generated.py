@@ -220,8 +220,8 @@ def test_a_listing_git_could_not_make_is_stale_not_clean(tmp_path, monkeypatch, 
     _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
     _commit(root)
     monkeypatch.setattr(generated, "_regenerate", _writes_both)
-    real = generated.run.run
-    monkeypatch.setattr(generated.run, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: broken")
+    real = generated.gitops.run
+    monkeypatch.setattr(generated.gitops, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: broken")
                         if "--others" in argv and "--cached" not in argv else real(argv, **kw))
     # Act
     rc = generated.check()
@@ -332,8 +332,8 @@ def test_a_snapshot_git_could_not_make_is_stale_not_clean(tmp_path, monkeypatch,
     _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
     _commit(root)
     monkeypatch.setattr(generated, "_regenerate", _writes_both)
-    real = generated.run.run
-    monkeypatch.setattr(generated.run, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: snap")
+    real = generated.gitops.run
+    monkeypatch.setattr(generated.gitops, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: snap")
                         if "--cached" in argv else real(argv, **kw))
     # Act
     rc = generated.check()

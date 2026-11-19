@@ -97,7 +97,7 @@ from simplon.model.command import AggregateCommand, Command, TaskCommand
 from simplon.manifest.load import PlanNode
 from simplon.model.task import class_ref
 from simplon.kernel.steps import Emit, Outcome, Pipeline, Step, StepState, write_run_transcript
-from simplon.kernel.run import run
+from simplon.tasks import gitops
 from simplon.tasks.acceptance import DEFAULT_SOURCE, Feature, Scenario
 from simplon.tasks.acceptance import Step as GherkinStep
 from simplon.tasks.acceptance import features
@@ -160,8 +160,8 @@ def who(root: Path) -> str:
     """
     if shutil.which("git") is None:
         return getpass.getuser()
-    name = run(["git", "-C", str(root), "config", "user.name"]).out.strip()
-    email = run(["git", "-C", str(root), "config", "user.email"]).out.strip()
+    name = gitops.git(root, "config", "user.name").out.strip()
+    email = gitops.git(root, "config", "user.email").out.strip()
     if name and email:
         return f"{name} <{email}>"
     return name or email or getpass.getuser()

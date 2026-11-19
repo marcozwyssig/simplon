@@ -268,7 +268,7 @@ def test_git_vanishing_between_the_two_calls_is_still_a_message_and_not_a_traceb
     # arrange: git answers the root and is gone by the time the remote is asked for
     repo = _repo(tmp_path / "labctl")
     monkeypatch.chdir(repo)
-    real = bootstrap.run
+    real = bootstrap.gitops.run
     calls = []
 
     def _vanishing(argv, **kwargs):
@@ -277,7 +277,7 @@ def test_git_vanishing_between_the_two_calls_is_still_a_message_and_not_a_traceb
             return real(["no-such-git-si653", *argv[1:]], **kwargs)
         return real(argv, **kwargs)
 
-    monkeypatch.setattr(bootstrap, "run", _vanishing)
+    monkeypatch.setattr(bootstrap.gitops, "run", _vanishing)
 
     # act
     rc = bootstrap.main(["init"])
@@ -296,7 +296,7 @@ def test_git_answering_with_nothing_is_the_same_as_not_answering(tmp_path, monke
     repository that could not name its own root would scaffold into wherever the command was typed and
     report success. `_git` collapses it to the same nothing a failure gives."""
     # arrange
-    monkeypatch.setattr(bootstrap, "run", lambda argv, **kwargs: Result(rc=0, out="  \n", err=""))
+    monkeypatch.setattr(bootstrap.gitops, "run", lambda argv, **kwargs: Result(rc=0, out="  \n", err=""))
 
     # act / assert
     with pytest.raises(ValueError, match="not inside a git repository"):

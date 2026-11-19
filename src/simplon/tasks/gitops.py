@@ -26,7 +26,8 @@ a COMPOSITE state - whether the tag was cut by this run or left over from an ear
 survived a rejected push - and no single primitive knows it. One caller composes them, so one caller
 owns every word about the outcome.
 
-The git wrappers run `git -C <ROOT>`; a consuming product points ROOT at its repo root via configure().
+Every git call goes through `git(root, ...)`; the commands here pass ROOT, which a consuming product points
+at its repo root via configure().
 """
 from __future__ import annotations
 
@@ -68,8 +69,15 @@ def _not_asked(result: Result) -> bool:
     return not result.ok and any(said in result.err for said in _NOT_ASKED)
 
 
-def _git(args: list[str], *, capture: bool = True, remote: bool = False):
-    """`remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does.
+def git(root: Path | str, *args: str, capture: bool = True, remote: bool = False) -> Result:
+    """`git -C <root> <args>`: the kernel's one git call (#670 item 13), and a Result, never a raise.
+
+    `root` is explicit, never this module's `ROOT` by default: a caller that names no repository cannot
+    run git in whatever the working directory is. The commands below pass `ROOT` (`configure()`); the
+    other tasks pass their own tree. What a failure MEANS stays with the caller: `releasenotes` raises
+    on one, `cli.bootstrap` reads one as "no answer", `generated` refuses an empty listing.
+
+    `remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does.
 
     An operation that talks to a remote (`limits.GIT_REMOTE_OPS`) runs under `limits.GIT_REMOTE` whether
     or not it carries the credential (si#654): a hung remote is a hung run either way.
@@ -92,7 +100,7 @@ def _git(args: list[str], *, capture: bool = True, remote: bool = False):
     credential (a refused `pull --rebase` and a conflicting one both exit 1). `capture=False` hands back
     what git said after it ended, instead of while it ran.
     """
-    argv = ["git", "-C", str(ROOT), *args]
+    argv = ["git", "-C", str(root), *args]
     if not (args and args[0] in limits.GIT_REMOTE_OPS):
         return run(argv, capture=capture)
     env = {"GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS": "false", "SSH_ASKPASS_REQUIRE": "force",
@@ -230,13 +238,13 @@ def commit(message: str) -> int:
     _require("git")
     if not message:
         log.die("commit message must not be empty")
-    _git(["add", "-A"])
-    if _git(["diff", "--cached", "--quiet"]).ok:
+    git(ROOT, "add", "-A")
+    if git(ROOT, "diff", "--cached", "--quiet").ok:
         log.warn("nothing to commit (working tree clean)")
         return 0
-    if not _git(["commit", "-m", message], capture=False).ok:
+    if not git(ROOT, "commit", "-m", message, capture=False).ok:
         log.die("git commit failed")
-    short = (_git(["rev-parse", "--short", "HEAD"]).out or "").strip()
+    short = (git(ROOT, "rev-parse", "--short", "HEAD").out or "").strip()
     log.ok(f"committed {short}: {message}")
     return 0
 
@@ -248,7 +256,7 @@ def init_submodule(path: str = "lib/platform") -> int:
     (netctl#434/#435/#658), not this kernel: simplon is installed from PyPI, never vendored. A product
     vendoring something else passes its own path."""
     _require("git")
-    return 0 if _git(["submodule", "update", "--init", path]).ok else 1
+    return 0 if git(ROOT, "submodule", "update", "--init", path).ok else 1
 
 
 def default_branch() -> str:
@@ -261,26 +269,26 @@ def default_branch() -> str:
     without a clone - has no `origin/HEAD` at all, which is the ordinary state of a repository created
     rather than cloned.
     """
-    named = (_git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).out or "").strip()
+    named = (git(ROOT, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").out or "").strip()
     return named[len("origin/"):] if named.startswith("origin/") else (named or "main")
 
 
 def push() -> int:
     """git pull --rebase then push (current branch); abort the rebase + die on conflicts."""
     _require("git")
-    branch = (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
+    branch = (git(ROOT, "rev-parse", "--abbrev-ref", "HEAD").out or "").strip()
     if not branch:
         log.die("not a git repository")
     log.info(f"pull --rebase + push ({branch})")
-    pulled = _git(["pull", "--rebase"], capture=False)
+    pulled = git(ROOT, "pull", "--rebase", capture=False)
     if not pulled.ok:
-        _git(["rebase", "--abort"])
+        git(ROOT, "rebase", "--abort")
         if pulled.timed_out:            # `run` has said which call and after how long; it was no conflict
             log.die("pull --rebase got no answer from the remote; nothing was pushed")
-        if _not_asked(pulled):          # `_git` has said the way out; it was no conflict either (si#760)
+        if _not_asked(pulled):          # `git` has said the way out; it was no conflict either (si#760)
             log.die("pull --rebase could not authenticate to the remote; nothing was pushed")
         log.die("pull --rebase failed (conflicts?); resolve them, then re-run the push")
-    if not _git(["push"], capture=False).ok:
+    if not git(ROOT, "push", capture=False).ok:
         log.die("git push failed")
     log.ok(f"pushed {branch}")
     return 0
@@ -319,12 +327,12 @@ def clean(force: bool = False) -> int:
     `log`. The next launcher call re-provisions the venv.
     """
     _require("git")
-    preview = _git(["clean", "-ndx"])
+    preview = git(ROOT, "clean", "-ndx")
     if not preview.ok:
         return _git_failed(preview, "-ndx")
     removes = _clean_lines(preview.out, "Would remove ")
     skipped = _clean_lines(preview.out, "Would skip repository ")
-    every = _git(["clean", "-ndx", "-ff"])
+    every = git(ROOT, "clean", "-ndx", "-ff")
     if not every.ok:
         return _git_failed(every, "-ndx -ff")
     reached = removes + skipped
@@ -346,7 +354,7 @@ def clean(force: bool = False) -> int:
                  f"was removed. Run again with --force to remove them.")
         return 0
 
-    done = _git(["clean", "-dx", "-f"])
+    done = git(ROOT, "clean", "-dx", "-f")
     # Nothing is imported from here on: the venv this runs from may just have gone.
     removed = _clean_lines(done.out, "Removing ")
     for path in removed:
@@ -382,7 +390,7 @@ def _prune_origin_only(*, main: str, cur: str, local: set[str], worktree_branche
     pull request is kept, since deleting it closes the PR; without that list nothing here is deleted.
     Returns how many it deleted, or would delete on a dry run."""
     done = 0
-    refs = (_git(["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/"]).out or "")
+    refs = (git(ROOT, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/").out or "")
     candidates = sorted(r[len("origin/"):] for r in refs.split()
                         if r.startswith("origin/") and r not in ("origin", "origin/HEAD")
                         and r[len("origin/"):] not in local)
@@ -397,7 +405,7 @@ def _prune_origin_only(*, main: str, cur: str, local: set[str], worktree_branche
         action, reason = prune_verdict(
             is_main_or_current=(b == main or b == cur),
             in_worktree=(b in worktree_branches),
-            is_ancestor=_git(["merge-base", "--is-ancestor", f"origin/{b}", f"origin/{main}"]).ok,
+            is_ancestor=git(ROOT, "merge-base", "--is-ancestor", f"origin/{b}", f"origin/{main}").ok,
             in_merged_prs=(b in merged_prs),
         )
         if action != "delete" or b in open_prs:
@@ -406,7 +414,7 @@ def _prune_origin_only(*, main: str, cur: str, local: set[str], worktree_branche
         if dry:
             log.info(f"would delete origin/{b} ({why}, only on origin)")
             done += 1
-        elif _git(["push", "origin", "--delete", b]).ok:
+        elif git(ROOT, "push", "origin", "--delete", b).ok:
             log.ok(f"deleted origin/{b} ({why}, only on origin)")
             done += 1
         else:
@@ -429,13 +437,13 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
     the reflog by whoever realises a minute later."""
     _require("git")
     log.info("fetching + pruning stale remote-tracking refs")
-    if not _git(["fetch", "--prune", "--quiet"]).ok:
+    if not git(ROOT, "fetch", "--prune", "--quiet").ok:
         log.die("git fetch failed")
 
     main = default_branch()
-    cur = (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
+    cur = (git(ROOT, "rev-parse", "--abbrev-ref", "HEAD").out or "").strip()
 
-    wt = _git(["worktree", "list", "--porcelain"]).out or ""
+    wt = git(ROOT, "worktree", "list", "--porcelain").out or ""
     worktree_branches = {ln[len("branch refs/heads/"):] for ln in wt.splitlines()
                          if ln.startswith("branch refs/heads/")}
 
@@ -444,8 +452,8 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
         log.warn("no merged-PR list from gh; using the ancestor check only (squash-merged branches may be kept)")
     merged_prs: set[str] = merged or set()
 
-    branches = [ln.strip() for ln in (_git(["for-each-ref", "--format=%(refname:short)",
-                                            "refs/heads/"]).out or "").splitlines() if ln.strip()]
+    branches = [ln.strip() for ln in (git(ROOT, "for-each-ref", "--format=%(refname:short)",
+                                            "refs/heads/").out or "").splitlines() if ln.strip()]
     kept: list[str] = []
     unproven: list[str] = []   # deleted WITHOUT proof of merge (#1136): reported apart from the rest
     deleted_preview = 0        # what a --dry-run WOULD delete, so its summary can say something
@@ -454,7 +462,7 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
         action, reason = prune_verdict(
             is_main_or_current=(b == main or b == cur),
             in_worktree=(b in worktree_branches),
-            is_ancestor=_git(["merge-base", "--is-ancestor", b, f"origin/{main}"]).ok,
+            is_ancestor=git(ROOT, "merge-base", "--is-ancestor", b, f"origin/{main}").ok,
             in_merged_prs=(b in merged_prs),
             prune_unmerged=unmerged,
         )
@@ -466,7 +474,7 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
         # The unmerged bucket carries its tip sha, and only it: for a merged branch the sha is noise, for
         # this one it is the difference between "recoverable from the reflog" and "gone".
         if reason == "unmerged":
-            tip = (_git(["rev-parse", "--short", b]).out or "").strip()
+            tip = (git(ROOT, "rev-parse", "--short", b).out or "").strip()
             why = f"NOT proven merged - tip {tip}"
         else:
             why = f"merged into {main}" if reason == "ancestor" else "PR merged"
@@ -476,15 +484,15 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
             if reason == "unmerged":
                 unproven.append(b)
             continue
-        if _git(["branch", "-D", b]).ok:
+        if git(ROOT, "branch", "-D", b).ok:
             log.ok(f"deleted {b} ({why})")
             deleted += 1
             if reason == "unmerged":
                 unproven.append(b)
             if remote:
-                there = _git(["ls-remote", "--exit-code", "--heads", "origin", b])
+                there = git(ROOT, "ls-remote", "--exit-code", "--heads", "origin", b)
                 if there.ok:
-                    if _git(["push", "origin", "--delete", b]).ok:
+                    if git(ROOT, "push", "origin", "--delete", b).ok:
                         log.ok(f"deleted origin/{b}")
                     else:
                         log.warn(f"could not delete origin/{b}")
@@ -568,7 +576,7 @@ def refresh_scopes(scopes: Sequence[str], host: str = "github.com") -> int:
 
 def head_commit() -> str:
     """The full sha of HEAD, or "" when this is not a git repository (or has no commit yet)."""
-    result = _git(["rev-parse", "--verify", "--quiet", "HEAD"])
+    result = git(ROOT, "rev-parse", "--verify", "--quiet", "HEAD")
     return (result.out or "").strip() if result.ok else ""
 
 
@@ -579,18 +587,18 @@ def describe(commit: str) -> str:
     not let a human see which is which - the subject line is what makes "this is my feature commit" and
     "this is what main carries" tell themselves apart (#23's third open question).
     """
-    result = _git(["log", "-1", "--format=%h (%s)", commit])
+    result = git(ROOT, "log", "-1", "--format=%h (%s)", commit)
     return (result.out or "").strip() if result.ok else commit
 
 
 def current_branch() -> str:
     """The branch name HEAD is on, or "HEAD" on a detached checkout - git's own word for it."""
-    return (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
+    return (git(ROOT, "rev-parse", "--abbrev-ref", "HEAD").out or "").strip()
 
 
 def origin_url() -> str:
     """`remote.origin.url` as git has it, or "" when there is no origin."""
-    result = _git(["config", "--get", "remote.origin.url"])
+    result = git(ROOT, "config", "--get", "remote.origin.url")
     return (result.out or "").strip() if result.ok else ""
 
 
@@ -598,7 +606,7 @@ def ref_exists(ref: str) -> bool:
     """Whether `ref` resolves here. Used on `origin/<branch>`, where the distinction matters: a ref that
     does not exist is not an ancestor of anything, so without this check a repository with no remote
     would be diagnosed as a feature branch."""
-    return _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]).ok
+    return git(ROOT, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").ok
 
 
 def valid_tag_name(name: str) -> bool:
@@ -610,7 +618,7 @@ def valid_tag_name(name: str) -> bool:
     place a shape is fixed (`release:check`, vX.Y.Z, si#463 D3), and only a product that declares
     `workflows: release:` meets it.
     """
-    return bool(name) and _git(["check-ref-format", f"refs/tags/{name}"]).ok
+    return bool(name) and git(ROOT, "check-ref-format", f"refs/tags/{name}").ok
 
 
 def tag_commit(name: str) -> str:
@@ -620,14 +628,14 @@ def tag_commit(name: str) -> str:
     on the same commit compare equal - the verdict is about which commit is being released, not about
     which of the two shapes somebody used.
     """
-    result = _git(["rev-parse", "--verify", "--quiet", f"refs/tags/{name}^{{commit}}"])
+    result = git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/tags/{name}^{{commit}}")
     return (result.out or "").strip() if result.ok else ""
 
 
 def tags_at(commit: str) -> list[str] | None:
     """The LOCAL tags pointing at `commit` (`git tag --points-at`), sorted; `[]` when there are none, and
     None when git could not list them - which is not "none there" (final review of si#487)."""
-    result = _git(["tag", "--points-at", commit])
+    result = git(ROOT, "tag", "--points-at", commit)
     return sorted((result.out or "").split()) if result.ok else None
 
 
@@ -638,7 +646,7 @@ def remote_default_branch() -> str | None:
     Not `default_branch()`, whose `origin/HEAD` a checkout made the way actions/checkout makes one does not
     have (measured on git 2.47 by the final review of si#487): there it falls back to `main`, and a product
     whose default branch is `master` would be told to start its release from a branch it does not have."""
-    result = _git(["ls-remote", "--symref", "origin", "HEAD"], remote=True)
+    result = git(ROOT, "ls-remote", "--symref", "origin", "HEAD", remote=True)
     if not result.ok:
         return None
     for line in (result.out or "").splitlines():
@@ -655,7 +663,7 @@ def carried_by(commit: str, ref: str) -> bool:
     built from a commit the default branch carries, which is the same question netctl has asked of its
     container images since #1088.
     """
-    return _git(["merge-base", "--is-ancestor", commit, ref]).ok
+    return git(ROOT, "merge-base", "--is-ancestor", commit, ref).ok
 
 
 def fetch_branches() -> bool:
@@ -671,7 +679,7 @@ def fetch_branches() -> bool:
     an off-main commit through (a false green, the thing being guarded against). A failure to reach the
     remote is therefore reported and survivable, not fatal.
     """
-    return _git(["fetch", "--quiet", "--no-tags", "origin"], remote=True).ok
+    return git(ROOT, "fetch", "--quiet", "--no-tags", "origin", remote=True).ok
 
 
 def create_tag(name: str) -> bool:
@@ -682,7 +690,7 @@ def create_tag(name: str) -> bool:
     command and the hand-typed route have to be the same act; a command that produced a different KIND
     of object would make "the freedom is two typed git commands" quietly untrue.
     """
-    return _git(["tag", name]).ok
+    return git(ROOT, "tag", name).ok
 
 
 def push_tag(name: str) -> Result:
@@ -698,7 +706,7 @@ def push_tag(name: str) -> Result:
     what git said and read WHY it said it - a rejection because the number is taken needs different
     advice from a rejection because the network is down, and one message for both would say nothing.
     """
-    return _git(["push", "origin", f"refs/tags/{name}"], remote=True)
+    return git(ROOT, "push", "origin", f"refs/tags/{name}", remote=True)
 
 
 def push_branch(name: str, *, force: bool = False) -> Result:
@@ -709,7 +717,7 @@ def push_branch(name: str, *, force: bool = False) -> Result:
     (`refs/heads/`) so a tag of the same name cannot be what is pushed. Captured, like `push_tag`, so the
     caller shows what git said.
     """
-    return _git(["push", *(["--force"] if force else []), "origin", f"refs/heads/{name}"], remote=True)
+    return git(ROOT, "push", *(["--force"] if force else []), "origin", f"refs/heads/{name}", remote=True)
 
 
 def remote_tag_commit(name: str) -> str | None:
@@ -733,7 +741,7 @@ def remote_tag_commit(name: str) -> str | None:
     The peeled `^{}` line wins where there is one: an annotated tag's own line carries the tag OBJECT's
     id, and comparing that with a commit would report a mismatch for a tag that is perfectly correct.
     """
-    result = _git(["ls-remote", "--tags", "origin", f"refs/tags/{name}"], remote=True)
+    result = git(ROOT, "ls-remote", "--tags", "origin", f"refs/tags/{name}", remote=True)
     if not result.ok:
         return None
     found = ""
