@@ -1,10 +1,11 @@
-"""Unit tests for simplon.manifest.environments.parse - the pure manifest-matrix (`cd: environments:` /
+"""Unit tests for simplon.manifest.environments.parse_data - the pure manifest-matrix (`cd: environments:` /
 `cd: default:`) -> Registry parsing and validation with product-supplied valid backends. No I/O; AAA
 throughout."""
 import pytest
 
 from simplon.manifest import environments as envs_mod
-from simplon.manifest.environments import parse, parse_data
+from simplon.manifest import yamlkeys
+from simplon.manifest.environments import parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """
@@ -17,9 +18,15 @@ cd:
 """
 
 
+def _parse(text: str, valid_backends):
+    """A manifest TEXT through the reader every manifest goes through, then `parse_data`. si#670 deleted
+    `environments.parse`, which did this with `yaml.safe_load(text) or {}` and had no caller in the kernel."""
+    return parse_data(yamlkeys.load(text), valid_backends)
+
+
 def test_parse_reads_environments_their_backends_and_the_default():
     # arrange / act
-    reg = parse(_OK, _BACKENDS)
+    reg = _parse(_OK, _BACKENDS)
 
     # assert: all three environments, their backends, and the default
     assert set(reg.environments) == {"dev", "test", "prod"}
@@ -31,7 +38,7 @@ def test_parse_reads_environments_their_backends_and_the_default():
 
 def test_parse_defaults_missing_description_to_empty():
     # arrange: prod has no description
-    reg = parse(_OK, _BACKENDS)
+    reg = _parse(_OK, _BACKENDS)
 
     # assert
     assert reg.environments["prod"].description == ""
@@ -43,7 +50,7 @@ def test_parse_rejects_a_backend_not_in_valid_backends():
 
     # act / assert
     with pytest.raises(ValueError, match="backend"):
-        parse(text, _BACKENDS)
+        _parse(text, _BACKENDS)
 
 
 def test_parse_rejects_a_default_that_is_not_a_defined_environment():
@@ -52,13 +59,13 @@ def test_parse_rejects_a_default_that_is_not_a_defined_environment():
 
     # act / assert
     with pytest.raises(ValueError, match="default"):
-        parse(text, _BACKENDS)
+        _parse(text, _BACKENDS)
 
 
 def test_parse_rejects_an_empty_environment_set():
     # arrange / act / assert
     with pytest.raises(ValueError, match="no environments"):
-        parse("cd:\n  default: dev\n  environments: {}\n", _BACKENDS)
+        _parse("cd:\n  default: dev\n  environments: {}\n", _BACKENDS)
 
 
 def test_parse_data_builds_the_registry_from_an_already_parsed_mapping():
