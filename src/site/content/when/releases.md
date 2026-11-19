@@ -136,6 +136,9 @@ The duplicates umbrella is done. What a product can notice:
 - **si#746:** `test generated` rules on what regenerating changed in the tree as it stands, not on a
   diff against HEAD, so an uncommitted hand edit beside a generated file is no longer called stale.
 - **si#743:** simplon's own image e2e test is isolated per run.
+- **si#779:** `test release-notes` no longer refuses a merge that brought no commit of its own (its
+  branch had already landed through another pull request); such a merge names no ticket. Every other
+  empty read is still refused as si#274 refuses it.
 - **#712** pins `deploy/image/image.pin` to the v0.45.0 kernel image.
 - **#777** makes a failed firn run in simplon's own tests show firn's stderr.
 - The pull requests are #712, #715 (si#714), #723 (si#663), #725 (si#713), #726 (si#668),
@@ -143,7 +146,7 @@ The duplicates umbrella is done. What a product can notice:
   #747 (si#719, si#718, si#574, as #734, #736 and #738), #748 (si#652, si#653, si#654, si#658, as
   #732, #735 and #737), #750 (si#742), #751 (si#744), #752 (si#745), #755 (si#741, si#740, si#743,
   as #749, #753 and #754), #758 (si#746), #759, #775 and #776 (si#739), #761, #764, #765, #766, #767,
-  #768, #769, #770 and #774 (si#670, with #762), #763 via #770 (si#760) and #777.
+  #768, #769, #770 and #774 (si#670, with #762), #763 via #770 (si#760), #777 and #780 (si#779).
 
 ## 0.45.0
 
