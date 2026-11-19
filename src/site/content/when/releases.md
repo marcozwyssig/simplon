@@ -23,6 +23,131 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.46.0
+
+**What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`), or `test
+generated` reports drift. The derived release workflow changed in four places: the write scopes moved
+onto the `release` job (si#719), the job carries a time limit (si#720), it provisions the launcher in a
+step that holds no token (si#718), and it checks the `token: app` secrets before the cut (si#574).
+Beyond that, check these where a product relies on the old behaviour:
+
+- **Jobs in the release workflow no longer inherit write.** Every job except `release` gets the
+  product's own `permissions:` beside `release:`, or `contents: read` when it declares none. A job
+  that pushed or published through the inherited write scopes needs its own `permissions:` block.
+- **A bare command group exits 2.** `./<product>.sh build` with no subcommand, or the launcher with no
+  command at all, prints the help on stderr and exits 2 instead of 0. A runbook line that dropped its
+  subcommand is red now; `--help` and `help` stay rc 0 on stdout.
+- **Git remote operations never prompt.** Clone, fetch, ls-remote, pull, push and submodule update run
+  with `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS=false` and `SSH_ASKPASS_REQUIRE=force`. A missing
+  credential, an unknown host key or a passphrase key without an agent fails at once, and the kernel
+  names the way out. `SSH_ASKPASS_REQUIRE` needs OpenSSH 8.4 or newer; an older ssh still waits until
+  the git remote time limit.
+- **An explicit instance id is checked.** `--instance` and the instance environment variable are held
+  to the rule a derived id fits (the reserved default, or `[a-z0-9]` up to the product's
+  `max_id_len`); anything else is refused naming the source and the limit.
+- **Any firn W105 makes `build model` red**, whether or not other templates produced files. The way
+  out is the template name in `firn.toml`.
+- **A product freshly scaffolded by `simplon init`** has placeholder phase bodies that exit 1 naming
+  `<pkg>/cli.py`, so its `deploy all` is no longer green doing nothing.
+
+### The release job (si#719, si#720, si#718, si#574)
+
+- **si#719:** the derived `release` job carries `contents: write` and `packages: write` in its own
+  `permissions:`. The workflow level is the default of every other job. A lower `permissions:` beside
+  `release:` is no longer refused; the rule that refused it had nothing left to guard and is struck.
+- **si#720:** `timeout_minutes:` beside `release:` renders as the derived job's `timeout-minutes`.
+  Without it the job carries 120 minutes, not GitHub's 360. A value that is not a positive whole
+  number, or the key with no `release:` beside it, is a diagnosis at load.
+- **si#718:** the job's first step is a plain `<launcher> help` with no token in its environment, so
+  the launcher's venv is built before any step holds `GITHUB_TOKEN`. Hash-locked requirements, the
+  ticket's second half, are not in this release.
+- **si#574:** the job starts by checking that the `CLIENT_ID` and `APP_KEY` secrets of every
+  `token: app` leaf in the workflow are set, and is red naming each one that is not. It has no `if:`,
+  so a dry run runs it too. A leaf in a job that names an `environment:` is not checked, since the
+  release job cannot see that environment's secrets; the generated file says so.
+
+### Subprocesses: an outcome for every way a child can fail (si#652, si#653, si#654, si#739, si#740, si#741, si#760)
+
+- **si#653:** `run()` returns a timeout and a start failure as values of its `Result`
+  (`timed_out`, `not_started`), each distinguishable from a non-zero rc. The catch blocks callers
+  carried around it are gone.
+- **si#740:** where a caller read `not ok` as one specific "no", a hung or missing client is now its
+  own outcome. A timed-out `oras` makes `deploy` refuse instead of saying a tag is not served, and a
+  `--version` that timed out reads as failed, not as a missing tool.
+- **si#652:** `run()` decodes a child's output as UTF-8 with replacement, like `run_stream()`. One
+  byte that is not UTF-8 is shown, not a `UnicodeDecodeError`.
+- **si#654:** network-bound calls (git remote operations, `gh`, `oras`, `docker pull`) run under a
+  per-class time limit, and a timed-out run says which tool, which operation and which limit.
+  **si#741:** `git submodule update --init` joins the git remote limit.
+- **si#739:** `run()` and `run_stream()` take `terminal`. A child declared `terminal=False`, or any
+  child when the kernel has no controlling terminal (CI), runs in a process group of its own, and the
+  time limit, the grace kill, an abandoned run and a stop kill the whole group, so a git remote helper
+  no longer outlives its limit. Children that may need the terminal (sudo, `gh auth refresh`,
+  Homebrew's prompt) keep the shared group.
+- **si#760:** the network-bound calls that never need the terminal are declared `terminal=False`,
+  each measured on a real pty without a credential, and git's remote operations ask nothing (see
+  above). `push` now says whether a refused credential or a rebase conflict stopped it.
+
+### Refusals instead of tracebacks, and diagnoses that say which (si#658, si#663, si#665, si#709, si#713, si#716, si#742, si#745)
+
+- **si#658:** the health gate tells "docker could not be asked" from "the container is missing",
+  bounds its `docker inspect`, and keeps to its time budget.
+- **si#709:** a conan pull that leaves no file at the manifest's `path:` is a refusal naming what it
+  did write. **si#745:** a conan publish with no archive at `path:` is a refusal, not a traceback.
+- **si#742:** the run transcript's instance line says "not declared", "invalid (...)" or
+  "unknown (...)" instead of "not declared" for every failure.
+- **si#663**, **si#665**, **si#713** and **si#716** are described in the list above.
+
+### Downloads and host installs (si#668, si#689, si#710, si#744)
+
+- **si#668:** every pinned download carries a sha256. A digest that is not the pinned one is an error
+  naming the file, the URL and both digests, with nothing written. Docker's static CLI and oras are
+  pinned this way.
+- **si#744:** containerlab's install script is fetched at one commit with a pinned sha256, run as a
+  file, pinned to one release and told to verify the package checksum, instead of `curl | sudo bash`.
+- **si#710:** on the container route (`DELIVERY_ROUTE=inside`) `support install` provisions nothing
+  and says so, instead of installing into the throwaway container and reporting it as the host.
+- **si#689:** the docker preflight's advice also names the window opened by URI (the JSON authority
+  form) and the `/var/run/docker.sock` socket, not only the `docker.context` setting.
+
+### New: `support git clean` (si#714)
+
+- **`vcs:clean`**, placed as `support git clean`, runs `git clean -dx` on the product's checkout.
+  Without `--force` it lists what would go and removes nothing; with `--force` it removes exactly that.
+  Nested repositories and worktrees are never touched and are named as skipped.
+
+### One mechanism where the kernel had several (si#670)
+
+The duplicates umbrella is done. What a product can notice:
+
+- `firngen`'s "firn ran no template" line is a warning on stdout, through `kernel/log`, instead of a
+  bare line on stderr. Kernel refusals from `firngen` and the orchestrator carry the log prefix.
+- The kernel's own catalogue is read with duplicate keys refused; a catalogue that is not a mapping is
+  named. `manifest.environments.parse` is gone (`parse_data` stays); it had no kernel caller.
+- The toolchain splice and `manifest migrate` share one block reader: the splice no longer ends `ci:`
+  at a column-0 comment, and places a new command below the last one.
+- `run()` takes `inherit=False` to make `env` the child's whole environment.
+- One git wrapper, `gitops.git(root, *args)`, with the root always named.
+- Every kernel-named image constant goes through `docker.pinned_image`; `build:fetch` and the model
+  export stage under a run's own file name, so two runs no longer share one.
+
+### Also in this release
+
+- **si#746:** `test generated` rules on what regenerating changed in the tree as it stands, not on a
+  diff against HEAD, so an uncommitted hand edit beside a generated file is no longer called stale.
+- **si#743:** simplon's own image e2e test is isolated per run.
+- **si#779:** `test release-notes` no longer refuses a merge that brought no commit of its own (its
+  branch had already landed through another pull request); such a merge names no ticket. Every other
+  empty read is still refused as si#274 refuses it.
+- **#712** pins `deploy/image/image.pin` to the v0.45.0 kernel image.
+- **#777** makes a failed firn run in simplon's own tests show firn's stderr.
+- The pull requests are #712, #715 (si#714), #723 (si#663), #725 (si#713), #726 (si#668),
+  #727 (si#709), #728 (si#689), #729 (si#710), #730 (si#716), #731 (si#720), #733 (si#665),
+  #747 (si#719, si#718, si#574, as #734, #736 and #738), #748 (si#652, si#653, si#654, si#658, as
+  #732, #735 and #737), #750 (si#742), #751 (si#744), #752 (si#745), #755 (si#741, si#740, si#743,
+  as #749, #753 and #754), #758 (si#746), #759, #775 and #776 (si#739), #761, #764, #765, #766, #767,
+  #768, #769, #770 and #774 (si#670, with #762), #763 via #770 (si#760), #777 and #780 (si#779).
+
 ## 0.45.0
 
 **What a product has to do:** regenerate its workflows (`support workflows`), or `test generated` reports
