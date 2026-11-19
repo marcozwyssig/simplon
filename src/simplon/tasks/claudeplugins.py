@@ -450,11 +450,9 @@ def _installed(timeout_s: float) -> tuple[tuple[Marketplace, ...], tuple[str, ..
 
 def _skip_reason(env: Mapping[str, str], container: bool) -> str:
     """Why this machine or route installs nothing, or "" when it can."""
-    if container:
-        return hostinstall.CONTAINER_ROUTE_SKIP
-    for variable in ("CI", "GITHUB_ACTIONS"):
-        if env.get(variable, "").lower() == "true":
-            return f"{variable}=true: plugins are for a machine somebody develops on"
+    machine = hostinstall.machine_skip_reason(env, container, what="plugins")
+    if machine:
+        return machine
     if shutil.which("claude", path=env.get("PATH")) is None:
         return "no `claude` on PATH"
     return ""

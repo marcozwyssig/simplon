@@ -89,11 +89,8 @@ def _install(where: str | None, interactive: bool) -> Outcome:
             fetch.download(INSTALL_URL, script, label="Homebrew install.sh", sha256=INSTALL_SHA256)
         except fetch.DownloadError as exc:
             return Outcome(State.FAILED, f"{exc} Nothing was run.")
-        env = dict(os.environ)
-        if not interactive:
-            env["NONINTERACTIVE"] = "1"
         log.info("brew missing; running Homebrew's install.sh")
-        reason = act([BASH, str(script)], env=env)
+        reason = act([BASH, str(script)], env=None if interactive else {"NONINTERACTIVE": "1"})
     if reason:
         return Outcome(State.FAILED, reason)
     if not _at_prefix(where):
