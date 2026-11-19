@@ -546,6 +546,49 @@ def test_a_merge_that_really_names_no_ticket_still_falls_back_rather_than_raisin
     assert named == {72}
 
 
+@pytest.mark.parametrize("synced", [True, False], ids=["main-merged-in", "already-an-ancestor"])
+def test_a_merge_that_brought_nothing_names_nothing_and_is_not_refused(tmp_path, synced):
+    """si#779: `--no-merges ^1..^2` is empty when the merged branch's own commits had already landed
+    through another pull request (#767 after #768, measured at 8722597). That is an answer git proves -
+    the range holds only a sync merge, or the second parent is already an ancestor - and it names no
+    ticket: the work is named through the merge that carried it."""
+    # arrange: #768's branch contains #767's; #768 merges first, then GitHub merges #767 anyway
+    root = _repo(tmp_path)
+    _commit(root, "chore: the root commit")
+    _git(root, "checkout", "-q", "-b", "si62-base")
+    _commit(root, "feat(si#62): the base", path="base.txt")
+    _git(root, "checkout", "-q", "-b", "si63-top")
+    _commit(root, "feat(si#63): the top", path="top.txt")
+    _git(root, "checkout", "-q", "main")
+    _git(root, "merge", "-q", "--no-ff", "-m", "Merge pull request #768 from marcozwyssig/si63-top", "si63-top")
+    subject = "Merge pull request #767 from marcozwyssig/si62-base"
+    if synced:
+        _git(root, "checkout", "-q", "si62-base")
+        _git(root, "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into si62-base", "main")
+        _git(root, "checkout", "-q", "main")
+        _git(root, "merge", "-q", "--no-ff", "-m", subject, "si62-base")
+        sha = _git(root, "rev-parse", "HEAD").strip()
+    else:
+        sha = _git(root, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-p", "si62-base", "-m", subject).strip()
+
+    # act / assert
+    assert releasenotes.brought_nothing(root, sha, subject) is True
+    assert releasenotes.tickets_of(root, sha, subject) == set()
+    assert releasenotes.fell_back_to_the_pull_request(root, sha, subject) is False
+
+
+def test_a_merge_that_brought_commits_did_bring_something(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "chore: the root commit")
+    subject = "Merge pull request #94 from marcozwyssig/docs/92-the-notes"
+    sha = _merge(root, "docs/92-the-notes", ["docs(#92): the notes"], subject)
+
+    # act / assert
+    assert releasenotes.brought_nothing(root, sha, subject) is False
+    assert releasenotes.tickets_of(root, sha, subject) == {92}
+
+
 # --- release:notes - generating the notes from the same walk (si#344 C.3, spec decision 16) -------------
 
 def test_the_notes_list_every_merge_since_the_previous_tag_with_its_tickets(tmp_path):
