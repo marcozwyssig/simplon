@@ -412,7 +412,7 @@ def _gh(argv: list[str], *, input_text: str | None = None) -> tuple[run.Result |
     would reach a walk whose answers are on disk and whose record has not been written. Since si#653 both
     come back from `run` as values, so this only reads them.
     """
-    result = run.run(argv, timeout=TIMEOUT, input_text=input_text)
+    result = run.run(argv, timeout=TIMEOUT, input_text=input_text, terminal=False)
     if result.timed_out:
         return None, (f"the tracker did not answer within {TIMEOUT:.0f}s, so this refusal was not filed "
                       f"and the walk went on rather than waiting on it")

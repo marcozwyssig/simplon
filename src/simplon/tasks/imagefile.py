@@ -210,7 +210,7 @@ def _pull_and_copy(cfg: image.Image, tag: str, platform: str, inside: str, path:
     source = published_reference(cfg, tag, platform)
     if source is None:
         return 1
-    pulled = run(["docker", "pull", source], timeout=limits.DOCKER_PULL)
+    pulled = run(["docker", "pull", source], timeout=limits.DOCKER_PULL, terminal=False)
     if not pulled.ok:
         log.error(f"`docker pull {source}` failed, so nothing was copied: "
                   f"{(pulled.err or pulled.out).strip() or '(it said nothing)'}.\n"
@@ -245,7 +245,7 @@ def published_reference(cfg: image.Image, tag: str, platform: str) -> str | None
     """
     ref = image.reference(cfg, tag)
     fetched = run(["oras", "manifest", "fetch", "--registry-config", str(docker_config_file()), ref],
-                  timeout=limits.ORAS)
+                  timeout=limits.ORAS, terminal=False)
     if not fetched.ok:
         log.error(f"{ref} could not be read from the registry, so nothing was pulled: "
                   f"{(fetched.err or fetched.out).strip() or '(oras said nothing)'}.\n"
@@ -407,7 +407,7 @@ def _warm_up(platform: str) -> None:
     image already held, the pull still asks the registry, about 3 s.
     """
     command = ["docker", "pull", *(["--platform", platform] if platform else []), FILE_TEST_IMAGE]
-    pulled = run(command, timeout=PULL_TIMEOUT)
+    pulled = run(command, timeout=PULL_TIMEOUT, terminal=False)
     if pulled.ok:
         return
     if pulled.timed_out:

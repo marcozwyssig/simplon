@@ -607,7 +607,7 @@ def published(ref: str) -> bool:
     `test_a_probe_that_cannot_answer_is_not_a_publish`).
     """
     githubpackages.require_oras()
-    result = run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS)
+    result = run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS, terminal=False)
     if result.timed_out or result.not_started:
         raise githubpackages.PackageError(f"could not ask the registry whether it serves {ref}: "
                                           f"{result.err.strip()}")
@@ -1762,7 +1762,7 @@ def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mappin
         return rc
     try:
         githubpackages.require_oras()
-        fetched = run(["oras", "manifest", "fetch", ref], timeout=limits.ORAS)
+        fetched = run(["oras", "manifest", "fetch", ref], timeout=limits.ORAS, terminal=False)
     except githubpackages.PackageError as failure:
         log.error(f"{ref} was pushed, but the publish could not be verified: {failure}")
         return 1

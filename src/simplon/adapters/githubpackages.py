@@ -99,7 +99,7 @@ def token() -> str:
     if from_env:
         return from_env
 
-    result = run.run(["gh", "auth", "token"], capture=True, timeout=limits.GH)
+    result = run.run(["gh", "auth", "token"], capture=True, timeout=limits.GH, terminal=False)
     if result.not_started:
         raise PackageError(
             f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({result.not_started}). "
@@ -300,7 +300,7 @@ def tags(registry: str, repository: str) -> list:
     """
     require_oras()
     result = run.run(["oras", "repo", "tags", f"{registry.rstrip('/')}/{repository.strip('/')}"],
-                     capture=True, timeout=limits.ORAS)
+                     capture=True, timeout=limits.ORAS, terminal=False)
     if result.rc != 0:
         raise PackageError(
             f"could not list tags of {repository}: {result.err or result.out}\n"

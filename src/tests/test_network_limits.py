@@ -162,6 +162,21 @@ def test_every_network_bound_run_carries_its_class_default():
     assert missing == []
 
 
+def test_every_network_bound_run_needs_no_terminal():
+    """si#760: each of these reads no terminal, measured on a pty without a credential (the PR of si#760), so
+    each runs in a group of its own and its limit kills everything it started. git's remote operations are
+    declared in `gitops._git`, whose argv this scan cannot read; `EXEMPT` is the one that prompts."""
+    # act
+    undeclared = [f"{module}:{line} `{lead}` reads no terminal: declare terminal=False"
+                  for module, line, _, lead, call in _calls()
+                  if not any(module == m and lead.startswith(prefix) for m, prefix in EXEMPT)
+                  and not any(kw.arg == "terminal" and isinstance(kw.value, ast.Constant) and kw.value.value is False
+                              for kw in call.keywords)]
+
+    # assert
+    assert undeclared == []
+
+
 def test_gitops_gives_every_remote_operation_the_git_default(monkeypatch):
     # arrange
     seen: list = []

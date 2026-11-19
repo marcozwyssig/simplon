@@ -139,8 +139,10 @@ def _own_group(terminal: bool) -> bool:
     typed there (only the foreground group does), and a child that reads the terminal is STOPPED (SIGTTIN,
     state T) until its limit. So the group is chosen only where neither can matter, by a test that is sure
     rather than a guess: the caller declares `terminal=False`, or this process has no controlling terminal
-    at all, and then no child can use one. Everything else - sudo, `gh auth refresh`, Homebrew's prompt, a
-    git credential prompt - keeps the shared group it always had. Never on Windows, which has no groups.
+    at all, and then no child can use one. Everything else - sudo, `gh auth refresh`, Homebrew's prompt -
+    keeps the shared group it always had. Never on Windows, which has no groups. Who declares, and why each
+    caller that does reads no terminal, is si#760 (`tests/test_terminal_declarations.py`): git's remote
+    operations among them, which ask for no credential (`GIT_TERMINAL_PROMPT=0`).
     """
     return os.name == "posix" and (not terminal or not _has_terminal())
 
@@ -208,7 +210,8 @@ class Result:
 
 def run(argv: list[str], *, check: bool = False, capture: bool = True,
         timeout: float | None = None, input_text: str | None = None,
-        cwd: str | None = None, env: Mapping[str, str] | None = None, terminal: bool = True) -> Result:
+        cwd: str | None = None, env: Mapping[str, str] | None = None, terminal: bool = True,
+        inherit: bool = True) -> Result:
     """Run `argv` (a list, never a shell string) and return a Result with the real rc.
 
     capture=True returns stdout/stderr as text; capture=False streams them to the terminal (used by the
@@ -217,6 +220,8 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     the process's stdin (e.g. `tee`-ing a script into the VM). cwd runs the process from that directory
     (e.g. pytest from the test dir so conftest.py is importable). env, when given, is ADDED to this
     process's environment for the child alone (si#507: a credential one git call needs and no other).
+    `inherit=False` makes `env` the child's WHOLE environment instead, for a caller that must leave a
+    variable out (#670 item 10: `host.context_endpoint` asks docker without DOCKER_HOST/DOCKER_CONTEXT).
 
     Output is decoded as UTF-8 with `errors="replace"`, whatever the locale says (si#652): the contract
     `run_stream` has, output is shown, never raised on. A strict decode in the locale's codec made one
@@ -248,7 +253,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     limit and the kill then reach the whole tree, and the stop is handed on always, a terminal's Ctrl-C
     included: the terminal sent it to this group, not to the child's.
     """
-    full_env = {**os.environ, **env} if env else None
+    full_env = dict(env or {}) if not inherit else {**os.environ, **env} if env else None
     guarded = os.name == "posix" and threading.current_thread() is threading.main_thread()
     stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)] if guarded else []
     pipe = subprocess.PIPE if capture else None
