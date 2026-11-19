@@ -52,34 +52,39 @@ def test_pom_url_turns_the_group_into_path_segments():
 # --- the container line --------------------------------------------------------------------------------
 
 
-def test_docker_argv_keeps_the_token_out_of_argv(tmp_path):
+def _pack_line(monkeypatch) -> list[str]:
+    """The line the real `pack` hands to `stream` - since si#670 assembled by `nuget.docker_argv`, so these
+    tests read the wiring rather than a copy of it."""
+    seen: list = []
+    monkeypatch.setattr(maven, "stream", lambda argv, cwd=None: (seen.append(list(argv)), 0)[1])
+    maven.pack("firn")
+    return seen[0]
+
+
+def test_docker_argv_keeps_the_token_out_of_argv(_publishable, monkeypatch):
     # arrange: the property that matters more than any other here. `docker run -e TOKEN=...` puts the
     # credential in the docker CLI's own argv, which `ps` shows to every user and `docker inspect` keeps.
-    env_file = tmp_path / "env"
-    env_file.write_text("GITHUB_TOKEN=ghp_secret\n")
+    monkeypatch.setattr(maven.githubpackages, "token", lambda: "ghp_secret")
 
     # act
-    argv = maven.docker_argv("gradle:9.7.1-jdk25", tmp_path, env_file, ["gradle", "publish"])
+    argv = _pack_line(monkeypatch)
 
     # assert
     assert "--env-file" in argv
     assert not any("ghp_secret" in part for part in argv)
 
 
-def test_docker_argv_points_gradle_at_a_home_inside_the_mounted_tree(tmp_path):
+def test_docker_argv_points_gradle_at_a_home_inside_the_mounted_tree(_publishable, monkeypatch):
     # arrange: si#325, measured by a consumer and paid for once already. The JVM reads `user.home` from
     # the passwd entry and IGNORES `$HOME`, so setting HOME does NOT move a gradle run - for root it is a
     # no-op. `GRADLE_USER_HOME` is therefore the only thing that works, not merely the tidier option.
-    env_file = tmp_path / "env"
-    env_file.write_text("")
 
     # act
-    argv = maven.docker_argv("gradle:9.7.1-jdk25", tmp_path, env_file, ["gradle", "publish"])
-    joined = " ".join(argv)
+    joined = " ".join(_pack_line(monkeypatch))
 
     # assert
     assert f"GRADLE_USER_HOME={maven.WORKDIR}/{maven.GRADLE_HOME}" in joined
-    assert f"{maven.WORKDIR}" in joined
+    assert f":{maven.WORKDIR} " in joined
 
 
 # --- the read-back, with three outcomes ----------------------------------------------------------------

@@ -573,17 +573,6 @@ class Render:
         return self.tool is not None and self.report is None
 
 
-def _docker_user() -> list[str]:
-    """``--user uid:gid`` for the render container - `simplon.adapters.docker.user_args`, which is where this body
-    moved when a SECOND containerised step needed the same argument for the same reason (#2's hugo site
-    build). The rule and both measured failures are documented there; the case that put it in this module
-    was `frankescobar/allure-docker-service` running as uid 1000 against a host uid that is not 1000, where
-    allure died with ``java.nio.file.AccessDeniedException`` (#6). The local-CLI branch never had this
-    because it already runs as the caller.
-    """
-    return docker.user_args()
-
-
 def render_report(report_dir: str, results: str | None = None, *, prefix: str = "allure") -> Render:
     """Render the merged single-file allure HTML to a timestamped ``report_dir/<prefix>-YYYYMMDD-HHMMSS.html``
     (netctl#402) via the local allure CLI, else docker. ``results`` defaults to ``report_dir/allure-results``;
@@ -620,13 +609,13 @@ def render_report(report_dir: str, results: str | None = None, *, prefix: str = 
         # without a registered product context on purpose - it is handed the report directory and knows
         # nothing else - so the check would have to demand a context this body has never needed, for a
         # failure it has never had. What allure MEASURED (#6) is the other direction entirely: an image
-        # running as uid 1000 against a host uid that is not 1000, which `_docker_user` answers. The day
+        # running as uid 1000 against a host uid that is not 1000, which `docker.user_args` answers. The day
         # a stale tree kills a render here, this is where the check goes.
         # si#412: named, labelled, and removed if the render is interrupted. With no product context
         # here the label's value is empty - `docker.lifecycle` says why that and not a refusal.
         container, lifecycle = docker.lifecycle()
         with docker.stopped_on_interrupt(container):
-            ok = run(["docker", "run", "--rm", *lifecycle, *_docker_user(),
+            ok = run(["docker", "run", "--rm", *lifecycle, *docker.user_args(),
                       "-v", f"{hostpath.translate(report_dir)}:/work", "-w", "/work",
                       "--entrypoint", "allure", IMAGE,
                       "generate", "--single-file", "--clean",

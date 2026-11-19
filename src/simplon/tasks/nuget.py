@@ -67,7 +67,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
@@ -264,6 +264,9 @@ def config(name: str = "") -> int:
 #: path printed by one command means the same thing in the other.
 WORKDIR = "/work"
 
+#: What every dotnet line sets besides its home: no telemetry and no first-run banner in a build log.
+DOTNET_ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"}
+
 
 @contextmanager
 def _env_file(token: str) -> Iterator[Path]:
@@ -291,8 +294,9 @@ def _env_file(token: str) -> Iterator[Path]:
 
 
 def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
-                lifecycle: Sequence[str] = (), home: str = "") -> list[str]:
-    """The container line for one dotnet invocation. PURE: it assembles, it runs nothing.
+                lifecycle: Sequence[str] = (), env: Mapping[str, str] | None = None) -> list[str]:
+    """The container line for one credentialed invocation - dotnet's here, gradle's in `tasks/maven`.
+    PURE: it assembles, it runs nothing.
 
     Pure for the reason `toolchain.docker_argv` is pure: the decisions here - whose uid, which mount,
     where dotnet may write, how the credential arrives - are exactly what a test should be able to read
@@ -304,16 +308,20 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
     manifest may not name, so it has no `--env-file`. Widening it would put a credential into the one
     shape si#105 wrote to keep declarations reviewable.
 
-    `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in by `_contained` because the name in
-    them is fresh per call - choosing it here would make the line impure. `home` is si#319's home in
-    container coordinates (`outputs.home_in_container`), handed in for the same reason.
+    ONE LINE FOR BOTH ECOSYSTEMS (si#670). `release:maven` used to carry a copy of this function that
+    differed only in its `-e` flags; the uid, the mount, the workdir and the credential file are the
+    decisions that must not drift between them, so the line is one and each caller hands in what its
+    tool needs in `env`.
+
+    `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in by the caller because the name in
+    them is fresh per call - choosing it here would make the line impure. `env` is handed in for the same
+    reason: dotnet's carries si#319's home in container coordinates (`outputs.home_in_container`).
     """
     return ["docker", "run", "--rm", *lifecycle,
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
             "--env-file", str(env_file),
-            *(["-e", f"HOME={home}"] if home else []),
-            "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1",
+            *(flag for name, value in (env or {}).items() for flag in ("-e", f"{name}={value}")),
             image, *argv]
 
 
@@ -325,7 +333,7 @@ def _contained(image: str, root: Path, env_file: Path, argv: list[str]) -> int:
     container, lifecycle = docker.lifecycle()
     with docker.stopped_on_interrupt(container):
         return stream(docker_argv(image, root, env_file, argv, lifecycle,
-                                  home=outputs.home_in_container(WORKDIR)))
+                                  env={"HOME": outputs.home_in_container(WORKDIR), **DOTNET_ENV}))
 
 
 def pack_argv(project: str, version: str, out: str) -> list[str]:

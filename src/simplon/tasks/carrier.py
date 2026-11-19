@@ -46,13 +46,13 @@ from simplon.kernel import log, run
 from simplon.tasks import proxmoxapi
 
 #: The two toolchains, pinned. Bump them deliberately, the way `DOCKER_CLI_VERSION` is bumped.
-PULUMI_IMAGE = "pulumi/pulumi-python:3.262.0"
-ANSIBLE_IMAGE = "alpine/ansible:2.21.0"
+PULUMI_IMAGE = docker.pinned_image("pulumi/pulumi-python:3.262.0", "simplon.tasks.carrier")
+ANSIBLE_IMAGE = docker.pinned_image("alpine/ansible:2.21.0", "simplon.tasks.carrier")
 
 #: What Ansible puts on the carrier. Pinned here rather than fetched: the community addon downloads its
 #: compose file from `downloads.portainer.io/ce-sts/`, a moving channel, which is exactly the thing a
 #: pin exists to stop.
-PORTAINER_IMAGE = "portainer/portainer-ce:2.45.0"
+PORTAINER_IMAGE = docker.pinned_image("portainer/portainer-ce:2.45.0", "simplon.tasks.carrier")
 
 #: The port Portainer answers on. A CONSTANT and not a manifest field: it is what the image listens on,
 #: the same for every carrier, and a product that wanted another would be changing the image's own
@@ -496,7 +496,7 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
         "-e", f"CARRIER_CORES={machine.cores}",
         "-e", f"CARRIER_HOSTNAME={hostname}",
         "-e", f"CARRIER_SSH_KEY={machine.ssh_key}",
-        docker.pinned_image(PULUMI_IMAGE, "the carrier's Pulumi toolchain"),
+        PULUMI_IMAGE,
         "bash", "-c",
         "pip install -q --root-user-action=ignore -r requirements.txt >/dev/null 2>&1 && "
         f"(pulumi stack init {carrier.name} --non-interactive >/dev/null 2>&1 || "
@@ -529,7 +529,7 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
         "-v", f"{hostpath.translate(work)}:/work",
         "-v", f"{hostpath.translate(key)}:/key:ro", "-w", "/work",
         "-e", "ANSIBLE_HOST_KEY_CHECKING=False",
-        docker.pinned_image(ANSIBLE_IMAGE, "the carrier's Ansible toolchain"),
+        ANSIBLE_IMAGE,
         "ansible-playbook", "-i", "inventory.ini", "carrier.yml", "--private-key", "/key",
     ]
     with docker.stopped_on_interrupt(container):
