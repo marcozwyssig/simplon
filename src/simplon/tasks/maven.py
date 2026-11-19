@@ -29,7 +29,7 @@ those files, artefacts before metadata, and then runs the read-back it always ra
 MEASURED AGAINST GITHUB (si#436, 2026-10-15): GitHub's Maven registry accepts a plain PUT per file, and a
 second release does NOT replace the version list. `upload` put 0.0.1 and then 0.0.2 of a scratch module
 (`ch.zwyssig.simplon.probe:si436-probe` in marcozwyssig/simplon, hand-staged in the layout `gradle publish`
-writes). Each PUT carried a `maven-metadata.xml` that listed only its own version. Read back afterwards, the
+writes; outside the `info.zwyssig` namespace, deleted 2026-11-19). Each PUT carried a `maven-metadata.xml` that listed only its own version. Read back afterwards, the
 metadata listed `0.0.1` and `0.0.2` with `latest` 0.0.2. What GitHub served was not the uploaded file either:
 it had no XML declaration and no `<release>`, both of which the upload carried. So GitHub builds the metadata
 itself, and the remote merge `mvn deploy` does first is not needed here. This task publishes only to GitHub
