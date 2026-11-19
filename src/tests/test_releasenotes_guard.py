@@ -126,6 +126,44 @@ def test_a_page_that_names_every_merged_ticket_passes(tmp_path, capsys, monkeypa
     assert "the release notes are complete" in said.out
 
 
+def _landed_twice(root: Path) -> None:
+    """si#779's shape, as #767 and #768 made it on 2026-11-18: a pull request whose branch contains
+    another's merges first, main is merged into the contained one to rerun its checks, and GitHub's button
+    then merges it too. That merge brings a sync merge and no commit of its own (measured at 8722597)."""
+    _git(root, "checkout", "-q", "-b", "si62-base")
+    (root / "base.txt").write_text("base", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "feat(si#62): the base")
+    _git(root, "checkout", "-q", "-b", "si63-top")
+    (root / "top.txt").write_text("top", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "feat(si#63): the top, on the base")
+    _git(root, "checkout", "-q", "main")
+    _git(root, "merge", "-q", "--no-ff", "-m", "Merge pull request #768 from marcozwyssig/si63-top", "si63-top")
+    # main merged into the contained branch to rerun its checks, then the button merges it
+    _git(root, "checkout", "-q", "si62-base")
+    _git(root, "merge", "-q", "--no-ff", "-m", "Merge remote-tracking branch 'origin/main' into si62-base", "main")
+    _git(root, "checkout", "-q", "main")
+    _git(root, "merge", "-q", "--no-ff", "-m", "Merge pull request #767 from marcozwyssig/si62-base", "si62-base")
+
+
+def test_a_merge_whose_branch_had_already_landed_is_not_refused(tmp_path, capsys, monkeypatch):
+    """si#779: 0.46.0's notes were red on main at #767's merge, read as si#274's "printed nothing". The
+    work it carried is named through the merge that landed it first, so the page is complete."""
+    # arrange
+    root = _complete_release(tmp_path)
+    _landed_twice(root)
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("it carries si#61.", "it carries si#61, si#62 and si#63."))
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr()
+    assert rc == 0, said.out + said.err
+    assert "the release notes are complete" in said.out
+
+
 # --- red: the failure si#82 was raised for, produced by breaking the page -------------------------------
 
 def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(tmp_path, capsys, monkeypatch):
