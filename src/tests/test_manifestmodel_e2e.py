@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from conftest import docker_is_usable
-from firnrun import firn_rc
+from firnrun import firn_result, said
 import realmanifests
 from simplon.manifest import catalogue, manifestmodel
 from simplon.model.task import mangle
@@ -47,7 +47,7 @@ def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     (target / f"{name}.firn").write_text(out, encoding="utf-8")
 
     # act
-    rc, text_out = firn_rc(tmp_path, "validate")
+    result = firn_result(tmp_path, "validate")
 
     # assert
-    assert rc == 0, text_out
+    assert result.rc == 0, said(result)
