@@ -1622,6 +1622,19 @@ so. `credential_from:` names a PREFIX like every other credential here, and the 
 every deployment** rather than stored in Portainer - so a stack somebody opens in the Portainer UI carries
 no usable read access to your source.
 
+**A private image on ghcr.io needs a registry entry in Portainer, and the kernel creates it.** Before the
+first write, `deploy up` asks ghcr.io anonymously whether each `ghcr.io/...` image in the compose document
+is public (si#785). When one is private and Portainer holds no `ghcr.io` entry, the entry is created
+through Portainer's API from two variables named after the carrier's `url_from:` - `url_from: PORTAINER`
+means `PORTAINER_GHCR_USER` (the GitHub account) and `PORTAINER_GHCR_PASSWORD` (a token with
+`read:packages`) - and the deployment goes on (si#783). Without them the deployment is **refused** before
+anything is written, naming both variables; without the entry it would have been accepted and then failed
+at container start with `unauthorized`. Unlike the clone credential, this one **is stored in Portainer**:
+Portainer pulls with it whenever it redeploys, so it has to be there. The token goes into that one request
+and nowhere else. Portainer CE has no GitHub registry type (CE 2.45.0 accepts types 1-7), so the entry is
+a custom registry with URL `ghcr.io`, which is also what to add by hand if you would rather not export the
+token. Creating it takes a Portainer token of an administrator; any other is answered 403.
+
 **`backend: portainer` needs no product code.** It is one of the two backends the kernel ships, because
 the whole chain under it is already the kernel's: `deploy carrier` builds the Portainer, `carriers:`
 describes it, and this section points at it. A product that registers its own implementation under that
