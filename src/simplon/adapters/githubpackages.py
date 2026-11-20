@@ -168,12 +168,20 @@ def _login(command: Sequence[str], registry: str, username: str) -> None:
     that mint the token, pick the host, feed stdin and translate a failure are the same for either, and
     a second copy is the copy that would stop naming `gh auth refresh` the day somebody edited only one
     of them. What differs is the executable, and that is all the caller passes.
+
+    UNDER THE LOGIN LIMIT, AND NEEDING NO TERMINAL (si#773). A registry that accepts and never answers
+    held the run for as long as the client chose. A login past `limits.REGISTRY_LOGIN` is a timeout and
+    says so, without the scope advice: no credential was refused. Neither client reads the terminal with
+    `--password-stdin`, measured on a real pty through `run(..., terminal=False)` against ghcr.io: oras
+    and docker each answered `denied` within 0.4 s with a wrong token and rc 0 with a valid one.
     """
     host = registry_host(registry)
     user = username or os.getenv("GITHUB_ACTOR") or os.getenv("GITHUB_USERNAME") or "x"
 
     result = run.run([*command, host, "-u", user, "--password-stdin"],
-                     capture=True, input_text=token())
+                     capture=True, input_text=token(), timeout=limits.REGISTRY_LOGIN, terminal=False)
+    if result.timed_out:
+        raise PackageError(f"{' '.join(command)} to {host} did not finish: {result.err}")
     if result.rc != 0:
         raise PackageError(f"{' '.join(command)} to {host} failed: {result.err or result.out}\n"
                            + scope_advice())
