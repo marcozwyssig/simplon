@@ -1488,7 +1488,7 @@ simplon init --dir . --launchers-only
 
 A launcher you forgot to re-render is **refused, not silent**. The launcher also exports the list it was
 rendered with (`DELIVERY_ENV_PASS`), and on the container route the kernel compares that with the union
-of the commands' lists. It refuses the run, naming the variables the launcher does not forward or still forwards, and
+of the commands' lists and the names it derives (below). It refuses the run, naming the variables the launcher does not forward or still forwards, and
 the command above. Without that check a missing variable would look exactly like one your host never
 set. The venv route has no container and inherits your whole environment, so nothing is compared there.
 
@@ -1508,6 +1508,15 @@ form and the re-render above as the way out.
 
 A name the launcher already forwards (`GH_TOKEN`, `<PRODUCT>_*`, a `DELIVERY_*` it does not set itself) is
 accepted, and changes nothing.
+
+**A `deploy:up` or `deploy:down` command needs no `env: pass:` for what this file already names** (si#810).
+The kernel derives those names from every `backend: portainer` environment: a deploy reads the carrier's
+`<url_from>_URL` and `<url_from>_TOKEN`, its ghcr.io credential `<url_from>_GHCR_USER` and
+`<url_from>_GHCR_PASSWORD`, the repository's `<credential_from>_USER` and `<credential_from>_PASSWORD`, and
+every name in `required:` and `optional:`. A teardown reads only the first two. They join the launcher's
+list and that command's own, and no other command keeps them. Re-render the launchers after changing a
+carrier or an environment, as after changing a list. A name the launcher sets itself (`HOME`) is not
+derived, and neither is a name no manifest writes (`PORTAINER_STACK`, `PORTAINER_ENDPOINT_ID`).
 
 ### `carriers:` - what an environment is realised on
 
