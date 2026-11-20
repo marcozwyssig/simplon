@@ -33,15 +33,18 @@ extra dependency, including on a host that has nothing but Python.
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import re
 import ssl
+import tarfile
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable, Mapping
+from typing import IO, TYPE_CHECKING, Callable, Mapping
 
 import yaml
 
@@ -50,7 +53,7 @@ from simplon.manifest import environments
 if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
     from simplon.model.carrierspec import Carrier
     from simplon.manifest.deployment import Version
-    from simplon.manifest.environments import Environment, Repository
+    from simplon.manifest.environments import Directory, Environment, Repository
 
 # The registry Portainer pulls the images from. A private package needs credentials stored IN Portainer;
 # without them the pull fails with "unauthorized", and it fails at START time - the kind of failure worth
@@ -730,6 +733,7 @@ class PortainerBackend:
                 f"deploy that")
         values = {**stack_values(env), VERSION_VAR: version.tag}
         credential = _clone_credential(repository, env)
+        check_directories(target, env)  # si#782
         check_registry_access(target, repository, values)
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(target, repository, credential, env_vars=values)
@@ -877,3 +881,209 @@ def _clone_credential(repository: "Repository", env: "Environment") -> "tuple[st
             f"them Portainer answers 'authentication required: Repository not found', which names the "
             f"repository for a missing variable")
     return found
+
+
+# --- the carrier's directories, checked before the stack is touched (si#782) -------------------------
+#
+# HOW A CARRIER'S FILESYSTEM IS READ FROM HERE AT ALL. `deploy up` holds a Portainer URL and a token and
+# nothing else: no ssh key, no address of the machine (a carrier with no `proxmox:` has none the manifest
+# knows), and on a CI runner not even a shell near the carrier. What it CAN reach is the Docker daemon
+# Portainer manages, through Portainer's own proxy - and that daemon is the very one that will resolve the
+# stack's bind mounts, so it is the honest witness rather than a stand-in for one. An ssh probe could stat
+# a different machine than the one Portainer deploys to and still come back green.
+#
+# THE PROBE, MEASURED 2026-11-20 against Docker 29.1 directly and through a Portainer 2.45 on the same
+# host (not the real carrier - none is reachable from where this was written):
+#
+#   - a container is CREATED and never started, binding the path read-only with a `Mounts` entry of type
+#     bind. A missing source is refused at create with 400 "bind source path does not exist: <path>", and
+#     - the point - NOTHING IS CREATED: `Mounts` does not make the directory the way `-v` does, so the
+#     probe cannot cause the defect it looks for;
+#   - `GET /containers/{id}/archive?path=/probe` answers on a created container with a tar whose first
+#     header is the bound directory itself: uid, gid, mode and type, as the host has them;
+#   - the image it is created from is an EMPTY one the kernel carries as bytes and loads with
+#     `POST /images/load` when the daemon does not have it, so the probe needs no registry and no pull. Its
+#     platform is fixed; on another architecture Docker warns and creates it all the same (measured with
+#     an arm64 config on amd64), and it never runs.
+#
+# Every outcome has its own value: ready, missing, wrong (owner, mode, not a directory), and COULD NOT
+# TELL - which is said by name and refuses nothing, the way si#785 treats a registry it could not ask.
+
+#: The image the probe container is created from, never pulled and never run. NOT declared through
+#: `docker.pinned_image`, and the rule that asks for it does not apply: its reason is a registry tag that
+#: means different bytes next month, and these bytes are `_probe_image()`'s own, loaded by this module and
+#: by nothing else. Importing `docker` here would also end this module being a leaf (it imports the
+#: manifest context at its head). Named `_REFERENCE` so the sweep for `*_IMAGE` constants does not read it
+#: as a pull nobody pinned.
+PROBE_REFERENCE = "simplon-dirprobe:empty"
+PROBE_LABEL = "simplon.probe"
+_PROBE_TARGET = "/probe"
+_MISSING = "bind source path does not exist"
+
+
+def _probe_image() -> bytes:
+    """`docker save` of an image with one empty layer, built here so no registry is ever involved."""
+    def tar(members: "dict[str, bytes]") -> bytes:
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+            for name, data in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        return out.getvalue()
+
+    layer = tar({})
+    config = json.dumps({"architecture": "amd64", "os": "linux", "config": {}, "rootfs": {
+        "type": "layers", "diff_ids": ["sha256:" + hashlib.sha256(layer).hexdigest()]}},
+        sort_keys=True).encode()
+    name = hashlib.sha256(config).hexdigest() + ".json"
+    manifest = json.dumps([{"Config": name, "RepoTags": [PROBE_REFERENCE], "Layers": ["layer.tar"]}])
+    return tar({"layer.tar": layer, name: config, "manifest.json": manifest.encode()})
+
+
+def _docker(target: PortainerTarget, method: str, path: str, body: "bytes | None" = None,
+            content_type: str = "application/json") -> "IO[bytes]":
+    """Open one call to the Docker API of the target's endpoint, through Portainer's proxy.
+
+    Returns the open response, for the caller to read as much of as it needs: an archive of a data
+    directory is the whole tree, and the probe wants its first header. Raises `urllib.error.HTTPError`
+    for an answer that is not 2xx and `OSError` for none at all; the caller decides what each one means.
+    """
+    request = urllib.request.Request(
+        f"{target.url}/api/endpoints/{target.endpoint_id}/docker{path}", method=method, data=body,
+        headers={"X-API-Key": target.token,
+                 **({"Content-Type": content_type} if body is not None else {})})
+    return urllib.request.urlopen(  # noqa: S310
+        request, timeout=_TIMEOUT_S, context=_context(target))
+
+
+def _said(error: BaseException) -> str:
+    """What a failed Docker call said - Docker's own `message` when it gave one."""
+    if isinstance(error, urllib.error.HTTPError):
+        detail = error.read().decode(errors="replace")[:300]
+        try:
+            detail = str(json.loads(detail).get("message", detail))
+        except (ValueError, AttributeError):
+            pass
+        return f"{error.code} {detail}".strip()
+    return str(error) or type(error).__name__
+
+
+def _ensure_probe_image(target: PortainerTarget) -> None:
+    """Load the empty probe image when the endpoint's daemon does not have it. Raises when it cannot."""
+    try:
+        with _docker(target, "GET", f"/images/{PROBE_REFERENCE}/json"):
+            return
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    with _docker(target, "POST", "/images/load?quiet=1", _probe_image(), "application/x-tar") as answer:
+        answer.read()
+
+
+def _stat(target: PortainerTarget, path: str) -> "tuple[tarfile.TarInfo | None, str]":
+    """The carrier's own view of `path`: (its tar header, "") when it exists, (None, "") when it does
+    not, and (None, why) when the probe could not tell - three values, never two."""
+    from simplon.kernel import log
+
+    spec = {"Image": PROBE_REFERENCE, "Cmd": ["probe"], "NetworkDisabled": True,
+            "Labels": {PROBE_LABEL: "directories"},
+            "HostConfig": {"Mounts": [{"Type": "bind", "Source": path, "Target": _PROBE_TARGET,
+                                       "ReadOnly": True}]}}
+    try:
+        with _docker(target, "POST", "/containers/create", json.dumps(spec).encode()) as answer:
+            container = str(json.loads(answer.read())["Id"])
+    except urllib.error.HTTPError as error:
+        said = _said(error)
+        return (None, "") if error.code == 400 and _MISSING in said else (None, f"Docker answered {said}")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return None, f"the probe container could not be created ({_said(error)})"
+    try:
+        with _docker(target, "GET", f"/containers/{container}/archive?path={_PROBE_TARGET}") as answer:
+            with tarfile.open(fileobj=answer, mode="r|") as archive:
+                header = archive.next()
+        if header is None:
+            return None, "Docker answered with an empty archive"
+        return header, ""
+    except (OSError, tarfile.TarError) as error:
+        return None, f"its archive could not be read ({_said(error)})"
+    finally:
+        try:
+            with _docker(target, "DELETE", f"/containers/{container}?force=1"):
+                pass
+        except OSError as error:
+            log.warn(f"directory check: the probe container {container[:12]} (label {PROBE_LABEL}) "
+                     f"could not be removed ({_said(error)}). It never ran and bound nothing writable")
+
+
+def _wrong(directory: "Directory", seen: "tarfile.TarInfo") -> str:
+    """What is wrong with a directory that exists, or "" when it is as declared."""
+    if not seen.isdir():
+        return f"{directory.path} is not a directory"
+    found = []
+    if (directory.uid is not None and seen.uid != directory.uid) or (
+            directory.gid is not None and seen.gid != directory.gid):
+        found.append(f"is owned by {seen.uid}:{seen.gid}, declared {directory.owner()}")
+    mode = seen.mode & 0o7777
+    if directory.mode is not None and mode != directory.mode:
+        found.append(f"has mode 0{mode:o}, declared 0{directory.mode:o}")
+    return f"{directory.path} {' and '.join(found)}" if found else ""
+
+
+def _install(directory: "Directory") -> str:
+    """The one line that makes the directory as declared, for the refusal's way out."""
+    owner = "" if directory.uid is None else f" -o {directory.uid}"
+    group = "" if directory.gid is None else f" -g {directory.gid}"
+    mode = "" if directory.mode is None else f" -m 0{directory.mode:o}"
+    return f"install -d{owner}{group}{mode} {directory.path}"
+
+
+def check_directories(target: PortainerTarget, env: "Environment") -> None:
+    """Refuse a deployment whose bind-mount directories are not on the carrier as declared (si#782).
+
+    WHY BEFORE: Docker would create a missing one as root at stack start, and the service would die on
+    the far side of the seam with "unable to open database file" - after the stack exists. Every
+    directory is checked and every wrong one named in ONE refusal; an operator repairing eight
+    directories one run at a time is being made to do the kernel's work.
+
+    A directory the probe could not tell about is said by name and refuses nothing - it is neither ready
+    nor missing - and when the probe image cannot be put on the endpoint at all, nothing is checked and
+    that is said once, naming every directory that went unchecked.
+    """
+    from simplon.kernel import log
+
+    if not env.directories:
+        return
+    try:
+        _ensure_probe_image(target)
+    except OSError as error:
+        log.warn(f"directory check did not run: the probe image could not be found or loaded on endpoint "
+                 f"{target.endpoint_id} of {target.url} ({_said(error)}), so none of "
+                 f"{', '.join(d.path for d in env.directories)} was checked")
+        return
+    wrong: list[str] = []
+    fixes: list[str] = []
+    unchecked = 0
+    for directory in env.directories:
+        seen, why = _stat(target, directory.path)
+        if why:
+            unchecked += 1
+            log.warn(f"directory check: could not tell whether {directory.path} is ready on the "
+                     f"carrier: {why}")
+            continue
+        problem = f"{directory.path} is missing" if seen is None else _wrong(directory, seen)
+        if problem:
+            wrong.append(problem)
+            if seen is None or seen.isdir():  # `install -d` fixes an existing directory, not a file
+                fixes.append(_install(directory))
+    if wrong:
+        raise PortainerError(
+            f"environment '{env.name}': {'; '.join(wrong)} on the carrier behind {target.url}, so the "
+            f"stack was not touched - Docker would create a missing directory as root, and a service "
+            f"running as another user fails at start. `deploy carrier` creates them on a carrier the "
+            f"kernel builds; on any other, run on the carrier: "
+            f"{'; '.join(fixes) or 'nothing until the file standing at that path is moved away'}")
+    ready = len(env.directories) - unchecked
+    if ready:
+        log.ok(f"{ready} of {len(env.directories)} declared director"
+               f"{'y' if len(env.directories) == 1 else 'ies'} ready on the carrier")
