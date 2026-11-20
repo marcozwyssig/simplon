@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 
 from simplon.adapters import backend, devcontainer, githubpackages, portainer
 from simplon.manifest import context, deployment, environments
 from simplon.kernel import log
+from simplon.model import artifactschema, carrierspec
 from simplon.tasks import image
 
 
@@ -158,3 +160,47 @@ def down(version: str = "") -> int:
     env = _environment()
     log.info(f"destroying {env.name} ({env.backend})")
     return backend.resolve(env, drivable_backends()).destroy(env)
+
+
+#: THE TASKS WHOSE NAMES THE KERNEL DERIVES (si#810), each with whether its body deploys (`up`) or destroys
+#: (`down`). Read off the catalogue's own body table rather than typed, so the coordinates are whatever
+#: `deploy:up`/`deploy:down` are bound to. `deploy:carrier` is not here: it reads `<url_from>_PASSWORD` and
+#: the Proxmox token, which is a different reader and was not part of the decision.
+READS: dict[str, bool] = {coordinate: ref == f"{__name__}:up" for coordinate, ref in artifactschema.BODIES.items()
+                          if ref in (f"{__name__}:up", f"{__name__}:down")}
+
+
+def variables_read(data: Mapping[str, object], task: str) -> tuple[str, ...]:
+    """The variable NAMES `task` reads out of the environment it runs in, derived from this manifest, or ()
+    for a task this module does not run (si#810).
+
+    THE GAP IT CLOSES. On the container route the launcher forwards only names somebody declared, and the
+    names `deploy:up` reads - the carrier's `<url_from>_URL`/`_TOKEN` and its ghcr.io credential, the
+    repository's `credential_from:` pair, the environment's `required:` and `optional:` - are declared in
+    the manifest already, as carriers and environments. A product that did not repeat them under `env:
+    pass:` met "PORTAINER_URL, PORTAINER_TOKEN missing" on the container route only. Decided by Marco
+    2026-11-20: the kernel derives them; the product re-renders its launchers.
+
+    Every `backend: portainer` environment counts, not only the one a run targets: the launcher is rendered
+    once for all of them. Another backend contributes nothing, because the kernel does not know what a
+    backend it does not ship reads. A manifest with no `cd: environments:` (a client install) derives
+    nothing; a malformed one is refused by `parse_data`, with its own sentence.
+    """
+    deploying = READS.get(task)
+    if deploying is None or environments.matrix_section(data)["environments"] is None:
+        return ()
+    registry = environments.parse_data(data)
+    carriers = carrierspec.declared(data)
+    names = (name for env in registry.environments.values() if env.backend == portainer.BACKEND
+             for name in portainer.variables_read(env, carriers, deploying=deploying))
+    return tuple(dict.fromkeys(names))
+
+
+def variables_kept(*tasks: str) -> tuple[str, ...]:
+    """`variables_read` for each of `tasks` against the running product's manifest, each name once - what a
+    command bound to one of them keeps when the kernel confines it (`launcherenv.confine`, si#810). Asks
+    nothing of the manifest unless one of `tasks` is in `READS`."""
+    if not any(task in READS for task in tasks):
+        return ()
+    data = context.current().manifest_data()
+    return tuple(dict.fromkeys(name for task in tasks for name in variables_read(data, task)))

@@ -301,8 +301,12 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
         # si#492: this command's `env: pass:` reaches its own `toolchain:run` line and no other command's.
         run = (lambda: launcherenv.within(spec.env_pass, guarded)) if spec.env_pass else guarded
         listed_run = (lambda: bound.within(listed, run)) if listed else run
-        # si#757: and every name the launcher forwarded that this command did not declare is unset first.
-        raise typer.Exit(code=listed_run() if keeps_all else launcherenv.confined(spec.env_pass, listed_run))
+        # si#757: and every name the launcher forwarded that this command did not declare is unset first;
+        # si#810: beside what the kernel derives for its task (`deploy:up` reads its carrier's names).
+        if keeps_all:
+            raise typer.Exit(code=listed_run())
+        keep = (*spec.env_pass, *_derived(spec.task))
+        raise typer.Exit(code=launcherenv.confined(keep, listed_run))
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
     # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and
@@ -328,6 +332,22 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
         callback.__annotations__ = {name: ann for name, ann in callback.__annotations__.items()
                                     if name not in stripped}
     return callback
+
+
+def _derived(*tasks: str) -> tuple[str, ...]:
+    """The names the kernel derives for `tasks` from the running product's manifest (si#810): what a command
+    bound to `deploy:up` keeps of the launcher's list although it declares no `env: pass:`. Imported when a
+    command runs rather than at the top, so assembling the CLI does not load the deploy module's adapters."""
+    from simplon.tasks import deploy
+
+    return deploy.variables_kept(*tasks)
+
+
+def _plan_keep(mf: manifest.Manifest, name: str, group: str) -> tuple[str, ...]:
+    """What an aggregate keeps (si#757): every planned leaf's `env: pass:` and what the kernel derives for
+    every planned leaf's task (si#810)."""
+    tree = mf.plan_tree_for(name, group=group)
+    return (*launcherenv.of_plan(tree), *_derived(*launcherenv.tasks_of_plan(tree)))
 
 
 def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: Command,
@@ -359,7 +379,7 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: Comman
 
     def _aggregate() -> None:
         # si#757: the plan's leaves run as processes that inherit this one's environment, so it keeps theirs.
-        keep = launcherenv.of_plan(mf.plan_tree_for(name, group=group))
+        keep = _plan_keep(mf, name, group)
         raise typer.Exit(code=launcherenv.confined(keep, lambda: run_command(name, mf, step_context,
                                                                              group=group)))
 
@@ -460,7 +480,7 @@ def _passing_aggregate(mf: manifest.Manifest, group: str, name: str, spec: Aggre
             annotation=str if required else (str | None)))
 
     def _aggregate(**values: object) -> None:
-        keep = launcherenv.of_plan(mf.plan_tree_for(name, group=group))     # si#757, as `_command_callback`
+        keep = _plan_keep(mf, name, group)     # si#757, as `_command_callback`
         raise typer.Exit(code=launcherenv.confined(keep, lambda: run_command(
             name, mf, step_context, group=group, leaf_args=leaf_arguments(takers, values))))
 
@@ -797,8 +817,12 @@ def main(*, app: typer.Typer, context: ProductContext,
     # unset - indistinguishable from one the host never set. `DELIVERY_ROUTE=inside` is the launcher's
     # own statement that this is that route; the venv route has no container and nothing to compare.
     if os.environ.get("DELIVERY_ROUTE") == "inside":
+        from simplon.tasks import deploy     # si#810: the names it derives are on the launcher's list too
+
+        data = context.manifest_data()
         stale = launcherenv.stale_launcher(
-            launcherenv.declared(context.manifest_data(), str(context.manifest_path)),
+            launcherenv.declared(data, str(context.manifest_path),
+                                 derive=lambda task: deploy.variables_read(data, task)),
             os.environ, launcher(context.name))
         if stale:
             log.die(stale)

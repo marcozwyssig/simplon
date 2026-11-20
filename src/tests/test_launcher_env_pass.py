@@ -331,7 +331,7 @@ def test_the_launchers_list_is_the_union_of_the_task_commands_lists(tmp_path):
         "y: { task: x }", "y: { task: x, env: { pass: [SHARED, OTHER] } }"))
 
     # act / assert: in the order written, each name once
-    assert launcherenv.declared(doc) == ("VSCE_PAT", "SHARED", "OTHER")
+    assert launcherenv.declared(doc, derive=lambda task: ()) == ("VSCE_PAT", "SHARED", "OTHER")
 
 
 def test_each_member_of_an_aggregate_keeps_its_own_list():
@@ -355,7 +355,7 @@ def test_the_launchers_union_leaves_an_aggregates_env_out():
     text = _doc(env=", env: { pass: [VSCE_PAT] }", aggregate_env=", env: { pass: [AGGREGATE_ONLY] }")
 
     # act / assert
-    assert launcherenv.declared(yaml.safe_load(text)) == ("VSCE_PAT",)
+    assert launcherenv.declared(yaml.safe_load(text), derive=lambda task: ()) == ("VSCE_PAT",)
 
 
 def test_an_env_on_an_aggregate_is_refused_and_points_at_the_members():

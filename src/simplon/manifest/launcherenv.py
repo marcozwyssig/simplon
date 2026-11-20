@@ -49,6 +49,13 @@ therefore also exports the list it was rendered with, as `DELIVERY_ENV_PASS`, an
 a run on the container route whose launcher disagrees with the manifest's union. The venv route has no container
 and inherits the caller's whole environment, so there is nothing to compare there.
 
+NAMES THE MANIFEST ALREADY DECLARES ARE DERIVED, NOT REPEATED (si#810, decided by Marco 2026-11-20). A
+command bound to `deploy:up` reads the carrier's `<url_from>_*`, the clone credential and the environment's
+`required:`/`optional:`, all named in the manifest already. `declared` takes them from a `derive` its
+callers hand in (`tasks.deploy.variables_read`, above this layer), so they are on the launcher's list and
+in the stale check; the dispatch wrappers add them to that command's keep-list for `confine`, and to no
+other command's.
+
 THE NAMES THE LAUNCHER SETS ITSELF ARE REFUSED, and they are read off the launcher templates rather than
 typed a second time here: every `-e NAME=...` the container line writes, plus the `LAUNCH_` namespace the
 launcher's own parameters live in. Forwarding the host's `HOME` or `PYTHONPATH` over the launcher's would
@@ -164,13 +171,31 @@ def of_command(env: object, where: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-def declared(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
-    """The UNION of every task command's `env: pass:` in this document, in the order written, or () when
-    none says anything - the names the launcher forwards into the kernel's container.
+def forwardable(name: str) -> bool:
+    """Whether the launcher can forward `name` by name at all: a POSIX name it does not set itself."""
+    return bool(_NAME.match(name)) and not _kernel_owned(name)
+
+
+def declared(data: Mapping[str, object], source: str = "manifest", *,
+             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+    """The UNION of every task command's `env: pass:` in this document, and of the names the kernel derives
+    for its task (si#810), in the order written, or () when there are none - the names the launcher
+    forwards into the kernel's container.
 
     Read off the raw document, because two of its readers have no loaded manifest: the launcher renderer
     (`simplon init --launchers-only`) and the container-route check, which runs before the CLI is
     assembled. An aggregate's list is not in it: an aggregate runs no `toolchain:run` line (si#492).
+
+    `derive(task)` is the names a kernel task reads that this same document already declares elsewhere -
+    `tasks.deploy.variables_read` over it, for `deploy:up` and `deploy:down` (si#810). It is handed in
+    because the readers live above this layer, and it is REQUIRED so that neither caller can render or
+    check a list without it: the launcher and the stale check disagreeing would refuse every run. It is
+    asked only for a task a command is bound to, so a document whose commands bind no such task reads no
+    environment at all. It takes the task and not the document, so the census's section walk follows the
+    document into the reader by name at the caller (`test_every_hand_off_of_the_document_is_followed`). A
+    derived name
+    the launcher could not forward by name (`HOME`, or no variable name at all) is left out rather than
+    refused - the manifest that wrote it wrote it for the deployment, not for the launcher.
     """
     check_retired(data, source)
     _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
@@ -181,7 +206,9 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> tuple[str,
                 continue
             parts = group.split(".")
             where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
-            for passed in of_command(spec.get(KEY), where):
+            task = spec.get("task")
+            derived = derive(task) if isinstance(task, str) else ()
+            for passed in (*of_command(spec.get(KEY), where), *filter(forwardable, derived)):
                 if passed not in out:
                     out.append(passed)
     return tuple(out)
@@ -230,6 +257,17 @@ def of_plan(tree: object) -> tuple[str, ...]:
         for name in getattr(leaf.spec, "env_pass", ()):
             if name not in out:
                 out.append(name)
+    return tuple(out)
+
+
+def tasks_of_plan(tree: object) -> tuple[str, ...]:
+    """The task every planned leaf is bound to, in plan order, each once - what an aggregate's derived names
+    (si#810) are asked for, beside its leaves' own lists (`of_plan`)."""
+    out: list[str] = []
+    for leaf in tree.leaves():      # type: ignore[attr-defined]
+        task = getattr(leaf.spec, "task", "")
+        if task and task not in out:
+            out.append(task)
     return tuple(out)
 
 
@@ -284,7 +322,8 @@ def stale_launcher(declared_names: tuple[str, ...], environ: Mapping[str, str], 
         said.append(f"does not forward {', '.join(missing)}")
     if extra:
         said.append(f"still forwards {', '.join(extra)}")
-    return (f"{launcher} was rendered for different names than the commands' `env: pass:` lists declare: it "
+    return (f"{launcher} was rendered for different names than the manifest declares (the commands' `env: "
+            f"pass:` lists, and what a `deploy:up`/`deploy:down` command reads off its environments): it "
             f"{' and '.join(said)}. A variable it does not forward would arrive here unset, which looks "
             f"exactly like one the host never set. Re-render the launchers at the product root with "
             f"`{FIX}` and run again. (Only the container route checks this: the venv route has no "
