@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 275 | nothing - the declaration had no working meaning |
-| expression rule | 46 | something it could otherwise have said |
-| **all load-time refusals** | **321** | |
+| diagnosis | 281 | nothing - the declaration had no working meaning |
+| expression rule | 47 | something it could otherwise have said |
+| **all load-time refusals** | **328** | |
 
 si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
 `env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus
@@ -91,6 +91,14 @@ si#590 added one diagnosis: a key the `claude:` section, or one of its marketpla
 read. It was ignored before, so `auto_instal: false` left the automatic install on and `rev:` left a
 marketplace unpinned, and neither said so. The message names the keys the section takes. Over the nine
 reachable manifests it refuses none.
+
+si#781 added six diagnoses and one expression rule, all on a carrier's new `runner:` half. A runner
+with no `repository:` or no `token_from:` registers nowhere, a repository written as a URL registers at
+`https://github.com/https://...`, a label that is not a string is no label, and a `runner:` on a carrier
+with no `proxmox:` states a runner no command could install. The expression rule is a bare owner:
+`config.sh` would register an organisation runner with it, so the refused manifest would have worked. It
+stands because organisation registration is unmeasured and was not asked for; every runner this account
+has is registered on a repository (#338). No reachable manifest declares a `runner:`, so it refuses none.
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
 `release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
@@ -199,7 +207,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 39 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 40 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

@@ -367,3 +367,76 @@ def test_the_deploy_path_never_reads_the_machine_half():
         carrier, "some-stack", environ={"PORTAINER_URL": "https://p:9443", "PORTAINER_TOKEN": "t"})
 
     assert target.stack_name == "some-stack"
+
+
+# --- si#781: a carrier may declare a self-hosted actions runner -------------------------------------
+
+RUNNER_MACHINE = {"node": "pve1", "kind": "lxc"}
+
+
+def test_a_runner_half_is_read_with_the_repository_it_registers_on():
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE,
+            "runner": {"repository": "marcozwyssig/biz-cockpit", "labels": ["cockpit", "x64"],
+                       "token_from": "COCKPIT"}}
+
+    # act
+    carrier = carrierspec.declared({"carriers": {"cockpit-runner": spec}}, "x")["cockpit-runner"]
+
+    # assert
+    assert carrier.runner == carrierspec.Runner(repository="marcozwyssig/biz-cockpit",
+                                                labels=("cockpit", "x64"), token_from="COCKPIT")
+    assert carrier.portainer is None
+
+
+def test_a_runner_that_names_no_label_carries_the_carriers_name():
+    """`runners.resolve` refuses a self-hosted job with no label of its own, so a runner registered with
+    only GitHub's defaults could never be reached by a generated workflow. The carrier's name is a label
+    nobody has to invent, and it is the runner's name too."""
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "runner": {"repository": "o/r", "token_from": "P"}}
+
+    # act
+    carrier = carrierspec.declared({"carriers": {"ghr-9": spec}}, "x")["ghr-9"]
+
+    # assert
+    assert carrier.runner.labels == ("ghr-9",)
+
+
+def test_a_single_runner_label_may_be_a_string():
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "runner": {"repository": "o/r", "token_from": "P", "labels": "one"}}
+
+    # act / assert
+    assert carrierspec.declared({"carriers": {"c": spec}}, "x")["c"].runner.labels == ("one",)
+
+
+@pytest.mark.parametrize("runner, fragment", [
+    ({"token_from": "P"}, "declares no `repository:`"),
+    ({"repository": "https://github.com/o/r", "token_from": "P"}, "is not an owner/name pair"),
+    ({"repository": "o/r/x", "token_from": "P"}, "is not an owner/name pair"),
+    ({"repository": "o", "token_from": "P"}, "names an owner and no repository"),
+    ({"repository": "o/r"}, "declares no `token_from:`"),
+    ({"repository": "o/r", "token_from": "P", "labels": [1]}, "is not a label"),
+    ({"repository": "o/r", "token_from": "P", "labels": {"a": 1}}, "is a label or a list of labels"),
+    ({"repository": "o/r", "token_from": "P", "token": "ghp_x"}, "does not take token"),
+])
+def test_every_broken_runner_half_is_refused_by_the_line_it_names(runner, fragment):
+    # arrange
+    document = {"carriers": {"c": {"proxmox": RUNNER_MACHINE, "runner": runner}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match=fragment):
+        carrierspec.declared(document, "x")
+
+
+def test_a_runner_without_a_machine_is_refused_because_nothing_could_install_it():
+    """`deploy carrier` installs a runner on the machine it has just made; with no `proxmox:` there is no
+    such machine, and the half would sit in the file with no command ever reading it."""
+    # arrange
+    document = {"carriers": {"c": {"portainer": {"url_from": "P"},
+                                   "runner": {"repository": "o/r", "token_from": "P"}}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="is installed only on a machine the kernel makes"):
+        carrierspec.declared(document, "x")

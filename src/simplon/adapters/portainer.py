@@ -99,6 +99,18 @@ SETTLE_TIMEOUT_S = 600.0
 _POLL_S = 2.0
 
 
+#: What a carrier's `url_from:` prefix gains to name Portainer's address and its API token: `url_from: HAUS`
+#: means `HAUS_URL` and `HAUS_TOKEN`. Written once, because two readers spell them: `from_carrier`, which
+#: reads them, and `variables_read`, which tells the launcher to forward them (si#810).
+URL_SUFFIX = "_URL"
+TOKEN_SUFFIX = "_TOKEN"
+
+
+def target_variables(url_from: str) -> "tuple[str, str]":
+    """The (url, token) variable NAMES a carrier's `url_from:` prefix stands for."""
+    return f"{url_from}{URL_SUFFIX}", f"{url_from}{TOKEN_SUFFIX}"
+
+
 class PortainerError(RuntimeError):
     """A failure the caller can print as a sentence, not as a traceback."""
 
@@ -133,16 +145,17 @@ class PortainerTarget:
                 f"or point this environment at a backend the product registers itself")
         source = dict(os.environ if environ is None else environ)
         prefix = carrier.portainer.url_from
-        for suffix in ("_URL", "_TOKEN"):
+        url_var, token_var = target_variables(prefix)
+        for suffix in (URL_SUFFIX, TOKEN_SUFFIX):
             if source.get(f"{prefix}{suffix}") and not source.get(f"PORTAINER{suffix}"):
                 source[f"PORTAINER{suffix}"] = source[f"{prefix}{suffix}"]
         target = PortainerTarget.from_env(
             carrier.name, stack_name, environ=source,
             secrets_hint=f"The carrier names `url_from: {prefix}`, so it is read from "
-                         f"{prefix}_URL and {prefix}_TOKEN.")
+                         f"{url_var} and {token_var}.")
         return replace(target, endpoint_id=carrier.portainer.endpoint,
                        insecure=carrier.portainer.insecure,
-                       registry_from=f"{prefix}{REGISTRY_SUFFIX}")
+                       registry_from=registry_prefix(prefix))
 
     @staticmethod
     def from_env(
@@ -277,6 +290,11 @@ _REGISTRY_WAY_OUT = (
 #: PASSWORD rather than a third spelling: the git clone credential (`credential_from:`) is a token in a
 #: `_PASSWORD` already.
 REGISTRY_SUFFIX = "_GHCR"
+
+
+def registry_prefix(url_from: str) -> str:
+    """The credential PREFIX the ghcr.io registry entry is created from, for a carrier's `url_from:`."""
+    return f"{url_from}{REGISTRY_SUFFIX}"
 
 #: Portainer's `RegistryType` for a custom registry: 3 in `api/portainer.go` and in the payload doc of
 #: `api/http/handler/registries/registry_create.go`, both read at tag 2.45.0. `GithubRegistry` (8) exists
@@ -783,6 +801,37 @@ def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None)
             f"instance ends up running somewhere nobody is looking")
     return {name: value(name)
             for name in (*env.required, *env.optional) if value(name)}
+
+
+def variables_read(env: "Environment", carriers: "Mapping[str, Carrier]", *,
+                   deploying: bool) -> tuple[str, ...]:
+    """Every variable NAME a deploy (`deploying`) or a destroy of `env` reads out of the environment the
+    command runs in, derived from the manifest - the names the launcher has to forward for it (si#810).
+
+    ONE ANSWER PER READER BELOW, each from the reader's own spelling, so a reader that gains a name gains
+    it here by the same edit: `from_carrier` (`target_variables`), `_ensure_registry` (`registry_prefix`
+    through `credentials.variables`), `_clone_credential` (`credentials.variables` of `credential_from:`)
+    and `stack_values` (`required:` and `optional:`). A destroy only finds the stack, so it reads the
+    target and nothing else.
+
+    NOT HERE, ON PURPOSE: `PORTAINER_URL`/`PORTAINER_TOKEN` as the fallback `from_env` reads when the
+    prefixed names are unset, `PORTAINER_ENDPOINT_ID` and `PORTAINER_STACK`. No manifest names them, so
+    nothing derives them; a carrier writing `url_from: PORTAINER` gets the first two by derivation anyway.
+    """
+    from simplon.adapters import credentials
+
+    names: list[str] = []
+    carrier = carriers.get(env.carrier) if env.carrier else None
+    if carrier is not None and carrier.portainer is not None:
+        url_from = carrier.portainer.url_from
+        names += target_variables(url_from)
+        if deploying:
+            names += credentials.variables(registry_prefix(url_from))
+    if deploying:
+        if env.repository is not None and env.repository.credential_from:
+            names += credentials.variables(env.repository.credential_from)
+        names += [*env.required, *env.optional]
+    return tuple(dict.fromkeys(names))
 
 
 def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":

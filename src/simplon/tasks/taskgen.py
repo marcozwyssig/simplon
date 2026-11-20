@@ -23,7 +23,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from simplon.manifest import bound, clitaxonomy, launcherenv, results, signatures
 from simplon.model import task
-from simplon.tasks import testrun
+from simplon.tasks import deploy, testrun
 from simplon.model.command import AggregateCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.model.task import resolve_ref
@@ -162,10 +162,13 @@ def render(manifest: Manifest, *, source: str, product: str,
     uses_results = False
     uses_bound = False
     # si#757: a manifest whose commands pass no name has nothing for a launcher to forward, so its module
-    # stays as it was; otherwise every command is confined to the names it (or its plan) declares.
-    passes_any = any(isinstance(spec, TaskCommand) and spec.env_pass
+    # stays as it was; otherwise every command is confined to the names it (or its plan) declares. si#810: a
+    # command bound to a task the kernel derives names for (`deploy:up`) makes the launcher forward them, so
+    # it counts as passing; what it derives is asked when it runs, so a changed environment needs no render.
+    passes_any = any(isinstance(spec, TaskCommand) and (spec.env_pass or spec.task in deploy.READS)
                      for members in manifest.commands.values() for spec in members.values())
     uses_env_pass = passes_any
+    uses_derived = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -216,7 +219,11 @@ def render(manifest: Manifest, *, source: str, product: str,
                 # si#757: every name the launcher forwarded that this command did not declare is unset first;
                 # a body that runs gates calls other commands' bodies here, so it keeps them all.
                 if passes_any and not testrun._runs_gates(impl_body):
-                    wrapped = f"_launcherenv.confined({spec.env_pass!r}, lambda: {wrapped})"
+                    keep = repr(spec.env_pass)
+                    if spec.task in deploy.READS:
+                        uses_derived = True
+                        keep = f"{keep} + _deploy.variables_kept({spec.task!r})"
+                    wrapped = f"_launcherenv.confined({keep}, lambda: {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": wrapped})
@@ -236,8 +243,13 @@ def render(manifest: Manifest, *, source: str, product: str,
                 has_aggregate = True
                 call = f"_plan({name!r}, {group!r})"
                 if passes_any:
-                    keep = launcherenv.of_plan(manifest.plan_tree_for(name, group=group))
-                    call = f"_launcherenv.confined({keep!r}, lambda: {call})"
+                    tree = manifest.plan_tree_for(name, group=group)
+                    keep = repr(launcherenv.of_plan(tree))
+                    derived = tuple(t for t in launcherenv.tasks_of_plan(tree) if t in deploy.READS)
+                    if derived:
+                        uses_derived = True
+                        keep = f"{keep} + _deploy.variables_kept({', '.join(map(repr, derived))})"
+                    call = f"_launcherenv.confined({keep}, lambda: {call})"
                 tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "", "call": call})
 
     if has_aggregate:
@@ -321,7 +333,7 @@ def render(manifest: Manifest, *, source: str, product: str,
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
                                                 tasks=tasks, body=body, covered=covered,
                                                 has_aggregate=has_aggregate, uses_results=uses_results, uses_bound=uses_bound,
-                                                uses_env_pass=uses_env_pass)
+                                                uses_env_pass=uses_env_pass, uses_derived=uses_derived)
 
 
 def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:

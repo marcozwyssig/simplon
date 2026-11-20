@@ -478,6 +478,181 @@ def test_pulumi_is_execed_so_the_signal_the_client_forwards_reaches_pulumi_itsel
     assert script.endswith("&& exec pulumi up --yes --non-interactive"), script
 
 
+# --- si#781: the runner half - a pinned, registered self-hosted actions runner ----------------------
+
+RUNNER = carrierspec.Carrier(
+    name="cockpit-runner",
+    proxmox=MACHINE.proxmox,
+    runner=carrierspec.Runner(repository="marcozwyssig/biz-cockpit", labels=("cockpit-runner", "x64"),
+                              token_from="COCKPIT"),
+)
+
+#: A value no rendered file and no command line may ever carry.
+TOKEN = "AREGISTRATIONTOKEN-nobody-should-find"
+
+
+def _runner_play() -> dict:
+    import yaml
+
+    (play,) = yaml.safe_load(carrier.runner_play(RUNNER))
+    return play
+
+
+def test_a_missing_registration_token_is_a_diagnosis_naming_the_variable(monkeypatch, capsys):
+    # arrange
+    monkeypatch.delenv("COCKPIT_RUNNER_TOKEN", raising=False)
+
+    # act
+    with pytest.raises(SystemExit):
+        carrier.runner_token(RUNNER)
+
+    # assert
+    message = capsys.readouterr().err
+    assert "COCKPIT_RUNNER_TOKEN is not set" in message
+    assert "repos/marcozwyssig/biz-cockpit/actions/runners/registration-token" in message, (
+        "the diagnosis names the way out: where a registration token comes from")
+
+
+def test_the_token_is_refused_before_the_machine_is_made(monkeypatch, tmp_path):
+    """The check belongs before Pulumi runs: a machine made and then left without its runner is the
+    half-done outcome the Portainer password check already prevents for its own half."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, RUNNER, seen)
+    monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: seen.append("pulumi") or 0)
+    monkeypatch.delenv("COCKPIT_RUNNER_TOKEN", raising=False)
+
+    # act
+    with pytest.raises(SystemExit):
+        carrier.up("prod")
+
+    # assert
+    assert seen == []
+
+
+def test_a_carrier_that_declares_a_runner_gets_one(monkeypatch, tmp_path):
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, RUNNER, seen)
+    monkeypatch.setenv("COCKPIT_RUNNER_TOKEN", TOKEN)
+    monkeypatch.setenv(carrier.SSH_KEY_ENV, str(tmp_path / "key"))
+    (tmp_path / "key").write_text("notarealkey\n", encoding="utf-8")
+
+    # act
+    rc = carrier.up("prod")
+
+    # assert
+    assert rc == 0
+    assert seen == ["ansible"]
+
+
+def test_the_token_reaches_no_rendered_file_and_no_command_line(_lines, monkeypatch, tmp_path):
+    """The acceptance's own words, for the half that can be measured here: the kernel's side of the run.
+    Every file `_ansible` renders is read back, and the docker argv with it."""
+    # arrange
+    monkeypatch.setenv("COCKPIT_RUNNER_TOKEN", TOKEN)
+
+    # act
+    carrier._ansible(RUNNER, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+
+    # assert
+    rendered = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert rendered, "the play has to have been rendered for this to say anything"
+    assert [p.name for p in rendered if TOKEN in p.read_text(encoding="utf-8")] == []
+    (argv,) = _lines
+    assert not any(TOKEN in arg for arg in argv)
+    assert argv[argv.index("COCKPIT_RUNNER_TOKEN") - 1] == "-e", (
+        "the variable crosses into the Ansible container by NAME, `docker run -e NAME`")
+    assert "lookup('env', 'COCKPIT_RUNNER_TOKEN')" in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+
+
+def test_the_registration_reads_the_token_from_stdin_and_logs_nothing():
+    """On the carrier's side: the token is the module's `stdin`, read by the shell into the one variable
+    the runner itself takes its arguments from and then deletes (`ACTIONS_RUNNER_INPUT_TOKEN`), so it is
+    on no argv there either. `no_log` keeps it out of Ansible's own output."""
+    # arrange
+    play = _runner_play()
+
+    # act
+    (register,) = [t for t in play["tasks"] if "config.sh" in str(t.get("ansible.builtin.command", ""))]
+
+    # assert
+    command = register["ansible.builtin.command"]
+    assert register["no_log"] is True
+    assert command["stdin"] == "{{ runner_token }}"
+    assert "runner_token" not in " ".join(command["argv"])
+    assert "ACTIONS_RUNNER_INPUT_TOKEN" in " ".join(command["argv"])
+    assert "--token" not in " ".join(command["argv"])
+
+
+def test_the_play_is_pipelined_so_no_module_argument_lands_in_a_file_on_the_carrier():
+    """Without pipelining Ansible copies every module, ARGUMENTS INCLUDED, into ~/.ansible/tmp on the
+    target before running it - and the registration's arguments carry the token."""
+    # act / assert
+    assert _runner_play()["vars"]["ansible_pipelining"] is True
+
+
+def test_the_runner_is_the_pinned_release_and_its_digest_is_checked():
+    # arrange
+    play = _runner_play()
+
+    # act
+    (download,) = [t["ansible.builtin.get_url"] for t in play["tasks"] if "ansible.builtin.get_url" in t]
+
+    # assert
+    assert play["vars"]["runner_version"] == carrier.RUNNER_VERSION
+    assert play["vars"]["runner_sha256"] == carrier.RUNNER_SHA256
+    assert download["checksum"] == "sha256:{{ runner_sha256[runner_arch] }}"
+    assert all(len(d) == 64 and int(d, 16) >= 0 for d in carrier.RUNNER_SHA256.values())
+
+
+def test_the_runner_registers_on_its_repository_with_its_labels_as_a_service():
+    # arrange
+    play = _runner_play()
+
+    # act
+    text = carrier.runner_play(RUNNER)
+
+    # assert
+    assert play["vars"]["runner_url"] == "https://github.com/marcozwyssig/biz-cockpit"
+    assert play["vars"]["runner_labels"] == "cockpit-runner,x64"
+    assert play["vars"]["runner_name"] == "cockpit-runner"
+    assert "./svc.sh install" in text
+    assert "Listening for Jobs" in text, "the play waits for the runner to say it is online"
+
+
+def test_the_machine_is_what_the_self_hosted_debian_kind_describes():
+    """`runners.TABLE['self-hosted-debian']`: the machine's own python3 builds the launcher's venv (so
+    `python3-venv`), and docker is reachable by the job's user."""
+    # arrange
+    play = _runner_play()
+
+    # act
+    packages = [t["ansible.builtin.apt"]["name"] for t in play["tasks"] if "ansible.builtin.apt" in t]
+    (user,) = [t["ansible.builtin.user"] for t in play["tasks"] if "ansible.builtin.user" in t]
+
+    # assert
+    assert {"docker.io", "python3", "python3-venv", "git"} <= set(packages[0])
+    assert "docker" in user["groups"]
+
+
+def test_each_half_renders_only_its_own_play(_lines, monkeypatch, tmp_path):
+    # arrange
+    monkeypatch.setenv("COCKPIT_RUNNER_TOKEN", TOKEN)
+    (tmp_path / "r").mkdir()
+
+    # act
+    carrier._ansible(RUNNER, "10.0.0.9", tmp_path / "r", tmp_path / "key", carrier.PORTAINER_PORT)
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+
+    # assert
+    runner_only = (tmp_path / "r" / "carrier.yml").read_text(encoding="utf-8")
+    portainer_only = (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    assert "portainer_image" not in runner_only and "runner_version" in runner_only
+    assert "runner_version" not in portainer_only and "portainer_image" in portainer_only
+    assert "COCKPIT_RUNNER_TOKEN" not in _lines[1], "a carrier without a runner passes no runner token"
+
+
 # --- si#802: the play reads the variable the kernel checked and forwarded -----------------------------
 
 def test_the_play_reads_the_password_under_the_prefix_the_carrier_names(_lines, monkeypatch, tmp_path):

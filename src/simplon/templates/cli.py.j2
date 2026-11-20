@@ -19,6 +19,9 @@ from simplon.manifest import launcherenv as _launcherenv
 {% if uses_results %}
 from simplon.manifest import results as _results
 {% endif %}
+{% if uses_derived %}
+from simplon.tasks import deploy as _deploy
+{% endif %}
 
 
 def _rc(value: int | None) -> int:
