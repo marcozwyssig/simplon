@@ -498,7 +498,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `artifacts:` | `release:artifact`, `build:nuget-pack`, `release:nuget`, `release:conan-*`, `build:maven-pack`, `release:maven`, `build:image`, `release:image`, `test:image` | one entry per artifact, each with its `kind:` (`image`, `directory`, `nuget`, `maven`, `conan`, ...) and that kind's keys - see [the kinds](../../with-what/kinds/) |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
-| `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
+| `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, the `portainer:` on it, and a self-hosted actions `runner:` |
 | `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
 | `ci:` | the loader | the `build:`, `test:` and `release:` commands |
 | `claude:` | `support:claude-plugins`, `support:install` | optional, and only what a product ADDS to simplon's plugin default (si#525): `plugins:` and the `marketplaces:` they need, `exclude:` for a default plugin it does not want, and `requires:`, executables its own plugins run. One missing from PATH makes the task fail (rc 1). A default or toolchain plugin whose own executable is missing (`gh` for github, `node` for token-optimizer, a language server for an LSP plugin) is not installed, and the run names the plugin and the executable and stays green; one already installed is left and named as unable to run (si#582). A marketplace declared under a default's name replaces that default, so `ref:` pins it too; one this machine registered from another repo or ref fails and names `claude plugin marketplace remove` as the way out (si#581). `auto_install: false` stops the launcher from installing missing plugins before any command after a deps refresh (si#525); then only an explicit `support install` or `support claude-plugins` installs (si#583). An absent section means the default |
@@ -1736,6 +1736,47 @@ wanted a machine got a workload it never asked for - and on a machine without `a
 
 **`backend: portainer` pointed at such a carrier is refused by name**, because that backend has nowhere
 to put its stack. The refusal names the carrier and both ways out.
+
+**`runner:` makes the machine a self-hosted GitHub Actions runner** (si#781), the machine
+`runner: { kind: self-hosted-debian }` describes to the workflow generator:
+
+```yaml
+carriers:
+  cockpit-runner:
+    proxmox: { ... }                      # the machine, as above
+    runner:
+      repository: you/myctl               # owner/name - the runner registers on this repository
+      labels: [cockpit-runner]            # may be left out: the carrier's name is the label
+      token_from: MYCTL                   # a PREFIX -> MYCTL_RUNNER_TOKEN; never the token itself
+```
+
+`deploy carrier` installs Docker, git and a `python3` that can make a venv, downloads actions/runner at
+the version the kernel pins and checks its sha256, registers it on the repository under the carrier's
+name with its labels, installs it as a service, and finishes only when the runner itself says it is
+listening for jobs. It runs as its own user, `actions-runner`, which may reach Docker.
+
+**The registration token is read from the environment** - `gh api -X POST
+repos/you/myctl/actions/runners/registration-token --jq .token` makes one, valid for an hour. A missing
+one stops the command before the machine is made, naming the variable. A re-run asks for one too, though
+a runner that is already registered does not use it: the kernel cannot know that before it has reached
+the machine.
+
+**The token is written to no file on either side and put on no command line.** It crosses into the
+Ansible container as `docker run -e NAME`, the play reads it with `lookup('env', ...)`, the play is
+pipelined so no module argument is copied to the carrier as a file, and the carrier's shell reads it from
+stdin into `ACTIONS_RUNNER_INPUT_TOKEN`, which the runner takes as its token and removes from its own
+environment. What the runner keeps after registering is its own credential, not this token.
+
+**`repository:` is one repository, `owner/name`.** A bare owner would register an organisation runner;
+that is refused, because nothing here has measured it. A `runner:` needs a `proxmox:` beside it - the
+runner is installed on the machine `deploy carrier` makes, and without one there is nothing to install it
+on.
+
+**The pin is what is installed, not what runs a month later.** A self-hosted runner updates itself when
+GitHub publishes a new version, and this half leaves that on: GitHub's own documentation says a runner
+with updates turned off must be updated within 63 days of a newer version (30 on GitHub Enterprise
+Server), and each version has a date after which it can no longer *register* at all - so the kernel's pin
+is bumped like every other one.
 
 ### `deploy:` - which version a deployment is deploying
 
