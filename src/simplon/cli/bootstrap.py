@@ -1186,7 +1186,7 @@ def launcher_orch_dir(name: str, target: Path, asked: str | None) -> str:
 
 def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
     """The names `<product>.yaml` at `target` passes through (its commands' `env: pass:`, si#492, and what
-    the kernel derives for a `deploy:up`/`deploy:down` command, si#810), for the launchers
+    the kernel derives for a `deploy:up`/`deploy:down`/`deploy:carrier` command, si#810/si#812), for the launchers
     `--launchers-only` renders. The manifest is READ, never written. One that is not there yields
     no names - the scaffold writes it beside the launchers, so a checkout without it has nothing to say - and
     one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
@@ -1204,7 +1204,7 @@ def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
         raise ValueError(f"simplon init --launchers-only: cannot read {path}: {exc}") from exc
     if not isinstance(data, dict):
         return ()
-    from simplon.tasks import deploy     # si#810: what `deploy:up`/`deploy:down` read, derived from the manifest
+    from simplon.tasks import deploy     # si#810/si#812: what the deploy tasks read, derived from the manifest
 
     return launcherenv.declared(data, str(path), derive=lambda task: deploy.variables_read(data, task))
 

@@ -166,6 +166,43 @@ def _backends(document: dict) -> tuple[str, ...]:
     return tuple(sorted(n for n in names if n)) or ("local",)
 
 
+def variables_read(document: dict) -> tuple[str, ...]:
+    """Every variable NAME `up` reads out of the environment it runs in, derived from the manifest - the names
+    the launcher has to forward for `deploy:carrier` on the container route (si#812, si#810's mechanism).
+
+    Each from its reader's own helper or constant: `password_variable` (`portainer_password`),
+    `runner_token_variable` (`runner_token`), `token_variable` (`_token`), `PASSPHRASE_ENV` (`_pulumi`) and
+    `SSH_KEY_ENV` (`up`, only for a carrier with something to install on the machine). Every environment's
+    carrier counts, whatever backend drives the environment, because the launcher is rendered once for all
+    of them; a carrier with no `proxmox:` reads nothing, since
+    `_carrier_of` refuses it. A carrier this document does not declare is left to `_carrier_of` to refuse.
+    """
+    if environments.matrix_section(document)["environments"] is None:
+        return ()
+    declared = carrierspec.declared(document)
+    registry = environments.parse_data(document, _backends(document))
+    names: list[str] = []
+    for environment in registry.environments.values():
+        carrier = declared.get(environment.carrier) if environment.carrier else None
+        if carrier is None or carrier.proxmox is None:
+            continue
+        if carrier.portainer is not None:
+            names.append(password_variable(carrier))
+        if carrier.runner is not None:
+            names.append(runner_token_variable(carrier))
+        if carrier.proxmox.token_from:
+            names.append(token_variable(carrier.proxmox))
+        names.append(PASSPHRASE_ENV)
+        if carrier.portainer is not None or carrier.runner is not None:
+            names.append(SSH_KEY_ENV)
+    return tuple(dict.fromkeys(names))
+
+
+def token_variable(machine: carrierspec.Proxmox) -> str:
+    """The NAME the Proxmox API token is read from: `token_from: PROXMOX` means `PROXMOX_API_TOKEN`."""
+    return f"{machine.token_from}{TOKEN_SUFFIX}"
+
+
 def _token(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox) -> str:
     """The Proxmox API token, from the environment and never from the file."""
     if not machine.token_from:
@@ -173,7 +210,7 @@ def _token(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox) -> str:
                 f"variable holds the API token. It is a PREFIX: `token_from: PROXMOX` reads "
                 f"PROXMOX{TOKEN_SUFFIX}")
         raise SystemExit(1)
-    variable = f"{machine.token_from}{TOKEN_SUFFIX}"
+    variable = token_variable(machine)
     token = os.environ.get(variable, "")
     if not token:
         log.die(f"{variable} is not set, so carrier '{carrier.name}' cannot reach "
@@ -197,6 +234,11 @@ def _declared_portainer(carrier: carrierspec.Carrier) -> carrierspec.Portainer:
     return carrier.portainer
 
 
+def password_variable(carrier: carrierspec.Carrier) -> str:
+    """The NAME the Portainer admin password is read from: `url_from: HAUS` means `HAUS_PASSWORD`."""
+    return f"{_declared_portainer(carrier).url_from}{PASSWORD_SUFFIX}"
+
+
 def portainer_password(carrier: carrierspec.Carrier) -> str:
     """The Portainer admin password, from the environment and never from the file.
 
@@ -207,7 +249,7 @@ def portainer_password(carrier: carrierspec.Carrier) -> str:
     Only asked of a carrier that DECLARES a Portainer (si#258). A carrier with no `portainer:` block gets
     no playbook, so there is no admin account to be locked out of and nothing to ask for.
     """
-    variable = f"{_declared_portainer(carrier).url_from}{PASSWORD_SUFFIX}"
+    variable = password_variable(carrier)
     password = os.environ.get(variable, "")
     if not password:
         log.die(f"{variable} is not set. Portainer needs an admin password AT START - one that gets it "

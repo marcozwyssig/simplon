@@ -1518,6 +1518,13 @@ list and that command's own, and no other command keeps them. Re-render the laun
 carrier or an environment, as after changing a list. A name the launcher sets itself (`HOME`) is not
 derived, and neither is a name no manifest writes (`PORTAINER_STACK`, `PORTAINER_ENDPOINT_ID`).
 
+**A `deploy:carrier` command needs none either** (si#812). For every environment whose carrier declares
+`proxmox:`, whatever its backend, the kernel derives what making that carrier reads: the Proxmox
+`<token_from>_API_TOKEN`, the Portainer admin password `<url_from>_PASSWORD` when the carrier declares
+`portainer:`, the registration token `<token_from>_RUNNER_TOKEN` when it declares `runner:`, and the
+kernel's own `SIMPLON_STATE_PASSPHRASE` and, when there is something to install, `SIMPLON_CARRIER_SSH_KEY`.
+They reach the carrier command and no other.
+
 ### `carriers:` - what an environment is realised on
 
 An environment says *where* it deploys with `backend:`. It says *onto what* by naming a **carrier** - and
