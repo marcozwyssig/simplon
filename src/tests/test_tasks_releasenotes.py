@@ -280,7 +280,7 @@ def test_merges_in_a_range_are_the_merge_commits_and_not_the_work_behind_them(tm
 def test_githubs_own_ephemeral_merge_is_out_of_the_population(tmp_path):
     """The one merge in a range that no author wrote and no author can fix (si#97).
 
-    CI runs `on: [push, pull_request]`, and the `pull_request` event checks out `refs/pull/N/merge` - a
+    CI runs on `pull_request`, and that event checks out `refs/pull/N/merge` - a
     commit GitHub creates on the fly to test the branch against the base. It is HEAD in that checkout, so
     it lands inside the prepared release's range, and its subject is machine-written with no place to put
     a ticket. It is not a change the release carries; it is the scaffolding the run is built on.

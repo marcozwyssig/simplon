@@ -706,17 +706,45 @@ def test_two_workflows_may_not_write_one_file():
         """))
 
 
-def test_a_workflow_declaring_no_trigger_is_refused():
-    """The kernel does not invent one. Whether a tag publishes is the product's statement, and si#40
-    says plainly that the generator must not promise more than it knows. The one derived trigger is a
-    `release:` workflow's (si#490), and that one is derived from a declaration, not invented."""
-    # Arrange / Act / Assert
+def test_a_workflow_declaring_no_trigger_gets_the_ci_default(manifest):
+    """si#787: a workflow of jobs that writes no `on:` runs on a pull request, on a push to the default
+    branch, and by hand - and NOT on a push to every branch. `push` unrestricted beside `pull_request` is
+    what made every push to a PR branch run the whole CI twice (measured on simplon's #774: two runs for
+    one head). The trigger reads back under the boolean key, so it is a trigger GitHub sees, not text."""
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      ci:
+        jobs:
+          build: { runs-on: x, steps: [{ command: test all }] }
+    """)
+
+    # Assert
+    assert yaml.safe_load(text)[True] == {"pull_request": None,
+                                          "push": {"branches": ["main"]},
+                                          "workflow_dispatch": None}
+
+
+def test_a_declared_trigger_is_kept_over_the_ci_default():
+    """The default fills an absence; it does not overwrite a statement."""
+    # Arrange / Act
+    workflows = workflowgen.parse(_section(_MINIMAL))
+
+    # Assert
+    assert workflows[0].on == ["push"]
+
+
+def test_a_rollout_declaring_no_trigger_is_still_refused():
+    """The CI default is for a workflow that CHECKS. A rollout deploys, and a rollout started by every
+    pull request would deploy code nobody has reviewed - so whether it runs on a tag, a release or a
+    dispatch stays the product's statement, and its absence stays a refusal."""
+    # Arrange
+    body = _section(_ROLLOUT_SECTION)
+    del body["workflows"]["rollout"][True]
+
+    # Act / Assert
     with pytest.raises(ValueError, match="declares no `on:` trigger"):
-        workflowgen.parse(_section("""
-        workflows:
-          ci:
-            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
-        """))
+        workflowgen.parse(body)
 
 
 def test_a_job_declaring_no_runner_is_refused():
@@ -2570,14 +2598,18 @@ def test_a_product_job_may_stand_beside_the_release():
     assert [job.name for job in parsed.jobs] == ["announce"]
 
 
-def test_a_workflow_without_release_still_writes_its_own_trigger():
-    with pytest.raises(ValueError, match="declares no `on:` trigger") as exc:
-        workflowgen.parse(_section("""
+def test_a_workflow_without_release_is_not_given_the_release_trigger():
+    """si#787 gave a jobs-only workflow without `on:` a trigger; it is not the release's dispatch with a
+    version, which only `release:` derives."""
+    # Arrange / Act
+    parsed = workflowgen.parse(_section("""
         workflows:
           ci:
             jobs: { a: { runs-on: x, steps: [{ run: y }] } }
-        """))
-    assert "`release:`" in str(exc.value)
+        """))[0]
+
+    # Assert
+    assert parsed.on != workflowgen._RELEASE_TRIGGER
 
 
 # --- si#490 Task 3: the derived release job ---------------------------------------------------------------

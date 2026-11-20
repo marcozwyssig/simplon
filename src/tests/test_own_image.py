@@ -451,9 +451,9 @@ def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_star
     # assert: dispatched on the pushed branch, by a job allowed to, into a workflow that accepts it
     assert dispatched > pushed
     assert job["permissions"]["actions"] == "write"
-    ci = _manifest()["workflows"]["ci"]
-    assert "workflow_dispatch" in ci.get("on", ci.get(True, []))       # YAML 1.1 reads a bare `on` as True
-    assert "  - workflow_dispatch" in (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # si#787: the manifest writes no `on:` any more, so the trigger is read where it lands - the generated file
+    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    assert "workflow_dispatch" in ci[True]                             # YAML 1.1 reads a bare `on` as True
 
 
 def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
