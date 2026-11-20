@@ -864,3 +864,185 @@ def test_ghcrs_anonymous_token_answer_decides_the_visibility(monkeypatch, status
 
     # assert
     assert seen == verdict
+
+
+# --- the registry entry created from the environment (si#783) ----------------------------------------
+
+#: A token-shaped value that must reach Portainer's request body and nowhere else.
+GHCR_TOKEN = "ghp_readpackages_never_printed"
+
+
+class Registering(Creating):
+    """A Portainer that holds no ghcr.io entry until `POST /registries` creates one.
+
+    `Creating` answers every POST by making the stack exist, which would turn the deployment that follows
+    a registry write into a redeploy; this one keeps the two apart, so the test can see both writes.
+    """
+
+    def __init__(self, created: dict, answer: object = "registry") -> None:
+        super().__init__(created)
+        self.answers["/registries"] = [{"URL": "docker.io"}]
+        self._answer = answer
+
+    def __call__(self, target, method: str, path: str, body: dict | None = None) -> object:
+        if method == "POST" and path == "/registries":
+            self.calls.append((method, path, body))
+            if self._answer != "registry":
+                return self._answer
+            entry = {"Id": 4, "Name": body["Name"], "URL": body["URL"], "Type": body["Type"]}
+            self.answers["/registries"] = [*self.answers["/registries"], entry]
+            return entry
+        return super().__call__(target, method, path, body)
+
+
+def _registering(monkeypatch, environ: dict, answer: object = "registry") -> Registering:
+    recorder = Registering({"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP},
+                           answer)
+    for name in ("HAUS_GHCR_USER", "HAUS_GHCR_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(portainer, "_request", recorder)
+    monkeypatch.setattr(portainer, "_target_for", lambda env: (
+        portainer.PortainerTarget.from_carrier(
+            CARRIER, "app-prod", {"HAUS_URL": "https://portainer.local", "HAUS_TOKEN": "t"}),
+        REPOSITORY))
+    monkeypatch.setattr(portainer, "_compose_text", lambda repository: _compose("ghcr.io/acme/app:1"))
+    monkeypatch.setattr(portainer, "_ghcr_token_status", lambda path: 401)
+    return recorder
+
+
+def test_a_missing_entry_is_created_from_the_environment_and_the_stack_then_deployed(monkeypatch,
+                                                                                      capsys) -> None:
+    """THE TICKET: with a read:packages token exported under the carrier's prefix, the entry si#785
+    refused on is created through Portainer's API, and the deployment goes on. The body is Portainer CE
+    2.45.0's `registryCreatePayload` with Type 3 (custom): CE's create handler accepts types 1-7 only, so
+    the GitHub type (8) is not creatable there."""
+    # arrange
+    recorder = _registering(monkeypatch, {"HAUS_GHCR_USER": "acme-bot", "HAUS_GHCR_PASSWORD": GHCR_TOKEN})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    writes = _writes(recorder)
+    assert writes[0] == ("POST", "/registries", {
+        "Name": "ghcr.io", "Type": 3, "URL": "ghcr.io", "Authentication": True,
+        "Username": "acme-bot", "Password": GHCR_TOKEN}), "the entry comes first"
+    assert writes[1][1].startswith("/stacks"), "and the stack after it"
+    said = capsys.readouterr()
+    assert "ghcr.io" in said.out and "acme-bot" in said.out
+    assert GHCR_TOKEN not in said.out + said.err, "the token is never printed"
+
+
+def test_without_the_token_the_refusal_stays_and_names_the_variables(monkeypatch) -> None:
+    """A missing capability is absent, never faked: no token, no entry, and the refusal says which two
+    variables would have made one."""
+    # arrange
+    recorder = _registering(monkeypatch, {})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy()
+
+    message = str(refused.value)
+    assert "no registry entry for ghcr.io" in message
+    assert "HAUS_GHCR_USER" in message and "HAUS_GHCR_PASSWORD" in message and "read:packages" in message
+    assert "si#783 will" not in message, "the promise is kept, so it is no longer made"
+    assert _writes(recorder) == []
+
+
+def test_half_a_registry_credential_creates_nothing_and_names_the_half_that_is_missing(monkeypatch) -> None:
+    # arrange
+    recorder = _registering(monkeypatch, {"HAUS_GHCR_USER": "acme-bot"})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy()
+
+    assert "HAUS_GHCR_PASSWORD is not set" in str(refused.value)
+    assert _writes(recorder) == []
+
+
+def test_an_existing_entry_is_not_created_a_second_time(monkeypatch) -> None:
+    # arrange
+    recorder = _registering(monkeypatch, {"HAUS_GHCR_USER": "acme-bot", "HAUS_GHCR_PASSWORD": GHCR_TOKEN})
+    recorder.answers["/registries"] = [{"URL": "ghcr.io"}]
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert not [call for call in recorder.calls if call[:2] == ("POST", "/registries")]
+
+
+def test_an_answer_that_is_not_the_created_entry_stops_the_deployment(monkeypatch) -> None:
+    """A 200 with no entry in it is not "created": the stack would fail at start exactly as before, so the
+    run stops here and says so."""
+    # arrange
+    recorder = _registering(monkeypatch, {"HAUS_GHCR_USER": "acme-bot", "HAUS_GHCR_PASSWORD": GHCR_TOKEN},
+                            answer=None)
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as stopped:
+        _deploy()
+
+    assert "POST /registries" in str(stopped.value) and GHCR_TOKEN not in str(stopped.value)
+    assert [call[1] for call in _writes(recorder)] == ["/registries"], "no stack after a failed entry"
+
+
+def test_the_carrier_names_where_the_registry_credential_is_read_from() -> None:
+    # act
+    target = portainer.PortainerTarget.from_carrier(
+        CARRIER, "app-prod", {"HAUS_URL": "https://p", "HAUS_TOKEN": "t"})
+
+    # assert
+    assert target.registry_from == "HAUS_GHCR"
+
+
+def test_the_entry_reaches_a_listening_server_as_portainer_reads_it() -> None:
+    """A STUB, AND ONLY THAT: a local HTTP server stands in for Portainer and records the one request.
+    It proves the real `urllib` path - URL, verb, `X-API-Key`, JSON body - and nothing about whether a
+    real Portainer accepts the body or whether the entry then lets a private image pull. That is the
+    ticket's acceptance and was not measured here."""
+    import http.server
+    import json
+    import threading
+
+    seen: dict = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            seen["method"] = self.command
+            seen["path"] = self.path
+            seen["key"] = self.headers.get("X-API-Key")
+            seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            reply = json.dumps({"Id": 4, "Name": "ghcr.io", "URL": "ghcr.io", "Type": 3}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    try:
+        # act
+        portainer.create_registry(
+            portainer.PortainerTarget(f"http://127.0.0.1:{server.server_port}", "ptr_key", 3, "s"),
+            "acme-bot", GHCR_TOKEN)
+    finally:
+        thread.join(timeout=10)
+        server.server_close()
+
+    # assert
+    assert seen["method"] == "POST" and seen["path"] == "/api/registries"
+    assert seen["key"] == "ptr_key"
+    assert seen["body"] == {"Name": "ghcr.io", "Type": 3, "URL": "ghcr.io", "Authentication": True,
+                            "Username": "acme-bot", "Password": GHCR_TOKEN}

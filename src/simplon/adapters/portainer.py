@@ -109,6 +109,9 @@ class PortainerTarget:
     endpoint_id: int
     stack_name: str
     insecure: bool = False
+    #: The credential PREFIX the ghcr.io registry entry is created from (si#783), `<url_from>_GHCR`; empty
+    #: on a target that no carrier described, which then has nothing to create the entry from.
+    registry_from: str = ""
 
     @staticmethod
     def from_carrier(carrier: "Carrier", stack_name: str,
@@ -135,7 +138,8 @@ class PortainerTarget:
             secrets_hint=f"The carrier names `url_from: {prefix}`, so it is read from "
                          f"{prefix}_URL and {prefix}_TOKEN.")
         return replace(target, endpoint_id=carrier.portainer.endpoint,
-                       insecure=carrier.portainer.insecure)
+                       insecure=carrier.portainer.insecure,
+                       registry_from=f"{prefix}{REGISTRY_SUFFIX}")
 
     @staticmethod
     def from_env(
@@ -257,11 +261,76 @@ GHCR_PUBLIC = "public"
 GHCR_PRIVATE = "private"
 _GHCR_ANSWERS = {200: GHCR_PUBLIC, 401: GHCR_PRIVATE}
 
-#: The way out, in one place. si#783 (P2 M8) will create the entry from the environment; until it names
-#: its variables, the Portainer UI is the only way out there is, and this sentence invents none.
+#: The way out by hand. NOT "provider GitHub", which si#785 first wrote: Portainer CE 2.45.0 (the version
+#: `tasks.carrier` installs) offers no GitHub registry type, neither in its UI (`registryTypes.js` ends at
+#: 7, ECR) nor in `POST /registries` (`registry_create.go` validates 1-7). A custom registry is the form CE
+#: has, and the one `create_registry` writes.
 _REGISTRY_WAY_OUT = (
-    "Add one in Portainer under Registries (provider GitHub, ghcr.io, a token with read:packages); "
-    "si#783 will create it from the environment")
+    "add one in Portainer under Registries (Custom registry, URL ghcr.io, authentication on, a GitHub "
+    "token with read:packages)")
+
+#: What `<url_from>` gains to name the ghcr.io credential (si#783): `url_from: HAUS` means `HAUS_GHCR_USER`
+#: and `HAUS_GHCR_PASSWORD`, the latter a GitHub token with `read:packages`. `credentials.py`'s USER and
+#: PASSWORD rather than a third spelling: the git clone credential (`credential_from:`) is a token in a
+#: `_PASSWORD` already.
+REGISTRY_SUFFIX = "_GHCR"
+
+#: Portainer's `RegistryType` for a custom registry: 3 in `api/portainer.go` and in the payload doc of
+#: `api/http/handler/registries/registry_create.go`, both read at tag 2.45.0. `GithubRegistry` (8) exists
+#: in the enum, and CE's create handler refuses it.
+_PORTAINER_CUSTOM_REGISTRY = 3
+
+
+def create_registry(target: PortainerTarget, username: str, token: str) -> dict:
+    """Create Portainer's registry entry for ghcr.io from a read:packages token (si#783).
+
+    The body is `registryCreatePayload` of Portainer CE 2.45.0. The token goes into the request body and
+    nowhere else: not into a file, not into a message - `_request`'s error text carries the verb, the path
+    and Portainer's answer, never the body. Portainer answers with the stored entry (`hideFields` drops
+    the password); anything else is not "created" and raises, because the stack would then fail at start
+    exactly as if nothing had been done.
+    """
+    created = _request(target, "POST", "/registries", {
+        "Name": GHCR_HOST, "Type": _PORTAINER_CUSTOM_REGISTRY, "URL": GHCR_HOST,
+        "Authentication": True, "Username": username, "Password": token})
+    if not isinstance(created, dict) or "Id" not in created:
+        raise PortainerError(
+            f"Portainer at {target.url} answered POST /registries with {type(created).__name__} rather "
+            f"than the entry it created, so this run cannot tell whether {GHCR_HOST} can be pulled from")
+    return created
+
+
+def _ensure_registry(target: PortainerTarget, private: "list[str]") -> None:
+    """The ghcr.io entry the private images need: there, created from the environment, or refused.
+
+    THE TOKEN IS READ HERE AND NOT EARLIER, and only when an entry is missing: a run whose Portainer
+    already holds one is asked for nothing. Without it the entry stays absent and the run says which two
+    variables would have created it - a missing capability is absent, never faked.
+    """
+    from simplon.adapters import credentials
+    from simplon.kernel import log
+
+    if has_registry(target):
+        log.ok(f"Portainer holds a registry entry for {GHCR_HOST}, needed by {', '.join(private)}")
+        return
+    found = credentials.credential(target.registry_from, os.environ) if target.registry_from else None
+    if found is None:
+        refusal = (
+            f"{', '.join(private)} {'is a private package' if len(private) == 1 else 'are private packages'}"
+            f" on {GHCR_HOST} and the Portainer at {target.url} holds no registry entry for {GHCR_HOST}, "
+            f"so the stack would fail at container start with 'unauthorized'.")
+        if not target.registry_from:
+            raise PortainerError(f"{refusal} To go on, {_REGISTRY_WAY_OUT}")
+        user_var, password_var = credentials.variables(target.registry_from)
+        unset = [name for name in (user_var, password_var) if not (os.environ.get(name) or "").strip()]
+        raise PortainerError(
+            f"{refusal} {' and '.join(unset)} {'is' if len(unset) == 1 else 'are'} not set: export "
+            f"{user_var} (the GitHub account) and {password_var} (a token with read:packages) and the "
+            f"entry is created on the next run, or {_REGISTRY_WAY_OUT}")
+    username, token = found
+    create_registry(target, username, token)
+    log.ok(f"created Portainer's registry entry for {GHCR_HOST} as {username}, needed by "
+           f"{', '.join(private)}")
 
 
 def _ghcr_token_status(path: str) -> int:
@@ -364,7 +433,10 @@ def check_registry_access(target: PortainerTarget, repository: "Repository",
     EVERY OUTCOME HAS ITS OWN VALUE, which is the point of the whole function:
       - no ghcr.io image, or only public ones: nothing to refuse, and Portainer is not asked;
       - a private one and Portainer holds a ghcr.io entry: deployed, and said;
-      - a private one and Portainer holds none: refused, every such image named in one sentence;
+      - a private one, Portainer holds none and `<url_from>_GHCR_USER`/`_PASSWORD` are set: the entry
+        is created (si#783), and said;
+      - a private one, Portainer holds none and the token is not set: refused, every such image named
+        in one sentence, with the variables that would have created the entry;
       - Portainer could not say what it holds: `has_registry` raises - neither present nor missing;
       - ghcr.io could not say whether an image is private, its reference stayed unresolved, or the
         compose document is not in this checkout: said by name, refused on nothing.
@@ -392,14 +464,8 @@ def check_registry_access(target: PortainerTarget, repository: "Repository",
         elif verdict is None:
             log.warn(f"registry check: could not tell whether {image} is private: {why}. If it is, "
                      f"Portainer needs a registry entry for {GHCR_HOST}")
-    if not private:
-        return
-    if not has_registry(target):
-        raise PortainerError(
-            f"{', '.join(private)} {'is a private package' if len(private) == 1 else 'are private packages'}"
-            f" on {GHCR_HOST} and the Portainer at {target.url} holds no registry entry for {GHCR_HOST}, "
-            f"so the stack would fail at container start with 'unauthorized'. {_REGISTRY_WAY_OUT}")
-    log.ok(f"Portainer holds a registry entry for {GHCR_HOST}, needed by {', '.join(private)}")
+    if private:
+        _ensure_registry(target, private)
 
 
 def deploy(target: PortainerTarget, compose_yaml: str, env_vars: dict[str, str]) -> str:
