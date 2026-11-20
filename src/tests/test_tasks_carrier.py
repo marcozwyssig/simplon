@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pytest
 
+from simplon.adapters import docker
 from simplon.model import carrierspec
 from simplon.manifest import environments
 from simplon.tasks import carrier, proxmoxapi
@@ -115,10 +116,15 @@ def test_the_playbook_names_a_pinned_portainer_and_fetches_no_compose_file():
                                    carrier.PORTAINER_IMAGE])
 def test_every_image_this_command_runs_is_pinned(image):
     """`docker.pinned_image`'s rule one level up: an unpinned toolchain means the same command builds
-    something different next month. It applies to the tools as much as to what they install."""
-    # assert
-    tag = image.rsplit(":", 1)[-1]
-    assert ":" in image and tag not in ("latest", "stable", "lts", "sts"), image
+    something different next month. It applies to the tools as much as to what they install.
+
+    The test ASKS the kernel's gate rather than restating it (si#771). It used to carry its own copy -
+    `':' in image` and a tag outside latest/stable/lts/sts - and the two disagreed in both directions:
+    the copy refused `stable`, `lts` and `sts`, which the gate accepts, and accepted an empty tag
+    (`img:`), a broken digest and a bare `registry.example:5000/img`, which the gate refuses. A rule
+    written twice drifts, so there is one, and it is `docker.pinned_image`."""
+    # act / assert
+    assert docker.pinned_image(image, "simplon.tasks.carrier") == image
 
 
 # --- the refusal that used to arrive three minutes late ---------------------------------------------
