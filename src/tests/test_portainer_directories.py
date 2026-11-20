@@ -396,8 +396,9 @@ def test_the_play_reads_the_directories_as_data_and_creates_parents_plainly(tmp_
 
     # assert
     play = yaml.safe_load((tmp_path / "carrier.yml").read_text(encoding="utf-8"))[0]
-    assert play["vars_files"] == ["directories.yml"]
-    assert (tmp_path / "directories.yml").read_text() == carrier.unsafe_vars(items)
+    assert play["vars_files"] == [carrier.VARS_FILE]
+    assert (tmp_path / carrier.VARS_FILE).read_text() == carrier.unsafe_vars(
+        items, {"portainer_password_variable": "P_PASSWORD"})
     names = [task["name"] for task in play["tasks"]]
     parents = names.index("The parents of those directories are there, as the system makes them")
     assert names[parents + 1] == "The directories the stacks bind are there, with their owner and mode"

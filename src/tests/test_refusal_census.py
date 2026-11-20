@@ -415,6 +415,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("carrierspec", "_runner", "which is not an owner/name pair"): DIAGNOSIS,
     ("carrierspec", "_runner", "names an owner and no repository"): EXPRESSION,
     ("carrierspec", "_runner", "declares no `token_from:`"): DIAGNOSIS,
+    # si#815: a repository outside GitHub's own characters (an owner is letters, digits and `-`, a name
+    # adds `.` and `_`). Diagnosis: no such repository exists, so the runner registers nowhere. It came
+    # with a security finding - the value reached the play as a template - but the template is closed by
+    # the `!unsafe` vars file, not by this rule, so the rule claims only what it is: a broken repository.
+    # The labels, the carrier name and the `token_from:` prefix got NO rule, for the same reason.
+    ("carrierspec", "_runner", "GitHub would not accept"): DIAGNOSIS,
     ("carrierspec", "_labels", "is not a label"): DIAGNOSIS,
     ("carrierspec", "_labels", "is a label or a list of labels"): DIAGNOSIS,
 

@@ -45,6 +45,7 @@ general list stays the way out if a third arrives that it cannot carry.
 """
 from __future__ import annotations
 
+import re
 from typing import Mapping, NamedTuple
 
 #: The manifest section this module owns.
@@ -73,6 +74,10 @@ PROXMOX_KEYS = ("endpoint", "token_from", "insecure", "node", "kind",
 PORTAINER_KEYS = ("url_from", "endpoint", "insecure")
 #: si#781. `token_from:` is a PREFIX like Proxmox's: `token_from: COCKPIT` reads `COCKPIT_RUNNER_TOKEN`.
 RUNNER_KEYS = ("repository", "labels", "token_from")
+
+#: GitHub's own characters for `owner/name` (si#815): an owner is letters, digits and `-`, a repository's
+#: name adds `.` and `_`.
+_GITHUB_REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 
 #: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
 #: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
@@ -307,6 +312,15 @@ def _runner(block: Mapping, name: str, where: str) -> Runner:
             f"{where}'s `runner: repository:` is {repository!r}, which names an owner and no repository. "
             f"The runner registers on one repository: write `{repository}/<name>`. An organisation-wide "
             f"runner is not something this half installs")
+    if not _GITHUB_REPOSITORY.fullmatch(repository):
+        # A DIAGNOSIS (si#815): GitHub takes letters, digits and `-` in an owner and adds `.` and `_` in a
+        # repository's name, so a value outside that names no repository a runner could register on. It
+        # is also what keeps the value a URL and nothing else on its way into the play and the way out
+        # `tasks/carrier.py` prints (`gh api repos/<it>/...`).
+        raise ValueError(
+            f"{where}'s `runner: repository:` is {repository!r}, which GitHub would not accept as a "
+            f"repository: an owner is letters, digits and `-`, a name adds `.` and `_`. Write the "
+            f"repository exactly as its URL spells it")
     token_from = str(block.get("token_from", "") or "").strip()
     if not token_from:
         raise ValueError(

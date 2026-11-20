@@ -71,9 +71,16 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 281 | nothing - the declaration had no working meaning |
+| diagnosis | 282 | nothing - the declaration had no working meaning |
 | expression rule | 47 | something it could otherwise have said |
-| **all load-time refusals** | **328** | |
+| **all load-time refusals** | **329** | |
+
+si#815 added one diagnosis: a carrier's `runner: repository:` outside GitHub's own characters (an owner
+is letters, digits and `-`, a name adds `.` and `_`) names no repository a runner could register on. It
+came with a security finding - the runner's repository, labels, name and token prefix, and Portainer's
+`url_from:`, reached the Ansible play as templates - and that is closed by writing every manifest value
+into a vars file tagged `!unsafe`, not by a rule. So the labels, the carrier name and the prefixes take
+any character they took before, and no expression rule was added for them.
 
 si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
 `env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus

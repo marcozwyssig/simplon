@@ -1828,7 +1828,10 @@ stdin into `ACTIONS_RUNNER_INPUT_TOKEN`, which the runner takes as its token and
 environment. What the runner keeps after registering is its own credential, not this token.
 
 **`repository:` is one repository, `owner/name`.** A bare owner would register an organisation runner;
-that is refused, because nothing here has measured it. A `runner:` needs a `proxmox:` beside it - the
+that is refused, because nothing here has measured it. So is a character GitHub does not allow in an
+owner (letters, digits, `-`) or a name (adds `.` and `_`). The labels and the carrier's name take any
+character: like a directory's path, every value read from the manifest reaches the play through a vars
+file tagged `!unsafe`, so Ansible takes it as written and never as a template (si#815). A `runner:` needs a `proxmox:` beside it - the
 runner is installed on the machine `deploy carrier` makes, and without one there is nothing to install it
 on.
 
