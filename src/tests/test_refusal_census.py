@@ -455,6 +455,42 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "parse_data", "stand(s) in both"): DIAGNOSIS,
     ("environments", "parse_data", "no deployment for those values to be given to"): DIAGNOSIS,
 
+    # --- environments.py, the carrier directories a stack binds (si#782, from biz-cockpit#273) -------
+    # Eight. Five diagnosis and three expression rules.
+    #
+    # Diagnosis: `directories:` that is not a list, an entry that is not a mapping, an entry with no
+    # absolute `path:` (a bind source is resolved on the carrier; a relative one names nothing there), a
+    # `mode:` that is not octal, and `directories:` on an environment with no `carrier:` - none of those
+    # manifests says something `deploy carrier` could create or `deploy up` could check.
+    #
+    # THE THREE EXPRESSION RULES, each of which refuses a manifest that could have worked:
+    #   - an UNKNOWN KEY (`mod: "0750"`): ignored, the directory would be created and deployed to - with
+    #     the mode the operator meant unchecked and reported ready. The same rule `_repository` carries.
+    #   - an UNQUOTED `owner:`/`mode:`: `owner: 1000` would have worked. Refused because YAML 1.1 has
+    #     changed the others before the kernel sees them - measured with the kernel's loader, `0750` is
+    #     488, `750` is 750 (0o1356 as a mode), `33:33` is 2013 and `1000:50` is 60050 - and a parsed
+    #     number cannot say which kind it was. ONE function for both keys, so one rule and not two.
+    #   - an owner that is a NAME (`owner: cockpit`): Ansible would chown to the carrier's user of that
+    #     name and the product might well run. Refused because the uid that matters is the container's,
+    #     the name resolves in the carrier's /etc/passwd, and the archive the check reads carries numbers.
+    # The three questions, answered for all three:
+    #   - does it forbid something a product might legitimately want? Measured 2026-11-20 over all
+    #     eight reachable manifests through the GitHub API: no environment declares `directories:` (the
+    #     one hit, cleon's `skip_directories:`, is another key). The one consumer that asked for the key,
+    #     biz-cockpit (#273), writes its tree as `install -d -o 1000 -g 1000 -m 750` - numbers.
+    #   - would deleting be cheaper than guarding? No: each guards a check that would otherwise rule on a
+    #     value nobody wrote and report a carrier ready, or refuse a correct one.
+    #   - what would the fix cost a product that violated it? Two quotes, or a key spelled right, or a
+    #     number for a name - in a section no product has written yet.
+    ("environments", "_directories", "must be a list of entries"): DIAGNOSIS,
+    ("environments", "_directories", "is a mapping with a `path:`"): DIAGNOSIS,
+    ("environments", "_directories", "entry does not take"): EXPRESSION,
+    ("environments", "_directories", "names no absolute `path:`"): DIAGNOSIS,
+    ("environments", "_directories", "is not a uid or uid:gid"): EXPRESSION,
+    ("environments", "_directories", "is not an octal mode"): DIAGNOSIS,
+    ("environments", "_quoted", "must be quoted"): EXPRESSION,
+    ("environments", "parse_data", "no machine for them to be created on"): DIAGNOSIS,
+
 
     # --- layout.py (si#250) --------------------------------------------------------------------------
     # Four. Three diagnosis and one expression rule.
@@ -1137,6 +1173,11 @@ REACH: dict[tuple[str, str, str], str] = {
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,
+    # si#782. MERGED as a claim about the parser, like si#5's: this kernel's own manifest goes through
+    # `parse_data` too, and declares no `directories:` today.
+    ("environments", "_directories", "entry does not take"): REACH_MERGED,
+    ("environments", "_directories", "is not a uid or uid:gid"): REACH_MERGED,
+    ("environments", "_quoted", "must be quoted"): REACH_MERGED,
     ("layout", "declared", "does not take"): REACH_MERGED,
     ("load", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("load", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,

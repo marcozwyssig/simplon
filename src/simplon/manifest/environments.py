@@ -8,6 +8,7 @@ active-environment gate on top of these types.
 from __future__ import annotations
 
 import os
+import re
 from typing import Iterable, Mapping, NamedTuple
 
 from simplon.model import carrierspec
@@ -47,6 +48,35 @@ class Repository(NamedTuple):
     ref: str = DEFAULT_REF
     compose: str = DEFAULT_COMPOSE
     credential_from: str = ""
+
+
+#: What one `directories:` entry accepts. An unknown key is REFUSED rather than ignored, for a reason of its
+#: own and not the no-secret one: a misspelt `mod:` would leave the mode unchecked and the check would then
+#: report the directory as fine - "not checked" read as "fine", one key away.
+DIRECTORY_KEYS = ("path", "owner", "mode")
+
+
+class Directory(NamedTuple):
+    """A host directory a stack binds, as the carrier has to hold it before the stack starts (si#782).
+
+    WHY IT EXISTS: Docker creates a missing bind source itself, AS ROOT, and a service running as uid 1000
+    then dies with "unable to open database file" - a sentence that points at none of this (biz-cockpit
+    #273, measured on a Linux host). `deploy carrier` creates what is declared here; `deploy up` checks it
+    on the carrier before the stack is touched.
+
+    `gid` and `mode` are None when the manifest does not state them, and None means NOT CHECKED AND NOT
+    SET - `chown 1000 path` leaves the group alone too. They are not filled with a default, because a
+    default would be a statement the manifest never made and the check would then refuse on it.
+    """
+
+    path: str
+    uid: "int | None" = None
+    gid: "int | None" = None
+    mode: "int | None" = None
+
+    def owner(self) -> str:
+        """The owner as the manifest wrote it, `uid` or `uid:gid`."""
+        return "" if self.uid is None else str(self.uid) + ("" if self.gid is None else f":{self.gid}")
 
 
 class Environment(NamedTuple):
@@ -100,6 +130,12 @@ class Environment(NamedTuple):
     #: `${{ inputs.version }}` interpolated into a shell command in a job holding deployment credentials,
     #: which is the classic Actions injection - and the kernel would be the one writing it.
     deploys: str = ""
+    #: THE HOST DIRECTORIES THIS ENVIRONMENT'S STACK BINDS (si#782), on the environment and not on the
+    #: carrier. A bind mount belongs to the stack, and the stack is the environment's: biz-cockpit's `test`
+    #: and `prod` share ONE carrier and are separated by their data trees, so a list on the carrier would
+    #: make `deploy up` for prod refuse over test's tree. `deploy carrier` reads every environment that
+    #: points at the carrier, so the carrier still gets the whole of it.
+    directories: "tuple[Directory, ...]" = ()
 
 
 class Registry(NamedTuple):
@@ -183,6 +219,74 @@ def _names(raw: object, key: str, where: str) -> tuple[str, ...]:
                 f"mean whatever happened to be exported")
         names.append(name)
     return tuple(names)
+
+
+_OWNER = re.compile(r"(\d+)(?::(\d+))?")
+_MODE = re.compile(r"[0-7]{3,4}")
+
+
+def _quoted(entry: Mapping, key: str, where: str) -> "str | None":
+    """`owner:` or `mode:` as the string the manifest wrote, or None when it wrote neither.
+
+    A STRING, AND AN UNQUOTED NUMBER IS REFUSED, because YAML 1.1 - the loader every manifest goes through -
+    has already changed it by the time it gets here, measured 2026-11-20 with the kernel's PyYAML:
+    `mode: 0750` arrives as 488 and `mode: 750` as 750 (which as a mode is 0o1356), `owner: 33:33` arrives
+    as 2013 and `owner: 1000:50` as 60050 - base-60 integers. `owner: 1000:1000` survives as a string only
+    because 1000 is not a base-60 digit. Nothing on this side can tell 488 the mode from 488 the typo, and
+    the check would then refuse a correct carrier, or Ansible set a wrong mode, on a number nobody wrote.
+    """
+    raw = entry.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        example = "1000:1000" if key == "owner" else "0750"
+        raise ValueError(
+            f"{where}: `{key}: {raw!r}` must be quoted, e.g. `{key}: \"{example}\"`. Unquoted, YAML "
+            f"reads it as a number before the kernel sees it - `0750` as 488, `33:33` as 2013 - and the "
+            f"value checked would not be the one written")
+    return raw.strip()
+
+
+def _directories(raw: object, where: str) -> "tuple[Directory, ...]":
+    """The `directories:` list of one environment, validated (si#782)."""
+    if raw is None:
+        return ()
+    if isinstance(raw, (str, Mapping)) or not isinstance(raw, (list, tuple)):
+        raise ValueError(
+            f"{where}: `directories:` must be a list of entries with a `path:` and optionally an `owner:` "
+            f"and a `mode:`, not {type(raw).__name__}")
+    found = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            raise ValueError(
+                f"{where}: every `directories:` entry is a mapping with a `path:`, and {entry!r} is not one")
+        unknown = sorted(str(k) for k in entry if str(k) not in DIRECTORY_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{where}: a `directories:` entry does not take {', '.join(unknown)} - it takes "
+                f"{', '.join(DIRECTORY_KEYS)}. A key that was ignored would leave what it meant unchecked, "
+                f"and the directory would be reported as ready on a check that never ran")
+        path = str(entry.get("path") or "").strip()
+        if not path.startswith("/"):
+            raise ValueError(
+                f"{where}: a `directories:` entry names no absolute `path:` (got {path!r}). It is a "
+                f"directory on the carrier, which is where a bind mount's source is resolved")
+        owner, mode = _quoted(entry, "owner", where), _quoted(entry, "mode", where)
+        ids = _OWNER.fullmatch(owner) if owner is not None else None
+        if owner is not None and ids is None:
+            raise ValueError(
+                f"{where}: `owner: {owner!r}` of {path} is not a uid or uid:gid. It is numeric because the "
+                f"service in the container runs as a number, and a name would be resolved on the carrier, "
+                f"whose /etc/passwd is not the container's")
+        if mode is not None and not _MODE.fullmatch(mode):
+            raise ValueError(
+                f"{where}: `mode: {mode!r}` of {path} is not an octal mode such as \"0750\"")
+        found.append(Directory(
+            path=path.rstrip("/") or "/",
+            uid=int(ids.group(1)) if ids else None,
+            gid=int(ids.group(2)) if ids and ids.group(2) is not None else None,
+            mode=int(mode, 8) if mode is not None else None))
+    return tuple(found)
 
 
 def matrix_section(document: Mapping) -> dict:
@@ -289,9 +393,15 @@ def parse_data(data: Mapping[str, object],
         # clones, so there is nothing on this machine for it to deploy". A second refusal here would be
         # the same verdict with less context.
         deploys = str(spec.get("deploys", "")).strip()
+        directories = _directories(spec.get("directories"), f"environment '{name}'")
+        if directories and not carrier:
+            raise ValueError(
+                f"environment '{name}': declares `directories:` and no `carrier:`, so there is no "
+                f"machine for them to be created on or checked against")
         envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
                                       carrier=carrier, stack=stack, repository=repository,
-                                      required=required, optional=optional, deploys=deploys)
+                                      required=required, optional=optional, deploys=deploys,
+                                      directories=directories)
     if not envs:
         raise ValueError("'cd: environments' defines no environments")
     default = str(matrix["default"] or "").strip()
