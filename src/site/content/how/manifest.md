@@ -1601,9 +1601,15 @@ output is a log somebody keeps.
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
 
-**Two things the kernel sets and you cannot get wrong:** an unprivileged LXC will not start a Docker
-daemon without `nesting` and `keyctl`, so they are not fields - they are what a carrier *is*, set on
-every container the kernel creates. Whoever has set them by hand once has also forgotten them once.
+**One feature the kernel sets and you cannot get wrong:** an unprivileged LXC will not start a Docker
+daemon without `nesting`, so it is not a field - it is what a carrier *is*, set on every container the
+kernel creates. Whoever has set it by hand once has also forgotten it once.
+
+**`keyctl` is NOT set, and that was measured (si#5), not forgotten.** Proxmox refuses every feature
+flag except `nesting` to an API token - HTTP 403, "only allowed for root@pam", even for a root token
+made with `--privsep 0` - and the kernel creates the carrier with a token. Docker does not need it
+either: on Debian 13 with kernel 7.0, overlay2 and cgroup v2, `docker run hello-world` is green with
+`nesting` alone. A runbook that adds `keyctl` would make the create fail, not the carrier better.
 
 **`insecure:` must be `true` or `false`, never a string.** Every non-empty string is truthy, so
 `insecure: "no"` would mean the opposite of what it says. It is the one value here that is refused
