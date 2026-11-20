@@ -152,7 +152,7 @@ def test_a_storage_serves_containers_only_when_all_three_fields_say_so(storage, 
 
 def _play() -> str:
     return carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
-                                   password="not-a-real-password")
+                                   password="not-a-real-password", password_from="PORTAINER_PASSWORD")
 
 
 def test_portainer_is_started_already_initialised():
@@ -254,7 +254,8 @@ def test_the_rendered_playbook_carries_no_password():
     secret = "a-password-nobody-should-find"
 
     # act
-    rendered = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT)
+    rendered = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
+                                       password_from="PORTAINER_PASSWORD")
 
     # assert
     assert secret not in rendered
@@ -663,3 +664,28 @@ def test_a_run_that_may_not_mint_says_so_and_names_the_command_that_does():
     assert said["when"] == f"existing | length == 0 and not ({flag})"
     assert "deploy carrier" in message and "terminal" in message
     assert not any(s in message for s in SECRETS)
+
+
+# --- si#802: the play reads the variable the kernel checked and forwarded -----------------------------
+
+def test_the_play_reads_the_password_under_the_prefix_the_carrier_names(_lines, monkeypatch, tmp_path):
+    """`url_from: COCKPIT` means the kernel checks `COCKPIT_PASSWORD` and forwards `COCKPIT_PASSWORD`
+    into the Ansible container. A play that read a fixed `PORTAINER_PASSWORD` would read an empty
+    string there, and Portainer would start with an empty admin password file - behind a length check
+    that passed on the variable the play never looked at."""
+    # arrange
+    cockpit = carrierspec.Carrier(
+        name=CARRIER.name, proxmox=CARRIER.proxmox,
+        portainer=carrierspec.Portainer(url_from="COCKPIT", endpoint=1))
+    monkeypatch.setenv(f"COCKPIT{carrier.PASSWORD_SUFFIX}", "a-long-enough-password")
+
+    # act
+    carrier._ansible(cockpit, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+
+    # assert
+    argv = _lines[0]
+    forwarded = argv[argv.index("-e") + 1]
+    play = (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    assert forwarded == "COCKPIT_PASSWORD"
+    assert f"lookup('env', '{forwarded}')" in play, "the play reads a variable the kernel did not forward"
+    assert "PORTAINER_PASSWORD" not in play
