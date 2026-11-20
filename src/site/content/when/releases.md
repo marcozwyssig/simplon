@@ -23,6 +23,78 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.47.0
+
+**What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) and its
+launchers (`simplon init --dir . --launchers-only`), or `test generated` reports drift. Beyond that, check these where a product relies on the old behaviour:
+
+- **A CI workflow with no `on:` is no longer refused.** A workflow made only of `jobs:` that declares
+  no trigger now runs on `pull_request`, on `push` to `main` and on `workflow_dispatch`. A product
+  whose own `on:` says the same can delete it; one that writes `[push, pull_request]` runs its CI twice
+  per pull request push and can delete it too. A declared `on:` is kept as written.
+- **A forwarded secret reaches only the command that declares it.** A name in a command's
+  `env: pass:` no longer reaches the dependency install or the version check, and in the kernel every
+  forwarded name the running command does not declare is unset before its code runs. An aggregate
+  keeps its members' names; a command that runs the gates keeps them all. The value is still visible
+  in `docker inspect` of the kernel's container.
+- **`deploy up` with `backend: portainer` can refuse before deploying**: a private `ghcr.io` image
+  with no ghcr.io registry entry in Portainer stops the deploy, naming the images and the way out.
+  With `<url_from>_GHCR_USER` and `<url_from>_GHCR_PASSWORD` (a token with `read:packages`) set, it
+  creates the entry instead and deploys.
+- **A carrier whose `url_from:` is not `PORTAINER` needs a fresh `deploy carrier`** if it was built
+  with an earlier kernel: its Portainer was started with an empty admin password (si#802).
+
+### Secrets forwarded by the launcher (si#757)
+
+- The launchers keep a command's `env: pass:` names off the install, check and stamp containers;
+  only the kernel's own `docker run` carries them.
+- The kernel confines the forwarded list (`DELIVERY_ENV_PASS`, the launcher's own export) to what the
+  dispatched command declares, in the reflective CLI and in the generated module alike.
+- The launcher's plugin step after a dependency refresh runs with every forwarded name withheld, and
+  the names are restored exactly for dispatch. On today's launcher paths the two never meet; this is a
+  guard, not a fix for an observed leak.
+
+### Deploy and registries (si#785, si#783, si#802, si#773)
+
+- **si#785:** before the first Portainer write, every `ghcr.io` image in the stack's compose document
+  (from the checkout, with the deployment's values substituted) is asked of ghcr.io anonymously: 200
+  is public, 401 is private. A 403, a 5xx or no answer is not a verdict and only warns. Portainer's
+  registries are asked only for a private image. `has_registry` no longer reads an unreadable answer
+  as "missing"; it says it cannot tell.
+- **si#783:** when the entry is missing and `<url_from>_GHCR_USER` / `<url_from>_GHCR_PASSWORD` are
+  set, `deploy up` creates it through `POST /registries` as a custom registry (URL `ghcr.io`,
+  authentication on): Portainer CE 2.45.0 refuses the GitHub registry type on create. The token goes
+  only into the request body. Without the variables the refusal names them. Not yet run against a real
+  Portainer.
+- **si#802:** the carrier's Portainer play read a fixed `PORTAINER_PASSWORD` while the kernel checked
+  and forwarded `<url_from>_PASSWORD`; with any other prefix the admin password was empty and the run
+  green. The play now reads the name the kernel forwards. biz-cockpit (`url_from: PORTAINER`) was not
+  affected.
+- **si#773:** `oras login` and `docker login` run under their own limit (`REGISTRY_LOGIN`, 120 s) and
+  without the terminal, and a login that times out says so instead of advising `gh auth refresh`.
+  The network-limit scan names this call, so a non-literal argv cannot slip past it again.
+
+### Workflows (si#787)
+
+- **si#787:** the CI default triggers above. simplon's own `ci.yml` takes the default. The default
+  branch is the constant `main`; whether a product may still write its own `on:`, and how, is decided
+  in the workflows design (si#788).
+
+### Also in this release
+
+- **si#717:** a suite venv whose `pip` names an interpreter that is missing, or one outside the
+  venv's own `bin/` (a moved or copied venv), is rebuilt. If rebuilding does not help, the gate stops
+  naming the venv and the way out instead of blaming the product's `requirements.txt`.
+- **si#772:** `manifest migrate` refuses a duplicated key whose cut would leave invalid YAML (a quoted
+  value continued at or left of the key's column), naming the key and both lines, and writes nothing.
+- **si#771:** the carrier test asks `docker.pinned_image` instead of carrying its own pin rule.
+- **si#803:** the carriers section of the manifest page says only `nesting` is set, and why `keyctl`
+  is not (si#5: Proxmox refuses it to an API token).
+- **si#436:** the docstring names the deleted probe package.
+- **#791** pins `deploy/image/image.pin` to the v0.46.0 kernel image.
+- The pull requests are #790 (si#436), #791, #792 (si#772), #793 (si#771), #794 (si#787),
+  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #806 (si#802) and #807 (si#803).
+
 ## 0.46.0
 
 **What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`), or `test
