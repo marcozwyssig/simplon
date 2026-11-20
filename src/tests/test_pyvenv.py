@@ -1,7 +1,10 @@
-"""Unit tests for the self-healing venv provisioning (netctl#475, kernel-extracted netctl#592). No real
-venvs, no network; run() and fetch.download are doubles that materialise the files a successful step would;
-AAA throughout."""
+"""Unit tests for the self-healing venv provisioning (netctl#475, kernel-extracted netctl#592). No network;
+run() and fetch.download are doubles that materialise the files a successful step would, except in the
+si#717 block at the foot, which builds real venvs because its defect is in what the OS does with a stale
+shebang; AAA throughout."""
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -19,10 +22,18 @@ def _executable(path):
     path.chmod(0o755)
 
 
+def _pip(venv):
+    """A pip the way pip's script maker writes it: a launcher naming this venv's own python (si#717)."""
+    _executable(venv / "bin" / "python")
+    pip = venv / "bin" / "pip"
+    pip.write_text(f"#!{venv}/bin/python\n")
+    pip.chmod(0o755)
+
+
 def test_healthy_venv_short_circuits_without_any_subprocess(monkeypatch, tmp_path):
     # arrange: a venv whose bin/pip is present and executable
     venv = tmp_path / ".venv"
-    _executable(venv / "bin" / "pip")
+    _pip(venv)
     monkeypatch.setattr(pyvenv, "run", lambda argv, **kw: _boom(f"unexpected run: {argv}"))
 
     # act / assert: returned as-is, nothing executed
@@ -38,7 +49,7 @@ def test_half_created_venv_is_rebuilt(monkeypatch, tmp_path):
     def fake_run(argv, **kw):
         calls.append(argv)
         if argv[:3] == ["python3", "-m", "venv"]:
-            _executable(venv / "bin" / "pip")
+            _pip(venv)
         return Result(rc=0, out="", err="")
 
     monkeypatch.setattr(pyvenv, "run", fake_run)
@@ -64,7 +75,7 @@ def test_no_ensurepip_falls_back_to_get_pip(monkeypatch, tmp_path):
             (venv / "bin").mkdir(parents=True, exist_ok=True)
             _executable(venv / "bin" / "python")
         if argv and argv[0] == str(venv / "bin" / "python"):
-            _executable(venv / "bin" / "pip")  # get-pip.py materialises pip
+            _pip(venv)  # get-pip.py materialises pip
         return Result(rc=0, out="", err="")
 
     monkeypatch.setattr(pyvenv, "run", fake_run)
@@ -182,3 +193,97 @@ def test_a_tampered_get_pip_is_refused_and_never_run(monkeypatch, tmp_path):
     assert pyvenv.GET_PIP_URL in str(refused.value) and pyvenv.GET_PIP_SHA256 in str(refused.value)
     assert not [argv for argv in ran if argv[0] == str(venv / "bin" / "python")]
     assert not (venv / "get-pip.py").exists()
+
+
+# --- si#717: a venv moved (or copied) with its repository keeps a pip bound to another venv --------------
+#
+# REAL venvs, not doubles, because the defect lives in what the OS does with a stale shebang: `bin/pip` is
+# present and executable, so `os.access(pip, X_OK)` said healthy, and posix_spawn then raised
+# `FileNotFoundError` naming the pip that exists. A double that writes `#!/bin/sh` cannot show that.
+
+def _host_has_ensurepip():
+    if not shutil.which("python3"):
+        return False
+    return subprocess.run(["python3", "-m", "ensurepip", "--version"], capture_output=True).returncode == 0
+
+
+needs_ensurepip = pytest.mark.skipif(not _host_has_ensurepip(),
+                                     reason="no python3 with ensurepip here to build a real venv from")
+
+
+def _real_venv(path):
+    subprocess.run(["python3", "-m", "venv", str(path)], check=True, capture_output=True)
+    return path
+
+
+@needs_ensurepip
+def test_a_venv_moved_with_its_repository_is_rebuilt_and_its_suite_installs(tmp_path):
+    """Measured on agile-cockpit (2026-11-16): after the repository moved, every suite gate died with
+    `FileNotFoundError: ... .venv/bin/pip` before a test ran; moving the `.venv` away made each one pass."""
+    # arrange: a real venv built at the old path, then the whole suite directory moved
+    old = tmp_path / "old" / "suite"
+    _real_venv(old / ".venv")
+    (old / "requirements.txt").write_text("")
+    suite = tmp_path / "new" / "suite"
+    suite.parent.mkdir()
+    old.rename(suite)
+    assert os.access(suite / ".venv" / "bin" / "pip", os.X_OK)  # all the old probe looked at
+
+    # act
+    py, pip = pyvenv.venv_python_pip(suite)
+
+    # assert: pip runs, and it runs as this venv
+    assert subprocess.run([pip, "--version"], capture_output=True).returncode == 0
+    prefix = subprocess.run([py, "-c", "import sys; print(sys.prefix)"], capture_output=True, text=True)
+    assert prefix.stdout.strip() == str(suite / ".venv")
+
+
+@needs_ensurepip
+def test_a_venv_copied_while_the_original_still_exists_is_rebuilt(tmp_path):
+    """The copied shape of the same defect, measured on 2026-11-20: the copy's pip runs, through the
+    ORIGINAL venv's python, and installs into the original. The suite would then start without its
+    dependencies, so 'pip runs' is not the health check - 'pip runs as this venv' is."""
+    # arrange
+    original = _real_venv(tmp_path / "a" / ".venv")
+    copy = tmp_path / "b" / ".venv"
+    shutil.copytree(original, copy, symlinks=True)
+
+    # act
+    pyvenv.ensure_venv(copy)
+
+    # assert: the copy's pip now reports the copy's site-packages, and the original was left alone
+    said = subprocess.run([str(copy / "bin" / "pip"), "--version"], capture_output=True, text=True).stdout
+    assert str(copy) in said, said
+    assert (original / "bin" / "pip").read_text().startswith(f"#!{original}/bin/python")
+
+
+def test_a_long_path_pip_wrapper_bound_to_its_own_venv_is_healthy(monkeypatch, tmp_path):
+    # arrange: past the kernel's shebang length pip writes a `#!/bin/sh` wrapper whose `exec` line names
+    # the interpreter; read naively, `/bin/sh` exists and is not this venv's
+    venv = tmp_path / ".venv"
+    _executable(venv / "bin" / "python")
+    pip = venv / "bin" / "pip"
+    pip.write_text(f"#!/bin/sh\n'''exec' {venv}/bin/python \"$0\" \"$@\"\n' '''\nimport sys\n")
+    pip.chmod(0o755)
+    monkeypatch.setattr(pyvenv, "run", lambda argv, **kw: _boom(f"unexpected run: {argv}"))
+
+    # act / assert: returned as-is, nothing executed
+    assert pyvenv.ensure_venv(venv) == venv
+
+
+def test_a_venv_that_cannot_be_rebuilt_is_refused_by_name_with_the_way_out(monkeypatch, tmp_path):
+    # arrange: a stale pip whose interpreter is gone, and a rebuild that removes nothing and fixes nothing
+    venv = tmp_path / ".venv"
+    pip = venv / "bin" / "pip"
+    pip.parent.mkdir(parents=True)
+    pip.write_text("#!/nowhere/old/.venv/bin/python3\n")
+    pip.chmod(0o755)
+    monkeypatch.setattr(pyvenv.shutil, "rmtree", lambda *a, **kw: None)
+    monkeypatch.setattr(pyvenv, "run", lambda argv, **kw: Result(rc=0, out="", err=""))
+    monkeypatch.setattr(pyvenv.log, "die", _boom)
+
+    # act / assert: a refusal, never a returned venv a suite would then run out of
+    with pytest.raises(SystemExit) as refused:
+        pyvenv.ensure_venv(venv)
+    message = str(refused.value)
+    assert f"Remove {venv}" in message, message
