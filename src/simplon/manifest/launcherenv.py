@@ -27,7 +27,8 @@ gradle and `npm install` as well (firn's security review, firn#1056). Now:
 - the launcher's hop into the kernel's container carries the UNION of every command's list (`declared`).
   It has to: the launcher is bash, builds that line before any manifest is parsed, and the command that
   needs the name runs inside that container. That container runs simplon's own code and installs nothing
-  third-party;
+  third-party. The launcher's dependency install and its check start from the same line, and they are not
+  handed the names (si#757): the install resolves third-party packages;
 - the `toolchain:run` hop carries the names of the command being run and of no other (`running`). The
   dispatch wrappers - `cli._bound`, the generated module, a gate's call - set them around the body with
   `within`; outside a command nothing is passed. An aggregate passes nothing of its own: each member keeps
