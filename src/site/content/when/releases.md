@@ -94,6 +94,17 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
   carrier. A missing token stops the run before Pulumi starts. Auto-update stays on, because GitHub
   stops accepting runners that are not updated.
 
+### Carrier directories (si#782)
+
+- **si#782:** a `backend: portainer` environment may declare `directories:` (`path`, optional
+  `owner`, `mode`). `deploy carrier` creates every directory of every environment on that carrier;
+  `deploy up` checks its own environment's directories before the first Portainer write and refuses
+  a missing one or a wrong owner or mode before the stack is touched, naming the path, `deploy carrier`
+  and the commands to run on a carrier the kernel does not build. A check that cannot answer warns. It
+  asks the carrier's Docker daemon through Portainer: a helper container with a read-only bind
+  mount, never started, whose archive header gives the host owner and mode. A `path` is limited to
+  `/`, letters, digits, `.`, `_` and `-`, with no `..`.
+
 ### Workflows (si#787)
 
 - **si#787:** the CI default triggers above. simplon's own `ci.yml` takes the default. The default
@@ -113,7 +124,7 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
 - **si#436:** the docstring names the deleted probe package.
 - **#791** pins `deploy/image/image.pin` to the v0.46.0 kernel image.
 - The pull requests are #790 (si#436), #791, #792 (si#772), #793 (si#771), #794 (si#787),
-  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #801 (si#781),
+  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #801 (si#781), #805 (si#782),
   #806 (si#802), #807 (si#803) and #811 (si#810).
 
 ## 0.46.0
