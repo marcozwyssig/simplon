@@ -24,6 +24,7 @@ rather than a stack trace.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from pathlib import Path
 
@@ -62,12 +63,64 @@ def _require_host_python(venv: Path) -> None:
             f"`toolchain:run` command, with `results_from:` pointing at what the container wrote")
 
 
+def _pip_interpreter(pip: Path) -> str | None:
+    """The interpreter `pip` would run under, as its own launcher names it, or None if it names none.
+
+    Two forms, both written by pip's script maker: `#!<python>` on the first line, or, when that path is
+    longer than the kernel accepts in a shebang, `#!/bin/sh` followed by `'''exec' <python> "$0" "$@"`.
+    """
+    try:
+        with open(pip, "rb") as handle:
+            first, second = handle.readline(), handle.readline()
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    line = first[2:].decode(errors="replace").strip()
+    if line == "/bin/sh" and second.startswith(b"'''exec'"):
+        try:
+            words = shlex.split(second.decode(errors="replace"))
+        except ValueError:
+            return None
+        return words[1] if len(words) > 1 else None
+    return line.split()[0] if line else None
+
+
+def _pip_is_this_venvs(venv: Path) -> bool:
+    """Healthy means `bin/pip` is executable AND runs under this venv's own `bin/` (si#717).
+
+    Executable alone was the old test, and it passes a venv moved with its repository: `bin/pip` is still
+    there, but its shebang names the old path, and the spawn fails with `No such file or directory`
+    naming the pip that exists. A venv COPIED while the original stays put passes even a "does pip run"
+    probe: the copy's pip runs under the ORIGINAL's python and installs into the original, so the suite
+    starts without its dependencies. Both are caught by asking where the interpreter lives.
+
+    Why the shebang and not `python -m pip --version` (measured 2026-11-20): in a moved venv `bin/python`
+    is a working symlink to the host python, so `python -m pip` answers rc 0 and would call the venv
+    healthy - the probe the ticket offered first does not see this defect at all. And it costs a
+    subprocess, about 110 ms, on every gate; reading two lines of a file costs nothing measurable.
+    `samefile` rather than a string comparison, so a venv reached through a symlinked path is not rebuilt
+    on every run.
+    """
+    pip = venv / "bin" / "pip"
+    if not os.access(pip, os.X_OK):
+        return False
+    interpreter = _pip_interpreter(pip)
+    if interpreter is None or not os.access(interpreter, os.X_OK):
+        return False
+    try:
+        return os.path.samefile(os.path.dirname(interpreter), venv / "bin")
+    except OSError:
+        return False
+
+
 def ensure_venv(venv: Path) -> Path:
     """Ensure a usable venv (python + pip) at `venv` and return it. Idempotent: a healthy venv
-    short-circuits; a half-created one is rebuilt; a venv-less host python falls back to get-pip."""
-    pip = venv / "bin" / "pip"
-    if os.access(pip, os.X_OK):
+    short-circuits; a half-created one, or one whose pip is bound to another venv's python (moved or
+    copied with its repository, si#717), is rebuilt; a venv-less host python falls back to get-pip."""
+    if _pip_is_this_venvs(venv):
         return venv
+    pip = venv / "bin" / "pip"
     _require_host_python(venv)
     shutil.rmtree(venv, ignore_errors=True)
     if run(["python3", "-m", "ensurepip", "--version"]).ok:
@@ -85,6 +138,13 @@ def ensure_venv(venv: Path) -> Path:
     if not os.access(pip, os.X_OK):
         log.die(f"could not provision pip into {venv} (ensurepip missing and get-pip.py failed); "
                 f"install venv support: sudo apt install python3-venv")
+    if not _pip_is_this_venvs(venv):
+        # Rebuilt and still bound elsewhere: the tree was not removed (`rmtree` ignores its errors) and
+        # `python3 -m venv` kept the stale launcher. Running pip from here would fail or install into
+        # another venv, so this is a refusal, never a venv returned without its suite's dependencies.
+        log.die(f"the suite venv at {venv} has a pip that does not run as this venv (it names "
+                f"{_pip_interpreter(pip) or 'no interpreter'}), and rebuilding it did not change that. "
+                f"Remove {venv} by hand and run again; it is rebuilt from scratch")
     return venv
 
 
