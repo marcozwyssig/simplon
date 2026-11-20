@@ -59,10 +59,11 @@ LIBRARY BY INTENT, pure apart from reading the two templates the kernel ships, a
 """
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from contextvars import ContextVar
 from importlib.resources import files
 
@@ -230,6 +231,27 @@ def of_plan(tree: object) -> tuple[str, ...]:
             if name not in out:
                 out.append(name)
     return tuple(out)
+
+
+@contextlib.contextmanager
+def withheld(environ: MutableMapping[str, str] | None = None) -> Iterator[None]:
+    """Every forwarded name unset for the duration, and put back exactly as it was afterwards (si#757).
+
+    For what runs in the kernel BEFORE dispatch has picked a command - the launcher's plugin step, which
+    installs third-party code with `claude plugin` - so no command's name reaches it. Afterwards the
+    command's own `confine` decides as usual. A name that was unset before is unset after, even if the
+    step set it; one that was set gets its own value back.
+    """
+    env = os.environ if environ is None else environ
+    forwarded = env.get(EXPORTED, "").split()
+    held = {name: env[name] for name in forwarded if name in env}
+    confine((), env)
+    try:
+        yield
+    finally:
+        for name in forwarded:
+            env.pop(name, None)
+        env.update(held)
 
 
 def confined(keep: tuple[str, ...], body: Callable[[], int]) -> int:

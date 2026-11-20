@@ -585,3 +585,56 @@ def test_the_generated_module_of_a_manifest_that_passes_nothing_is_unchanged(pro
 
     # assert
     assert "_launcherenv" not in text
+
+
+def _plugin_step_seeing(monkeypatch, seen: list) -> None:
+    """The launcher's plugin step asked for, with `claude plugin` replaced by a probe of VSCE_PAT."""
+    from simplon.tasks import claudeplugins
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    monkeypatch.setattr(cli, "_auto_install", lambda: True)
+    monkeypatch.setattr(claudeplugins, "step", lambda: seen.append(os.environ.get("VSCE_PAT"))
+                        or claudeplugins.Outcome(claudeplugins.State.OFF, "probe"))
+
+
+def test_the_plugin_step_before_dispatch_sees_no_forwarded_name(product, passed, monkeypatch):
+    # arrange: `claude plugin` installs third-party code, and no command has been picked yet
+    seen: list[str | None] = []
+    _plugin_step_seeing(monkeypatch, seen)
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert
+    assert seen == [None]
+
+
+def test_the_command_dispatched_after_the_plugin_step_still_gets_its_declared_name(product, passed, seen_env,
+                                                                                   monkeypatch):
+    # arrange
+    _write(product, _PUBLISH + _OTHER)
+    _plugin_step_seeing(monkeypatch, [])
+
+    # act
+    cli.plugin_step_after_refresh()
+    result = CliRunner().invoke(_app(product), ["build", "publish"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert seen_env == ["s3cret-757"]
+
+
+def test_a_forwarded_name_unset_before_the_plugin_step_is_unset_after_it(product, monkeypatch):
+    # arrange: forwarded by the list, but the host never set it - and the step sets one itself
+    monkeypatch.setenv("DELIVERY_ENV_PASS", "VSCE_PAT")
+    monkeypatch.delenv("VSCE_PAT", raising=False)
+    from simplon.tasks import claudeplugins
+    monkeypatch.setenv(cli.PLUGIN_STEP_ENV, "1")
+    monkeypatch.setattr(cli, "_auto_install", lambda: True)
+    monkeypatch.setattr(claudeplugins, "step", lambda: os.environ.__setitem__("VSCE_PAT", "from-the-step")
+                        or claudeplugins.Outcome(claudeplugins.State.OFF, "probe"))
+
+    # act
+    cli.plugin_step_after_refresh()
+
+    # assert
+    assert "VSCE_PAT" not in os.environ

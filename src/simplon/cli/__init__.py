@@ -677,7 +677,9 @@ def plugin_step_after_refresh() -> None:
         return              # the product turned the automatic step off (si#583), and asked for silence
     # ON STDERR, all of it: this runs before the command a person typed, and `V=$(./<product>.sh
     # release version)` right after a deps refresh must capture the version and nothing else.
-    with contextlib.redirect_stdout(sys.stderr):
+    # si#757: and with no command's `env: pass:` name set - none has been picked yet, and `claude plugin`
+    # installs third-party code. Dispatch gets them back, and the command's own `confine` decides then.
+    with contextlib.redirect_stdout(sys.stderr), launcherenv.withheld():
         try:
             outcome = claudeplugins.step()
         except Exception as exc:     # noqa: BLE001 - the launcher's promise is that this never stops a command
