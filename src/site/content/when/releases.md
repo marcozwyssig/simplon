@@ -39,6 +39,10 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
   in `docker inspect` of the kernel's container.
 - **`deploy up` with `backend: portainer` can refuse before deploying**: a private `ghcr.io` image
   with no ghcr.io registry entry in Portainer stops the deploy, naming the images and the way out.
+  With `<url_from>_GHCR_USER` and `<url_from>_GHCR_PASSWORD` (a token with `read:packages`) set, it
+  creates the entry instead and deploys.
+- **A carrier whose `url_from:` is not `PORTAINER` needs a fresh `deploy carrier`** if it was built
+  with an earlier kernel: its Portainer was started with an empty admin password (si#802).
 
 ### Secrets forwarded by the launcher (si#757)
 
@@ -50,13 +54,22 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
   the names are restored exactly for dispatch. On today's launcher paths the two never meet; this is a
   guard, not a fix for an observed leak.
 
-### Deploy and registries (si#785, si#773)
+### Deploy and registries (si#785, si#783, si#802, si#773)
 
 - **si#785:** before the first Portainer write, every `ghcr.io` image in the stack's compose document
   (from the checkout, with the deployment's values substituted) is asked of ghcr.io anonymously: 200
   is public, 401 is private. A 403, a 5xx or no answer is not a verdict and only warns. Portainer's
   registries are asked only for a private image. `has_registry` no longer reads an unreadable answer
   as "missing"; it says it cannot tell.
+- **si#783:** when the entry is missing and `<url_from>_GHCR_USER` / `<url_from>_GHCR_PASSWORD` are
+  set, `deploy up` creates it through `POST /registries` as a custom registry (URL `ghcr.io`,
+  authentication on): Portainer CE 2.45.0 refuses the GitHub registry type on create. The token goes
+  only into the request body. Without the variables the refusal names them. Not yet run against a real
+  Portainer.
+- **si#802:** the carrier's Portainer play read a fixed `PORTAINER_PASSWORD` while the kernel checked
+  and forwarded `<url_from>_PASSWORD`; with any other prefix the admin password was empty and the run
+  green. The play now reads the name the kernel forwards. biz-cockpit (`url_from: PORTAINER`) was not
+  affected.
 - **si#773:** `oras login` and `docker login` run under their own limit (`REGISTRY_LOGIN`, 120 s) and
   without the terminal, and a login that times out says so instead of advising `gh auth refresh`.
   The network-limit scan names this call, so a non-literal argv cannot slip past it again.
@@ -78,7 +91,7 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
 - **si#436:** the docstring names the deleted probe package.
 - **#791** pins `deploy/image/image.pin` to the v0.46.0 kernel image.
 - The pull requests are #790 (si#436), #791, #792 (si#772), #793 (si#771), #794 (si#787),
-  #795 (si#773), #796 (si#717), #797 (si#785) and #798 (si#757).
+  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783) and #806 (si#802).
 
 ## 0.46.0
 
