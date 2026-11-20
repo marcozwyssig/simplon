@@ -180,7 +180,10 @@ rem set is named rather than left to be discovered.
 for /f "usebackq tokens=1 delims==" %%N in (`set DELIVERY_ 2^>nul`) do call :forward %%N
 for /f "usebackq tokens=1 delims==" %%N in (`set {{ product_env_prefix }}_ 2^>nul`) do call :forward %%N
 for %%N in ({{ forwarded }}) do call :forward %%N
-for %%N in (%LAUNCH_ENV_PASS%) do call :forward %%N
+rem A COMMAND'S PASSED NAMES GO ON THE KERNEL'S LINE ALONE (si#757), collected apart in DOCKER_PASS: the
+rem install below resolves third-party packages, and a token one command declares has no business there.
+set "DOCKER_PASS="
+for %%N in (%LAUNCH_ENV_PASS%) do call :pass %%N
 rem What this file was rendered to pass, as names, so the kernel can tell a stale launcher from an unset
 rem variable (si#467).
 set "DOCKER_ENV=%DOCKER_ENV% -e "DELIVERY_ENV_PASS=%LAUNCH_ENV_PASS%""
@@ -199,7 +202,7 @@ if errorlevel 1 (
     docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -c "import pathlib,os; p=pathlib.Path('/src/build/container/python/.deps-stamp'); p.touch()" || exit /b 1
 )
 
-docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -u -m %LAUNCH_MODULE% %*
+docker run %DOCKER_ARGS% %DOCKER_ENV% %DOCKER_PASS% "%KERNEL_IMAGE%" python -u -m %LAUNCH_MODULE% %*
 exit /b %ERRORLEVEL%
 
 :forward
@@ -215,6 +218,12 @@ if /i "%~1"=="PYTHONUSERBASE" goto :eof
 if /i "%~1"=="HOME" goto :eof
 if not defined %~1 goto :eof
 set "DOCKER_ENV=%DOCKER_ENV% -e %~1"
+goto :eof
+
+:pass
+rem A passed name the loader accepted: it never names what `:forward` skips (launcherenv refuses those).
+if not defined %~1 goto :eof
+set "DOCKER_PASS=%DOCKER_PASS% -e %~1"
 goto :eof
 
 :venv_route

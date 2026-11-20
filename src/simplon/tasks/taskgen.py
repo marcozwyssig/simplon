@@ -21,8 +21,9 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon.manifest import bound, clitaxonomy, results, signatures
+from simplon.manifest import bound, clitaxonomy, launcherenv, results, signatures
 from simplon.model import task
+from simplon.tasks import testrun
 from simplon.model.command import AggregateCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.model.task import resolve_ref
@@ -160,7 +161,11 @@ def render(manifest: Manifest, *, source: str, product: str,
     has_aggregate = False
     uses_results = False
     uses_bound = False
-    uses_env_pass = False
+    # si#757: a manifest whose commands pass no name has nothing for a launcher to forward, so its module
+    # stays as it was; otherwise every command is confined to the names it (or its plan) declares.
+    passes_any = any(isinstance(spec, TaskCommand) and spec.env_pass
+                     for members in manifest.commands.values() for spec in members.values())
+    uses_env_pass = passes_any
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -208,6 +213,10 @@ def render(manifest: Manifest, *, source: str, product: str,
                 if listed:
                     uses_bound = True
                     wrapped = f"_bound.within({listed!r}, lambda: {wrapped})"
+                # si#757: every name the launcher forwarded that this command did not declare is unset first;
+                # a body that runs gates calls other commands' bodies here, so it keeps them all.
+                if passes_any and not testrun._runs_gates(impl_body):
+                    wrapped = f"_launcherenv.confined({spec.env_pass!r}, lambda: {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": wrapped})
@@ -225,8 +234,11 @@ def render(manifest: Manifest, *, source: str, product: str,
                         f"generated module cannot render - its dispatcher takes a command name only. "
                         f"Leave this group to `simplon.cli.assemble`, which binds `passes:`")
                 has_aggregate = True
-                tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "",
-                              "call": f"_plan({name!r}, {group!r})"})
+                call = f"_plan({name!r}, {group!r})"
+                if passes_any:
+                    keep = launcherenv.of_plan(manifest.plan_tree_for(name, group=group))
+                    call = f"_launcherenv.confined({keep!r}, lambda: {call})"
+                tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "", "call": call})
 
     if has_aggregate:
         body.append("if aggregate is None:")

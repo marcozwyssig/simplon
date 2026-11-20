@@ -64,13 +64,34 @@ def test_a_declared_name_crosses_by_name_and_its_value_is_on_no_docker_line(tmp_
     # act
     done = _run(root, "support", "doctor", env={"VSCE_PAT": SECRET})
 
-    # assert: every docker line, the install ones included, carries the name and never the value
+    # assert: the kernel's line carries the name, and no docker line carries the value
     assert done.returncode == 0, done.stderr
     assert done.docker
+    assert " -e VSCE_PAT " in f" {done.docker[-1]} "
     for line in done.docker:
-        assert " -e VSCE_PAT " in f" {line} "
         assert SECRET not in line
     assert SECRET not in done.stdout + done.stderr
+
+
+def test_a_declared_name_never_reaches_the_install_or_the_check_container(tmp_path):
+    """si#757: the dependency install resolves third-party packages (and may build an sdist), and the check
+    runs on the same line. Neither needs a command's secret, so neither container is handed the name."""
+    # arrange
+    root = _declaring(tmp_path)
+
+    # act
+    done = _run(root, "support", "doctor", env={"VSCE_PAT": SECRET})
+
+    # assert: the install and the check ran, and only the kernel's own line names VSCE_PAT
+    assert done.returncode == 0, done.stderr
+    assert len(done.docker) == 3, done.docker
+    install, check, kernel = done.docker
+    assert "pip install --user" in install
+    assert "python -I -c" in check
+    assert "python -u -m" in kernel
+    for line in (install, check):
+        assert " -e VSCE_PAT " not in f" {line} ", line
+    assert " -e VSCE_PAT " in f" {kernel} "
 
 
 def test_a_declared_name_the_host_does_not_set_is_not_forwarded_at_all(tmp_path):
@@ -126,9 +147,14 @@ def test_the_batch_launcher_forwards_the_list_by_name_and_exports_it(tmp_path):
     cmd = bootstrap._render_launcher("democtl", "launch.cmd.j2", "deploy/provision/orchestrator",
                                      ("VSCE_PAT",))
 
-    # assert: through `:forward`, which passes `-e NAME` only for a defined name, and the export
-    assert "for %%N in (%LAUNCH_ENV_PASS%) do call :forward %%N" in cmd
-    assert 'set "DOCKER_ENV=%DOCKER_ENV% -e %~1"' in cmd
+    # assert: through `:pass`, which passes `-e NAME` only for a defined name and only on the kernel's own
+    # line (si#757: never the install's or the check's), and the export
+    assert "for %%N in (%LAUNCH_ENV_PASS%) do call :pass %%N" in cmd
+    assert 'set "DOCKER_PASS=%DOCKER_PASS% -e %~1"' in cmd
+    runs = [line.strip() for line in cmd.splitlines() if line.strip().startswith("docker run ")]
+    assert len(runs) == 4, runs   # install, check, stamp, kernel
+    assert [line for line in runs if "%DOCKER_PASS%" in line] == [runs[-1]]
+    assert "python -u -m" in runs[-1]
     assert '-e "DELIVERY_ENV_PASS=%LAUNCH_ENV_PASS%"' in cmd
     assert 'if /i "%~1"=="DELIVERY_ENV_PASS" goto :eof' in cmd
 

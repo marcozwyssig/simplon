@@ -279,13 +279,18 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # GH_TOKEN stopping at the boundary, a walk on the container route would have found the tool present,
     # skipped the sentence that says the tool is missing, and failed with a 401 instead - a worse
     # message than the one si#206 wrote, reached by fixing half the problem.
+    #
+    # A COMMAND'S PASSED NAMES GO ON THE KERNEL'S LINE ALONE (si#757), collected apart in DOCKER_PASS. The
+    # install and the check below start from DOCKER_RUN too, and the install resolves third-party packages
+    # and may build an sdist: a token one command declares has no business there.
     ENV_PREFIX="$(printf '%s' "$LAUNCH_PRODUCT" | tr '[:lower:]-' '[:upper:]_')"
+    DOCKER_PASS=()
     while read -r _name; do
         case "$_name" in
             DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|DELIVERY_DIST_CACHE|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
             DELIVERY_*|{{ forwarded_sh }}) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
-            *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_RUN+=(-e "$_name") ;; esac ;;
+            *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_PASS+=(-e "$_name") ;; esac ;;
         esac
     done < <(compgen -e)
     # WHAT THIS FILE WAS RENDERED TO PASS, as names (si#467). It crosses so the kernel can tell a launcher
@@ -346,7 +351,8 @@ if [ "$DELIVERY_ROUTE" = container ]; then
 
     # -u for the reason the venv route gives: unbuffered, so streamed output stays live and correctly
     # ordered when piped.
-    exec "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" python -u -m "$LAUNCH_MODULE" "$@"
+    exec "${DOCKER_RUN[@]}" ${DOCKER_PASS[@]+"${DOCKER_PASS[@]}"} --name "$(_launch_name)" "$KERNEL_IMAGE" \
+        python -u -m "$LAUNCH_MODULE" "$@"
 fi
 
 command -v python3 >/dev/null 2>&1 || {

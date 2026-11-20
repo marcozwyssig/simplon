@@ -41,6 +41,7 @@ from simplon.model.command import AggregateCommand, Command, TaskCommand
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
 from simplon.kernel.provenance import provenance_line
+from simplon.tasks import testrun
 from simplon.tasks.taskgen import _docstring
 
 # The passthrough context settings: a passthrough command forwards unrecognised trailing args to its
@@ -285,6 +286,9 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
     evidence = results.evidence_of(spec)
     # si#553: the names bound to a list port (no `param`) reach the body through `bound.names`.
     listed = bound.of(spec)
+    # si#757: a body that RUNS GATES calls other commands' bodies in this process, each with its own
+    # `env: pass:`, so it keeps every forwarded name rather than strip one a gated command needs.
+    keeps_all = testrun._runs_gates(fn)
 
     @functools.wraps(fn)
     def _wrapped(*args: object, **kwargs: object) -> None:
@@ -296,7 +300,9 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
         guarded = (lambda: results.guarded(evidence, body)) if evidence else body
         # si#492: this command's `env: pass:` reaches its own `toolchain:run` line and no other command's.
         run = (lambda: launcherenv.within(spec.env_pass, guarded)) if spec.env_pass else guarded
-        raise typer.Exit(code=bound.within(listed, run) if listed else run())
+        listed_run = (lambda: bound.within(listed, run)) if listed else run
+        # si#757: and every name the launcher forwarded that this command did not declare is unset first.
+        raise typer.Exit(code=listed_run() if keeps_all else launcherenv.confined(spec.env_pass, listed_run))
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
     # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and
@@ -352,7 +358,10 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: Comman
         return _passing_aggregate(mf, group, name, spec, step_context)
 
     def _aggregate() -> None:
-        raise typer.Exit(code=run_command(name, mf, step_context, group=group))
+        # si#757: the plan's leaves run as processes that inherit this one's environment, so it keeps theirs.
+        keep = launcherenv.of_plan(mf.plan_tree_for(name, group=group))
+        raise typer.Exit(code=launcherenv.confined(keep, lambda: run_command(name, mf, step_context,
+                                                                             group=group)))
 
     _aggregate.__name__ = name.replace("-", "_")
     _aggregate.__doc__ = spec.help
@@ -451,8 +460,9 @@ def _passing_aggregate(mf: manifest.Manifest, group: str, name: str, spec: Aggre
             annotation=str if required else (str | None)))
 
     def _aggregate(**values: object) -> None:
-        raise typer.Exit(code=run_command(name, mf, step_context, group=group,
-                                          leaf_args=leaf_arguments(takers, values)))
+        keep = launcherenv.of_plan(mf.plan_tree_for(name, group=group))     # si#757, as `_command_callback`
+        raise typer.Exit(code=launcherenv.confined(keep, lambda: run_command(
+            name, mf, step_context, group=group, leaf_args=leaf_arguments(takers, values))))
 
     _aggregate.__name__ = name.replace("-", "_")
     callback = cast(_Introspectable, _aggregate)
@@ -667,7 +677,9 @@ def plugin_step_after_refresh() -> None:
         return              # the product turned the automatic step off (si#583), and asked for silence
     # ON STDERR, all of it: this runs before the command a person typed, and `V=$(./<product>.sh
     # release version)` right after a deps refresh must capture the version and nothing else.
-    with contextlib.redirect_stdout(sys.stderr):
+    # si#757: and with no command's `env: pass:` name set - none has been picked yet, and `claude plugin`
+    # installs third-party code. Dispatch gets them back, and the command's own `confine` decides then.
+    with contextlib.redirect_stdout(sys.stderr), launcherenv.withheld():
         try:
             outcome = claudeplugins.step()
         except Exception as exc:     # noqa: BLE001 - the launcher's promise is that this never stops a command

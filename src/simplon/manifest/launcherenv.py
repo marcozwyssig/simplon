@@ -27,7 +27,10 @@ gradle and `npm install` as well (firn's security review, firn#1056). Now:
 - the launcher's hop into the kernel's container carries the UNION of every command's list (`declared`).
   It has to: the launcher is bash, builds that line before any manifest is parsed, and the command that
   needs the name runs inside that container. That container runs simplon's own code and installs nothing
-  third-party;
+  third-party. The launcher's dependency install and its check start from the same line, and they are not
+  handed the names (si#757): the install resolves third-party packages. Inside the kernel, once dispatch
+  has picked the command, `confine` unsets every forwarded name that command (or an aggregate's plan) does
+  not declare - but the value stays in `docker inspect` of the kernel's container (si#757, option B);
 - the `toolchain:run` hop carries the names of the command being run and of no other (`running`). The
   dispatch wrappers - `cli._bound`, the generated module, a gate's call - set them around the body with
   `within`; outside a command nothing is passed. An aggregate passes nothing of its own: each member keeps
@@ -56,9 +59,11 @@ LIBRARY BY INTENT, pure apart from reading the two templates the kernel ships, a
 """
 from __future__ import annotations
 
+import contextlib
 import functools
+import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from contextvars import ContextVar
 from importlib.resources import files
 
@@ -189,6 +194,70 @@ def within(names: tuple[str, ...], body: Callable[[], int]) -> int:
         return body()
     finally:
         _running.reset(token)
+
+
+def confine(keep: Iterable[str], environ: MutableMapping[str, str] | None = None) -> tuple[str, ...]:
+    """Unset every name the launcher forwarded that `keep` does not hold, and say which went (si#757).
+
+    The launcher hands the kernel's container the UNION of every command's list, because it builds that
+    line before any manifest is parsed. So once dispatch has picked the command, the kernel takes back what
+    that command did not ask for: `keep` is its own `env: pass:`, or for an aggregate every planned leaf's,
+    since the leaves run as processes that inherit this one's environment. Neither the body nor anything it
+    starts (a third-party library, a `gh` extension) can then read a name meant for another command.
+
+    THE LIST IS THE LAUNCHER'S OWN, `DELIVERY_ENV_PASS`, and nothing re-derives it: what is unset is exactly
+    what was forwarded. With no such variable (the venv route, which inherits the caller's whole environment
+    on purpose) nothing is unset. Called once per process, at the top-level dispatch only; a name kept here
+    is what `within` then hands to the command's `toolchain:run` line.
+
+    THE ACCEPTED LIMIT: the value stays visible in `docker inspect` of the kernel's container, whose Config.Env
+    recorded it when the launcher started it. Only the launcher could keep it off that line, and it cannot
+    tell which command runs without a second copy of the CLI's argument grammar (si#757, option B).
+    """
+    env = os.environ if environ is None else environ
+    kept = set(keep)
+    gone = tuple(name for name in env.get(EXPORTED, "").split() if name not in kept and name in env)
+    for name in gone:
+        del env[name]
+    return gone
+
+
+def of_plan(tree: object) -> tuple[str, ...]:
+    """The names an aggregate keeps: every planned leaf's `env: pass:`, in plan order, each once. `tree` is
+    `Manifest.plan_tree_for`'s root; a leaf whose declaration carries no list contributes nothing."""
+    out: list[str] = []
+    for leaf in tree.leaves():      # type: ignore[attr-defined]
+        for name in getattr(leaf.spec, "env_pass", ()):
+            if name not in out:
+                out.append(name)
+    return tuple(out)
+
+
+@contextlib.contextmanager
+def withheld(environ: MutableMapping[str, str] | None = None) -> Iterator[None]:
+    """Every forwarded name unset for the duration, and put back exactly as it was afterwards (si#757).
+
+    For what runs in the kernel BEFORE dispatch has picked a command - the launcher's plugin step, which
+    installs third-party code with `claude plugin` - so no command's name reaches it. Afterwards the
+    command's own `confine` decides as usual. A name that was unset before is unset after, even if the
+    step set it; one that was set gets its own value back.
+    """
+    env = os.environ if environ is None else environ
+    forwarded = env.get(EXPORTED, "").split()
+    held = {name: env[name] for name in forwarded if name in env}
+    confine((), env)
+    try:
+        yield
+    finally:
+        for name in forwarded:
+            env.pop(name, None)
+        env.update(held)
+
+
+def confined(keep: tuple[str, ...], body: Callable[[], int]) -> int:
+    """`body()`'s rc, run after `confine(keep)` - the form the dispatch wrappers call."""
+    confine(keep)
+    return body()
 
 
 def running() -> tuple[str, ...]:
