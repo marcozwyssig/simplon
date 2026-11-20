@@ -35,12 +35,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Mapping
+
+import yaml
 
 from simplon.manifest import environments
 
@@ -224,11 +227,179 @@ def has_registry(target: PortainerTarget, host: str = GHCR_HOST) -> bool:
     """Whether Portainer holds credentials for this registry.
 
     Without them a private package fails at start time with "unauthorized" - better said beforehand.
+
+    AN ANSWER THAT IS NOT A LIST IS NOT "NO" (si#785). It used to come back as False, and a caller that
+    refuses on False would send the operator to add an entry that may well be there. Portainer that
+    could not be asked is neither "present" nor "missing", so it raises - as an unreachable one already
+    does in `_request`.
     """
     registries = _request(target, "GET", "/registries")
     if not isinstance(registries, list):
-        return False
+        raise PortainerError(
+            f"Portainer at {target.url} answered GET /registries with {type(registries).__name__} "
+            f"rather than a list, so this run cannot tell whether it holds credentials for {host}")
     return any(host in str(registry.get("URL", "")) for registry in registries)
+
+
+# --- the registry check before a deployment (si#785) -------------------------------------------------
+
+#: What ghcr.io's anonymous token endpoint answered, MEASURED 2026-11-20 rather than read off a document,
+#: because these three numbers are the whole of how the kernel tells a private package from a public one:
+#:
+#:   200  a public package: an anonymous pull token is handed out
+#:   401  a private package: `UNAUTHORIZED`, "authentication required"
+#:   403  a name ghcr.io does not serve: `DENIED`, "requested access to the resource is denied"
+#:
+#: Only the first two are verdicts. 403 is NOT "private" (the measured case was a repository that does not
+#: exist), and a 5xx, a timeout or no connection says nothing at all; each of those is reported as "could
+#: not tell" and refuses nothing - a failed probe is not a result.
+GHCR_PUBLIC = "public"
+GHCR_PRIVATE = "private"
+_GHCR_ANSWERS = {200: GHCR_PUBLIC, 401: GHCR_PRIVATE}
+
+#: The way out, in one place. si#783 (P2 M8) will create the entry from the environment; until it names
+#: its variables, the Portainer UI is the only way out there is, and this sentence invents none.
+_REGISTRY_WAY_OUT = (
+    "Add one in Portainer under Registries (provider GitHub, ghcr.io, a token with read:packages); "
+    "si#783 will create it from the environment")
+
+
+def _ghcr_token_status(path: str) -> int:
+    """The HTTP status ghcr.io's token endpoint gives an ANONYMOUS pull request for `owner/name`.
+
+    Raises OSError when no answer came back at all, which the caller turns into "could not tell".
+    """
+    request = urllib.request.Request(
+        f"https://{GHCR_HOST}/token?scope=repository:{path}:pull&service={GHCR_HOST}")
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+
+def ghcr_visibility(path: str) -> "tuple[str | None, str]":
+    """Whether the ghcr.io package `owner/name` is public or private, or None with the reason why not."""
+    try:
+        status = _ghcr_token_status(path)
+    except OSError as error:
+        return None, f"ghcr.io could not be asked ({error})"
+    verdict = _GHCR_ANSWERS.get(status)
+    return verdict, "" if verdict else f"ghcr.io answered {status} to an anonymous pull token request"
+
+
+_VARIABLE = re.compile(r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)(?P<op>:?[-?])?(?P<default>[^}]*)\}"
+                       r"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*)|(?P<dollar>\$))")
+
+
+def _resolved(text: str, values: "Mapping[str, str]") -> str:
+    """An image reference resolved the way compose resolves it against the values this deployment sends.
+
+    `${X}`, `$X`, `${X:-default}` and `${X-default}` take the value or the default; a name with neither is
+    left as written, so the caller sees a `$` and says it could not tell the registry rather than guessing
+    one. Only the stack's own values are used - the kernel does not know what else Portainer holds.
+    """
+    def one(match: "re.Match[str]") -> str:
+        if match.group("dollar"):
+            return "$"
+        name = match.group("braced") or match.group("bare")
+        value = values.get(name, "")
+        op = match.group("op") or ""
+        if value or (name in values and op in ("-", "?")):
+            return value
+        if op in (":-", "-"):
+            return _resolved(match.group("default"), values)
+        return match.group(0)
+    return _VARIABLE.sub(one, text)
+
+
+def _ghcr_path(image: str) -> "str | None":
+    """`owner/name` when `image` is on ghcr.io, otherwise None. The tag or digest is not part of it."""
+    host, _, rest = image.partition("/")
+    if host != GHCR_HOST or not rest:
+        return None
+    rest = rest.split("@", 1)[0]
+    return rest.rsplit(":", 1)[0] if ":" in rest.rsplit("/", 1)[-1] else rest
+
+
+def stack_images(compose: str, values: "Mapping[str, str]") -> "tuple[list[str], list[str]]":
+    """The images a compose document names, resolved, and the ones whose reference stayed unresolved."""
+    document = yaml.safe_load(compose) or {}
+    services = document.get("services") if isinstance(document, dict) else None
+    images: list[str] = []
+    unresolved: list[str] = []
+    for service in (services or {}).values():
+        raw = service.get("image") if isinstance(service, dict) else None
+        if not isinstance(raw, str) or not raw:
+            continue
+        image = _resolved(raw, values)
+        (unresolved if "$" in image else images).append(image if "$" not in image else raw)
+    return images, unresolved
+
+
+def _compose_text(repository: "Repository") -> "str | None":
+    """The compose document as THIS checkout holds it, or None when it is not here.
+
+    A SECOND SOURCE, AND SAID SO. Portainer clones `repository.url` at `repository.ref`; this reads the
+    file at the same path in the checkout the command runs in. For a product deploying its own repository
+    that is the same document, give or take the ref; for one that is not, the file is absent and the
+    caller says the check did not run rather than reading that as "no image".
+    """
+    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+
+    try:
+        return (context.current().root / repository.compose).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def check_registry_access(target: PortainerTarget, repository: "Repository",
+                          values: "Mapping[str, str]") -> None:
+    """Refuse a stack naming a private ghcr.io image Portainer holds no registry entry for (si#785).
+
+    WHY BEFORE AND NOT AFTER. Without the entry the stack is accepted, Portainer pulls, and the container
+    fails at START with "unauthorized" - on the far side of the seam, after the stack exists. The facts
+    that decide it are two calls away, so they are asked first.
+
+    EVERY OUTCOME HAS ITS OWN VALUE, which is the point of the whole function:
+      - no ghcr.io image, or only public ones: nothing to refuse, and Portainer is not asked;
+      - a private one and Portainer holds a ghcr.io entry: deployed, and said;
+      - a private one and Portainer holds none: refused, every such image named in one sentence;
+      - Portainer could not say what it holds: `has_registry` raises - neither present nor missing;
+      - ghcr.io could not say whether an image is private, its reference stayed unresolved, or the
+        compose document is not in this checkout: said by name, refused on nothing.
+    A PRESENT ENTRY IS NOT A PROVEN ONE: Portainer is not asked whether its token can read these packages.
+    """
+    from simplon.kernel import log
+
+    compose = _compose_text(repository)
+    if compose is None:
+        log.warn(f"registry check did not run: {repository.compose} is not in this checkout, so the "
+                 f"images Portainer will pull from {repository.url} could not be read here")
+        return
+    images, unresolved = stack_images(compose, values)
+    for image in unresolved:
+        log.warn(f"registry check: could not tell which registry {image} is on - its reference uses a "
+                 f"value this deployment does not send")
+    private: list[str] = []
+    for image in images:
+        path = _ghcr_path(image)
+        if path is None:
+            continue
+        verdict, why = ghcr_visibility(path)
+        if verdict == GHCR_PRIVATE:
+            private.append(image)
+        elif verdict is None:
+            log.warn(f"registry check: could not tell whether {image} is private: {why}. If it is, "
+                     f"Portainer needs a registry entry for {GHCR_HOST}")
+    if not private:
+        return
+    if not has_registry(target):
+        raise PortainerError(
+            f"{', '.join(private)} {'is a private package' if len(private) == 1 else 'are private packages'}"
+            f" on {GHCR_HOST} and the Portainer at {target.url} holds no registry entry for {GHCR_HOST}, "
+            f"so the stack would fail at container start with 'unauthorized'. {_REGISTRY_WAY_OUT}")
+    log.ok(f"Portainer holds a registry entry for {GHCR_HOST}, needed by {', '.join(private)}")
 
 
 def deploy(target: PortainerTarget, compose_yaml: str, env_vars: dict[str, str]) -> str:
@@ -474,9 +645,10 @@ class PortainerBackend:
                 f"itself - so there is nothing on this machine for it to deploy. Publish the version and "
                 f"deploy that")
         values = {**stack_values(env), VERSION_VAR: version.tag}
+        credential = _clone_credential(repository, env)
+        check_registry_access(target, repository, values)
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
-        message = deploy_from_repository(
-            target, repository, _clone_credential(repository, env), env_vars=values)
+        message = deploy_from_repository(target, repository, credential, env_vars=values)
         log.ok(f"{message}, {len(values)} value(s) incl. {VERSION_VAR}={version.tag}")
         return 0
 

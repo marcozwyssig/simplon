@@ -116,3 +116,15 @@ def test_the_registry_check_looks_for_the_named_host(monkeypatch, target) -> Non
         portainer, "_request", Recorder({"/registries": [{"URL": "registry.example/x"}]})
     )
     assert portainer.has_registry(target, host="registry.example") is True
+
+
+def test_a_registries_answer_that_is_not_a_list_is_no_verdict(monkeypatch, target) -> None:
+    """si#785: "Portainer said nothing usable" used to come back as False - "no registry entry" - and a
+    caller that refuses on False would send the operator to add an entry that may well be there. Not
+    asked is neither present nor missing, so it is its own outcome: a PortainerError."""
+    # arrange
+    monkeypatch.setattr(portainer, "_request", Recorder({"/registries": None}))
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError, match="cannot tell"):
+        portainer.has_registry(target)
