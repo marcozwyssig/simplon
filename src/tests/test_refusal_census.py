@@ -392,6 +392,31 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # write the refusal a second time it moved into `_insecure`, which both halves call - so the census
     # key moved with it and the count did not grow. A refusal shared by two callers is one rule.
     ("carrierspec", "_insecure", "must be true or false"): DIAGNOSIS,
+    # si#781: the `runner:` half. Six diagnosis and one expression rule.
+    #
+    # Diagnosis: a runner with no `repository:` or no `token_from:` cannot register anywhere; a repository
+    # written as a URL or with a third segment registers at `https://github.com/https://...`; a label that
+    # is not a string is no label. The `runner:` with no `proxmox:` is the least obvious and still
+    # diagnosis: the rest of such a carrier works, but the half it is refused for states a runner and no
+    # command could ever install one - `deploy carrier` refuses a carrier with no machine by name - so
+    # what the manifest SAYS could not have been produced.
+    #
+    # THE EXPRESSION RULE is a bare owner. `config.sh --url https://github.com/<org>` registers an
+    # organisation runner, so the refused manifest would have worked, merely differently. The questions:
+    #   - does it forbid something a product might legitimately want? Yes, an organisation-wide runner.
+    #     What it does instead today is what every runner this account has does: #338 measured all eight
+    #     (ghr-1..8) through `repos/<repo>/actions/runners`, every one registered on a repository.
+    #   - would deleting be cheaper than guarding? Deleting it means claiming organisation registration
+    #     works through a key named `repository:` - unmeasured, and presence is not capability.
+    #   - what does a violation cost? Nothing to bill: no reachable manifest declares a `runner:` (the
+    #     half is new), so the population is empty and is said to be.
+    ("carrierspec", "_carrier", "declares a `runner:` and no `proxmox:`"): DIAGNOSIS,
+    ("carrierspec", "_runner", "declares no `repository:`"): DIAGNOSIS,
+    ("carrierspec", "_runner", "which is not an owner/name pair"): DIAGNOSIS,
+    ("carrierspec", "_runner", "names an owner and no repository"): EXPRESSION,
+    ("carrierspec", "_runner", "declares no `token_from:`"): DIAGNOSIS,
+    ("carrierspec", "_labels", "is not a label"): DIAGNOSIS,
+    ("carrierspec", "_labels", "is a label or a list of labels"): DIAGNOSIS,
 
     # --- environments.py, the repository block (si#5 slice 3) ---------------------------------------
     # The `repository:` block Portainer clones from. Two diagnosis and one expression rule, and the split
@@ -1135,6 +1160,9 @@ REACH: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_release_key", "and the trigger is derived from"): REACH_MERGED,
     ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
+    # si#781, the same claim about the same parser: a `runner:` under a carrier of simplon's own would be
+    # refused the same way. simplon declares no carrier, so it is a claim about the parser, not a placement.
+    ("carrierspec", "_runner", "names an owner and no repository"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,
     ("layout", "declared", "does not take"): REACH_MERGED,
