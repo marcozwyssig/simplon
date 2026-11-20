@@ -340,6 +340,7 @@ def test_the_resolved_version_reaches_the_stack(monkeypatch) -> None:
                         lambda env: (portainer.PortainerTarget("u", "t", 1, "s"), REPOSITORY))
     monkeypatch.setattr(portainer, "deploy_from_repository",
                         lambda t, r, c, env_vars: sent.update(env_vars) or "created")
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)  # si#785, tested below
 
     # act
     code = portainer.PortainerBackend().deploy(
@@ -473,6 +474,7 @@ def test_the_whole_module_never_writes_a_compose_document(monkeypatch, target) -
     recorder = Creating({"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP})
     monkeypatch.setattr(portainer, "_request", recorder)
     monkeypatch.setattr(portainer, "_target_for", lambda env: (target, REPOSITORY))
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)  # si#785, tested below
 
     # act
     portainer.PortainerBackend().deploy(
@@ -532,6 +534,7 @@ def test_the_values_and_the_version_travel_together(monkeypatch) -> None:
                         lambda env: (portainer.PortainerTarget("u", "t", 1, "s"), REPOSITORY))
     monkeypatch.setattr(portainer, "deploy_from_repository",
                         lambda t, r, c, env_vars: sent.update(env_vars) or "created")
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)  # si#785, tested below
     monkeypatch.setenv("HTTP_BIND", "127.0.0.1")
 
     # act
@@ -649,3 +652,215 @@ def test_optional_alone_still_needs_somewhere_to_go() -> None:
         environments.parse_data(document, ("portainer",))
 
     assert "no deployment for those values to be given to" in str(refused.value)
+
+
+# --- a private ghcr image Portainer cannot pull, refused before anything is deployed (si#785) --------
+
+def _compose(*images: str) -> str:
+    services = "\n".join(f"  s{n}:\n    image: \"{image}\"" for n, image in enumerate(images))
+    return f"services:\n{services}\n"
+
+
+def _registry_check(monkeypatch, compose: "str | None", answers: dict,
+                    registries: object = ()) -> Creating:
+    """The three things the check reads, replaced: the compose document, ghcr.io's anonymous token
+    endpoint (an HTTP status per repository path, or the exception the request raised) and Portainer.
+
+    `raising=False` on the two new seams is deliberate: on the code before si#785 they do not exist, and
+    the red these tests showed first had to be "it deployed", not "the test could not patch".
+    """
+    asked: list[str] = []
+
+    def token_status(path: str) -> int:
+        asked.append(path)
+        answer = answers[path]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    recorder = Creating({"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP})
+    recorder.answers["/registries"] = list(registries) if registries is not None else None
+    recorder.asked = asked  # type: ignore[attr-defined]
+    monkeypatch.setattr(portainer, "_request", recorder)
+    monkeypatch.setattr(portainer, "_target_for", lambda env: (
+        portainer.PortainerTarget("https://portainer.local", "t", 3, "app-prod"), REPOSITORY))
+    monkeypatch.setattr(portainer, "_compose_text", lambda repository: compose, raising=False)
+    monkeypatch.setattr(portainer, "_ghcr_token_status", token_status, raising=False)
+    return recorder
+
+
+def _deploy() -> int:
+    return portainer.PortainerBackend().deploy(
+        _environment(), deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+
+
+def _writes(recorder: Recorder) -> list:
+    return [call for call in recorder.calls if call[0] != "GET"]
+
+
+def test_a_private_ghcr_image_without_a_registry_entry_is_refused_before_anything_is_deployed(
+        monkeypatch) -> None:
+    """THE TICKET'S ACCEPTANCE, seen red first: before si#785 this deployed, and the stack then failed
+    at container start with "unauthorized" - on the far side of the seam, after the stack existed."""
+    # arrange
+    recorder = _registry_check(
+        monkeypatch, _compose("ghcr.io/acme/app:${SIMPLON_VERSION}"),
+        {"acme/app": 401}, registries=[{"URL": "docker.io"}])
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy()
+
+    message = str(refused.value)
+    assert "ghcr.io/acme/app:1.4.0" in message
+    assert "https://portainer.local" in message and "no registry entry for ghcr.io" in message
+    assert "Registries" in message and "read:packages" in message, "the way out is named"
+    assert _writes(recorder) == [], "nothing may be deployed before the check has refused"
+
+
+def test_every_private_image_is_named_in_one_refusal(monkeypatch) -> None:
+    """An operator repairing two images one run at a time is being made to do the kernel's work."""
+    # arrange
+    _registry_check(monkeypatch, _compose("ghcr.io/acme/api:1", "ghcr.io/acme/web:1"),
+                    {"acme/api": 401, "acme/web": 401})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy()
+
+    assert "ghcr.io/acme/api:1" in str(refused.value) and "ghcr.io/acme/web:1" in str(refused.value)
+
+
+def test_a_private_ghcr_image_is_deployed_when_portainer_holds_the_registry(monkeypatch) -> None:
+    # arrange
+    recorder = _registry_check(monkeypatch, _compose("ghcr.io/acme/app:1"), {"acme/app": 401},
+                               registries=[{"URL": "ghcr.io"}])
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert _sent(recorder, "POST")
+
+
+def test_a_public_ghcr_image_is_not_refused_and_portainer_is_not_asked(monkeypatch) -> None:
+    """Public means ghcr.io hands out an anonymous pull token - measured 2026-11-20 on a public package:
+    200 and a token. Portainer needs no entry for it, so its registry list is not even read."""
+    # arrange
+    recorder = _registry_check(monkeypatch, _compose("ghcr.io/acme/app:1"), {"acme/app": 200})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert recorder.asked == ["acme/app"]  # type: ignore[attr-defined]
+    assert ("GET", "/registries", None) not in recorder.calls
+
+
+def test_an_image_from_another_registry_is_neither_probed_nor_refused(monkeypatch) -> None:
+    # arrange
+    recorder = _registry_check(
+        monkeypatch, _compose("caddy:2-alpine", "docker.io/library/redis:7", "registry.example/acme/x:1",
+                              "localhost:5000/x"), {})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert recorder.asked == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("answer", [403, 500, OSError("ghcr.io unreachable")])
+def test_a_probe_that_did_not_answer_is_neither_public_nor_private(monkeypatch, capsys, answer) -> None:
+    """A FAILED PROBE IS NOT A RESULT. 403 is what ghcr.io answers for a name it does not serve
+    (measured 2026-11-20, against a repository that does not exist); a 500 or no connection says
+    nothing at all. None of them is "public" - the run says it could not tell, naming the image - and
+    none is "private" either, so nothing is refused on it."""
+    # arrange
+    _registry_check(monkeypatch, _compose("ghcr.io/acme/app:1"), {"acme/app": answer})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert "could not tell whether ghcr.io/acme/app:1 is private" in capsys.readouterr().out
+
+
+def test_a_portainer_that_cannot_say_what_it_holds_stops_the_deployment_as_unasked(monkeypatch) -> None:
+    """Not asked is neither "registry present" nor "missing". The deployment stops - the same Portainer
+    has to accept the stack next - and the sentence is that Portainer could not tell, not that an entry
+    is missing."""
+    # arrange
+    recorder = _registry_check(monkeypatch, _compose("ghcr.io/acme/app:1"), {"acme/app": 401},
+                               registries=None)
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as stopped:
+        _deploy()
+
+    assert "cannot tell" in str(stopped.value)
+    assert "no registry entry" not in str(stopped.value)
+    assert _writes(recorder) == []
+
+
+def test_an_image_written_with_variables_is_checked_as_the_stack_will_resolve_it(monkeypatch) -> None:
+    """The compose document resolves its image against the values this deployment sends; the check reads
+    it through the same values, so `${OWNER}` is not mistaken for a registry nobody can probe."""
+    # arrange
+    monkeypatch.setenv("OWNER", "acme")
+    recorder = _registry_check(monkeypatch, _compose("${REG:-ghcr.io}/${OWNER}/app:${SIMPLON_VERSION}"),
+                               {"acme/app": 401})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError, match="ghcr.io/acme/app:1.4.0"):
+        portainer.PortainerBackend().deploy(
+            _environment(required=("OWNER",)),
+            deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+
+    assert recorder.asked == ["acme/app"]  # type: ignore[attr-defined]
+
+
+def test_an_image_whose_registry_cannot_be_resolved_is_said_rather_than_skipped(monkeypatch, capsys) -> None:
+    # arrange
+    _registry_check(monkeypatch, _compose("${IMAGE}"), {})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    assert "${IMAGE}" in capsys.readouterr().out
+
+
+def test_a_compose_document_not_in_this_checkout_is_said_rather_than_read_as_no_images(monkeypatch,
+                                                                                      capsys) -> None:
+    """The check reads the compose document out of THIS checkout, while Portainer clones the repository.
+    Where the file is not here the check has nothing to read - which is not "no ghcr image"."""
+    # arrange
+    _registry_check(monkeypatch, None, {})
+
+    # act
+    code = _deploy()
+
+    # assert
+    assert code == 0
+    said = capsys.readouterr().out
+    assert "registry check did not run" in said and REPOSITORY.compose in said
+
+
+@pytest.mark.parametrize("status, verdict", [(200, "public"), (401, "private"), (403, None), (500, None)])
+def test_ghcrs_anonymous_token_answer_decides_the_visibility(monkeypatch, status, verdict) -> None:
+    """The measurement of 2026-11-20, pinned: 200 for a public package, 401 "authentication required"
+    for a private one, 403 "denied" for a name ghcr.io does not serve. Only the first two are verdicts."""
+    # arrange
+    monkeypatch.setattr(portainer, "_ghcr_token_status", lambda path: status, raising=False)
+
+    # act
+    seen, _why = portainer.ghcr_visibility("acme/app")
+
+    # assert
+    assert seen == verdict
