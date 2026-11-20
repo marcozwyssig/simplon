@@ -15,7 +15,9 @@ calling a command that is gone. That resolution is the whole value; the YAML aro
 
 WHAT BELONGS TO THE PRODUCT, AND WHAT DOES NOT (si#40's first hard question). Runner images, triggers,
 permissions, schedules, environments and concurrency are the PRODUCT's: the kernel cannot know them and
-must not guess. They are carried through VERBATIM, dumped as they were declared. What is not the
+must not guess. They are carried through VERBATIM, dumped as they were declared - and the one trigger
+the kernel supplies, a workflow of jobs that declares none (si#787, `_CI_TRIGGER`), is a default that a
+declared `on:` replaces, never a guess written over one. What is not the
 product's is the step SEQUENCE - it is already in the manifest - and the invariants the kernel has
 learned the hard way, which is why `actions/checkout` is emitted by this module with `fetch-depth: 0`
 rather than declared per job: si#3 measured that a shallow clone makes setuptools-scm derive a version
@@ -383,17 +385,19 @@ def _workflow(key: str, body: object) -> Workflow:
     emulates = _emulates(body, where, release)
     timeout = _release_timeout(body, where, release)
     trigger = _declared_trigger(body, where) if not release else _RELEASE_TRIGGER
+    stages = _stages(body, where)
+    if trigger is None and not stages:
+        trigger = _CI_TRIGGER
     if trigger is None:
         raise ValueError(
-            f"{where}: declares no `on:` trigger. The kernel derives one only for a `{RELEASE_KEY}:` "
-            f"workflow - otherwise whether a tag publishes, or a push runs the suite, is this product's "
-            f"statement and not something that can be derived from a command tree")
+            f"{where}: declares no `on:` trigger. The kernel derives one for a `{RELEASE_KEY}:` workflow "
+            f"and a workflow of jobs only (pull request, push to {DEFAULT_BRANCH}, dispatch) - a "
+            f"`{FLOW_KEY}:` deploys, and whether a tag or a release starts it is this product's statement")
     # `flow:` AND `jobs:` TOGETHER ARE ALLOWED, and the refusal that stood here was struck for si#267's
     # reason: a product wanting the rollout plus a notification job of its own was saying something the
     # kernel could honour, and forbidding it sent them back to writing the whole file. The generated
     # stage jobs carry stable names (`deploy-<environment>`), so a product's own job hangs `needs:` on
     # one and the order stays the product's.
-    stages = _stages(body, where)
     runner, rollout_runs_on = ((None, "") if not stages and not release
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
     rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
@@ -436,6 +440,20 @@ _RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
                 "required": True, "type": "string"},
     "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
                 "required": True, "type": "boolean", "default": True}}}}
+#: si#787: the trigger of a workflow of jobs that declares no `on:` - a pull request, a push to the default
+#: branch, and by hand. NOT `push` on every branch beside `pull_request`: that pair runs the whole CI twice
+#: for every push to a PR branch, measured on simplon's #774 (runs 44454884131 and 44454889265, one head).
+#: No merge queue (Marco, 2026-11-19). A product that writes `on:` keeps what it wrote.
+#:
+#: THE DEFAULT BRANCH IS A CONSTANT, and what that costs is stated rather than hidden. GitHub has no
+#: placeholder for it in a `branches:` filter, so the name is written into the file; asking origin for it
+#: (`gitops.remote_default_branch`) would make rendering, and the suite that holds the generated files
+#: equal to the manifest, depend on the network. Measured 2026-11-20 over the GitHub API: every consumer
+#: that declares `workflows:` is on `main`; cleon and agile-cockpit are on `master` and declare none. A
+#: product on another branch writes `on:` itself, and until it does its pushes to that branch run nothing.
+DEFAULT_BRANCH = "main"
+_CI_TRIGGER: Mapping[str, object] = {"pull_request": None, "push": {"branches": [DEFAULT_BRANCH]},
+                                     "workflow_dispatch": None}
 #: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
 #: to push an image. They are the derived release job's own (si#719), never the workflow's.
 _RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}

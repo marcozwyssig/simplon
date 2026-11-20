@@ -4,8 +4,8 @@
 # a command that is renamed or removed breaks generation instead of leaving a workflow calling
 # something that is gone. `--check` reports drift and returns 1.
 
-# Every push and every pull request, and every step is a command a developer can type in a
-# checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
+# Every pull request and every push to main, and every step is a command a developer can type in
+# a checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
 # produced si#8, where the CI was green for months because it had never run mypy at all.
 #
 # The steps name the LEAVES, not the `test all` aggregate that plans three of them (si#156,
@@ -17,9 +17,11 @@
 # and `test all` reaches three of them by name rather than by repeating them.
 name: ci
 on:
-  - push
-  - pull_request
-  - workflow_dispatch
+  pull_request: null
+  push:
+    branches:
+    - main
+  workflow_dispatch: null
 
 jobs:
 

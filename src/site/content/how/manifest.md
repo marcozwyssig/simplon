@@ -1263,8 +1263,11 @@ Until 0.16.0 the value was coerced with `str()`, so that list came out as the si
 exist, so the job queued for ever with no error anywhere (si#266). A value GitHub has no reading for at
 all - a number, a bool, a list with something other than a label in it - is refused naming the line.
 
-**Whether a tag publishes is your statement**, so a workflow that declares no `on:` is refused rather
-than given a default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an
+**A workflow of jobs that declares no `on:` runs as CI** (si#787): on a pull request, on a push to
+`main`, and by dispatch - not on a push to every branch, which beside `pull_request` runs the whole CI
+twice for every push to a pull request's branch. A product on another default branch, or with any other
+reason, writes `on:` and keeps what it wrote. **Whether a deployment starts is your statement**, so a
+`flow:` workflow that declares no `on:` is refused rather than given a default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an
 upload, a shell script that reports something - is written out verbatim beside the resolved ones.
 
 A command step keeps its modifiers, which is what lets it stay a command step:
