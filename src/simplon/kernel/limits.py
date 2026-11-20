@@ -29,8 +29,14 @@ GIT_REMOTE = 300.0
 #: One `gh` call (an API request, not an upload).
 GH = 60.0
 
-#: One `oras` call that reads or logs in (a manifest, a tag list), not a push or a pull.
+#: One `oras` call that reads (a manifest, a tag list), not a push or a pull.
 ORAS = 120.0
+
+#: One registry login, `oras login` or `docker login` (si#773). Each client gives up on its own on a
+#: registry that accepts and never answers - measured, docker after 25 s and oras after 67 s (its TLS
+#: handshake timeout, retried) - but that is each client's business, and a registry that answers too
+#: slowly to trip either would still hold the run. ORAS's bound, for the same unmeasured reason.
+REGISTRY_LOGIN = 120.0
 
 #: One `docker pull` of a product's image.
 DOCKER_PULL = 900.0

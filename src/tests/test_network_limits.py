@@ -9,13 +9,18 @@ without a limit.
 from __future__ import annotations
 
 import ast
+import os
+import shutil
 import socket
 import subprocess
+import sys
 import threading
+from urllib.parse import urlsplit
 
 import pytest
 
 from conftest import ROOT
+from simplon.adapters import githubpackages
 from simplon.kernel import limits
 from simplon.kernel import run as run_module
 from simplon.tasks import gitops
@@ -91,10 +96,83 @@ def test_a_remote_git_operation_against_a_silent_remote_times_out(tmp_path, monk
     assert "`git ls-remote origin` gave no answer within 1 s" in res.err
 
 
+# --- a registry login against a registry that never answers (si#773) ----------------------------------
+
+#: A login client that connects to the host it is given and waits for an answer, with no time limit of its
+#: own: what `_login` hands its argv and its stdin to, and nothing else. oras and docker each carry an
+#: internal timeout (measured against a silent listener: docker 25 s, oras 67 s), so only this stand-in
+#: shows the kernel's own limit doing the stopping; the real oras is the test after it.
+_WAITING_CLIENT = (
+    "import socket, sys; host, port = sys.argv[1].rsplit(':', 1); sys.stdin.read(); "
+    "socket.create_connection((host, int(port))).recv(1)"
+)
+
+
+def _login_in_a_thread(call) -> list:
+    """Run `call` in a thread, so the red run (no limit: it waits) fails the test rather than hanging the suite."""
+    got: list = []
+
+    def attempt() -> None:
+        try:
+            call()
+        except githubpackages.PackageError as refused:
+            got.append(refused)
+
+    worker = threading.Thread(target=attempt, daemon=True)
+    worker.start()
+    worker.join(15)
+    assert got, "the login against a silent registry gave no verdict within 15 s"
+    return got
+
+
+def test_a_registry_login_against_a_silent_registry_times_out_with_its_own_message(monkeypatch, silent_remote):
+    # arrange: a registry that accepts and never answers, a token, and a short limit
+    host = urlsplit(silent_remote).netloc
+    monkeypatch.setenv("GITHUB_TOKEN", "a-token")
+    monkeypatch.setattr(limits, "REGISTRY_LOGIN", 1.0)
+
+    # act
+    [refused] = _login_in_a_thread(
+        lambda: githubpackages._login([sys.executable, "-c", _WAITING_CLIENT], host, ""))
+
+    # assert: a timeout, said as one - not a rejected credential, so no `gh auth refresh`
+    assert "gave no answer within 1 s" in str(refused)
+    assert host in str(refused)
+    assert "gh auth refresh" not in str(refused)
+
+
+def _provided_oras() -> str:
+    """An oras this host already has (on PATH, or the one the kernel downloaded into this checkout's
+    build/tools/bin); "" when there is none. The suite does not download one: the kernel image carries no
+    oras (deploy/image/Dockerfile)."""
+    downloaded = ROOT / "build" / "tools" / "bin" / "oras"
+    return shutil.which("oras") or (str(downloaded) if downloaded.is_file() else "")
+
+
+def test_a_real_oras_login_against_a_silent_registry_times_out(tmp_path, monkeypatch, silent_remote):
+    # arrange: the real oras, against a registry that accepts and never answers
+    found = _provided_oras()
+    if not found:
+        pytest.skip("no oras on this host; the stand-in test above holds the limit")
+    host = urlsplit(silent_remote).netloc
+    monkeypatch.setenv("PATH", os.pathsep.join([os.path.dirname(found), os.environ["PATH"]]))
+    monkeypatch.setenv("GITHUB_TOKEN", "a-token")
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    monkeypatch.setattr(limits, "REGISTRY_LOGIN", 1.0)
+
+    # act
+    [refused] = _login_in_a_thread(lambda: githubpackages.login(host))
+
+    # assert
+    assert f"`oras login {host}` gave no answer within 1 s" in str(refused)
+    assert "gh auth refresh" not in str(refused)
+
+
 # --- the scan: no network-bound run() without a limit ------------------------------------------------
 
 #: The tool class of a literal argv, or "" when it is not network-bound. Only literal lists are seen: an
-#: argv built in a variable is outside this scan (a known limit of an AST scan, not a claim about it).
+#: argv built in a variable is outside this scan (a known limit of an AST scan, not a claim about it), unless
+#: its enclosing function is named in `NON_LITERAL` below (si#773).
 def _tool_class(argv: list[ast.expr]) -> str:
     words = [each.value if isinstance(each, ast.Constant) and isinstance(each.value, str) else None
              for each in argv]
@@ -121,30 +199,56 @@ EXEMPT = {
 }
 
 
+#: Network-bound `run()` calls whose argv the scan cannot read, named by (module, enclosing function), with
+#: their tool class. si#773: `githubpackages._login` builds `[*command, host, ...]` for `oras login` and
+#: `docker login`, so the literal scan never saw it and it ran with no limit. A new entry is a decision.
+NON_LITERAL = {
+    ("adapters/githubpackages.py", "_login"): "REGISTRY_LOGIN",
+}
+
+
+def _is_run(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call) or not node.args:
+        return False
+    func = node.func
+    return (func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else "") == "run"
+
+
 def _calls() -> list[tuple[str, int, str, str, ast.Call]]:
-    """(module, line, tool class, the argv's leading words, call) for every literal-argv `run` in the kernel."""
+    """(module, line, tool class, the argv's leading words, call) for every literal-argv `run` in the kernel,
+    and for every `run` inside a function `NON_LITERAL` names (its leading words are the function's name)."""
     found = []
     src = ROOT / "src" / "simplon"
     for path in sorted(src.rglob("*.py")):
+        module = path.relative_to(src).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in ast.walk(tree):
+            kind = NON_LITERAL.get((module, getattr(function, "name", None)))
+            if kind and isinstance(function, ast.FunctionDef):
+                found += [(module, node.lineno, kind, function.name, node)
+                          for node in ast.walk(function) if _is_run(node)]
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not node.args or not isinstance(node.args[0], ast.List):
-                continue
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
-            if name != "run":
+            if not _is_run(node) or not isinstance(node.args[0], ast.List):
                 continue
             kind = _tool_class(node.args[0].elts)
             if kind:
                 lead = " ".join(each.value for each in node.args[0].elts[:3]
                                 if isinstance(each, ast.Constant) and isinstance(each.value, str))
-                found.append((path.relative_to(src).as_posix(), node.lineno, kind, lead, node))
+                found.append((module, node.lineno, kind, lead, node))
     return found
 
 
 def test_the_scan_sees_the_calls_it_is_about():
     # assert: a scan that matched nothing would pass every rule below; it must see each class
-    assert {kind for _, _, kind, _, _ in _calls()} == {"GH", "ORAS", "DOCKER_PULL"}
+    assert {kind for _, _, kind, _, _ in _calls()} == {"GH", "ORAS", "DOCKER_PULL", "REGISTRY_LOGIN"}
+
+
+def test_every_named_non_literal_call_is_still_where_the_scan_looks():
+    # act: a renamed or moved function would leave its entry matching nothing, and its call unscanned
+    seen = {(module, lead) for module, _, _, lead, _ in _calls()}
+
+    # assert
+    assert [entry for entry in NON_LITERAL if entry not in seen] == []
 
 
 def test_every_network_bound_run_carries_its_class_default():
