@@ -268,8 +268,16 @@ def _dedupe(text: str) -> Migration:
     lines = text.splitlines()
     removed: list[str] = []
     moved: list[str] = []
+    cut = ""  # the copy the last turn cut out - the input composed, so a YAML error below follows a cut
     while True:
-        found = _duplicates("\n".join(lines) + "\n")
+        try:
+            found = _duplicates("\n".join(lines) + "\n")
+        except yaml.YAMLError:
+            # si#772: a quoted value continued at or left of its key's column is not in the block the
+            # splice cuts, so cutting the copy leaves its tail behind
+            return refused(f"{cut}, and cutting the second copy out leaves text that is not valid YAML "
+                           "(its value continues on a line the cut does not reach) - write the key once by "
+                           "hand, and run again")
         if not found:
             break
         path, indent, first, second = found[-1]  # the last first: dropping it moves no line above it
@@ -281,6 +289,7 @@ def _dedupe(text: str) -> Migration:
         if _as_written(lines[a0:a1], indent) != _as_written(lines[b0:b1], indent):
             return refused(f"{path} is written twice, on lines {first + 1} and {second + 1}, and the two copies "
                            "differ - YAML keeps only the second, so merge them into one by hand, and run again")
+        cut = f"{path} is written twice, on lines {first + 1} and {second + 1}"
         removed += lines[b0:b1]
         del lines[b0:b1]
         moved.insert(0, f"{path}: written twice, identically (lines {first + 1} and {second + 1}) - the "

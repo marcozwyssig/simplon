@@ -512,6 +512,26 @@ def test_a_quoted_value_continued_on_a_tab_led_line_moves_with_its_key():
     assert result.text == 'product: demo\ny: "one\n\ttwo"\nother: 1\n'
 
 
+@pytest.mark.parametrize("continued", ["  two\"", " two\""], ids=["at-the-key-column", "left-of-it"])
+def test_a_copy_whose_quoted_value_continues_at_or_left_of_its_key_is_refused_and_nothing_is_written(
+        continued, tmp_path, capsys):
+    # arrange: si#772 - the block ends at the continuation line, so cutting the second copy leaves its
+    # tail behind; the text then fails to compose (ScannerError at the key's column, ParserError left of it)
+    path = tmp_path / "demo.yaml"
+    text = f'product: demo\na:\n  y: "one\n{continued}\n  other: 1\n  y: "one\n{continued}\n'
+    path.write_bytes(text.encode())
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert: a refusal naming the key and its line and the way out, rc 1, the file byte-identical
+    assert rc == 1
+    assert path.read_bytes() == text.encode()
+    err = capsys.readouterr().err
+    assert "demo.yaml: not migrated, nothing written - a.y is written twice, on lines 3 and 6" in err
+    assert "write the key once by hand, and run again" in err
+
+
 def test_copies_that_differ_only_in_indentation_are_said_to_differ():
     # arrange: review minor 2 - `c` is a sibling of `b` in one copy and its child in the other
     text = "product: demo\na:\n  b:\n  c: 1\na:\n  b:\n    c: 1\n"
