@@ -519,23 +519,50 @@ def test_a_token_is_minted_only_when_none_with_its_description_exists():
     when = str(_task(carrier.MINT_TASK).get("when", ""))
 
     # assert
-    assert when == "existing | length == 0", when
+    assert when.startswith("existing | length == 0 and "), when
     assert carrier.TOKEN_DESCRIPTION in carrier.playbook(CARRIER)
 
 
-def test_every_task_that_sees_a_secret_logs_nothing_but_the_one_that_shows_the_token():
-    """THE TOKEN IS SHOWN ONCE, by one task, and every other task that sees the JWT, the password or the
-    raw key runs with `no_log`. The display task is the exception and the only one."""
-    # arrange
-    secrets = ("auth.json.jwt", "portainer_password", "minted.json")
+#: What a task holds when it sees a secret: the admin JWT, the admin password, the raw API key.
+SECRETS = ("auth.json.jwt", "portainer_password", "rawAPIKey")
 
+
+def test_every_task_that_sees_a_secret_logs_nothing_but_the_one_that_shows_the_token():
+    """THE TOKEN IS SHOWN ONCE, by one task, and every other task in the WHOLE play that sees the JWT, the
+    password or the raw key runs with `no_log` - the pre-existing endpoint tasks included, which sent the
+    JWT in a header with nothing hiding it. The display task is the exception and the only one."""
     # act
-    seeing = [task for task in _token_tasks() if any(s in str(task) for s in secrets)]
+    seeing = [task for task in _tasks() if any(s in str(task) for s in SECRETS)]
     loud = [task["name"] for task in seeing if not task.get("no_log")]
 
     # assert
-    assert len(seeing) > 1, "the tasks that see a secret were not found - the check would hold nothing"
+    assert {"Which Docker environments does it manage?", "The local one exists"} <= {
+        task["name"] for task in seeing}, "the tasks that see a secret were not found"
     assert loud == [carrier.SHOW_TASK]
+
+
+def test_a_hidden_api_call_still_says_why_it_failed():
+    """`no_log` HIDES A FAILURE'S OWN WORDS with the secret, so every hidden API call is told not to fail
+    on its own (`failed_when: false`) and the task after it fails instead, naming the status, the
+    module's message and Portainer's - none of which carries the header or the body that was sent. The
+    pattern si#781 used for the runner's registration token."""
+    # arrange
+    tasks = _tasks()
+
+    # act
+    hidden = [(i, task) for i, task in enumerate(tasks)
+              if "ansible.builtin.uri" in task and task.get("no_log")]
+
+    # assert
+    assert len(hidden) >= 5, [task["name"] for _, task in hidden]
+    for i, task in hidden:
+        assert task.get("failed_when") is False, task["name"]
+        said = tasks[i + 1]
+        assert "ansible.builtin.fail" in said, f"nothing after {task['name']!r} says why it failed"
+        message = str(said["ansible.builtin.fail"]["msg"])
+        assert f"{task['register']}.status" in message and f"{task['register']}.msg" in message, message
+        assert not any(s in message for s in SECRETS), message
+        assert not said.get("no_log"), said["name"]
 
 
 def test_the_token_is_shown_under_the_variable_deploy_up_reads():
@@ -560,7 +587,7 @@ def test_a_second_run_says_a_token_exists_and_how_to_replace_it():
     message = str(said["ansible.builtin.debug"]["msg"])
 
     # assert
-    assert said.get("when") == "minted is skipped"
+    assert said.get("when") == "existing | length > 0"
     assert "DELETE" in message and "/tokens/" in message
     assert "minted.json" not in message
 
@@ -571,3 +598,68 @@ def test_the_ansible_run_renders_the_token_tasks(_lines, tmp_path):
 
     # assert
     assert carrier.MINT_TASK in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+
+
+# --- no token is minted into a log (si#784, owner decision on #804) ----------------------------------
+#
+# The raw key is shown on stdout, so a run whose stdout is not a person's terminal - CI, a pipe, a
+# captured step - would put it into a log. Such a run mints nothing and says how to mint it. The KERNEL
+# decides, because only it can see its own stdout: the play runs in `docker run` without `-t`, where
+# every run looks non-interactive.
+
+class _Tty:
+    def __init__(self, tty: bool) -> None:
+        self.tty = tty
+
+    def isatty(self) -> bool:
+        return self.tty
+
+    def write(self, text: str) -> int:
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("ci, tty, mint", [
+    ("", True, True),
+    ("true", True, False),
+    ("", False, False),
+    ("1", False, False),
+])
+def test_only_a_run_on_a_terminal_outside_ci_mints(monkeypatch, ci, tty, mint):
+    # arrange
+    monkeypatch.setenv("CI", ci)
+    monkeypatch.setattr(carrier.sys, "stdout", _Tty(tty))
+
+    # act / assert
+    assert carrier.interactive() is mint
+
+
+@pytest.mark.parametrize("tty, value", [(True, "true"), (False, "false")])
+def test_the_kernels_decision_reaches_the_play(_lines, monkeypatch, tmp_path, tty, value):
+    # arrange
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr(carrier.sys, "stdout", _Tty(tty))
+
+    # act
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+
+    # assert
+    argv = _lines[0]
+    assert argv[argv.index(f"{carrier.MINT_VAR}={value}") - 1] == "-e", argv
+
+
+def test_a_run_that_may_not_mint_says_so_and_names_the_command_that_does():
+    # arrange
+    flag = f"{carrier.MINT_VAR} | default(false) | bool"
+
+    # act
+    said = _task(carrier.NOT_INTERACTIVE_TASK)
+    message = str(said["ansible.builtin.debug"]["msg"])
+
+    # assert
+    assert flag in str(_task(carrier.MINT_TASK)["when"])
+    assert said["when"] == f"existing | length == 0 and not ({flag})"
+    assert "deploy carrier" in message and "terminal" in message
+    assert not any(s in message for s in SECRETS)

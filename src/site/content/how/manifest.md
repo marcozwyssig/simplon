@@ -1594,7 +1594,9 @@ run creates an API token described `simplon deploy:carrier` and prints it once, 
 `PORTAINER_TOKEN=ptr_...`, on the terminal: it is written into no file, and Portainer itself keeps only
 its digest. Store it where `deploy up` reads it. A second run finds the token by that description and
 mints none - it says one exists, and prints the command that revokes it; revoke it and run again for a
-new one.
+new one. **Only a run at a terminal mints:** with `CI` set, or output that is not a terminal, the
+run says no token was minted and that `deploy carrier` from a terminal mints it - because there the
+output is a log somebody keeps.
 
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
