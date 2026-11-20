@@ -96,6 +96,44 @@ def test_an_entry_that_cannot_be_acted_on_is_refused_by_what_is_wrong(entry, fra
     assert fragment in str(refused.value)
 
 
+@pytest.mark.parametrize("path", [
+    "/srv/app/{{ 7*7 }}", "/srv/app/{% raw %}", "/srv/app/../../etc", "/srv/my app", "/srv/app;rm -rf x",
+    "/srv/app/$(id)", "/srv/app\nx"])
+def test_a_path_that_could_be_read_as_code_on_the_carrier_never_reaches_the_play(path, monkeypatch,
+                                                                                tmp_path) -> None:
+    """SEEN RED FIRST, on the carrier side: before this rule `/srv/app/{{ 7*7 }}` reached the play and the
+    pinned ansible image created `/srv/app/49` - a template evaluated as root on the carrier."""
+    # arrange
+    document = _document([{"path": path, "owner": "1000"}])
+    monkeypatch.setattr(context, "_current", context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+    monkeypatch.setattr(context.ProductContext, "manifest_data", lambda self: document)
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        carrier.directories_on("haus")
+    assert "may only use letters, digits" in str(refused.value)
+
+
+def test_the_path_rule_is_one_function_a_resolved_value_can_be_put_through() -> None:
+    """The follow-up resolves `${VAR}` from the deployment's values; the resolved string goes through this
+    same function, because a value from the environment is no safer than one from the file."""
+    # act / assert
+    assert environments.carrier_path("/srv/biz-cockpit/prod/data", "x") == "/srv/biz-cockpit/prod/data"
+    with pytest.raises(ValueError):
+        environments.carrier_path("/srv/{{ lookup('env', 'HOME') }}", "x")
+
+
+def test_the_carrier_vars_are_tagged_so_ansible_takes_them_literally() -> None:
+    """THE SECOND WALL, measured with the pinned image: tagged `!unsafe`, `/srv/app/{{ 7*7 }}` was created
+    as a directory of that literal name rather than `/srv/app/49`."""
+    # act
+    text = carrier.unsafe_vars([{"path": "/srv/app/{{ 7*7 }}", "owner": "1000"}])
+
+    # assert
+    assert 'path: !unsafe "/srv/app/{{ 7*7 }}"' in text and 'owner: !unsafe "1000"' in text
+    assert carrier.unsafe_vars([]) == "carrier_directories: []\n"
+
+
 def test_a_list_is_required_and_not_one_entry() -> None:
     # act / assert
     with pytest.raises(ValueError) as refused:
@@ -358,8 +396,8 @@ def test_the_play_reads_the_directories_as_data_and_creates_parents_plainly(tmp_
 
     # assert
     play = yaml.safe_load((tmp_path / "carrier.yml").read_text(encoding="utf-8"))[0]
-    assert play["vars_files"] == ["directories.json"]
-    assert json.loads((tmp_path / "directories.json").read_text()) == {"carrier_directories": items}
+    assert play["vars_files"] == ["directories.yml"]
+    assert (tmp_path / "directories.yml").read_text() == carrier.unsafe_vars(items)
     names = [task["name"] for task in play["tasks"]]
     parents = names.index("The parents of those directories are there, as the system makes them")
     assert names[parents + 1] == "The directories the stacks bind are there, with their owner and mode"

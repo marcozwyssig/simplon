@@ -247,6 +247,34 @@ def _quoted(entry: Mapping, key: str, where: str) -> "str | None":
     return raw.strip()
 
 
+_CARRIER_PATH = re.compile(r"/[A-Za-z0-9._/-]+")
+
+
+def carrier_path(path: str, where: str) -> str:
+    """`path` when it may stand on a carrier as a directory, or a refusal that says why not (si#782).
+
+    A FUNCTION OF ITS OWN, AND PUBLIC, BECAUSE IT HAS A SECOND CALLER COMING: a path written as `${VAR}`
+    and resolved from the deployment's values (the follow-up the owner decided, like si#785's image
+    resolution) has to pass the same rule AFTER resolution - a value from the environment is no safer
+    than one from the file. Apply this to the resolved string, not to the template.
+
+    WHY A STRICT SET: the path travels into Ansible on the carrier and into a shell line in the refusal's
+    way out. Measured 2026-11-20 with the pinned ansible image: `/srv/app/{{ 7*7 }}` made the play create
+    `/srv/app/49` - the path was a TEMPLATE, evaluated as root on the carrier. `..` is refused with it,
+    because a path that climbs is not the directory it reads as.
+    """
+    if not path.startswith("/"):
+        raise ValueError(
+            f"{where}: a `directories:` entry names no absolute `path:` (got {path!r}). It is a "
+            f"directory on the carrier, which is where a bind mount's source is resolved")
+    if not _CARRIER_PATH.fullmatch(path) or ".." in path.split("/"):
+        raise ValueError(
+            f"{where}: `path: {path!r}` may only use letters, digits, `.`, `_`, `-` and `/`, with no `..` "
+            f"segment. It reaches Ansible and a shell on the carrier, where anything else could be read "
+            f"as code - `{{{{ ... }}}}` is a template there. Rename the directory to fit")
+    return path
+
+
 def _directories(raw: object, where: str) -> "tuple[Directory, ...]":
     """The `directories:` list of one environment, validated (si#782)."""
     if raw is None:
@@ -266,11 +294,7 @@ def _directories(raw: object, where: str) -> "tuple[Directory, ...]":
                 f"{where}: a `directories:` entry does not take {', '.join(unknown)} - it takes "
                 f"{', '.join(DIRECTORY_KEYS)}. A key that was ignored would leave what it meant unchecked, "
                 f"and the directory would be reported as ready on a check that never ran")
-        path = str(entry.get("path") or "").strip()
-        if not path.startswith("/"):
-            raise ValueError(
-                f"{where}: a `directories:` entry names no absolute `path:` (got {path!r}). It is a "
-                f"directory on the carrier, which is where a bind mount's source is resolved")
+        path = carrier_path(str(entry.get("path") or "").strip(), where)
         owner, mode = _quoted(entry, "owner", where), _quoted(entry, "mode", where)
         ids = _OWNER.fullmatch(owner) if owner is not None else None
         if owner is not None and ids is None:

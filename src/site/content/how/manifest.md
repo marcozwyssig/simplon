@@ -1706,7 +1706,8 @@ Portainer clones, and there is nothing on your machine for it to clone.
 **`directories:` names the host directories the stack binds, and they are there before it starts.**
 Docker creates a missing bind source itself, *as root*, and a service running as uid 1000 then dies with
 `unable to open database file` - a sentence that points at none of this. Each entry takes an absolute
-`path:`, an `owner:` (`"uid"` or `"uid:gid"`) and a `mode:` (`"0750"`); what an entry leaves out is
+`path:` of letters, digits, `.`, `_`, `-` and `/` with no `..` segment (it reaches Ansible and a shell on
+the carrier, where `{{ ... }}` would be a template run as root), an `owner:` (`"uid"` or `"uid:gid"`) and a `mode:` (`"0750"`); what an entry leaves out is
 neither set nor checked. `deploy carrier` creates the directories of *every* environment on that carrier,
 parents first and plain, then each with its owner and mode. `deploy up` checks them on the carrier before
 the stack is touched, and refuses naming every directory that is missing, owned by someone else, of
