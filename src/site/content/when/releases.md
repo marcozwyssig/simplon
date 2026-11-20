@@ -43,6 +43,10 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
   creates the entry instead and deploys.
 - **A carrier whose `url_from:` is not `PORTAINER` needs a fresh `deploy carrier`** if it was built
   with an earlier kernel: its Portainer was started with an empty admin password (si#802).
+- **A product with a `deploy:up` or `deploy:down` command and a `backend: portainer` environment must
+  re-render its launchers.** The kernel now derives the names those commands read (si#810); a launcher
+  rendered by an earlier kernel fails the stale check and every container-route command is refused
+  until `simplon init --dir . --launchers-only` has run.
 
 ### Secrets forwarded by the launcher (si#757)
 
@@ -53,6 +57,12 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
 - The launcher's plugin step after a dependency refresh runs with every forwarded name withheld, and
   the names are restored exactly for dispatch. On today's launcher paths the two never meet; this is a
   guard, not a fix for an observed leak.
+- **si#810:** on the container route, `deploy:up` and `deploy:down` with `backend: portainer` now get
+  the names the manifest already declares without repeating them in `env: pass:`: the carrier's
+  `<url_from>_URL` / `_TOKEN`, `<url_from>_GHCR_USER` / `_GHCR_PASSWORD`, the clone credential
+  (`credential_from:`) and the environment's `required:` and `optional:`. A teardown gets only the URL
+  and token. The kernel derives the list from the same helpers its readers use; the launcher forwards
+  it and `confine` keeps it for those two tasks only. `deploy:carrier` is not derived yet (si#812).
 
 ### Deploy and registries (si#785, si#783, si#802, si#773)
 
@@ -74,6 +84,27 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
   without the terminal, and a login that times out says so instead of advising `gh auth refresh`.
   The network-limit scan names this call, so a non-literal argv cannot slip past it again.
 
+### A carrier can run an actions runner (si#781)
+
+- **si#781:** a `carriers:` entry takes a third optional half, `runner:` (`repository`, `labels`,
+  `token_from`), beside `proxmox:` and `portainer:`. `deploy carrier` then installs actions/runner
+  at a pinned version with checksums, registers it on the repository with
+  `<token_from>_RUNNER_TOKEN`, and finishes only when the service logs `Listening for Jobs`. The labels
+  default to the carrier's name. The token travels on stdin under `no_log` and lands in no file on the
+  carrier. A missing token stops the run before Pulumi starts. Auto-update stays on, because GitHub
+  stops accepting runners that are not updated.
+
+### Carrier directories (si#782)
+
+- **si#782:** a `backend: portainer` environment may declare `directories:` (`path`, optional
+  `owner`, `mode`). `deploy carrier` creates every directory of every environment on that carrier;
+  `deploy up` checks its own environment's directories before the first Portainer write and refuses
+  a missing one or a wrong owner or mode before the stack is touched, naming the path, `deploy carrier`
+  and the commands to run on a carrier the kernel does not build. A check that cannot answer warns. It
+  asks the carrier's Docker daemon through Portainer: a helper container with a read-only bind
+  mount, never started, whose archive header gives the host owner and mode. A `path` is limited to
+  `/`, letters, digits, `.`, `_` and `-`, with no `..`.
+
 ### Workflows (si#787)
 
 - **si#787:** the CI default triggers above. simplon's own `ci.yml` takes the default. The default
@@ -93,7 +124,8 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
 - **si#436:** the docstring names the deleted probe package.
 - **#791** pins `deploy/image/image.pin` to the v0.46.0 kernel image.
 - The pull requests are #790 (si#436), #791, #792 (si#772), #793 (si#771), #794 (si#787),
-  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #806 (si#802) and #807 (si#803).
+  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #801 (si#781), #805 (si#782),
+  #806 (si#802), #807 (si#803) and #811 (si#810).
 
 ## 0.46.0
 

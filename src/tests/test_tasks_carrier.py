@@ -320,6 +320,7 @@ def _stub(monkeypatch, tmp_path, carrier_, seen: list) -> None:
     monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: 0)
     monkeypatch.setattr(carrier, "_address", lambda *a, **k: "10.0.0.9")
     monkeypatch.setattr(carrier, "_ansible", lambda *a, **k: seen.append("ansible") or 0)
+    monkeypatch.setattr(carrier, "directories_on", lambda name: [])  # si#782, tested on its own
     monkeypatch.setattr(carrier.proxmoxapi, "check_storage", lambda *a, **k: None)
     monkeypatch.setattr(context, "_current",
                         context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))

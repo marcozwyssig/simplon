@@ -1587,6 +1587,9 @@ cd:
       optional:                   # travels when set, absent when not
         - SMALLINVOICE_CLIENT_SECRET
         - APP_TITLE
+      directories:                # created by `deploy carrier`, checked by `deploy up`
+        - { path: /srv/myctl/prod/data, owner: "1000:1000", mode: "0750" }
+        - { path: /srv/myctl/prod/backups, owner: "1000" }   # group and mode left alone
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -1736,6 +1739,35 @@ readable as the answer to "what goes over". And a manifest names variables here,
 whatever the document happened to name. It is the kernel's variable and `required:` may not claim it -
 two answers to one question, and nothing would print which had been used. `local` is refused here:
 Portainer clones, and there is nothing on your machine for it to clone.
+
+**`directories:` names the host directories the stack binds, and they are there before it starts.**
+Docker creates a missing bind source itself, *as root*, and a service running as uid 1000 then dies with
+`unable to open database file` - a sentence that points at none of this. Each entry takes an absolute
+`path:` of letters, digits, `.`, `_`, `-` and `/` with no `..` segment (it reaches Ansible and a shell on
+the carrier, where `{{ ... }}` would be a template run as root), an `owner:` (`"uid"` or `"uid:gid"`) and a `mode:` (`"0750"`); what an entry leaves out is
+neither set nor checked. `deploy carrier` creates the directories of *every* environment on that carrier,
+parents first and plain, then each with its owner and mode. `deploy up` checks them on the carrier before
+the stack is touched, and refuses naming every directory that is missing, owned by someone else, of
+another mode or a file - with the `install -d` line that makes each one as declared, for a carrier the
+kernel did not build.
+
+The list belongs to the **environment**, not the carrier: a bind mount is the stack's, and two
+environments sharing one carrier are kept apart by their trees, so `deploy up` for `prod` must not refuse
+over `test`'s.
+
+**`owner:` and `mode:` are quoted strings, and an unquoted one is refused.** YAML reads them as numbers
+before the kernel sees them: `0750` arrives as 488, `33:33` as 2013 (a base-60 integer), and the kernel
+cannot tell 488 the mode from 488 the typo. `owner:` is numeric because the container runs as a number; a
+name would resolve in the carrier's `/etc/passwd`, which is not the container's.
+
+**How `deploy up` sees the carrier at all.** It holds a Portainer URL and a token, and nothing else - no
+ssh key and, on a carrier somebody else built, no address. So it asks the Docker daemon Portainer manages,
+which is the very daemon that will resolve the stack's bind mounts: it creates (and never starts) a
+container from an empty image the kernel carries, binding the path read-only, and reads the directory's
+owner and mode from the container's archive. A missing path is refused by Docker at that create, and that
+bind form does *not* create the path. The container is removed again. If the check cannot be made - a
+token that may not create containers, a daemon that does not answer - it says so by name and refuses
+nothing: "could not tell" is neither "ready" nor "missing".
 
 {{< callout type="warning" >}}
 **No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the
