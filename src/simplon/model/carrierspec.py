@@ -32,6 +32,10 @@ thing this kernel knows how to install on it. The `portainer:` half used to be r
 apt -> Docker -> Portainer playbook at the end of every run, with no branch in it. A carrier that omits
 the block is created and not configured, and that outcome is reported rather than implied.
 
+si#781 ADDED A SECOND THING TO INSTALL, `runner:` - a self-hosted GitHub Actions runner registered on one
+repository. It is a block of its own beside `portainer:` rather than a value of it, and either, both or
+neither may be declared; `deploy carrier` runs one play per declared half.
+
 WHY THE CHAIN IS TWO NAMED BLOCKS AND NOT A GENERAL LIST OF LAYERS. The expressive form was considered
 and declined with a number: `backend: local` is the only value in all eight environments of all six
 products this kernel can reach. A general layer mechanism for a chain nobody declares yet is the kind of
@@ -67,6 +71,8 @@ KINDS = (LXC, VM)
 PROXMOX_KEYS = ("endpoint", "token_from", "insecure", "node", "kind",
                 "template", "storage", "cores", "memory", "disk", "ssh_key")
 PORTAINER_KEYS = ("url_from", "endpoint", "insecure")
+#: si#781. `token_from:` is a PREFIX like Proxmox's: `token_from: COCKPIT` reads `COCKPIT_RUNNER_TOKEN`.
+RUNNER_KEYS = ("repository", "labels", "token_from")
 
 #: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
 #: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
@@ -124,6 +130,22 @@ class Portainer(NamedTuple):
     insecure: bool = False
 
 
+class Runner(NamedTuple):
+    """The runner half (si#781): a self-hosted GitHub Actions runner, registered on ONE repository.
+
+    `repository` is `owner/name` and nothing else - the runner registers at `https://github.com/<it>`, so a
+    URL here would register at `https://github.com/https://...`. `labels` are the runner's own; when the
+    manifest names none it carries the carrier's name, because `runners.resolve` refuses a self-hosted job
+    that names no label of its own and a runner with only GitHub's defaults could never be reached by a
+    generated workflow. `token_from` is the PREFIX the registration token is read from at run time, so this
+    tuple carries no secret and the manifest has no field for one.
+    """
+
+    repository: str
+    labels: tuple[str, ...]
+    token_from: str
+
+
 class Carrier(NamedTuple):
     """One named carrier: a machine, and what the kernel installs on it - and either half may be absent.
 
@@ -158,6 +180,7 @@ class Carrier(NamedTuple):
     name: str
     proxmox: "Proxmox | None" = None
     portainer: "Portainer | None" = None
+    runner: "Runner | None" = None
 
 
 def _block(spec: Mapping, key: str, allowed: tuple[str, ...], where: str) -> Mapping:
@@ -182,7 +205,8 @@ def _block(spec: Mapping, key: str, allowed: tuple[str, ...], where: str) -> Map
 
 def _what(key: str) -> str:
     return {"proxmox": "which node the carrier stands on",
-            "portainer": "where the Portainer on it answers"}.get(key, f"the `{key}:` half")
+            "portainer": "where the Portainer on it answers",
+            "runner": "which repository the runner on it registers on"}.get(key, f"the `{key}:` half")
 
 
 def _carrier(name: str, spec: object, where: str) -> Carrier:
@@ -210,6 +234,18 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
                 f"kernel cannot infer it")
         machine = _proxmox(proxmox, node, kind, where)
 
+    runner = None
+    if "runner" in spec:
+        if machine is None:
+            # NOTHING COULD INSTALL IT. `deploy carrier` puts a runner on the machine it has just made and
+            # refuses a carrier with no `proxmox:` by name, so this half would sit in the file with no
+            # command ever reading it - a value that never has an effect.
+            raise ValueError(
+                f"{where} declares a `runner:` and no `proxmox:`. A runner is installed only on a machine "
+                f"the kernel makes, by `deploy carrier`; add the `proxmox:` half, or register the runner "
+                f"on a machine you built yourself by hand")
+        runner = _runner(_block(spec, "runner", RUNNER_KEYS, where), name, where)
+
     if "portainer" not in spec:
         if machine is None:
             # NEITHER HALF. Each absence is a statement on its own; both at once state nothing at all,
@@ -223,7 +259,7 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
         # that used to stand here said a carrier with no `portainer:` "declares no ... so nothing says
         # where the Portainer on it answers" - true only while a carrier and a Portainer host were the
         # same thing. What a product puts on the machine is now its own to say.
-        return Carrier(name=name, proxmox=machine, portainer=None)
+        return Carrier(name=name, proxmox=machine, portainer=None, runner=runner)
 
     portainer = _block(spec, "portainer", PORTAINER_KEYS, where)
     url_from = str(portainer.get("url_from", "")).strip()
@@ -242,7 +278,58 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
 
     return Carrier(name=name, proxmox=machine,
                    portainer=Portainer(url_from=url_from, endpoint=endpoint,
-                                       insecure=_insecure(portainer, "portainer", where)))
+                                       insecure=_insecure(portainer, "portainer", where)),
+                   runner=runner)
+
+
+def _runner(block: Mapping, name: str, where: str) -> Runner:
+    """The runner half, validated (si#781). Every refusal here is a diagnosis: each names a runner that
+    could not have been registered anywhere."""
+    repository = str(block.get("repository", "") or "").strip()
+    if not repository:
+        raise ValueError(
+            f"{where}'s `runner:` declares no `repository:`, so nothing says where the runner registers. "
+            f"It is `owner/name`, e.g. `repository: marcozwyssig/biz-cockpit`")
+    owner, slash, repo = repository.partition("/")
+    if not owner or (slash and not repo) or "/" in repo or ":" in repository \
+            or any(c.isspace() for c in repository):
+        raise ValueError(
+            f"{where}'s `runner: repository:` is {repository!r}, which is not an owner/name pair. The "
+            f"runner registers at https://github.com/<owner>/<name>, so write only that part, e.g. "
+            f"`repository: marcozwyssig/biz-cockpit`")
+    if not slash:
+        # AN ORGANISATION ALONE WOULD HAVE WORKED - `config.sh --url https://github.com/<org>` registers an
+        # organisation runner, given an organisation's token - so this is an expression rule and the census
+        # bills it. It stands because that capability is unmeasured here and was not asked for (si#781
+        # asks for a runner on the repository), and a key called `repository:` quietly meaning an
+        # organisation is a second meaning nobody would read off the file.
+        raise ValueError(
+            f"{where}'s `runner: repository:` is {repository!r}, which names an owner and no repository. "
+            f"The runner registers on one repository: write `{repository}/<name>`. An organisation-wide "
+            f"runner is not something this half installs")
+    token_from = str(block.get("token_from", "") or "").strip()
+    if not token_from:
+        raise ValueError(
+            f"{where}'s `runner:` declares no `token_from:`, so nothing says where the registration token "
+            f"is read from. It is a PREFIX, not a value: `token_from: COCKPIT` means COCKPIT_RUNNER_TOKEN")
+    return Runner(repository=repository, labels=_labels(block.get("labels"), where) or (name,),
+                  token_from=token_from)
+
+
+def _labels(declared: object, where: str) -> tuple[str, ...]:
+    """The labels a runner names, as a tuple - a bare string is one label, and absent is none."""
+    if declared is None:
+        return ()
+    if isinstance(declared, str):
+        return (declared,) if declared.strip() else ()
+    if isinstance(declared, (list, tuple)):
+        wrong = [item for item in declared if not isinstance(item, str) or not item.strip()]
+        if wrong:
+            raise ValueError(f"{where}'s `runner: labels:` is a list of runner labels, and "
+                             + ", ".join(repr(item) for item in wrong) + " is not a label")
+        return tuple(item.strip() for item in declared)
+    raise ValueError(f"{where}'s `runner: labels:` is a label or a list of labels, not "
+                     f"{type(declared).__name__}")
 
 
 def _positive(block: Mapping, key: str, default: int, where: str) -> int:
