@@ -1589,6 +1589,13 @@ would have given it.
 Portainer needs an admin account *at start* or it locks itself after five minutes - `PORTAINER_PASSWORD`,
 which must be at least twelve characters.
 
+**`PORTAINER_TOKEN` is minted by `deploy carrier`, not by hand** (si#784). After the admin exists, the
+run creates an API token described `simplon deploy:carrier` and prints it once, as
+`PORTAINER_TOKEN=ptr_...`, on the terminal: it is written into no file, and Portainer itself keeps only
+its digest. Store it where `deploy up` reads it. A second run finds the token by that description and
+mints none - it says one exists, and prints the command that revokes it; revoke it and run again for a
+new one.
+
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
 

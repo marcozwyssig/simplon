@@ -474,3 +474,100 @@ def test_pulumi_is_execed_so_the_signal_the_client_forwards_reaches_pulumi_itsel
     script = _lines[0][-1]
     assert _lines[0][-3:-1] == ["bash", "-c"]
     assert script.endswith("&& exec pulumi up --yes --non-interactive"), script
+
+
+# --- the API token `deploy up` reads (si#784) --------------------------------------------------------
+#
+# The API shape is Portainer CE 2.45.0's own source, read at the tag: `POST /api/users/{id}/tokens`
+# takes a JWT and never an API key (api/http/handler/users/user_create_access_token.go), wants the
+# user's password beside the description, and answers `rawAPIKey` once; `GET` on the same path lists the
+# user's keys with the digest blanked (user_get_access_tokens.go); `GenerateApiKey` keeps only a SHA-256
+# of the raw key and refuses no duplicate description (api/apikey/service.go). The play was driven
+# against a real portainer-ce:2.45.0 container on 2026-11-20; see the PR for that run.
+
+def _tasks() -> list[dict]:
+    import yaml
+    return yaml.safe_load(carrier.playbook(CARRIER))[0]["tasks"]
+
+
+def _token_tasks() -> list[dict]:
+    tasks = _tasks()
+    names = [task["name"] for task in tasks]
+    return tasks[names.index(carrier.TOKEN_FIRST_TASK):]
+
+
+def _task(name: str) -> dict:
+    return next(task for task in _token_tasks() if task["name"] == name)
+
+
+def test_the_token_is_minted_after_the_admin_has_logged_in():
+    # arrange
+    names = [task["name"] for task in _tasks()]
+
+    # act
+    mint = _task(carrier.MINT_TASK)["ansible.builtin.uri"]
+
+    # assert
+    assert names.index("Log in as the admin") < names.index(carrier.TOKEN_FIRST_TASK)
+    assert mint["method"] == "POST" and str(mint["url"]).endswith("/tokens"), mint
+
+
+def test_a_token_is_minted_only_when_none_with_its_description_exists():
+    """A SECOND RUN MAY NOT MINT A SECOND TOKEN SILENTLY. Portainer refuses no duplicate description, so
+    a play that minted on every run would leave one more live credential behind it per run."""
+    # act
+    when = str(_task(carrier.MINT_TASK).get("when", ""))
+
+    # assert
+    assert when == "existing | length == 0", when
+    assert carrier.TOKEN_DESCRIPTION in carrier.playbook(CARRIER)
+
+
+def test_every_task_that_sees_a_secret_logs_nothing_but_the_one_that_shows_the_token():
+    """THE TOKEN IS SHOWN ONCE, by one task, and every other task that sees the JWT, the password or the
+    raw key runs with `no_log`. The display task is the exception and the only one."""
+    # arrange
+    secrets = ("auth.json.jwt", "portainer_password", "minted.json")
+
+    # act
+    seeing = [task for task in _token_tasks() if any(s in str(task) for s in secrets)]
+    loud = [task["name"] for task in seeing if not task.get("no_log")]
+
+    # assert
+    assert len(seeing) > 1, "the tasks that see a secret were not found - the check would hold nothing"
+    assert loud == [carrier.SHOW_TASK]
+
+
+def test_the_token_is_shown_under_the_variable_deploy_up_reads():
+    """`url_from: PORTAINER` means `deploy up` reads PORTAINER_TOKEN - held against the adapter that
+    reads it rather than against a string typed twice."""
+    # arrange
+    from simplon.adapters import portainer
+    shown = _task(carrier.SHOW_TASK)["ansible.builtin.debug"]["msg"][0]
+    variable = shown.split("=", 1)[0]
+    environ = {"PORTAINER_URL": "https://10.0.0.9:9443", variable: "ptr_x"}
+
+    # act
+    target = portainer.PortainerTarget.from_carrier(CARRIER, "s", environ=environ)
+
+    # assert
+    assert target.token == "ptr_x", variable
+
+
+def test_a_second_run_says_a_token_exists_and_how_to_replace_it():
+    # act
+    said = _task(carrier.EXISTS_TASK)
+    message = str(said["ansible.builtin.debug"]["msg"])
+
+    # assert
+    assert said.get("when") == "minted is skipped"
+    assert "DELETE" in message and "/tokens/" in message
+    assert "minted.json" not in message
+
+
+def test_the_ansible_run_renders_the_token_tasks(_lines, tmp_path):
+    # act
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+
+    # assert
+    assert carrier.MINT_TASK in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
