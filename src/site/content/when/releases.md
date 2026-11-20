@@ -88,10 +88,12 @@ launchers (`simplon init --dir . --launchers-only`), or `test generated` reports
 - **si#772:** `manifest migrate` refuses a duplicated key whose cut would leave invalid YAML (a quoted
   value continued at or left of the key's column), naming the key and both lines, and writes nothing.
 - **si#771:** the carrier test asks `docker.pinned_image` instead of carrying its own pin rule.
+- **si#803:** the carriers section of the manifest page says only `nesting` is set, and why `keyctl`
+  is not (si#5: Proxmox refuses it to an API token).
 - **si#436:** the docstring names the deleted probe package.
 - **#791** pins `deploy/image/image.pin` to the v0.46.0 kernel image.
 - The pull requests are #790 (si#436), #791, #792 (si#772), #793 (si#771), #794 (si#787),
-  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783) and #806 (si#802).
+  #795 (si#773), #796 (si#717), #797 (si#785), #798 (si#757), #800 (si#783), #806 (si#802) and #807 (si#803).
 
 ## 0.46.0
 
