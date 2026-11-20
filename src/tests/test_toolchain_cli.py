@@ -9,6 +9,8 @@ drives the result with Typer's runner.
 
 AAA; the name states the behaviour under test.
 """
+import os
+
 import pytest
 import typer
 import yaml
@@ -16,6 +18,7 @@ from typer.testing import CliRunner
 
 from simplon import cli
 from simplon.manifest import context
+from simplon.kernel.product import StepFactoryContext
 from simplon.kernel.run import Result
 from simplon.tasks import taskgen, testrun, toolchain
 
@@ -429,3 +432,156 @@ def test_the_generated_module_wraps_only_the_declaring_command(product):
     assert "from simplon.manifest import launcherenv as _launcherenv" in text
     assert text.count("_launcherenv.within(") == 1
     assert "_launcherenv.within(('VSCE_PAT',)" in text
+
+
+# --- si#757: a passed name the running command does not declare is gone from the kernel's own process -----
+
+_AGGREGATES = """\
+      everything: { help: "Both.", depends_on: [publish, smoke] }
+      quiet: { help: "Smoke only.", depends_on: [smoke] }
+"""
+
+
+@pytest.fixture
+def passed(monkeypatch):
+    """The container route as the launcher leaves it: VSCE_PAT forwarded, and the list it was rendered with."""
+    monkeypatch.setenv("VSCE_PAT", "s3cret-757")
+    monkeypatch.setenv("DELIVERY_ENV_PASS", "VSCE_PAT")
+
+
+@pytest.fixture
+def seen_env(monkeypatch):
+    """What the command's code sees of VSCE_PAT when it reaches its toolchain line, or an aggregate its plan."""
+    seen: list[str | None] = []
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+    monkeypatch.setattr(toolchain.docker, "container_name", lambda product: f"simplon-{product}-pinned")
+    monkeypatch.setattr(toolchain.docker, "run_container",
+                        lambda a, name, **kw: seen.append(os.environ.get("VSCE_PAT")) or Result(rc=0, out="", err=""))
+    monkeypatch.setattr(cli, "run_command",
+                        lambda name, mf, ctx, **kw: seen.append(os.environ.get("VSCE_PAT")) or 0)
+    return seen
+
+
+def _app_with_plans(path) -> typer.Typer:
+    app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+    cli.assemble(app, context.current().manifest(), product="demo",
+                 step_context=StepFactoryContext("demo", lambda name, **kw: None))
+    return app
+
+
+def test_a_passed_name_the_command_does_not_declare_is_unset_before_its_code_runs(product, passed, seen_env):
+    # arrange
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "smoke"])
+
+    # assert: the kernel process no longer holds it, so neither the body nor anything it starts can read it
+    assert result.exit_code == 0, result.output
+    assert seen_env == [None]
+    assert "VSCE_PAT" not in os.environ
+
+
+def test_a_passed_name_the_command_declares_stays(product, passed, seen_env):
+    # arrange
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "publish"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert seen_env == ["s3cret-757"]
+
+
+def test_an_aggregate_keeps_the_names_its_members_declare(product, passed, seen_env):
+    # arrange: its leaves run as their own processes, which inherit this one's environment
+    _write(product, _PUBLISH + _OTHER + _AGGREGATES)
+
+    # act
+    result = CliRunner().invoke(_app_with_plans(product), ["build", "everything"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert seen_env == ["s3cret-757"]
+
+
+def test_an_aggregate_whose_members_declare_nothing_loses_the_name(product, passed, seen_env):
+    # arrange
+    _write(product, _PUBLISH + _OTHER + _AGGREGATES)
+
+    # act
+    result = CliRunner().invoke(_app_with_plans(product), ["build", "quiet"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert seen_env == [None]
+
+
+def test_without_the_launchers_list_nothing_is_unset(product, seen_env, monkeypatch):
+    # arrange: the venv route, where no launcher forwarded anything and the caller's whole environment is
+    # inherited on purpose
+    monkeypatch.setenv("VSCE_PAT", "s3cret-757")
+    monkeypatch.delenv("DELIVERY_ENV_PASS", raising=False)
+    _write(product, _PUBLISH + _OTHER)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "smoke"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert seen_env == ["s3cret-757"]
+
+
+def test_the_generated_module_confines_every_command_to_its_own_names(product):
+    # arrange
+    _write(product, _PUBLISH + _OTHER + _AGGREGATES)
+
+    # act
+    text = taskgen.render(context.current().manifest(), source="demo.yaml", product="demo")
+
+    # assert: each command and each aggregate keeps what it (or its plan) declares, and nothing else
+    assert "_launcherenv.confined(('VSCE_PAT',), lambda: _launcherenv.within(('VSCE_PAT',)" in text
+    assert "_launcherenv.confined((), lambda: _rc(" in text
+    assert "_launcherenv.confined(('VSCE_PAT',), lambda: _plan('everything', 'build'))" in text
+    assert "_launcherenv.confined((), lambda: _plan('quiet', 'build'))" in text
+
+
+def test_a_command_that_runs_the_gates_keeps_every_forwarded_name(product):
+    # arrange: a gate calls other commands' bodies in this process, each with its own `env: pass:` - so
+    # stripping to the gate command's own (empty) list would take a gated command's name away silently
+    _write(product, _PUBLISH + _OTHER)
+    product.write_text(product.read_text(encoding="utf-8").replace(
+        "support:\n", '  test:\n    commands:\n      gate: { task: "test:gate" }\nsupport:\n', 1), encoding="utf-8")
+
+    # act
+    text = taskgen.render(context.current().manifest(), source="demo.yaml", product="demo")
+
+    # assert: the gate command's call is not confined, every other command's is
+    gate_line = next(line for line in text.splitlines() if "TestGate().run(" in line)
+    assert "_launcherenv.confined(" not in gate_line
+    assert "_launcherenv.confined((), lambda: _rc(" in text
+
+
+def test_the_cli_leaves_every_forwarded_name_to_a_command_that_runs_the_gates(product, passed):
+    # arrange: the same manifest, assembled reflectively
+    _write(product, _PUBLISH + _OTHER)
+    product.write_text(product.read_text(encoding="utf-8").replace(
+        "support:\n", '  test:\n    commands:\n      gate: { task: "test:gate" }\nsupport:\n', 1), encoding="utf-8")
+
+    # act: the gate itself refuses (this product declares no `suites:`), after dispatch
+    CliRunner().invoke(_app(product), ["test", "gate"])
+
+    # assert
+    assert os.environ.get("VSCE_PAT") == "s3cret-757"
+
+
+def test_the_generated_module_of_a_manifest_that_passes_nothing_is_unchanged(product):
+    # arrange
+    _write(product, _OTHER)
+
+    # act
+    text = taskgen.render(context.current().manifest(), source="demo.yaml", product="demo")
+
+    # assert
+    assert "_launcherenv" not in text
