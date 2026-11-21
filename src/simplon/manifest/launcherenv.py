@@ -55,7 +55,10 @@ command bound to `deploy:up` reads the carrier's `<url_from>_*`, the clone crede
 password and tokens (si#812). `declared` takes them from a `derive` its
 callers hand in (`tasks.deploy.variables_read`, above this layer), so they are on the launcher's list and
 in the stale check; the dispatch wrappers add them to that command's keep-list for `confine`, and to no
-other command's.
+other command's. A derived name takes a carrier's prefix, so `url_from: my-haus` derives `my-haus_PASSWORD`,
+which bash cannot export and the launcher still carries (si#824, `_CARRIED`). One no launcher can carry is
+left off the list and named - by `simplon init --launchers-only`, and by the kernel when the command that
+reads it runs - rather than arriving unset behind a "not set" that blames the host.
 
 THE NAMES THE LAUNCHER SETS ITSELF ARE REFUSED, and they are read off the launcher templates rather than
 typed a second time here: every `-e NAME=...` the container line writes, plus the `LAUNCH_` namespace the
@@ -105,6 +108,15 @@ LAUNCHER_PREFIX = "LAUNCH_"
 #: A POSIX environment variable name: a letter or underscore, then letters, digits and underscores. The
 #: launcher matches names inside a space-separated list, so anything else could not even be written there.
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: A name BOTH LAUNCHERS CAN CARRY by name (si#824): the POSIX names, and `-` and `.` after the first
+#: character. A derived name takes a carrier's prefix, and si#820 lets `url_from: my-haus` stand; measured
+#: 2026-11-21, bash hands `my-haus_PASSWORD` to its children unchanged, `docker run -e` carries it and the
+#: kernel's Python reads it. Nothing else: the `.sh` renders the list inside double quotes (`$`, a backquote,
+#: `"`), the `.cmd` inside `set "..."` and a `for` list (`%`, `!`, `^`, `,`, `;`, `=`), and both split it on
+#: whitespace. A derived name outside this is left off the list and NAMED, never dropped quietly
+#: (`left_out`, `cannot_carry`).
+_CARRIED = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
 #: `-e NAME=` / `-e "NAME=` in a launcher template - a variable the launcher itself sets on the line.
 _SETS = re.compile(r'-e\s+"?([A-Za-z_][A-Za-z0-9_]*)=')
@@ -173,8 +185,44 @@ def of_command(env: object, where: str) -> tuple[str, ...]:
 
 
 def forwardable(name: str) -> bool:
-    """Whether the launcher can forward `name` by name at all: a POSIX name it does not set itself."""
-    return bool(_NAME.match(name)) and not _kernel_owned(name)
+    """Whether the launcher can forward `name` by name at all: a name it can carry (`_CARRIED`, which takes
+    `my-haus_PASSWORD` since si#824) and does not set itself."""
+    return bool(_CARRIED.match(name)) and not _kernel_owned(name)
+
+
+def cannot_carry(name: str) -> str:
+    """Why the launcher does not forward the derived name `name`, and the way out (si#824) - the sentence the
+    renderer and the kernel both say, so a variable the host set is never reported only as "not set"."""
+    why = ("the launcher sets it on the kernel's container itself" if _kernel_owned(name) else
+           "a launcher can carry only letters, digits, `_`, `-` and `.` in a variable name")
+    return (f"{name} does not reach the kernel on the container route: {why}. Rename what it is derived "
+            f"from (a carrier's `url_from:`/`token_from:`, an environment's `required:`/`optional:`), or run "
+            f"on the venv route (DELIVERY_ROUTE=venv), which inherits the whole environment")
+
+
+def _commands(data: Mapping[str, object], source: str,
+              derive: Callable[[str], tuple[str, ...]]) -> Iterator[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Each task command's own `env: pass:` and what `derive` answers for its task, in document order."""
+    check_retired(data, source)
+    _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
+    for group, members in flat.items():
+        for name, spec in (members or {}).items():
+            if not isinstance(spec, Mapping) or spec.get("depends_on"):
+                continue
+            parts = group.split(".")
+            where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
+            task = spec.get("task")
+            yield of_command(spec.get(KEY), where), (derive(task) if isinstance(task, str) else ())
+
+
+def left_out(data: Mapping[str, object], source: str = "manifest", *,
+             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+    """The derived names `declared` leaves off the launcher's list because no launcher can forward them, in
+    the order written, each once (si#824) - for the renderer to name, each with `cannot_carry`."""
+    out: list[str] = []
+    for _, derived in _commands(data, source, derive):
+        out += [name for name in derived if not forwardable(name) and name not in out]
+    return tuple(out)
 
 
 def declared(data: Mapping[str, object], source: str = "manifest", *,
@@ -196,23 +244,16 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
     environment at all. It takes the task and not the document, so the census's section walk follows the
     document into the reader by name at the caller (`test_every_hand_off_of_the_document_is_followed`). A
     derived name
-    the launcher could not forward by name (`HOME`, or no variable name at all) is left out rather than
-    refused - the manifest that wrote it wrote it for the deployment, not for the launcher.
+    the launcher could not forward by name (`HOME`, or `my$haus_PASSWORD`) is left off rather than
+    refused - the manifest that wrote it wrote it for the deployment, not for the launcher, and the venv
+    route reads it - but it is NAMED, by `left_out` at render time and by the kernel when the command
+    that reads it runs (si#824).
     """
-    check_retired(data, source)
-    _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
     out: list[str] = []
-    for group, members in flat.items():
-        for name, spec in (members or {}).items():
-            if not isinstance(spec, Mapping) or spec.get("depends_on"):
-                continue
-            parts = group.split(".")
-            where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
-            task = spec.get("task")
-            derived = derive(task) if isinstance(task, str) else ()
-            for passed in (*of_command(spec.get(KEY), where), *filter(forwardable, derived)):
-                if passed not in out:
-                    out.append(passed)
+    for passed_by_command, derived in _commands(data, source, derive):
+        for passed in (*passed_by_command, *filter(forwardable, derived)):
+            if passed not in out:
+                out.append(passed)
     return tuple(out)
 
 

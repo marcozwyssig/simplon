@@ -293,6 +293,13 @@ if [ "$DELIVERY_ROUTE" = container ]; then
             *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_PASS+=(-e "$_name") ;; esac ;;
         esac
     done < <(compgen -e)
+    # A PASSED NAME BASH CANNOT HOLD AS A VARIABLE (si#824): a carrier's `url_from: my-haus` derives
+    # `my-haus_PASSWORD`. bash hands such a name to every child unchanged but never lists it in `compgen -e`,
+    # so the loop above cannot see it; `printenv` can, and it crosses by name like the rest. The list holds
+    # only letters, digits, `_`, `-` and `.` (launcherenv._CARRIED), so the word split is safe.
+    for _name in $LAUNCH_ENV_PASS; do
+        case "$_name" in *[!A-Za-z0-9_]*) printenv "$_name" >/dev/null && DOCKER_PASS+=(-e "$_name") ;; esac
+    done
     # WHAT THIS FILE WAS RENDERED TO PASS, as names (si#467). It crosses so the kernel can tell a launcher
     # that forwards what the manifest declares from one rendered before the list changed - without it, an
     # out-of-date launcher would look exactly like a variable the host never set.
