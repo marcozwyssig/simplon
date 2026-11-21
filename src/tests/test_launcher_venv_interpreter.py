@@ -78,6 +78,20 @@ def test_a_venv_whose_python_was_removed_is_rebuilt_and_the_command_runs(tmp_pat
     assert str(tmp_path / "pybin" / "python3") not in os.path.realpath(venv / "bin" / "python")
 
 
+def test_a_venv_with_python_and_no_pip_is_still_rebuilt_silently(tmp_path):
+    # arrange: what an interrupted first run leaves - the case the old `-x "$PIP"` gate was written for
+    venv = _product(tmp_path / "product")
+    subprocess.run(["python3", "-m", "venv", "--without-pip", str(venv)], check=True, timeout=300)
+
+    # act
+    result = _launch(tmp_path / "product")
+
+    # assert: rebuilt; no "does not run as this venv" line, since there was no pip to name anything
+    assert _ran_under_its_own_venv(result, venv), result.stderr
+    assert "does not run as this venv" not in result.stderr
+    assert os.access(venv / "bin" / "pip", os.X_OK)
+
+
 def test_a_venv_copied_from_another_is_rebuilt_rather_than_run_as_the_original(tmp_path):
     # arrange: the copy's pip names the ORIGINAL's python, which works - and installs into the original
     venv = _product(tmp_path / "product")

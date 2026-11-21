@@ -72,7 +72,9 @@ def test_both_shims_rebuild_a_venv_that_has_no_pip(tmp_path):
     sh = (tmp_path / "democtl.sh").read_text()
     cmd = (tmp_path / "democtl.cmd").read_text()
 
-    assert 'if [ ! -x "$PIP" ]; then' in sh, "the sh shim does not gate its rebuild on pip"
+    # si#844: the gate is `_venv_is_whole`, which still starts from pip and adds the interpreter pip names
+    assert 'if ! _venv_is_whole; then' in sh, "the sh shim does not gate its rebuild on pip"
+    assert '[ -x "$PIP" ] || return 1' in sh, "the sh shim does not gate its rebuild on pip"
     assert 'rm -rf "$VENV"' in sh, "the sh shim rebuilds over the broken venv instead of removing it"
     assert 'if not exist "%VPIP%" (' in cmd, "the cmd shim does not gate its rebuild on pip"
     assert 'rmdir /s /q "%VENV%"' in cmd, "the cmd shim rebuilds over the broken venv instead of removing it"
