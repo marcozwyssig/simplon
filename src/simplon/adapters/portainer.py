@@ -145,9 +145,12 @@ class PortainerTarget:
                 f"to put the stack. A carrier without one is a machine the kernel creates and does not "
                 f"configure (si#258); give it `portainer: url_from: ...` to have a Portainer installed, "
                 f"or point this environment at a backend the product registers itself")
+        from simplon.kernel import secrets
+
         source = dict(os.environ if environ is None else environ)
         prefix = carrier.portainer.url_from
         url_var, token_var = target_variables(prefix)
+        secrets.read(token_var, source)
         for suffix in (URL_SUFFIX, TOKEN_SUFFIX):
             if source.get(f"{prefix}{suffix}") and not source.get(f"PORTAINER{suffix}"):
                 source[f"PORTAINER{suffix}"] = source[f"{prefix}{suffix}"]
@@ -188,9 +191,11 @@ class PortainerTarget:
             raise PortainerError(
                 f"PORTAINER_ENDPOINT_ID must be a number, is {raw_endpoint!r}"
             ) from error
+        from simplon.kernel import secrets
+
         return PortainerTarget(
             url=source["PORTAINER_URL"].rstrip("/"),
-            token=source["PORTAINER_TOKEN"],
+            token=secrets.read("PORTAINER_TOKEN", source),
             endpoint_id=endpoint_id,
             stack_name=source.get("PORTAINER_STACK") or default_stack,
         )
@@ -790,9 +795,13 @@ def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None)
     ALL OF THEM AT ONCE. An operator repairing eight variables one run at a time is being made to do the
     kernel's work; the refusal names every missing one.
     """
+    from simplon.kernel import secrets
+
     source = os.environ if environ is None else environ
 
     def value(name: str) -> str:
+        if name in env.secret:
+            return secrets.read(name, source).strip()
         return (source.get(name) or "").strip()
 
     missing = [name for name in env.required if not value(name)]
@@ -811,31 +820,50 @@ def variables_read(env: "Environment", carriers: "Mapping[str, Carrier]", *,
                    deploying: bool) -> tuple[str, ...]:
     """Every variable NAME a deploy (`deploying`) or a destroy of `env` reads out of the environment the
     command runs in, derived from the manifest - the names the launcher has to forward for it (si#810).
+    They are `variable_roles`' names: a reader that gains a name says in the same edit whether it is secret
+    (si#833)."""
+    return tuple(variable_roles(env, carriers, deploying=deploying))
+
+
+def target_roles(url_from: str) -> "dict[str, str]":
+    """`target_variables`, each with its role (si#833): the address is plain, the API token is secret."""
+    from simplon.kernel import secrets
+
+    url_var, token_var = target_variables(url_from)
+    return {url_var: secrets.PLAIN, token_var: secrets.SECRET}
+
+
+def variable_roles(env: "Environment", carriers: "Mapping[str, Carrier]", *,
+                   deploying: bool) -> "dict[str, str]":
+    """Every variable NAME a deploy (`deploying`) or a destroy of `env` reads, each with its role (si#810,
+    si#833).
 
     ONE ANSWER PER READER BELOW, each from the reader's own spelling, so a reader that gains a name gains
-    it here by the same edit: `from_carrier` (`target_variables`), `_ensure_registry` (`registry_prefix`
-    through `credentials.variables`), `_clone_credential` (`credentials.variables` of `credential_from:`)
-    and `stack_values` (`required:` and `optional:`). A destroy only finds the stack, so it reads the
-    target and nothing else.
+    it here by the same edit: `from_carrier` (`target_roles`), `_ensure_registry` (`registry_prefix`
+    through `credentials.variable_roles`), `_clone_credential` (`credentials.variable_roles` of
+    `credential_from:`) and `stack_values` (`required:` and `optional:`, plain unless the environment lists
+    them under `secret:`). A destroy only finds the stack, so it reads the target and nothing else.
 
     NOT HERE, ON PURPOSE: `PORTAINER_URL`/`PORTAINER_TOKEN` as the fallback `from_env` reads when the
     prefixed names are unset, `PORTAINER_ENDPOINT_ID` and `PORTAINER_STACK`. No manifest names them, so
     nothing derives them; a carrier writing `url_from: PORTAINER` gets the first two by derivation anyway.
     """
     from simplon.adapters import credentials
+    from simplon.kernel import secrets
 
-    names: list[str] = []
+    roles: dict[str, str] = {}
     carrier = carriers.get(env.carrier) if env.carrier else None
     if carrier is not None and carrier.portainer is not None:
         url_from = carrier.portainer.url_from
-        names += target_variables(url_from)
+        roles.update(target_roles(url_from))
         if deploying:
-            names += credentials.variables(registry_prefix(url_from))
+            roles.update(credentials.variable_roles(registry_prefix(url_from)))
     if deploying:
         if env.repository is not None and env.repository.credential_from:
-            names += credentials.variables(env.repository.credential_from)
-        names += [*env.required, *env.optional]
-    return tuple(dict.fromkeys(names))
+            roles.update(credentials.variable_roles(env.repository.credential_from))
+        for name in (*env.required, *env.optional):
+            roles.setdefault(name, secrets.SECRET if name in env.secret else secrets.PLAIN)
+    return roles
 
 
 def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
@@ -1112,7 +1140,13 @@ def _nearest(target: PortainerTarget, path: str) -> "tuple[str | None, str]":
 
 
 def _install_argv(ancestor: str, directory: "Directory") -> "list[str]":
-    """`install -d` for `directory`, as the helper sees it below `ancestor` - an argv, never a string."""
+    """`install -d` for `directory`, as the helper sees it below `ancestor` - an argv, never a string.
+
+    It becomes the helper container's command on the CARRIER, where `docker inspect` and `ps` show it, so
+    a path templated from a secret is refused here rather than put there (si#833): a directory named after
+    a secret cannot be created without exposing it."""
+    from simplon.kernel import secrets
+
     argv = ["install", "-d"]
     if directory.uid is not None:
         argv += ["-o", str(directory.uid)]
@@ -1120,7 +1154,9 @@ def _install_argv(ancestor: str, directory: "Directory") -> "list[str]":
         argv += ["-g", str(directory.gid)]
     if directory.mode is not None:
         argv += ["-m", f"0{directory.mode:o}"]
-    return [*argv, posixpath.join(_PROBE_TARGET, posixpath.relpath(directory.path, ancestor))]
+    argv.append(posixpath.join(_PROBE_TARGET, posixpath.relpath(directory.path, ancestor)))
+    secrets.check_argv([*argv, ancestor])
+    return argv
 
 
 def _ensure_install_image(target: PortainerTarget) -> None:

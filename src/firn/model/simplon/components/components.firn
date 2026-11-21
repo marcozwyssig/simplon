@@ -41,6 +41,9 @@ kernel typeOf simplon.architecture.Component {
   module m_kernel_steplog typeOf simplon.architecture.Module {
     path = "kernel.steplog"
   }
+  module m_kernel_secrets typeOf simplon.architecture.Module {
+    path = "kernel.secrets"
+  }
   module m_kernel_waits typeOf simplon.architecture.Module {
     path = "kernel.waits"
   }

@@ -71,9 +71,16 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 285 | nothing - the declaration had no working meaning |
+| diagnosis | 286 | nothing - the declaration had no working meaning |
 | expression rule | 48 | something it could otherwise have said |
-| **all load-time refusals** | **333** | |
+| **all load-time refusals** | **334** | |
+
+si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
+is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no
+value to keep out of the output. **Rejected: a name pattern** (`*_TOKEN`, `*_SECRET`) deciding what is
+secret. Over the eight reachable manifests it missed three of the seven measured secrets (`VSCE_PAT` and
+two `*_CLIENT_SECRET`) and hit a flag (`COCKPIT_REQUIRE_SECRET: "0"`), and a product could only change
+the answer by renaming a variable. It reopens if every real secret comes to follow the readers' suffixes.
 
 si#820 added two diagnoses and no expression rule, on the carrier name and on the prefixes si#815 left
 open. The name reached `inventory.ini`, a `bash -c` line in the Pulumi container and a path unquoted:

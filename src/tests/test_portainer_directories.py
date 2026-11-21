@@ -769,8 +769,9 @@ def test_the_ancestor_walk_refuses_a_relative_path_instead_of_walking_forever(mo
 
 # --- a resolved path is said with the template it came from (si#825) ---------------------------------
 #
-# The kernel has no notion of a secret value: `required:` and `optional:` are both "values the deployment
-# sends", and a resolved compose image is echoed the same way (si#785). A path made from a value lands in
+# A plain value is said as it resolved: `required:` and `optional:` are both "values the deployment
+# sends", and a resolved compose image is echoed the same way (si#785). A value the environment lists under
+# `secret:` reads `***` instead (si#833, `test_secret_census.py`). A path made from a value lands in
 # the bind mount and on the carrier's filesystem, so hiding it in the output would protect nothing and
 # would make the `install -d` way out unrunnable. What the reader lacked was WHERE it came from.
 

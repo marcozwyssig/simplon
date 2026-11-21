@@ -32,7 +32,7 @@ import typer.core
 import simplon
 from simplon.manifest import bound, clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
-from simplon.kernel import log, runhost
+from simplon.kernel import log, runhost, secrets
 from simplon.manifest.context import (ENVIRONMENT_ENV, ManifestRefused, ProductContext, TaskRefused,
                                       environment_name, launcher)
 from simplon.manifest import launcherenv, load as manifest, results
@@ -808,6 +808,10 @@ def main(*, app: typer.Typer, context: ProductContext,
     # Every run starts here, a product's and simplon's own, so this is where the layers above the kernel
     # tell it what they know (si#391). Before the env token is read, because nothing below asks yet.
     runhost.register(run_host())
+    # si#833: from here on every write to stdout and stderr is redacted, and the forwarded fixed names that
+    # are secret (`gh`'s tokens) are registered. A command's own names are registered at its dispatch.
+    secrets.install()
+    secrets.register_present(launcherenv.FORWARDED_ROLES)
     plugin_step_after_refresh()
 
     taxonomy = context.manifest().taxonomy()

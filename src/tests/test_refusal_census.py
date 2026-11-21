@@ -513,6 +513,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "_names", "may not name"): EXPRESSION,
     ("environments", "parse_data", "stand(s) in both"): DIAGNOSIS,
     ("environments", "parse_data", "no deployment for those values to be given to"): DIAGNOSIS,
+    # si#833: a name under `secret:` that is in neither list is never read by the deployment, so there is no
+    # value to keep out of the output - the declaration is inert, the typo it most likely is goes unseen.
+    # Diagnosis. `secret:` itself goes through `_names`, so its shape refusals are the four above.
+    ("environments", "parse_data", "in neither `required:` nor `optional:`"): DIAGNOSIS,
 
     # --- environments.py, the carrier directories a stack binds (si#782, from biz-cockpit#273) -------
     # Nine. Five diagnosis and four expression rules.

@@ -47,7 +47,7 @@ from typing import Mapping
 from simplon.model import carrierspec
 from simplon.manifest import context, environments
 from simplon.adapters import docker, hostpath, portainer
-from simplon.kernel import log, run
+from simplon.kernel import log, run, secrets
 from simplon.tasks import proxmoxapi
 
 #: The two toolchains, pinned. Bump them deliberately, the way `DOCKER_CLI_VERSION` is bumped.
@@ -187,10 +187,17 @@ def _backends(document: dict) -> tuple[str, ...]:
 def variables_read(document: dict) -> tuple[str, ...]:
     """Every variable NAME `up` reads out of the environment it runs in, derived from the manifest - the names
     the launcher has to forward for `deploy:carrier` on the container route (si#812, si#810's mechanism).
+    They are `variable_roles`' names, so each arrives with whether it is secret (si#833)."""
+    return tuple(variable_roles(document))
+
+
+def variable_roles(document: dict) -> dict[str, str]:
+    """Every variable NAME `up` reads, each with its role (si#812, si#833).
 
     Each from its reader's own helper or constant: `password_variable` (`portainer_password`),
     `runner_token_variable` (`runner_token`), `token_variable` (`_token`), `PASSPHRASE_ENV` (`_pulumi`) and
-    `SSH_PRIVATE_KEY_ENV` (`private_key`, only for a carrier with something to install on the machine). The
+    `SSH_PRIVATE_KEY_ENV` (`private_key`, only for a carrier with something to install on the machine) -
+    every one of them a secret. The
     retired `RETIRED_SSH_KEY_ENV` is not forwarded: a launcher rendered before si#819 still forwards it, and
     that is exactly the launcher whose operator needs to hear it is gone. Every environment's
     carrier counts, whatever backend drives the environment, because the launcher is rendered once for all
@@ -198,24 +205,24 @@ def variables_read(document: dict) -> tuple[str, ...]:
     `_carrier_of` refuses it. A carrier this document does not declare is left to `_carrier_of` to refuse.
     """
     if environments.matrix_section(document)["environments"] is None:
-        return ()
+        return {}
     declared = carrierspec.declared(document)
     registry = environments.parse_data(document, _backends(document))
-    names: list[str] = []
+    roles: dict[str, str] = {}
     for environment in registry.environments.values():
         carrier = declared.get(environment.carrier) if environment.carrier else None
         if carrier is None or carrier.proxmox is None:
             continue
         if carrier.portainer is not None:
-            names.append(password_variable(carrier))
+            roles[password_variable(carrier)] = secrets.SECRET
         if carrier.runner is not None:
-            names.append(runner_token_variable(carrier))
+            roles[runner_token_variable(carrier)] = secrets.SECRET
         if carrier.proxmox.token_from:
-            names.append(token_variable(carrier.proxmox))
-        names.append(PASSPHRASE_ENV)
+            roles[token_variable(carrier.proxmox)] = secrets.SECRET
+        roles[PASSPHRASE_ENV] = secrets.SECRET
         if carrier.portainer is not None or carrier.runner is not None:
-            names.append(SSH_PRIVATE_KEY_ENV)
-    return tuple(dict.fromkeys(names))
+            roles[SSH_PRIVATE_KEY_ENV] = secrets.SECRET
+    return roles
 
 
 def token_variable(machine: carrierspec.Proxmox) -> str:
@@ -231,7 +238,7 @@ def _token(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox) -> str:
                 f"PROXMOX{TOKEN_SUFFIX}")
         raise SystemExit(1)
     variable = token_variable(machine)
-    token = os.environ.get(variable, "")
+    token = secrets.read(variable)
     if not token:
         log.die(f"{variable} is not set, so carrier '{carrier.name}' cannot reach "
                 f"{machine.endpoint or 'Proxmox'}. Export it; it may not be written into the "
@@ -270,7 +277,7 @@ def portainer_password(carrier: carrierspec.Carrier) -> str:
     no playbook, so there is no admin account to be locked out of and nothing to ask for.
     """
     variable = password_variable(carrier)
-    password = os.environ.get(variable, "")
+    password = secrets.read(variable)
     if not password:
         log.die(f"{variable} is not set. Portainer needs an admin password AT START - one that gets it "
                 f"later does not exist, because an uninitialised instance locks itself after five "
@@ -308,7 +315,7 @@ def runner_token(carrier: carrierspec.Carrier) -> str:
     has reached the machine.
     """
     variable = runner_token_variable(carrier)
-    token = os.environ.get(variable, "")
+    token = secrets.read(variable)
     if not token:
         repository = _declared_runner(carrier).repository
         log.die(f"{variable} is not set, so the runner on carrier '{carrier.name}' cannot register on "
@@ -337,7 +344,7 @@ def private_key(carrier: carrierspec.Carrier) -> None:
     its own, so trailing whitespace is stripped here and LF is the only line end.
     """
     fill = f'{SSH_PRIVATE_KEY_ENV}="$(cat ~/.ssh/id_ed25519)"'
-    value = os.environ.get(SSH_PRIVATE_KEY_ENV, "")
+    value = secrets.read(SSH_PRIVATE_KEY_ENV)
     if not value.strip():
         retired = os.environ.get(RETIRED_SSH_KEY_ENV, "")
         if retired:
@@ -1041,7 +1048,7 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
     # `-e NAME=value` - puts the secret into the docker client's argv, where `/proc/<pid>/cmdline` and
     # `ps` can read it for as long as the container runs.
     os.environ[CARRIER_TOKEN_ENV] = token
-    os.environ[PULUMI_PASSPHRASE_ENV] = os.environ.get(PASSPHRASE_ENV, "")
+    os.environ[PULUMI_PASSPHRASE_ENV] = secrets.read(PASSPHRASE_ENV)
     argv = [
         "docker", "run", "--rm",
         # THROUGH `hostpath.translate`, and the guard that insisted is right: on si#201's container
@@ -1152,16 +1159,16 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, port: int,
     # ONE PLAY PER DECLARED HALF (si#781), in one file: each play is self-contained, so a carrier with
     # both halves runs both and one with either runs that one.
     plays: list[str] = []
-    secrets: list[str] = []
+    by_name: list[str] = []
     if carrier.portainer is not None:
         password_from = password_variable(carrier)
         plays.append(playbook(carrier, port))
         # The password rides the environment for the same reason, and the playbook reads it with
         # `lookup('env', ...)` rather than carrying a rendered copy of it on disk.
-        secrets += ["-e", password_from]
+        by_name += ["-e", password_from]
     if carrier.runner is not None:
         plays.append(runner_play(carrier))
-        secrets += ["-e", runner_token_variable(carrier)]
+        by_name += ["-e", runner_token_variable(carrier)]
     (work / "carrier.yml").write_text("\n".join(plays), encoding="utf-8")
     # Read by each play's `vars_files:` (si#782, si#815); written either way, since it is data only.
     (work / VARS_FILE).write_text(unsafe_vars(directories or [], manifest_values(carrier)), encoding="utf-8")
@@ -1170,7 +1177,7 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, port: int,
     container, lifecycle = docker.lifecycle()
     argv = [
         "docker", "run", "--rm", *lifecycle,
-        *secrets,
+        *by_name,
         "-e", SSH_PRIVATE_KEY_ENV, "--tmpfs", f"{KEY_DIR}:mode=0700",
         "-v", f"{hostpath.translate(work)}:/work", "-w", "/work",
         "-e", "ANSIBLE_HOST_KEY_CHECKING=False",
