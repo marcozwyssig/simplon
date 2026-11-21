@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from simplon.manifest import context
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 from simplon.kernel.run import run
 
 # --- the manifest section this module owns -----------------------------------------------------------
@@ -949,7 +949,7 @@ def _admin_password(cfg: NexusConfig, required: bool = True) -> str:
     res = run(["docker", "exec", cfg.container, "cat", ADMIN_PASSWORD_FILE])
     if res.ok and res.out.strip():
         return res.out.strip()
-    from_env = (os.environ.get(ADMIN_PASSWORD_ENV_VAR) or "").strip()
+    from_env = secrets.read(ADMIN_PASSWORD_ENV_VAR).strip()
     if from_env:
         return from_env
     if not required:

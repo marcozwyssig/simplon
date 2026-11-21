@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
-from simplon.kernel import limits, log, run
+from simplon.kernel import limits, log, run, secrets
 from simplon.adapters import oras
 from simplon.manifest.context import TaskRefused
 
@@ -95,7 +95,7 @@ def token() -> str:
     OSError for a missing binary, and that reached every caller but adapters.github as a traceback. Since
     si#653 `run` returns it as `not_started`, which is read here.
     """
-    from_env = os.getenv("GITHUB_TOKEN", "").strip()
+    from_env = secrets.read("GITHUB_TOKEN").strip()
     if from_env:
         return from_env
 

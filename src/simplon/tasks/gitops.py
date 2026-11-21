@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from simplon.kernel import limits, log
+from simplon.kernel import limits, log, secrets
 from simplon.kernel.run import Result, run
 
 ROOT = Path.cwd()
@@ -130,7 +130,7 @@ def remote_auth() -> dict[str, str]:
     The empty value first is git's documented reset of the multi-valued key: a checkout that DID persist
     its credential would otherwise send two `Authorization` headers, its own and this one.
     """
-    token = os.environ.get("GITHUB_TOKEN", "")
+    token = secrets.read("GITHUB_TOKEN")
     if not token:
         return {}
     server = os.environ.get("GITHUB_SERVER_URL", "") or "https://github.com"

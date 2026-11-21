@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shlex
 from pathlib import Path
@@ -40,7 +39,7 @@ from typing import NamedTuple
 from urllib.parse import unquote, urlparse
 
 from simplon.adapters import docker, pypi, repofile
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context, results as results_mod
 from simplon.model import artifactschema
@@ -305,7 +304,7 @@ def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
                          f"with test:homebrew-formula first")
     raw = path.read_bytes()
     target = f"Formula/{path.stem}.rb"
-    token = os.environ.get(APP_TOKEN_ENV, "").strip()
+    token = secrets.read(APP_TOKEN_ENV).strip()
     if not token:
         log.error(f"refused: {APP_TOKEN_ENV} is empty or not set, so {repository} was not asked. The workflow "
                   f"mints it for a `token: app` step (si#534): check the app's secrets; by hand, export a token "
