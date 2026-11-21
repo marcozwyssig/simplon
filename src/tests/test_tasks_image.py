@@ -569,7 +569,26 @@ def test_both_paths_gone_are_both_named_rather_than_the_first_one(cli, _no_prove
     err = capsys.readouterr().err
     assert "dockerfile: docker/worker.Dockerfile" in err
     assert "context: services/worker" in err
-    assert "two paths that do not exist" in err
+    assert "2 paths that do not exist" in err
+
+
+def test_three_paths_gone_are_counted_as_three(cli, _no_provenance, _product, capsys):
+    # arrange: si#829 - the header said "two paths" for any count above one; a `build_contexts:` directory
+    # gone beside the Dockerfile and the context makes three
+    manifest = _product / "demo.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "    tag: latest\n", "    tag: latest\n    build_contexts:\n      api: services/api\n"), encoding="utf-8")
+    (_product / "docker" / "worker.Dockerfile").unlink()
+    shutil.rmtree(_product / "services" / "worker")
+
+    # act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "declares 3 paths that do not exist" in err
+    assert "two" not in err
 
 
 def test_a_declared_path_that_is_gone_is_answered_without_docker_on_the_host(monkeypatch, _no_provenance,
@@ -2561,6 +2580,39 @@ def test_a_multi_platform_build_checks_the_dependencys_paths_too(monkeypatch, _n
     assert rc == 1
     assert fake.argv_starting("docker", "buildx", "bake") == []
     assert "dockerfile: docker/base.Dockerfile" in capsys.readouterr().err
+
+
+def test_a_dependencys_missing_path_names_the_dependencys_entry(monkeypatch, _no_provenance, _multi, capsys):
+    # arrange: si#829 - the path is `base`'s, so "fix the `artifacts.multi:` entry" sent the reader to an
+    # entry that is right
+    (_multi / "docker" / "base.Dockerfile").unlink()
+    _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert ("fix the `artifacts.base:` entry, or move what it names - docker would have failed later, "
+            "about something else" in err)
+    assert "artifacts.multi:" not in err
+
+
+def test_missing_paths_in_two_entries_name_each_entry(monkeypatch, _no_provenance, _multi, capsys):
+    # arrange: si#829 - one path gone in the built image's entry, one in its dependency's
+    (_multi / "docker" / "base.Dockerfile").unlink()
+    (_multi / "Dockerfile").unlink()
+    _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert ("fix the `artifacts.multi:` entry and the `artifacts.base:` entry, or move what they name - "
+            "docker would have failed later, about something else" in err)
 
 
 def test_a_multi_platform_build_records_every_platform_it_loaded(monkeypatch, _no_provenance, _multi):
