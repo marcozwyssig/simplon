@@ -401,6 +401,48 @@ def test_the_tui_pane_and_its_clipboard_never_hold_a_secret_value(registered, mo
     assert copied and all(CANARY not in text for text in copied), copied
 
 
+def test_the_token_gh_prints_is_registered_like_one_read_from_the_environment(monkeypatch, capsys):
+    """si#839: `githubpackages.token`'s fallback takes the token `gh auth token` prints, which never was an
+    environment variable, so `secrets.read` never saw it."""
+    # arrange
+    from simplon.adapters import githubpackages
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(run, "run", lambda *args, **kwargs: run.Result(0, "canary-839-gh-token\n", ""))
+    secrets.install()
+
+    # act
+    token = githubpackages.token()
+    log.info(f"logging in with {token}")
+
+    # assert
+    assert token == "canary-839-gh-token"
+    assert "canary-839-gh-token" not in capsys.readouterr().out
+    with pytest.raises(secrets.SecretInArgv):
+        secrets.check_argv(["oras", "login", "-p", token])
+
+
+def test_the_nexus_password_read_from_its_container_is_registered(monkeypatch, capsys):
+    """si#839: `nexusproxy._admin_password` reads the generated password out of the container's file first,
+    and only falls back to `NEXUS_ADMIN_PASSWORD`."""
+    # arrange
+    from simplon.adapters import nexusproxy
+    from test_nexusproxy import CFG
+
+    monkeypatch.setattr(nexusproxy, "run", lambda *args, **kwargs: run.Result(0, "canary-839-nexus\n", ""))
+    secrets.install()
+
+    # act
+    password = nexusproxy._admin_password(CFG)
+    log.info(f"admin:{password}")
+
+    # assert
+    assert password == "canary-839-nexus"
+    assert "canary-839-nexus" not in capsys.readouterr().out
+    with pytest.raises(secrets.SecretInArgv):
+        secrets.check_argv(["curl", "-u", f"admin:{password}"])
+
+
 def test_outside_github_actions_nothing_is_masked(monkeypatch):
     # arrange
     monkeypatch.delenv(secrets.ACTIONS_ENV, raising=False)

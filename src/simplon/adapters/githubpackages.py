@@ -107,6 +107,7 @@ def token() -> str:
             "`secrets.GITHUB_TOKEN` in the step's `env:` - Actions sets it for no step on its own.")
     if result.rc == 0 and result.out.strip():
         log.info("using the token from `gh auth token` (GITHUB_TOKEN is not set)")
+        secrets.register("GITHUB_TOKEN", result.out.strip())     # si#839: no env variable, so `read` never saw it
         return result.out.strip()
 
     raise PackageError(

@@ -39,7 +39,8 @@ WHAT THE WALK CANNOT SEE, said here rather than left to be found. A call through
 (`self.f(os.environ)`) is not followed, so a parameter it hands the environment to is not an alias; a
 mapping copied into a dataclass field and read later is not either. A secret that never was an environment
 variable (the token `gh auth token` prints, the Nexus password read from its container) is not a read
-this walk rules on. A child process started with `capture=False` writes to the inherited descriptor (the
+this walk rules on; those two are registered where they are taken, held by their canaries in
+`test_secret_census.py`. A child process started with `capture=False` writes to the inherited descriptor (the
 module head of `secrets` records that limit). A write through a stream handle the walk cannot type
 (`handle.write(...)` on a file object) IS counted: every `.write` that is not on `sys.stdout`/`sys.stderr`,
 `self` or a kernel module is a site, so this limit errs towards naming too much.
@@ -318,7 +319,8 @@ def _reads() -> tuple[_Read, ...]:
                     elif _is_secrets_read(module, node.func) and node.args:
                         key, through = node.args[0], True
                 elif (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
-                      and (_is_os_environ(node.value) or (isinstance(node.value, ast.Name) and node.value.id in names))):
+                      and (_is_os_environ(node.value)
+                           or (isinstance(node.value, ast.Name) and node.value.id in names))):
                     key = node.slice
                 if key is not None:
                     out.append(_Read(module.dotted, function, _key(module, scope, key), through,
