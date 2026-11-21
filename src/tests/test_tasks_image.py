@@ -1937,6 +1937,58 @@ def test_a_file_context_not_yet_fetched_names_the_product_command_that_fetches_i
     assert "build:fetch" not in err
 
 
+_FETCHES_GRADLE = ('      gradle: { task: "build:fetch", with: { name: gradle-dist } }\n'
+                   '      tool-image: { task: "build:image", produces: { image: tool } }\n')
+
+
+def test_a_file_context_a_command_makes_ends_with_that_command_and_nothing_else(cli, _no_provenance,
+                                                                                _product, capsys):
+    # arrange: si#826, firn's measurement on 0.47.0 - `build builder` before `build gradle`. The entry is
+    # right and nothing has to move, so the stale-declaration tail would send the reader to edit a
+    # correct manifest
+    _with_file_context(_product, _FETCHES_GRADLE)
+
+    # act
+    rc = image.build(name="tool", tag="1")
+
+    # assert: the last line of the message is the command advice
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert err.rstrip().endswith("contexts: gradle-dist - no file at build/dist/gradle.zip; "
+                                 "run `./demo.sh build gradle` first, which makes it")
+    assert "move what it names" not in err
+
+
+def test_a_file_context_no_command_makes_keeps_the_fix_the_entry_tail(cli, _no_provenance, _product, capsys):
+    # arrange: si#826 - with no producer, the declaration may well be what is wrong
+    _with_file_context(_product)
+
+    # act
+    rc = image.build(name="tool", tag="1")
+
+    # assert
+    assert rc == 1
+    assert ("fix the `artifacts.tool:` entry, or move what it names - docker would have failed later, "
+            "about something else" in capsys.readouterr().err)
+
+
+def test_a_missing_dockerfile_beside_a_made_file_context_names_only_the_dockerfile_line(cli, _no_provenance,
+                                                                                       _product, capsys):
+    # arrange: si#826 - both kinds in one run; the tail is about the declared path alone
+    _with_file_context(_product, _FETCHES_GRADLE)
+    (_product / "Dockerfile").unlink()
+
+    # act
+    rc = image.build(name="tool", tag="1")
+
+    # assert
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "run `./demo.sh build gradle` first, which makes it" in err
+    assert ("fix the `dockerfile:` line of the `artifacts.tool:` entry, or move what it names - docker "
+            "would have failed later, about something else" in err)
+
+
 # --- si#664: `build_contexts:`, a named DIRECTORY under the product root ----------------------------------
 
 #: biz-cockpit's frontend entry, as its live `biz-cockpit.yaml` declares it (read 2026-11-14 through the GitHub
