@@ -675,7 +675,7 @@ def test_a_templated_path_is_resolved_from_the_deployments_values_and_created(mo
     # assert
     assert daemon.written == ["/srv/app", "/srv/app/db"]
     assert daemon.tree["/srv/app/db"] == (1000, 1000, 0o755)
-    assert "created /srv/app/db on the carrier, owner 1000:1000" in capsys.readouterr().out
+    assert "created /srv/app/db (from `${DATA_DIR}/db`) on the carrier, owner 1000:1000" in capsys.readouterr().out
     assert any(call[0] == "PUT" for call in recorder.calls), "the stack was deployed"
 
 
@@ -741,3 +741,62 @@ def test_the_carrier_run_names_a_templated_path_it_cannot_resolve_and_never_writ
     assert "$" not in carrier.unsafe_vars(items)
     out = capsys.readouterr().out
     assert "${DATA_DIR} was not created" in out and "environment 'prod'" in out and "`deploy up`" in out
+
+
+# --- the ancestor walk ends on its own (si#825) ------------------------------------------------------
+
+def test_the_ancestor_walk_refuses_a_relative_path_instead_of_walking_forever(monkeypatch) -> None:
+    """`posixpath.dirname` of a relative path ends at "" and never at "/", so a walk that stops only at
+    "/" never ends. `carrier_path` keeps such a path away today, two calls up; this holds the walk to its
+    own end. THE STUB IS THE TIME LIMIT: it gives up after a budget of parents, so the version without the
+    guard fails here instead of hanging the suite (seen red: 'walked 65 parents of a relative path: ['', '', '']')."""
+    # arrange
+    asked: list[str] = []
+
+    def stat(target, path):
+        asked.append(path)
+        if len(asked) > 64:
+            raise AssertionError(f"walked {len(asked)} parents of a relative path: {asked[-3:]}")
+        return None, ""
+
+    monkeypatch.setattr(portainer, "_stat", stat)
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        portainer._nearest(TARGET, "srv/app/data")
+    assert "'srv/app/data'" in str(refused.value) and "not absolute" in str(refused.value)
+
+
+# --- a resolved path is said with the template it came from (si#825) ---------------------------------
+#
+# The kernel has no notion of a secret value: `required:` and `optional:` are both "values the deployment
+# sends", and a resolved compose image is echoed the same way (si#785). A path made from a value lands in
+# the bind mount and on the carrier's filesystem, so hiding it in the output would protect nothing and
+# would make the `install -d` way out unrunnable. What the reader lacked was WHERE it came from.
+
+def test_the_created_line_names_the_template_beside_the_resolved_path(monkeypatch, capsys) -> None:
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755)})
+
+    # act
+    _deploy_templated(monkeypatch, daemon, [{"path": "${DATA_DIR}/db"}, {"path": "/srv/literal"}],
+                      {"DATA_DIR": "/srv/app"})
+
+    # assert
+    out = capsys.readouterr().out
+    assert "created /srv/app/db (from `${DATA_DIR}/db`) on the carrier" in out
+    assert "created /srv/literal on the carrier" in out, "a literal path is said as it was written"
+
+
+def test_a_refusal_names_the_template_beside_the_resolved_path_and_keeps_the_way_out_runnable(
+        monkeypatch) -> None:
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755), "/srv/app": (0, 0, 0o700)})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy_templated(monkeypatch, daemon, [{"path": "${TENANT}/app", "mode": "0750"}],
+                          {"TENANT": "/srv", "DATA_DIR": "/srv/data"}, optional=("TENANT",))
+    message = str(refused.value)
+    assert "/srv/app (from `${TENANT}/app`) has mode 0700" in message
+    assert "install -d -m 0750 /srv/app" in message, "the way out names the real path, and only it"
