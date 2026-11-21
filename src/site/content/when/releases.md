@@ -67,8 +67,8 @@ where a product relies on the old behaviour:
   printed. CRLF line ends and a missing final newline are repaired, because ssh-keygen fails on both
   with a message that names neither.
 - **si#820:** the carrier name check above covers the three places the name reaches unquoted
-  (inventory, the Pulumi container's shell line, `build/carrier/<name>`). The narrower form
-  `[a-z0-9]([a-z0-9-]*[a-z0-9])?` for every carrier was built and struck: it would be an expression
+  (inventory, the Pulumi container's shell line, `build/carrier/<name>`). The narrower form for every
+  carrier (lowercase letters, digits and inner hyphens only) was built and struck: it would be an expression
   rule that buys one form, not safety. The Portainer play now stops first on an empty admin password,
   naming the variable.
 
