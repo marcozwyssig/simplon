@@ -25,7 +25,7 @@ from simplon.adapters import credentials, portainer
 from simplon.cli import bootstrap
 from simplon.manifest import context, launcherenv
 from simplon.model import carrierspec
-from simplon.tasks import deploy, deploy_down, deploy_up, taskgen
+from simplon.tasks import deploy, deploy_carrier, deploy_down, deploy_up, taskgen
 from test_launch_container import _product, _run
 
 SECRET = "s3cret-810"
@@ -82,8 +82,11 @@ cd:
 
 
 def test_the_coordinates_are_read_off_the_catalogues_body_table():
-    # assert: the generated task classes are bound to exactly these two, and up deploys while down destroys
-    assert deploy.READS == {deploy_up.DeployUp.KEY: True, deploy_down.DeployDown.KEY: False}
+    # assert: the generated task classes are bound to exactly these, each with the body it runs (si#812
+    # added deploy:carrier)
+    assert deploy.READS == {deploy_up.DeployUp.KEY: "simplon.tasks.deploy:up",
+                            deploy_down.DeployDown.KEY: "simplon.tasks.deploy:down",
+                            deploy_carrier.DeployCarrier.KEY: "simplon.tasks.carrier:up"}
 
 
 def test_a_deploy_reads_the_carriers_names_the_clone_credential_and_the_stack_values():
@@ -113,7 +116,7 @@ def test_the_names_are_the_readers_own_spelling():
     assert credentials.variables(target.registry_from) == UP[2:4]
 
 
-@pytest.mark.parametrize("task", ["toolchain:run", "deploy:carrier", "up", ""])
+@pytest.mark.parametrize("task", ["toolchain:run", "up", ""])
 def test_any_other_task_derives_nothing(task):
     # act / assert
     assert deploy.variables_read(_document(), task) == ()

@@ -86,8 +86,9 @@ that carries no such line. Each file is reported as `unchanged`, `replaced` or `
 a launcher is lost.
 
 It also reads `<product>.yaml` for the one thing the launchers carry from it: the union of the variable
-names its commands list under `env: pass:`, and the names a `deploy:up`/`deploy:down` command reads off
-its carriers and environments, which the container route forwards by name (si#467, si#492, si#810, see
+names its commands list under `env: pass:`, and the names a `deploy:up`/`deploy:down`/`deploy:carrier`
+command reads off its carriers and environments, which the container route forwards by name (si#467, si#492,
+si#810, si#812, see
 [the manifest](../manifest/#a-commands-env-pass---the-variables-that-cross-to-its-toolchain)). Run it
 again after editing one of those lists, a carrier or an environment. On the container route the kernel refuses a launcher whose list no longer matches.
 

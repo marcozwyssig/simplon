@@ -1518,6 +1518,13 @@ list and that command's own, and no other command keeps them. Re-render the laun
 carrier or an environment, as after changing a list. A name the launcher sets itself (`HOME`) is not
 derived, and neither is a name no manifest writes (`PORTAINER_STACK`, `PORTAINER_ENDPOINT_ID`).
 
+**A `deploy:carrier` command needs none either** (si#812). For every environment whose carrier declares
+`proxmox:`, whatever its backend, the kernel derives what making that carrier reads: the Proxmox
+`<token_from>_API_TOKEN`, the Portainer admin password `<url_from>_PASSWORD` when the carrier declares
+`portainer:`, the registration token `<token_from>_RUNNER_TOKEN` when it declares `runner:`, and the
+kernel's own `SIMPLON_STATE_PASSPHRASE` and, when there is something to install, `SIMPLON_CARRIER_SSH_KEY`.
+They reach the carrier command and no other.
+
 ### `carriers:` - what an environment is realised on
 
 An environment says *where* it deploys with `backend:`. It says *onto what* by naming a **carrier** - and
@@ -1600,6 +1607,15 @@ would have given it.
 `PROXMOX_API_TOKEN`; `url_from: PORTAINER` means `PORTAINER_URL`, `PORTAINER_TOKEN` and - because
 Portainer needs an admin account *at start* or it locks itself after five minutes - `PORTAINER_PASSWORD`,
 which must be at least twelve characters.
+
+**`PORTAINER_TOKEN` is minted by `deploy carrier`, not by hand** (si#784). After the admin exists, the
+run creates an API token described `simplon deploy:carrier` and prints it once, as
+`PORTAINER_TOKEN=ptr_...`, on the terminal: it is written into no file, and Portainer itself keeps only
+its digest. Store it where `deploy up` reads it. A second run finds the token by that description and
+mints none - it says one exists, and prints the command that revokes it; revoke it and run again for a
+new one. **Only a run at a terminal mints:** with `CI` set, or output that is not a terminal, the
+run says no token was minted and that `deploy carrier` from a terminal mints it - because there the
+output is a log somebody keeps.
 
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
