@@ -16,8 +16,9 @@ census also runs over two documents in the live shapes: biz-cockpit's own (`_BIZ
 anything.
 
 THE CANARY. A value set in the environment under a secret role must not appear in anything the kernel
-writes: stdout, stderr, the step log, the run transcript, a streaming step's header, a refusal, and the
-helper container's command on a carrier. Each canary is an obvious fake.
+writes: stdout, stderr, the step log, the run transcript, a streaming step's header, a refusal, the TUI's
+details pane and clipboard (si#839), and the helper container's command on a carrier. Each canary is an
+obvious fake.
 
 THE PRODUCT'S HALF IS NOT VERIFIABLE HERE, and that limit is recorded: a product that adds a secret to
 `optional:` and forgets `secret:` gets it printed wherever the kernel interpolates it.
@@ -398,6 +399,87 @@ def test_in_github_actions_every_line_of_a_value_is_masked_before_its_first_use(
     assert "::add-mask::canary-833-key-line" in masks
     assert lines.index("::add-mask::canary-833-key-line") < len(masks) <= lines.index(lines[-1])
     assert "canary-833-key-line" not in lines[-1] and lines[-1].endswith(f"the key line is {secrets.MASK}")
+
+
+def test_the_tui_pane_and_its_clipboard_never_hold_a_secret_value(registered, monkeypatch):
+    """si#839: Textual's driver draws to `sys.__stderr__`, past the wrapper `secrets.install` puts on
+    `sys.stderr` (measured in textual 8: `LinuxDriver._file = sys.__stderr__`), and a step's captured lines
+    reach the details pane without passing any other redacting sink. So the pane redacts what it is handed,
+    and so does every copy out of the app - `c`, and a mouse selection's ctrl+c."""
+    # arrange
+    pytest.importorskip("textual")
+    import asyncio
+
+    from simplon.ui import clipboard, tui
+    from test_orchestrator_tui import _details
+
+    copied: list[str] = []
+    monkeypatch.setattr(clipboard, "copy", lambda text, **kw: copied.append(text) or clipboard.Result(
+        clipboard.State.CONFIRMED, "stub"))
+    monkeypatch.setattr(steps, "clock", lambda: 0.0)
+    pipeline = steps.Pipeline("leak", [steps.Step(label="prints", action=lambda: steps.Outcome(
+        rc=0, output=f"the token is {CANARY}"))])
+
+    async def scenario() -> str:
+        app = tui._StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while any(s.state in (steps.StepState.PENDING, steps.StepState.RUNNING) for s in pipeline.steps):
+                await pilot.pause(0.05)
+            await pilot.press("down")
+            await pilot.press("c")
+            await pilot.pause()
+            return _details(app)
+
+    # act
+    shown = asyncio.run(scenario())
+
+    # assert
+    assert f"the token is {secrets.MASK}" in shown, f"the step's output is in the pane, masked: {shown!r}"
+    assert CANARY not in shown
+    assert copied and all(CANARY not in text for text in copied), copied
+
+
+def test_the_token_gh_prints_is_registered_like_one_read_from_the_environment(monkeypatch, capsys):
+    """si#839: `githubpackages.token`'s fallback takes the token `gh auth token` prints, which never was an
+    environment variable, so `secrets.read` never saw it."""
+    # arrange
+    from simplon.adapters import githubpackages
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(run, "run", lambda *args, **kwargs: run.Result(0, "canary-839-gh-token\n", ""))
+    secrets.install()
+
+    # act
+    token = githubpackages.token()
+    log.info(f"logging in with {token}")
+
+    # assert
+    assert token == "canary-839-gh-token"
+    assert "canary-839-gh-token" not in capsys.readouterr().out
+    with pytest.raises(secrets.SecretInArgv):
+        secrets.check_argv(["oras", "login", "-p", token])
+
+
+def test_the_nexus_password_read_from_its_container_is_registered(monkeypatch, capsys):
+    """si#839: `nexusproxy._admin_password` reads the generated password out of the container's file first,
+    and only falls back to `NEXUS_ADMIN_PASSWORD`."""
+    # arrange
+    from simplon.adapters import nexusproxy
+    from test_nexusproxy import CFG
+
+    monkeypatch.setattr(nexusproxy, "run", lambda *args, **kwargs: run.Result(0, "canary-839-nexus\n", ""))
+    secrets.install()
+
+    # act
+    password = nexusproxy._admin_password(CFG)
+    log.info(f"admin:{password}")
+
+    # assert
+    assert password == "canary-839-nexus"
+    assert "canary-839-nexus" not in capsys.readouterr().out
+    with pytest.raises(secrets.SecretInArgv):
+        secrets.check_argv(["curl", "-u", f"admin:{password}"])
 
 
 def test_outside_github_actions_nothing_is_masked(monkeypatch):

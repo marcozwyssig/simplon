@@ -14,12 +14,11 @@ path - a convention, not a claim about what any particular product vendors there
 """
 from __future__ import annotations
 
-import os
 import sys
 
 from simplon.manifest import context
 from simplon.adapters import githubpackages
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 from simplon.tasks import gitops
 
 
@@ -86,7 +85,7 @@ def auth_scopes() -> int:
     not start the device flow without a terminal: in CI that does not fail, it HANGS until the job times
     out, and CI has the workflow token anyway.
     """
-    if (os.getenv("GITHUB_TOKEN") or "").strip():
+    if secrets.read("GITHUB_TOKEN").strip():
         log.warn("GITHUB_TOKEN is set and wins over the gh token, so refreshing gh would change "
                  "nothing. Unset it, or mint that token with "
                  f"{', '.join(githubpackages.PACKAGE_SCOPES)}.")

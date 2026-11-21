@@ -87,7 +87,7 @@ from textual.theme import Theme  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
-from simplon.kernel import steplog  # noqa: E402
+from simplon.kernel import secrets, steplog  # noqa: E402
 from simplon.ui import clipboard  # noqa: E402
 from textual.selection import Selection  # noqa: E402
 from textual.strip import Strip  # noqa: E402
@@ -101,7 +101,14 @@ class _SelectableLog(RichLog):
     rendered lines carry no `offset` meta, so the screen cannot tell where in the widget a drag started.
     Both are supplied here, as `Log` supplies them for itself, over the lines RichLog already holds - the
     WRAPPED lines, which are exactly the rows on screen, so a drag's coordinates and the text agree.
+
+    EVERY WRITE IS REDACTED HERE (si#839). Textual draws to `sys.__stderr__`, past the wrapper
+    `secrets.install` puts on `sys.stderr`, and a step's captured lines reach this pane through no other
+    redacting sink. So this pane is one: every line it shows, and so every selection cut from them.
     """
+
+    def write(self, content, *args, **kwargs):
+        return super().write(secrets.redact(content) if isinstance(content, str) else content, *args, **kwargs)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         return selection.extract("\n".join(strip.text for strip in self.lines)), "\n"
@@ -645,7 +652,10 @@ class _StepApp(App):
         Textual's own version only writes OSC 52, which a VTE terminal drops without a word, so "copied"
         was said over copies that never happened. The desktop's clipboard tool is tried first because its
         exit status can be read; OSC 52 is the fallback, and then the notice says nobody can tell.
+
+        Redacted first (si#839): `_details_text` is built from the step, not from the pane.
         """
+        text = secrets.redact(text)
         self._clipboard = text
         result = clipboard.copy(text)
         if result.state is clipboard.State.CONFIRMED:
