@@ -1031,10 +1031,12 @@ def _stat(target: PortainerTarget, path: str) -> "tuple[tarfile.TarInfo | None, 
                      f"could not be removed ({_said(error)}). It never ran and bound nothing writable")
 
 
-def _wrong(directory: "Directory", seen: "tarfile.TarInfo") -> str:
-    """What is wrong with a directory that exists, or "" when it is as declared."""
+def _wrong(directory: "Directory", seen: "tarfile.TarInfo", name: str = "") -> str:
+    """What is wrong with a directory that exists, or "" when it is as declared. `name` is how the
+    directory is said, when that is more than its path (`check_directories`, si#825)."""
+    name = name or directory.path
     if not seen.isdir():
-        return f"{directory.path} is not a directory"
+        return f"{name} is not a directory"
     found = []
     if (directory.uid is not None and seen.uid != directory.uid) or (
             directory.gid is not None and seen.gid != directory.gid):
@@ -1042,7 +1044,7 @@ def _wrong(directory: "Directory", seen: "tarfile.TarInfo") -> str:
     mode = seen.mode & 0o7777
     if directory.mode is not None and mode != directory.mode:
         found.append(f"has mode 0{mode:o}, declared 0{directory.mode:o}")
-    return f"{directory.path} {' and '.join(found)}" if found else ""
+    return f"{name} {' and '.join(found)}" if found else ""
 
 
 def _install(directory: "Directory") -> str:
@@ -1187,9 +1189,10 @@ def _create(target: PortainerTarget, directory: "Directory") -> str:
                      f"could not be removed ({_said(error)}). It binds {ancestor} writable")
 
 
-def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "list[tuple[Directory, bool]]":
+def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "list[tuple[Directory, str]]":
     """Every declared directory with its path resolved against the values this deployment sends, each
-    paired with whether it was templated (si#809). Raises before the carrier is asked anything.
+    paired with the template it was written as, or "" when it was a literal path (si#809, si#825).
+    Raises before the carrier is asked anything.
 
     THE SAME RESOLUTION AS A COMPOSE IMAGE (`_resolved`, si#785), over the same values - `stack_values`
     plus the version, exactly what Portainer is handed - so the directory checked and created is the one
@@ -1200,13 +1203,21 @@ def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "li
     than one from the file. A name with no value is a refusal that names it, every one at once: the
     directory's place is not known, so there is nothing honest to check. Only an `optional:` name can get
     here empty; `stack_values` has already refused a missing `required:` one.
+
+    THE RESOLVED PATH IS SAID, WITH ITS TEMPLATE BESIDE IT, AND NOT HIDDEN (si#825). The kernel has no
+    notion of a secret value - `required:` and `optional:` are both values the deployment sends, and a
+    compose image resolved from them is echoed the same way (si#785, `check_registry_access`). A value
+    used as a path is written onto the carrier's filesystem and into the stack's bind mount, where
+    `docker inspect` shows it to anyone who can reach the daemon, so masking it in this output would
+    protect nothing and would leave the refusal's `install -d` line unrunnable. What the reader could not
+    see was where the path came from; the template says it.
     """
-    found: "list[tuple[Directory, bool]]" = []
+    found: "list[tuple[Directory, str]]" = []
     unresolved: "dict[str, list[str]]" = {}
     for directory in env.directories:
         names = environments.path_variables(directory.path)
         if not names:
-            found.append((directory, False))
+            found.append((directory, ""))
             continue
         missing = [name for name in names if not values.get(name)]
         if missing:
@@ -1215,7 +1226,7 @@ def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "li
             continue
         where = f"environment '{env.name}', `path: {directory.path}` resolved from the deployment's values"
         path = environments.carrier_path(_resolved(directory.path, values), where)
-        found.append((directory._replace(path=path.rstrip("/") or "/"), True))
+        found.append((directory._replace(path=path.rstrip("/") or "/"), directory.path))
     if unresolved:
         named = "; ".join(f"{name} in {', '.join(paths)}" for name, paths in unresolved.items())
         one = len(unresolved) == 1
@@ -1257,12 +1268,13 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
     resolved = resolved_directories(env, values or {})
     directories = [directory for directory, _ in resolved]
     creatable = {directory.path for directory, templated in resolved if create or templated}
+    shown = {d.path: f"{d.path} (from `{template}`)" if template else d.path for d, template in resolved}
     try:
         _ensure_probe_image(target)
     except OSError as error:
         log.warn(f"directory check did not run: the probe image could not be found or loaded on endpoint "
                  f"{target.endpoint_id} of {target.url} ({_said(error)}), so none of "
-                 f"{', '.join(d.path for d in directories)} was checked")
+                 f"{', '.join(shown[d.path] for d in directories)} was checked")
         return
     wrong: list[str] = []
     fixes: list[str] = []
@@ -1272,20 +1284,20 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
         seen, why = _stat(target, directory.path)
         if why:
             unchecked += 1
-            log.warn(f"directory check: could not tell whether {directory.path} is ready on the "
+            log.warn(f"directory check: could not tell whether {shown[directory.path]} is ready on the "
                      f"carrier: {why}")
             continue
         if seen is None:
             missing.append(directory)
             continue
-        problem = _wrong(directory, seen)
+        problem = _wrong(directory, seen, shown[directory.path])
         if problem:
             wrong.append(problem)
             if seen.isdir():  # `install -d` fixes an existing directory, not a file
                 fixes.append(_install(directory))
     left = [d for d in missing if d.path not in creatable]
     if wrong or left:
-        wrong = [f"{d.path} is missing" for d in missing] + wrong
+        wrong = [f"{shown[d.path]} is missing" for d in missing] + wrong
         fixes = [_install(d) for d in missing] + fixes
         way = ("`deploy up` creates a missing one on this carrier, and created none because of the rest; "
                "it never rewrites one that exists, so run on the carrier: " if not left else
@@ -1304,14 +1316,15 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
             why = why or ("it is still missing afterwards" if seen is None else _wrong(directory, seen))
         if why:
             failed.append(directory)
-            log.error(f"directory creation: {directory.path} was not made as declared: {why}")
+            log.error(f"directory creation: {shown[directory.path]} was not made as declared: {why}")
             continue
-        log.ok(f"created {directory.path} on the carrier"
+        log.ok(f"created {shown[directory.path]} on the carrier"
                f"{f', owner {directory.owner()}' if directory.uid is not None else ''}"
                f"{f', mode 0{directory.mode:o}' if directory.mode is not None else ''}")
     if failed:
         raise PortainerError(
-            f"environment '{env.name}': {', '.join(d.path for d in failed)} could not be made as declared "
+            f"environment '{env.name}': {', '.join(shown[d.path] for d in failed)} could not be made as "
+            f"declared "
             f"through {target.url} (said above), so the stack was not touched - Docker would create a "
             f"missing directory as root. Run on the carrier: {'; '.join(_install(d) for d in failed)}")
     ready = len(directories) - unchecked
