@@ -1594,7 +1594,7 @@ cd:
       optional:                   # travels when set, absent when not
         - SMALLINVOICE_CLIENT_SECRET
         - APP_TITLE
-      directories:                # created by `deploy carrier`, checked by `deploy up`
+      directories:                # created by `deploy carrier` (or `deploy up`), checked by `deploy up`
         - { path: /srv/myctl/prod/data, owner: "1000:1000", mode: "0750" }
         - { path: /srv/myctl/prod/backups, owner: "1000" }   # group and mode left alone
 ```
@@ -1755,8 +1755,15 @@ the carrier, where `{{ ... }}` would be a template run as root), an `owner:` (`"
 neither set nor checked. `deploy carrier` creates the directories of *every* environment on that carrier,
 parents first and plain, then each with its owner and mode. `deploy up` checks them on the carrier before
 the stack is touched, and refuses naming every directory that is missing, owned by someone else, of
-another mode or a file - with the `install -d` line that makes each one as declared, for a carrier the
-kernel did not build.
+another mode or a file - with the `install -d` line that makes each one as declared.
+
+**On a carrier with no `proxmox:`, `deploy up` creates a missing directory itself** (si#808): `deploy
+carrier` never builds such a carrier, so nothing else would. It runs the same `install -d` line on the
+carrier (missing parents come out `0:0 0755`, what the entry leaves out is not passed), checks the result
+again, and only then deploys; a second run creates nothing and says so. A directory that **exists** with
+the wrong owner, mode or type is never rewritten: it is refused as above, and while anything is refused
+nothing is created. When not even the top-level parent exists (no `/srv`), it refuses with the
+`install -d` line rather than bind the carrier's root writable.
 
 The list belongs to the **environment**, not the carrier: a bind mount is the stack's, and two
 environments sharing one carrier are kept apart by their trees, so `deploy up` for `prod` must not refuse
@@ -1774,7 +1781,11 @@ container from an empty image the kernel carries, binding the path read-only, an
 owner and mode from the container's archive. A missing path is refused by Docker at that create, and that
 bind form does *not* create the path. The container is removed again. If the check cannot be made - a
 token that may not create containers, a daemon that does not answer - it says so by name and refuses
-nothing: "could not tell" is neither "ready" nor "missing".
+nothing: "could not tell" is neither "ready" nor "missing". Creating goes through the same proxy: a
+short-lived container from a busybox image pinned by digest (pulled through Portainer when the daemon
+lacks it) binds the deepest existing parent writable, runs `install -d`, and is removed. The command is
+handed to Docker as a list of words, never a shell line; each word is a constant, a number, or the path
+the rule above already let through.
 
 {{< callout type="warning" >}}
 **No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the
