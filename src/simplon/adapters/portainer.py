@@ -49,6 +49,7 @@ from typing import IO, TYPE_CHECKING, Callable, Mapping
 
 import yaml
 
+from simplon.adapters import docker
 from simplon.manifest import environments
 
 if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
@@ -436,7 +437,7 @@ def _compose_text(repository: "Repository") -> "str | None":
     that is the same document, give or take the ref; for one that is not, the file is absent and the
     caller says the check did not run rather than reading that as "no image".
     """
-    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
 
     try:
         return (context.current().root / repository.compose).read_text(encoding="utf-8")
@@ -843,7 +844,7 @@ def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
     all three are there and "portainer backend failed" would send the reader through the whole file.
     """
     from simplon.model import carrierspec
-    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
 
     if not env.carrier:
         raise ValueError(
@@ -869,7 +870,7 @@ def _built_by_kernel(env: "Environment") -> bool:
     other carrier nothing in the kernel would ever create them, so `deploy up` does (si#808).
     """
     from simplon.model import carrierspec
-    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
 
     return carrierspec.declared(context.current().manifest_data())[str(env.carrier)].proxmox is not None
 
@@ -926,9 +927,8 @@ def _clone_credential(repository: "Repository", env: "Environment") -> "tuple[st
 #: The image the probe container is created from, never pulled and never run. NOT declared through
 #: `docker.pinned_image`, and the rule that asks for it does not apply: its reason is a registry tag that
 #: means different bytes next month, and these bytes are `_probe_image()`'s own, loaded by this module and
-#: by nothing else. Importing `docker` here would also end this module being a leaf (it imports the
-#: manifest context at its head). Named `_REFERENCE` so the sweep for `*_IMAGE` constants does not read it
-#: as a pull nobody pinned.
+#: by nothing else. Named `_REFERENCE` so the sweep for `*_IMAGE` constants does not read it as a pull
+#: nobody pinned. (`INSTALL_IMAGE` below IS pulled, so it is pinned through `docker.pinned_image`, si#808.)
 PROBE_REFERENCE = "simplon-dirprobe:empty"
 PROBE_LABEL = "simplon.probe"
 _PROBE_TARGET = "/probe"
@@ -1056,67 +1056,99 @@ def _install(directory: "Directory") -> str:
 #
 # A carrier with no `proxmox:` is a Portainer somebody else built, so `deploy carrier` never runs for it and
 # nothing in the kernel would create its directories: si#782 left `deploy up` refusing with the
-# `install -d` lines until somebody typed them on the host. Here `deploy up` makes a MISSING one itself,
-# through the same proxy and from the same empty image. An existing directory with the wrong owner or mode
-# is never touched: that stays a refusal, because rewriting it would change a tree somebody else may own.
+# `install -d` lines until somebody typed them on the host. Here `deploy up` runs that same line itself,
+# through the same proxy. An existing directory with the wrong owner or mode is never touched: that stays a
+# refusal, because rewriting it would change a tree somebody else may own.
 #
-# HOW, AND WHY NOT `install -d` IN A CONTAINER. The probe image is empty: it has no `install`, no shell,
-# nothing to run, and running one would mean pulling an image from a registry the probe was built to
-# avoid. Docker can write without running anything: `PUT /containers/{id}/archive` extracts a tar into a
-# CREATED container's filesystem, and through a writable bind mount that is the host's. The tar's headers
-# carry uid, gid and mode, and the daemon applies them. MEASURED 2026-11-21 with Docker 29.10, directly and
-# through a Portainer 2.45: a header `1000 1000 0o2770 dir` came out `1000:1000 2770` on the host, setgid
-# included. So no command is ever formed from a manifest value - there is no argv and no shell for a
-# hostile path to reach - and the path itself has already passed `environments.carrier_path`.
+# HOW. A short-lived container from `INSTALL_IMAGE` (busybox, pinned by digest, pulled through the proxy
+# when the daemon lacks it) binds the deepest existing parent writable and runs `install -d [-o uid]
+# [-g gid] [-m mode] <path below it>`, then is removed. The command is an argv list handed to Docker as
+# JSON - no shell is involved anywhere - and every word of it is either a constant, a number the parser
+# made (`Directory.uid`/`gid`/`mode` are ints), or the path, which has passed `environments.carrier_path`
+# at load. MEASURED 2026-11-21 with this image on Docker 29.10: `install -d -o 1000 -g 1000 -m 02770
+# /probe/a/b/c` made `a` and `b` `0:0 755` and `c` `1000:1000 2770`, so one run makes the parents plainly,
+# the way `deploy carrier`'s parents task does. The directory is then checked again, so a daemon that did
+# something else (userns-remap, an Agent that proxies differently) is a refusal, not a "created".
 #
-# WHAT IS BOUND. The deepest ancestor that exists, writable, and nothing above it; the tar names only the
-# components below it that are missing, so an existing parent is never chowned by the extraction. The
-# parents it creates are `0:0 0755`, the way `install -d` and `deploy carrier`'s parents task make them.
-# What the manifest does not state for the directory itself is made the same way (uid 0, gid 0, 0755):
-# something has to own a new directory, and that is what `install -d` run as root gives it. It is then
-# checked again, so a carrier that ignored a header (a remapped daemon, an Agent that proxies differently)
-# is a refusal, not a "created".
+# NOT `/`. When no parent below `/` exists, the helper would have to bind the carrier's root writable.
+# That is refused instead, with the `install -d` line: a carrier without even `/srv` is not one a
+# deployment should be laying out by itself.
 
-_CREATED_PARENT = (0, 0, 0o755)
+#: What the directories are made with: `install` and nothing it needs from outside. The same pin as
+#: `tasks.imagefile.FILE_TEST_IMAGE` (an adapter does not import a task); the index digest, so each
+#: platform resolves to its own manifest.
+INSTALL_IMAGE = docker.pinned_image(
+    "busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
+    "simplon.adapters.portainer")
+
+#: The reference Docker's API is given: name and digest. The tag is for the reader; the digest is the pin.
+_INSTALL_REFERENCE = INSTALL_IMAGE.split(":", 1)[0] + "@" + INSTALL_IMAGE.split("@", 1)[1]
 
 
 def _nearest(target: PortainerTarget, path: str) -> "tuple[str | None, str]":
-    """(the deepest existing ancestor of `path`, "") or (None, why) - the probe's three values, again."""
+    """(the deepest existing ancestor of `path` below `/`, "") or (None, why) - never `/` itself."""
     parent = posixpath.dirname(path)
-    while True:
+    while parent != "/":
         seen, why = _stat(target, parent)
         if why:
             return None, f"its parent {parent} could not be read: {why}"
         if seen is not None:
             return (parent, "") if seen.isdir() else (None, f"{parent} is not a directory")
-        if parent == "/":
-            return None, "Docker says not even / exists"
         parent = posixpath.dirname(parent)
+    return None, (f"no parent of it below / exists on the carrier, and `deploy up` does not bind the "
+                  f"carrier's root writable to lay out a top-level tree")
 
 
-def _tree(ancestor: str, directory: "Directory") -> bytes:
-    """The tar that makes `directory` below `ancestor`: each missing parent plainly, then the directory."""
-    relative = posixpath.relpath(directory.path, ancestor).split("/")
-    out = io.BytesIO()
-    with tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as archive:
-        for depth in range(1, len(relative) + 1):
-            info = tarfile.TarInfo("/".join(relative[:depth]))
-            info.type = tarfile.DIRTYPE
-            info.uid, info.gid, info.mode = _CREATED_PARENT if depth < len(relative) else (
-                directory.uid or 0, directory.gid or 0, 0o755 if directory.mode is None else directory.mode)
-            archive.addfile(info)
-    return out.getvalue()
+def _install_argv(ancestor: str, directory: "Directory") -> "list[str]":
+    """`install -d` for `directory`, as the helper sees it below `ancestor` - an argv, never a string."""
+    argv = ["install", "-d"]
+    if directory.uid is not None:
+        argv += ["-o", str(directory.uid)]
+    if directory.gid is not None:
+        argv += ["-g", str(directory.gid)]
+    if directory.mode is not None:
+        argv += ["-m", f"0{directory.mode:o}"]
+    return [*argv, posixpath.join(_PROBE_TARGET, posixpath.relpath(directory.path, ancestor))]
+
+
+def _ensure_install_image(target: PortainerTarget) -> None:
+    """Pull `INSTALL_IMAGE` through the proxy when the daemon lacks it. Raises when it cannot.
+
+    Docker answers a pull 200 and streams its progress, and a failed pull is an `error` line INSIDE that
+    200 - read as the status code alone it would be a pull that worked and an image that is not there.
+    """
+    from urllib.parse import quote
+
+    try:
+        with _docker(target, "GET", f"/images/{quote(_INSTALL_REFERENCE, safe='')}/json"):
+            return
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    with _docker(target, "POST", f"/images/create?fromImage={quote(_INSTALL_REFERENCE, safe='')}",
+                 b"") as answer:
+        for line in answer.read().decode(errors="replace").splitlines():
+            try:
+                said = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(said, dict) and said.get("error"):
+                raise OSError(f"the pull of {INSTALL_IMAGE} said: {said['error']}")
 
 
 def _create(target: PortainerTarget, directory: "Directory") -> str:
-    """Make a missing `directory` on the carrier. "" when Docker took it, otherwise why not."""
+    """Make a missing `directory` on the carrier. "" when `install -d` exited 0, otherwise why not."""
     from simplon.kernel import log
 
     ancestor, why = _nearest(target, directory.path)
     if ancestor is None:
         return why
-    spec = {"Image": PROBE_REFERENCE, "Cmd": ["create"], "NetworkDisabled": True,
-            "Labels": {PROBE_LABEL: "create"},
+    try:
+        _ensure_install_image(target)
+    except OSError as error:
+        return f"{INSTALL_IMAGE} could not be found or pulled on the carrier ({_said(error)})"
+    spec = {"Image": _INSTALL_REFERENCE, "Cmd": _install_argv(ancestor, directory), "Entrypoint": [],
+            "User": "0:0", "NetworkDisabled": True, "Labels": {PROBE_LABEL: "create"},
             "HostConfig": {"Mounts": [{"Type": "bind", "Source": ancestor, "Target": _PROBE_TARGET,
                                        "ReadOnly": False}]}}
     try:
@@ -1125,20 +1157,24 @@ def _create(target: PortainerTarget, directory: "Directory") -> str:
     except (OSError, ValueError, KeyError, TypeError) as error:
         return f"the helper container could not be created ({_said(error)})"
     try:
-        with _docker(target, "PUT", f"/containers/{container}/archive?path={_PROBE_TARGET}"
-                                    f"&noOverwriteDirNonDir=1", _tree(ancestor, directory),
-                     "application/x-tar") as answer:
-            answer.read()
-        return ""
-    except OSError as error:
-        return f"Docker did not take the directory ({_said(error)})"
+        with _docker(target, "POST", f"/containers/{container}/start", b""):
+            pass
+        with _docker(target, "POST", f"/containers/{container}/wait", b"") as answer:
+            code = json.loads(answer.read()).get("StatusCode")
+        if code == 0:
+            return ""
+        with _docker(target, "GET", f"/containers/{container}/logs?stdout=1&stderr=1") as answer:
+            said = answer.read().decode(errors="replace")
+        return f"install -d exited {code}: {''.join(c for c in said if c.isprintable()).strip()[:300]}"
+    except (OSError, ValueError, AttributeError) as error:
+        return f"the helper container did not run to the end ({_said(error)})"
     finally:
         try:
             with _docker(target, "DELETE", f"/containers/{container}?force=1"):
                 pass
         except OSError as error:
             log.warn(f"directory creation: the helper container {container[:12]} (label {PROBE_LABEL}) "
-                     f"could not be removed ({_said(error)}). It never ran; it binds {ancestor} writable")
+                     f"could not be removed ({_said(error)}). It binds {ancestor} writable")
 
 
 def check_directories(target: PortainerTarget, env: "Environment", create: bool = False) -> None:
