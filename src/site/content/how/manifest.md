@@ -1296,7 +1296,9 @@ hands the stop on to the test run, which writes its report on the way out. The `
 command, so nothing after it is skipped. A step whose declared shell is not bash or sh (`shell: pwsh`,
 an expression, at the step, job or workflow level) keeps the plain line.
 
-Two things are the kernel's, and both are settings you should not have to remember. The checkout is
+Three things are the kernel's, and all are settings you should not have to remember. Every job starts
+with a step that removes the containers a cancelled job left running on a self-hosted machine, ahead of
+the checkout it would otherwise write into ([CI hosts](../ci-hosts/), si#756). The checkout is
 emitted with `fetch-depth: 0`, because `actions/checkout` defaults to a shallow clone that carries no
 tags - so anything deriving a version from one gets a wrong answer *silently* rather than an error - and
 with `persist-credentials: false`, so the job's token is not left in `.git/config` for every step to

@@ -161,9 +161,10 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
     manifest = _loaded()
     doc = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
-    # Act - the kernel's own hand-off lines (si#344 C.4) pack and unpack an archive, and name no command
+    # Act - the kernel's own hand-off lines (si#344 C.4) pack and unpack an archive, and name no command;
+    # nor does si#756's reap, which runs before the checkout the launcher lives in
     runs = [step["run"] for job in doc["jobs"].values() for step in job["steps"]
-            if "run" in step and HANDOFF_PREFIX not in step["run"]]
+            if "run" in step and HANDOFF_PREFIX not in step["run"] and step.get("name") != workflowgen.REAP_NAME]
 
     # Assert
     assert runs, "the generated workflow runs no product command at all"

@@ -137,6 +137,31 @@ A generated workflow places it on the same jobs as the disk pair, as their first
 placed `support:ci-docker-preflight`; otherwise the file says what to place. It is placed on its own, so a
 product that placed only the disk pair keeps both of those.
 
+### What a cancelled job left running (si#756)
+
+A cancelled job does not stop every container it started. The kernel stops its containers on SIGINT and
+SIGTERM, but the runner's SIGKILL a few seconds into a cancel reaches no handler, and on a machine that
+survives the job the container runs on into the next job's checkout. firn measured a `gradle check`
+container still running after the whole cancel sequence (si#409).
+
+So **every generated job starts with a step that removes them**, ahead of its checkout. The product writes
+nothing for it. It cannot be one of the product's commands, because it has to run before the checkout
+those commands live in, so it is a short shell step the kernel writes into the file.
+
+- **What it removes:** a container that carries `simplon.run=<product>`, the label the kernel puts on every
+  container it starts, **and** has a bind mount inside this job's workspace. The runner runs one job at a
+  time, so such a container is an orphan. A container of another checkout or of a developer's gate on the
+  same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+- **Where it runs:** `if: runner.environment != 'github-hosted' && runner.os != 'Windows'`. It does not
+  matter whether the job names its machine with `runner:` or `runs-on:`: GitHub says at run time whether
+  the machine outlives the job. A GitHub-hosted machine is destroyed after every job, so the step is
+  skipped there. A runner too old to set `runner.environment` runs it.
+- **What it says:** each orphan by name and image, then `N orphaned container(s) removed`, which is `0`
+  on a clean machine. With no docker client yet, or a daemon `docker ps` cannot reach, it prints a
+  warning and lets the job go on: the job's own first docker step meets the same daemon and says why.
+  An orphan that is still there after `docker rm --force` **fails** the step, because it would be writing
+  into this job's checkout. The step has a 5-minute limit.
+
 ## Verifying it
 
 ```bash

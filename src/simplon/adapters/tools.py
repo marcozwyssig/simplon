@@ -18,9 +18,14 @@ from pathlib import Path
 from simplon.manifest import context
 
 
+#: The directory, relative to the product's root. Named so a generated workflow step that has no product
+#: context to ask - si#756's reap, which runs before the checkout - looks where the bootstrap put the client.
+BIN_DIR = "build/tools/bin"
+
+
 def bin_dir() -> Path:
     """The product-owned tool directory a bootstrap installs into (wiped by `clean` with build/)."""
-    return context.current().root / "build" / "tools" / "bin"
+    return context.current().root / BIN_DIR
 
 
 def prepend_to_path(directory: Path | str) -> None:

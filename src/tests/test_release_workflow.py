@@ -137,7 +137,8 @@ def test_the_documentation_job_runs_unconditionally(docs_job):
     builds the site and uploads it into the run, and only the deploy waits for a real release. `needs:`
     is a different thing - it orders the job after the upload, it does not decide whether it happens."""
     # Arrange / Act
-    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit")  # held below
+    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit",  # held below
+               workflowgen.REAP_NAME)  # si#756, held in test_workflow_reap.py
     conditions = [(step.get("uses"), step["if"]) for step in docs_job["steps"]
                   if "if" in step and step.get("name") not in opening]
 
@@ -153,7 +154,8 @@ def test_the_documentation_job_runs_exactly_one_build_command(docs_job):
     """One `run:` besides the local cut every product job opens with (si#491), and it is the command a
     developer types in a checkout."""
     # Arrange / Act
-    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit")
+    opening = ("Cut the tag in this checkout", "The tag is on origin at this commit",
+               workflowgen.REAP_NAME)  # si#756, held in test_workflow_reap.py
     commands = [str(step["run"]).strip() for step in docs_job["steps"]
                 if "run" in step and step.get("name") not in opening]
 
@@ -470,9 +472,9 @@ TAG_REQUIRED = "The tag is on origin at this commit"
 
 
 def _opening(steps):
-    """A product job's steps after the checkout and the interpreter."""
-    return [step for step in steps
-            if not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python"))]
+    """A product job's steps after si#756's reap, the checkout and the interpreter."""
+    return [step for step in steps if step.get("name") != workflowgen.REAP_NAME
+            and not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python"))]
 
 
 def test_every_product_job_rehearses_with_the_cut_and_requires_the_pushed_tag(workflow):
