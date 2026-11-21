@@ -153,15 +153,21 @@ def test_directories_with_no_carrier_have_nowhere_to_be() -> None:
 class FakeDaemon:
     """The endpoint's Docker as Portainer proxies it, with a filesystem of `path -> (uid, gid, mode)`.
 
-    A value of `"file"` is a regular file at that path; an exception is raised on the archive call.
+    A value of `"file"` is a regular file at that path; an exception is raised on the archive call. `/`
+    always exists. A `PUT .../archive` into a writable helper adds the tar's directories to the tree with
+    their headers' owner and mode, as Docker 29.10 did through Portainer 2.45 on 2026-11-21 (si#808);
+    `ignores_headers` stands for a daemon that would not, so the check after creating has something to find.
     """
 
-    def __init__(self, tree: dict, image: bool = True, fail: "dict[str, int] | None" = None) -> None:
-        self.tree = tree
+    def __init__(self, tree: dict, image: bool = True, fail: "dict[str, int] | None" = None,
+                 ignores_headers: bool = False) -> None:
+        self.tree = {"/": (0, 0, 0o755), **tree}
         self.image = image
         self.fail = fail or {}
+        self.ignores_headers = ignores_headers
         self.calls: list[tuple[str, str]] = []
         self.containers: dict[str, str] = {}
+        self.written: list[str] = []
 
     @staticmethod
     def _error(code: int, message: str) -> urllib.error.HTTPError:
@@ -185,12 +191,24 @@ class FakeDaemon:
         if path == "/containers/create":
             spec = json.loads(body or b"{}")
             mount = spec["HostConfig"]["Mounts"][0]
-            assert mount["Type"] == "bind" and mount["ReadOnly"] is True, "a -v bind would CREATE the path"
+            assert mount["Type"] == "bind", "a -v bind would CREATE the path"
+            assert mount["ReadOnly"] is (spec["Labels"][portainer.PROBE_LABEL] != "create"), \
+                "only the creating helper binds writable"
             if mount["Source"] not in self.tree:
                 raise self._error(400, 'invalid mount config for type "bind": bind source path does not '
                                        f'exist: {mount["Source"]}')
             self.containers[f"c{len(self.containers)}"] = mount["Source"]
             return io.BytesIO(json.dumps({"Id": f"c{len(self.containers) - 1}", "Warnings": []}).encode())
+        if method == "PUT" and "/archive" in path:
+            base = self.containers[path.split("/")[2]]
+            for member in tarfile.open(fileobj=io.BytesIO(body or b"")).getmembers():
+                assert member.isdir() and not member.name.startswith("/") and ".." not in member.name
+                where = base.rstrip("/") + "/" + member.name
+                assert where not in self.tree, f"an existing {where} was written over"
+                self.tree[where] = (0, 0, 0o755) if self.ignores_headers else (
+                    member.uid, member.gid, member.mode)
+                self.written.append(where)
+            return io.BytesIO(b"")
         if "/archive" in path:
             seen = self.tree[self.containers[path.split("/")[2]]]
             if isinstance(seen, Exception):
@@ -209,7 +227,7 @@ class FakeDaemon:
         raise AssertionError(f"unexpected call {method} {path}")
 
 
-def _deploy(monkeypatch, daemon: FakeDaemon, directories: list) -> Recorder:
+def _deploy(monkeypatch, daemon: FakeDaemon, directories: list, builds: bool = True) -> Recorder:
     """`deploy up` through the shipped backend, with the stack side recorded and the daemon faked.
 
     The environment is PARSED from a manifest rather than built, so that on the code before si#782 - which
@@ -221,6 +239,7 @@ def _deploy(monkeypatch, daemon: FakeDaemon, directories: list) -> Recorder:
     monkeypatch.setattr(portainer, "_request", recorder)
     monkeypatch.setattr(portainer, "_docker", daemon, raising=False)
     monkeypatch.setattr(portainer, "_target_for", lambda env: (TARGET, REPOSITORY))
+    monkeypatch.setattr(portainer, "_built_by_kernel", lambda env: builds, raising=False)
     monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)  # si#785, tested there
     portainer.PortainerBackend().deploy(
         _prod(directories), deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
@@ -352,6 +371,120 @@ def test_an_environment_with_no_directories_asks_the_carrier_nothing(monkeypatch
 
     # assert
     assert daemon.calls == []
+
+
+# --- deploy up creates a missing one on a carrier deploy carrier never builds (si#808) ---------------
+
+def test_a_missing_directory_is_created_with_its_owner_and_mode_and_its_parents_plainly(monkeypatch,
+                                                                                         capsys) -> None:
+    """THE TICKET'S ACCEPTANCE, seen red first: before si#808 this refused with the `install -d` line."""
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755), "/srv/app": (0, 0, 0o755), "/srv/app/data": (1000, 1000, 0o750)})
+
+    # act
+    recorder = _deploy(monkeypatch, daemon, [
+        {"path": "/srv/app/data", "owner": "1000:1000", "mode": "0750"},
+        {"path": "/srv/app/prod/belege", "owner": "1000:1000", "mode": "2770"},
+        {"path": "/srv/app/cache"}], builds=False)
+
+    # assert
+    assert daemon.written == ["/srv/app/prod", "/srv/app/prod/belege", "/srv/app/cache"]
+    assert daemon.tree["/srv/app/prod"] == (0, 0, 0o755), "a parent is made the way install -d makes it"
+    assert daemon.tree["/srv/app/prod/belege"] == (1000, 1000, 0o2770)
+    assert daemon.tree["/srv/app/cache"] == (0, 0, 0o755), "unstated is what install -d as root gives"
+    assert daemon.tree["/srv"] == (0, 0, 0o755), "an existing parent is not in the tar"
+    out = capsys.readouterr().out
+    assert "created /srv/app/prod/belege on the carrier, owner 1000:1000, mode 02770" in out
+    assert "3 of 3 declared directories ready on the carrier" in out and "nothing to create" not in out
+    assert any(call[0] == "PUT" for call in recorder.calls), "the stack was deployed"
+
+
+def test_every_helper_container_is_removed_creating_too(monkeypatch) -> None:
+    # arrange
+    daemon = FakeDaemon({})
+
+    # act
+    _deploy(monkeypatch, daemon, [{"path": "/srv/app/data", "owner": "1000"}], builds=False)
+
+    # assert
+    removed = {path.split("/")[2].split("?")[0] for method, path in daemon.calls if method == "DELETE"}
+    assert removed == set(daemon.containers) and len(removed) > 1
+
+
+def test_a_second_run_creates_nothing_and_says_so(monkeypatch, capsys) -> None:
+    # arrange
+    daemon = FakeDaemon({})
+    directories = [{"path": "/srv/app/data", "owner": "1000:1000", "mode": "0750"}]
+    _deploy(monkeypatch, daemon, directories, builds=False)
+    first = list(daemon.written)
+    capsys.readouterr()
+
+    # act
+    _deploy(monkeypatch, daemon, directories, builds=False)
+
+    # assert
+    assert daemon.written == first, "nothing written the second time"
+    out = capsys.readouterr().out
+    assert "1 of 1 declared directory ready on the carrier, nothing to create" in out
+    assert "created" not in out
+
+
+def test_a_wrong_owner_is_refused_and_not_rewritten_and_nothing_else_is_created(monkeypatch) -> None:
+    """A wrong one stays a refusal; and while anything is refused, nothing is made, so a refused run
+    leaves the carrier as it found it."""
+    # arrange
+    daemon = FakeDaemon({"/srv/app/data": (0, 0, 0o750)})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy(monkeypatch, daemon, [{"path": "/srv/app/data", "owner": "1000:1000", "mode": "0750"},
+                                      {"path": "/srv/app/backups", "owner": "1000"}], builds=False)
+    message = str(refused.value)
+    assert "/srv/app/data is owned by 0:0, declared 1000:1000" in message
+    assert "/srv/app/backups is missing" in message and "created none because of the rest" in message
+    assert daemon.written == [] and daemon.tree["/srv/app/data"] == (0, 0, 0o750)
+
+
+def test_a_carrier_deploy_carrier_builds_is_still_left_to_it(monkeypatch) -> None:
+    # arrange
+    daemon = FakeDaemon({})
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy(monkeypatch, daemon, [{"path": "/srv/app/data", "owner": "1000"}], builds=True)
+    assert "`deploy carrier` creates them" in str(refused.value)
+    assert daemon.written == []
+
+
+@pytest.mark.parametrize("daemon, said", [
+    (FakeDaemon({}, fail={"/containers/c1/archive": 500}), "Docker did not take the directory (500"),
+    (FakeDaemon({}, ignores_headers=True), "is owned by 0:0, declared 1000:1000"),
+    (FakeDaemon({"/srv": "file"}), "/srv is not a directory"),
+])
+def test_a_directory_that_could_not_be_made_as_declared_is_refused(monkeypatch, capsys, daemon,
+                                                                   said) -> None:
+    """It is KNOWN to be missing, so this is not "could not tell": deploying would let Docker make it as
+    root. And what Docker reports after creating is checked, not assumed."""
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        _deploy(monkeypatch, daemon, [{"path": "/srv/app/data", "owner": "1000:1000"}], builds=False)
+    assert said in capsys.readouterr().err
+    assert "Run on the carrier: install -d -o 1000 -g 1000 /srv/app/data" in str(refused.value)
+    assert "ready on the carrier" not in capsys.readouterr().out
+
+
+def test_whether_deploy_carrier_builds_the_carrier_is_read_from_its_proxmox_half(monkeypatch,
+                                                                                tmp_path) -> None:
+    # arrange
+    document = _document([{"path": "/srv/app"}])
+    document["carriers"]["built"] = {"proxmox": {"node": "pve1", "kind": "lxc"}, "portainer": {"url_from": "B"}}
+    monkeypatch.setattr(context, "_current", context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+    monkeypatch.setattr(context.ProductContext, "manifest_data", lambda self: document)
+    env = _prod([{"path": "/srv/app"}])
+
+    # act / assert
+    assert portainer._built_by_kernel(env) is False
+    assert portainer._built_by_kernel(env._replace(carrier="built")) is True
 
 
 # --- deploy carrier creates them --------------------------------------------------------------------
