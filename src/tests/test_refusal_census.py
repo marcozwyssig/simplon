@@ -530,6 +530,31 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "_quoted", "must be quoted"): EXPRESSION,
     ("environments", "parse_data", "no machine for them to be created on"): DIAGNOSIS,
 
+    # --- environments.py, a `directories:` path written as `${NAME}` (si#809) -------------------------
+    # Two. One diagnosis and one expression rule. LOAD TIME checks the template's shape and its names;
+    # what the path resolves to is `deploy up`'s, which puts the resolved string through `carrier_path`
+    # (a run-time refusal, outside this census, like the unresolved name it also refuses).
+    #
+    # Diagnosis: a `${NAME}` that names neither a `required:` nor an `optional:` value nor SIMPLON_VERSION.
+    # Only those travel to the deployment (`stack_values`), so the path could never resolve and `deploy up`
+    # would refuse every time.
+    #
+    # THE EXPRESSION RULE: a template of any other shape - `$NAME`, `${NAME:-default}`, or text around
+    # `${NAME}` outside the path set. `${DATA_DIR:-/srv/app}` would have worked: compose reads it. Refused
+    # because a default is the fallback `stack_values` refuses for `required:` (the directory lands where
+    # nobody declared it when the value is missing), and the surrounding text reaches Ansible and a shell
+    # like a literal path. The three questions:
+    #   - does it forbid something a product might legitimately want? The one consumer, biz-cockpit,
+    #     names its paths as `required:` values (`COCKPIT_DATA_DIR`, ...) and asked for `${VAR}` (si#809);
+    #     its manifest declares no `directories:` yet (read 2026-11-21 through the GitHub API). Every form
+    #     refused here was refused before si#809 as well, by `carrier_path`'s set: nothing a manifest
+    #     could say yesterday is lost.
+    #   - would deleting be cheaper than guarding? No: without it the kernel would have to resolve
+    #     defaults the way compose does, and a missing value would create a directory nobody declared.
+    #   - what would the fix cost? Drop the default and put the name in `required:`.
+    ("environments", "directory_path", "which the deployment does not send"): DIAGNOSIS,
+    ("environments", "directory_path", "name a value only as"): EXPRESSION,
+
 
     # --- layout.py (si#250) --------------------------------------------------------------------------
     # Four. Three diagnosis and one expression rule.
@@ -1221,6 +1246,8 @@ REACH: dict[tuple[str, str, str], str] = {
     ("environments", "_directories", "is not a uid or uid:gid"): REACH_MERGED,
     ("environments", "_quoted", "must be quoted"): REACH_MERGED,
     ("environments", "carrier_path", "may only use letters, digits"): REACH_MERGED,
+    # si#809, the same claim about the same parser.
+    ("environments", "directory_path", "name a value only as"): REACH_MERGED,
     ("layout", "declared", "does not take"): REACH_MERGED,
     ("load", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("load", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,

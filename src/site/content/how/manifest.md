@@ -1765,6 +1765,20 @@ the wrong owner, mode or type is never rewritten: it is refused as above, and wh
 nothing is created. When not even the top-level parent exists (no `/srv`), it refuses with the
 `install -d` line rather than bind the carrier's root writable.
 
+**A `path:` may take its value from the deployment** (si#809): `path: ${COCKPIT_DATA_DIR}` or
+`path: ${ROOT}/backups`, so a directory and the bind mount that names the same `required:` value cannot
+drift apart. Only the form `${NAME}` is read - no `$NAME`, no `${NAME:-default}`, because a default would
+put the directory where nobody declared it when the value is missing - and the name must be in the
+environment's `required:` or `optional:` (or be `SIMPLON_VERSION`), since nothing else reaches the
+deployment. **At load** the kernel can only check that shape: the text around the variable is in the path
+set, and the path is absolute unless a variable stands first. **`deploy up`** resolves it against the
+values it sends Portainer, puts the resolved string through the same path rule a literal path passed at
+load, and refuses before the carrier is asked anything when the value breaks it or when a name has no
+value (only an `optional:` one can be empty there). A templated directory is created by `deploy up` on
+every carrier, also one `deploy carrier` builds: `deploy carrier` does not have the deployment's values
+(one run serves `test` and `prod`, which give one name two values), so it names each such path, says
+`deploy up` creates it, and never writes it literally.
+
 The list belongs to the **environment**, not the carrier: a bind mount is the stack's, and two
 environments sharing one carrier are kept apart by their trees, so `deploy up` for `prod` must not refuse
 over `test`'s.

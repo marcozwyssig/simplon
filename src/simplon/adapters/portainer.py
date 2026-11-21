@@ -736,7 +736,8 @@ class PortainerBackend:
         values = {**stack_values(env), VERSION_VAR: version.tag}
         credential = _clone_credential(repository, env)
         # si#782, si#808 - the carrier is only asked about when there is something to check
-        check_directories(target, env, create=bool(env.directories) and not _built_by_kernel(env))
+        check_directories(target, env, create=bool(env.directories) and not _built_by_kernel(env),
+                          values=values)
         check_registry_access(target, repository, values)
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(target, repository, credential, env_vars=values)
@@ -1065,7 +1066,7 @@ def _install(directory: "Directory") -> str:
 # [-g gid] [-m mode] <path below it>`, then is removed. The command is an argv list handed to Docker as
 # JSON - no shell is involved anywhere - and every word of it is either a constant, a number the parser
 # made (`Directory.uid`/`gid`/`mode` are ints), or the path, which has passed `environments.carrier_path`
-# at load. MEASURED 2026-11-21 with this image on Docker 29.10: `install -d -o 1000 -g 1000 -m 02770
+# at load or, written as `${NAME}`, after resolution (si#809, `resolved_directories`). MEASURED 2026-11-21 with this image on Docker 29.10: `install -d -o 1000 -g 1000 -m 02770
 # /probe/a/b/c` made `a` and `b` `0:0 755` and `c` `1000:1000 2770`, so one run makes the parents plainly,
 # the way `deploy carrier`'s parents task does. The directory is then checked again, so a daemon that did
 # something else (userns-remap, an Agent that proxies differently) is a refusal, not a "created".
@@ -1177,7 +1178,48 @@ def _create(target: PortainerTarget, directory: "Directory") -> str:
                      f"could not be removed ({_said(error)}). It binds {ancestor} writable")
 
 
-def check_directories(target: PortainerTarget, env: "Environment", create: bool = False) -> None:
+def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "list[tuple[Directory, bool]]":
+    """Every declared directory with its path resolved against the values this deployment sends, each
+    paired with whether it was templated (si#809). Raises before the carrier is asked anything.
+
+    THE SAME RESOLUTION AS A COMPOSE IMAGE (`_resolved`, si#785), over the same values - `stack_values`
+    plus the version, exactly what Portainer is handed - so the directory checked and created is the one
+    the stack's `${NAME}` bind mount will name, and not a second reading of the environment.
+
+    THE RESOLVED STRING PASSES `carrier_path`, the rule a literal path passed at load: it reaches Docker
+    as an argv word and the refusal's `install -d` line, and a value from the environment is no safer
+    than one from the file. A name with no value is a refusal that names it, every one at once: the
+    directory's place is not known, so there is nothing honest to check. Only an `optional:` name can get
+    here empty; `stack_values` has already refused a missing `required:` one.
+    """
+    found: "list[tuple[Directory, bool]]" = []
+    unresolved: "dict[str, list[str]]" = {}
+    for directory in env.directories:
+        names = environments.path_variables(directory.path)
+        if not names:
+            found.append((directory, False))
+            continue
+        missing = [name for name in names if not values.get(name)]
+        if missing:
+            for name in missing:
+                unresolved.setdefault(name, []).append(directory.path)
+            continue
+        where = f"environment '{env.name}', `path: {directory.path}` resolved from the deployment's values"
+        path = environments.carrier_path(_resolved(directory.path, values), where)
+        found.append((directory._replace(path=path.rstrip("/") or "/"), True))
+    if unresolved:
+        named = "; ".join(f"{name} in {', '.join(paths)}" for name, paths in unresolved.items())
+        one = len(unresolved) == 1
+        raise ValueError(
+            f"environment '{env.name}': this deployment sends no value for {', '.join(unresolved)}, and "
+            f"`directories:` names {'it' if one else 'them'} ({named}) - so where that directory is is "
+            f"not known, and the carrier was asked about none. Export {'it' if one else 'them'} where "
+            f"the deploy command runs")
+    return found
+
+
+def check_directories(target: PortainerTarget, env: "Environment", create: bool = False,
+                      values: "Mapping[str, str] | None" = None) -> None:
     """Refuse a deployment whose bind-mount directories are not on the carrier as declared (si#782), and
     with `create`, make the missing ones first (si#808).
 
@@ -1185,6 +1227,10 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
     the far side of the seam with "unable to open database file" - after the stack exists. Every
     directory is checked and every wrong one named in ONE refusal; an operator repairing eight
     directories one run at a time is being made to do the kernel's work.
+
+    A path written as `${NAME}` is resolved from `values` first (si#809, `resolved_directories`), and a
+    resolved one is created whatever `create` says: `deploy carrier` does not have the deployment's
+    values and leaves it alone, so nothing but this would make it.
 
     `create` is for a carrier `deploy carrier` never builds. It makes a MISSING directory and nothing else:
     one that exists with the wrong owner, mode or type is refused exactly as without it, and while anything
@@ -1199,18 +1245,21 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
 
     if not env.directories:
         return
+    resolved = resolved_directories(env, values or {})
+    directories = [directory for directory, _ in resolved]
+    creatable = {directory.path for directory, templated in resolved if create or templated}
     try:
         _ensure_probe_image(target)
     except OSError as error:
         log.warn(f"directory check did not run: the probe image could not be found or loaded on endpoint "
                  f"{target.endpoint_id} of {target.url} ({_said(error)}), so none of "
-                 f"{', '.join(d.path for d in env.directories)} was checked")
+                 f"{', '.join(d.path for d in directories)} was checked")
         return
     wrong: list[str] = []
     fixes: list[str] = []
     missing: "list[Directory]" = []
     unchecked = 0
-    for directory in env.directories:
+    for directory in directories:
         seen, why = _stat(target, directory.path)
         if why:
             unchecked += 1
@@ -1225,11 +1274,12 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
             wrong.append(problem)
             if seen.isdir():  # `install -d` fixes an existing directory, not a file
                 fixes.append(_install(directory))
-    if wrong or (missing and not create):
+    left = [d for d in missing if d.path not in creatable]
+    if wrong or left:
         wrong = [f"{d.path} is missing" for d in missing] + wrong
         fixes = [_install(d) for d in missing] + fixes
         way = ("`deploy up` creates a missing one on this carrier, and created none because of the rest; "
-               "it never rewrites one that exists, so run on the carrier: " if create else
+               "it never rewrites one that exists, so run on the carrier: " if not left else
                "`deploy carrier` creates them on a carrier the kernel builds; on any other, run on the "
                "carrier: ")
         raise PortainerError(
@@ -1255,7 +1305,7 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
             f"environment '{env.name}': {', '.join(d.path for d in failed)} could not be made as declared "
             f"through {target.url} (said above), so the stack was not touched - Docker would create a "
             f"missing directory as root. Run on the carrier: {'; '.join(_install(d) for d in failed)}")
-    ready = len(env.directories) - unchecked
+    ready = len(directories) - unchecked
     if ready:
         log.ok(f"{ready} of {len(env.directories)} declared director"
                f"{'y' if len(env.directories) == 1 else 'ies'} ready on the carrier"
