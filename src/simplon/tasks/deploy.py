@@ -35,7 +35,7 @@ from pathlib import Path
 
 from simplon.adapters import backend, devcontainer, githubpackages, portainer
 from simplon.manifest import context, deployment, environments, launcherenv
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 from simplon.model import artifactschema, carrierspec
 from simplon.tasks import carrier, image
 
@@ -193,17 +193,28 @@ def variables_read(data: Mapping[str, object], task: str) -> tuple[str, ...]:
     readers that spell its names: the Portainer admin password, the runner's registration token, the
     Proxmox API token and the kernel's state passphrase and SSH key path.
     """
+    return tuple(variable_roles(data, task))
+
+
+def variable_roles(data: Mapping[str, object], task: str) -> dict[str, str]:
+    """`variables_read`, each name with its role (si#833): what the reader that spells the name says about
+    whether its value is secret. A reader cannot hand the launcher a name without saying which it is."""
     body = READS.get(task)
     if body == _CARRIER:
-        return carrier.variables_read(dict(data))
+        return carrier.variable_roles(dict(data))
     if body is None or environments.matrix_section(data)["environments"] is None:
-        return ()
+        return {}
     deploying = body == _UP
     registry = environments.parse_data(data)
     carriers = carrierspec.declared(data)
-    names = (name for env in registry.environments.values() if env.backend == portainer.BACKEND
-             for name in portainer.variables_read(env, carriers, deploying=deploying))
-    return tuple(dict.fromkeys(names))
+    roles: dict[str, str] = {}
+    for env in registry.environments.values():
+        if env.backend != portainer.BACKEND:
+            continue
+        for name, role in portainer.variable_roles(env, carriers, deploying=deploying).items():
+            if roles.get(name) != secrets.SECRET:
+                roles[name] = role
+    return roles
 
 
 def variables_kept(*tasks: str) -> tuple[str, ...]:
@@ -217,7 +228,14 @@ def variables_kept(*tasks: str) -> tuple[str, ...]:
     if not any(task in READS for task in tasks):
         return ()
     data = context.current().manifest_data()
-    names = tuple(dict.fromkeys(name for task in tasks for name in variables_read(data, task)))
+    roles: dict[str, str] = {}
+    for task in tasks:
+        for name, role in variable_roles(data, task).items():
+            if roles.get(name) != secrets.SECRET:
+                roles[name] = role
+    # si#833: the kept names' secret values are registered before the body runs, so every sink redacts them.
+    secrets.register_present(roles)
+    names = tuple(roles)
     if os.environ.get("DELIVERY_ROUTE") == "inside":
         for name in names:
             if not launcherenv.forwardable(name):

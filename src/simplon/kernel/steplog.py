@@ -28,7 +28,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from simplon.kernel import log, provenance, runhost
+from simplon.kernel import log, provenance, runhost, secrets
 
 # Everything a filesystem would rather not see in a name. A step's identity is usually a dotted command
 # (`build.compile`), but it FALLS BACK to the shlex-joined argv, which carries slashes and spaces -
@@ -84,7 +84,7 @@ def write(command: str, output: str) -> Path | None:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / log_name(command)
-        path.write_text(output.rstrip("\n") + "\n", encoding="utf-8")
+        path.write_text(secrets.redact(output).rstrip("\n") + "\n", encoding="utf-8")
     except OSError:
         return None       # a read-only checkout is a reason to lose the log, never the run
     return path
@@ -174,7 +174,7 @@ def write_run(text: str) -> Path | None:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / RUN_TRANSCRIPT
-        path.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
+        path.write_text(secrets.redact(text).rstrip("\n") + "\n", encoding="utf-8")
     except OSError:
         return None       # a read-only checkout is a reason to lose the transcript, never the run
     return path

@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from types import FrameType
 from typing import Any, Callable, Mapping
 
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 
 #: How long the reader waits for a line to FINISH before handing over what it already has.
 #:
@@ -253,6 +253,7 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     limit and the kill then reach the whole tree, and the stop is handed on always, a terminal's Ctrl-C
     included: the terminal sent it to this group, not to the child's.
     """
+    secrets.check_argv(argv)      # si#833: a secret crosses by name, never on a command line
     full_env = dict(env or {}) if not inherit else {**os.environ, **env} if env else None
     guarded = os.name == "posix" and threading.current_thread() is threading.main_thread()
     stops = [getattr(signal, name) for name in _STOPS if hasattr(signal, name)] if guarded else []
@@ -440,6 +441,7 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
     none, runs in a group of its own, and an abandoned run kills the whole group - the grandchild of an
     `sh -c "a; b"` included, which killing the shell alone left running (si#743).
     """
+    secrets.check_argv(argv)      # si#833: a secret crosses by name, never on a command line
     group = _own_group(terminal)
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
                             process_group=0 if group else None)

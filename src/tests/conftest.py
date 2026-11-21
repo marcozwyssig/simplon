@@ -65,6 +65,22 @@ def _a_run_has_the_host_the_cli_registers():
     runhost.register(None)
 
 
+@pytest.fixture(autouse=True)
+def _no_secret_outlives_its_test():
+    """`simplon.kernel.secrets` is process state (si#833): a value one test registers would be redacted in
+    every later test's output - a fake token `t` would mask every `t`. And `cli.main` wraps `sys.stdout` and
+    `sys.stderr`, which must not stay wrapped around pytest's capture after the test that called it."""
+    from simplon.kernel import secrets
+    secrets.reset()
+    out, err = sys.stdout, sys.stderr
+    yield
+    secrets.reset()
+    if isinstance(sys.stdout, secrets._Redacting):
+        sys.stdout = out
+    if isinstance(sys.stderr, secrets._Redacting):
+        sys.stderr = err
+
+
 class Recorder:
     """A Portainer that records the calls and answers by path.
 

@@ -78,6 +78,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMappin
 from contextvars import ContextVar
 from importlib.resources import files
 
+from simplon.kernel import secrets
 from simplon.manifest import treeform
 
 #: The retired top-level section (si#467's form), refused by name since si#492. Not a `SECTION`: the kernel
@@ -100,7 +101,10 @@ EXPORTED = "DELIVERY_ENV_PASS"
 #: `GITHUB_TOKEN`, its fallback (si#225). Written once, here, and rendered into `launch.sh.j2` and
 #: `launch.cmd.j2` by `simplon init`: si#225 added `GH_TOKEN` to the `.sh` list by hand and the `.cmd` copy
 #: stayed one name short (si#479).
-FORWARDED = ("CI", "NO_COLOR", "TERM", "TZ", "GITHUB_TOKEN", "GH_TOKEN")
+#: Each with its role (si#833): `gh`'s two tokens are secret, the rest are plain.
+FORWARDED_ROLES = {"CI": secrets.PLAIN, "NO_COLOR": secrets.PLAIN, "TERM": secrets.PLAIN, "TZ": secrets.PLAIN,
+                   "GITHUB_TOKEN": secrets.SECRET, "GH_TOKEN": secrets.SECRET}
+FORWARDED = tuple(FORWARDED_ROLES)
 
 #: The namespace the launcher's own parameters live in (`LAUNCH_PRODUCT`, `LAUNCH_ORCH_DIR`, ...).
 LAUNCHER_PREFIX = "LAUNCH_"
@@ -258,7 +262,13 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
 
 
 def within(names: tuple[str, ...], body: Callable[[], int]) -> int:
-    """`body()`'s rc, with `names` what `running()` answers while it runs, and reset after, even on a raise."""
+    """`body()`'s rc, with `names` what `running()` answers while it runs, and reset after, even on a raise.
+
+    Every name is SECRET by role (si#833): the kernel only forwards an `env: pass:` name and never reads its
+    value into a string, so calling it secret costs nothing - and its value, when set, is registered here,
+    before the body runs, so no sink prints it."""
+    for name in names:
+        secrets.read(name)
     token = _running.set(tuple(names))
     try:
         return body()
@@ -282,7 +292,9 @@ def confine(keep: Iterable[str], environ: MutableMapping[str, str] | None = None
 
     THE ACCEPTED LIMIT: the value stays visible in `docker inspect` of the kernel's container, whose Config.Env
     recorded it when the launcher started it. Only the launcher could keep it off that line, and it cannot
-    tell which command runs without a second copy of the CLI's argument grammar (si#757, option B).
+    tell which command runs without a second copy of the CLI's argument grammar (si#757, option B). si#833
+    accepted it with a reopen trigger, recorded in `simplon.kernel.secrets`: a docker daemon shared with a
+    principal who is not root-equivalent on that host.
     """
     env = os.environ if environ is None else environ
     kept = set(keep)

@@ -136,6 +136,13 @@ class Environment(NamedTuple):
     #: make `deploy up` for prod refuse over test's tree. `deploy carrier` reads every environment that
     #: points at the carrier, so the carrier still gets the whole of it.
     directories: "tuple[Directory, ...]" = ()
+    #: THE NAMES OF `required:`/`optional:` WHOSE VALUES ARE SECRET (si#833), so the kernel redacts them
+    #: wherever it would print them and refuses to put them on a command line. A sibling list rather than a
+    #: flag on each entry, so the two lists keep the one shape their readers know. Every other name in them
+    #: is plain: a port or a flag registered as secret would turn `80` or `1` into `***` in every log line.
+    #: The names a kernel READER derives (the carrier's token, the clone credential's password) need no
+    #: entry: the reader already knows which half of a pair is the secret (`portainer.variable_roles`).
+    secret: tuple[str, ...] = ()
 
 
 class Registry(NamedTuple):
@@ -455,6 +462,15 @@ def parse_data(data: Mapping[str, object],
             raise ValueError(
                 f"environment '{name}': {', '.join(both)} stand(s) in both `required:` and `optional:`, "
                 f"which says a value must be there and may be absent. One of the two lists is the answer")
+        secret = _names(spec.get("secret"), "secret", f"environment '{name}'")
+        inert = [entry for entry in secret if entry not in (*required, *optional)]
+        if inert:
+            raise ValueError(
+                f"environment '{name}': `secret:` names {', '.join(inert)}, which "
+                f"{'is' if len(inert) == 1 else 'are'} in neither `required:` nor `optional:` - the "
+                f"deployment never reads {'it' if len(inert) == 1 else 'them'}, so there is no value to "
+                f"keep out of the output. Add {'it' if len(inert) == 1 else 'them'} to one of the two "
+                f"lists, or strike {'it' if len(inert) == 1 else 'them'} from `secret:`")
         if (required or optional) and not stack:
             raise ValueError(
                 f"environment '{name}': declares `required:`/`optional:` and no `stack:`, so there is no "
@@ -476,7 +492,7 @@ def parse_data(data: Mapping[str, object],
         envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
                                       carrier=carrier, stack=stack, repository=repository,
                                       required=required, optional=optional, deploys=deploys,
-                                      directories=directories)
+                                      directories=directories, secret=secret)
     if not envs:
         raise ValueError("'cd: environments' defines no environments")
     default = str(matrix["default"] or "").strip()

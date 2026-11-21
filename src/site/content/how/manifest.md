@@ -1594,6 +1594,8 @@ cd:
       optional:                   # travels when set, absent when not
         - SMALLINVOICE_CLIENT_SECRET
         - APP_TITLE
+      secret:                     # of the two lists above, the values the kernel never prints
+        - SMALLINVOICE_CLIENT_SECRET
       directories:                # created by `deploy carrier` (or `deploy up`), checked by `deploy up`
         - { path: /srv/myctl/prod/data, owner: "1000:1000", mode: "0750" }
         - { path: /srv/myctl/prod/backups, owner: "1000" }   # group and mode left alone
@@ -1758,6 +1760,27 @@ kernel's work handed to an operator.
 **A name that is not in the list does not reach the deployment**, which is what keeps the manifest
 readable as the answer to "what goes over". And a manifest names variables here, never holds one:
 `TOGGL_API_TOKEN=4c2b9f` is refused rather than read as a name with an equals sign in it.
+
+**`secret:` says which of those values the kernel must never print** (si#833). Every other name in
+`required:` and `optional:` is plain: a port or a flag treated as secret would turn `80` or `1` into `***`
+in every log line. A secret value is replaced by `***` wherever the kernel would print it - a log line, a
+refusal, the step logs and the run transcript, a `directories:` path or an image templated from it - and in
+GitHub Actions it is masked with `::add-mask::` as soon as it is read. A command line that would carry it
+is refused: a secret crosses into a container by name (`-e NAME`), never as `NAME=value`. A name under
+`secret:` must be in `required:` or `optional:`; one in neither is never read, and is refused by name.
+
+The names the kernel derives need no entry, because the reader that spells them knows which half of a
+pair is the secret: the carrier's `<url_from>_TOKEN`, the `_PASSWORD` of the ghcr.io and repository
+credentials, and everything `deploy carrier` reads (the Portainer admin password, the runner and Proxmox
+tokens, the state passphrase, the SSH private key). A command's `env: pass:` names need none either: the
+kernel only forwards them, and treats each as secret.
+
+What this does not cover, said rather than implied: a tool started with its output going straight to the
+terminal (in GitHub Actions the mask covers it), the stack environment Portainer stores by design, and
+`docker inspect` of the kernel's container, whose Config.Env holds every forwarded value. The last is
+accepted: reading it takes the docker socket, which is root on that host, and root can read the process
+anyway. It reopens on a docker daemon shared with someone who is not root-equivalent on that host (a
+shared remote `DOCKER_HOST`, a multi-tenant runner).
 
 **The version reaches the stack as `SIMPLON_VERSION`.** A compose document writes
 `image: ghcr.io/acme/app:${SIMPLON_VERSION}`, so `deploy up --version 1.4.0` deploys 1.4.0 rather than

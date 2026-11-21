@@ -216,10 +216,12 @@ PACKAGES = frozenset({"tasks"})
 #: `provenance` and `runhost` (si#391) are the kernel's side of two seams the cli used to be reached for
 #: across: which simplon is answering, and what the layers above tell a run. `cli.main` registers the host;
 #: a product has no reason to import either.
+#: `secrets` (si#833) is INTERNAL until a product asks for it: a product's credential reaches it through
+#: `adapters.credentials`, which is promised and reads its password half through it.
 INTERNAL = frozenset({
     "adapters.brew", "adapters.diskguard", "adapters.gh", "adapters.github", "adapters.hostinstall", "adapters.oras", "adapters.pypi", "adapters.repofile", "adapters.tools", "cli.bootstrap",
     "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
-    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "manifest.yamllines", "kernel.limits", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "manifest.signatures", "manifest.taskkeys", "manifest.yamlkeys", "manifest.yamllines", "kernel.limits", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.secrets", "kernel.steplog", "test_impls",
     "ui.clipboard",
 })
 

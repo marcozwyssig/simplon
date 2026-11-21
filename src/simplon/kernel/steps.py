@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Sequence, TextIO
 
 from simplon.kernel import log
-from simplon.kernel import runhost, steplog
+from simplon.kernel import runhost, secrets, steplog
 from simplon.kernel.run import LINE_BREAK, run_stream
 
 # What may run at the same time is read off the plan tree alone, so it lives with the tree: the load rule
@@ -1234,7 +1234,7 @@ def argv_step(label: str, argv: list[str], command: str | None = None, help: str
     that shows these lines is a Textual app, and Textual holds the mouse, so what is on screen cannot be
     selected or copied out of it. Writing on success only would hand back a log for every run except
     the interesting one."""
-    identity = command if command is not None else shlex.join(argv)
+    identity = secrets.redact(command if command is not None else shlex.join(argv))
 
     # The collector, built HERE rather than inside `stream`, so the Step below can be handed the SAME
     # list and a pane can read what this step has produced while it is still producing it (si#144).

@@ -36,7 +36,7 @@ import os
 import sys
 from typing import Iterable, Mapping, MutableMapping, Tuple
 
-from simplon.kernel import log
+from simplon.kernel import log, secrets
 
 USER_SUFFIX = "_USER"
 PASSWORD_SUFFIX = "_PASSWORD"
@@ -45,6 +45,12 @@ PASSWORD_SUFFIX = "_PASSWORD"
 def variables(prefix: str) -> Tuple[str, str]:
     """The (user, password) variable NAMES a prefix stands for."""
     return f"{prefix}{USER_SUFFIX}", f"{prefix}{PASSWORD_SUFFIX}"
+
+
+def variable_roles(prefix: str) -> dict[str, str]:
+    """`variables`, each with its role (si#833): the username is plain, the password is secret."""
+    user_var, password_var = variables(prefix)
+    return {user_var: secrets.PLAIN, password_var: secrets.SECRET}
 
 
 def credential(prefix: str, env: Mapping[str, str]) -> Tuple[str, str] | None:
@@ -58,7 +64,7 @@ def credential(prefix: str, env: Mapping[str, str]) -> Tuple[str, str] | None:
         return None
     user_var, password_var = variables(prefix)
     user = (env.get(user_var) or "").strip()
-    password = (env.get(password_var) or "").strip()
+    password = secrets.read(password_var, env).strip()
     return (user, password) if user and password else None
 
 
@@ -99,6 +105,7 @@ def ask_for_secret(variable: str, env: MutableMapping[str, str] | None = None) -
         return None
 
     env[variable] = answer
+    secrets.read(variable, env)
     return variable
 
 
