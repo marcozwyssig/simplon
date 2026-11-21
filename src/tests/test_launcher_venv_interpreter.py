@@ -32,6 +32,11 @@ def _product(root: Path) -> Path:
     """A product checkout holding the rendered launcher and an orchestrator that names its interpreter."""
     package = root / "deploy" / "orchestrator" / "src" / "python" / "orchestrator"
     package.mkdir(parents=True)
+    # A REGULAR package, as every product's orchestrator is. Without `__init__.py` it is a namespace
+    # portion, and a regular `orchestrator` anywhere later on sys.path wins over it: under
+    # `./simplon.sh test suite` the inherited PYTHONPATH carries simplon's own, which then imported
+    # typer and failed in CI (PR #846, Python 3.14) while a bare pytest run passed.
+    (package / "__init__.py").write_text("")
     (package / "__main__.py").write_text('import sys\nprint("ran under", sys.executable)\n')
     (root / "deploy" / "orchestrator" / "requirements.txt").write_text("")
     launcher = root / "demo.sh"
@@ -41,7 +46,11 @@ def _product(root: Path) -> Path:
 
 
 def _launch(root: Path, path: str | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "DELIVERY_ROUTE": "venv", "PYTHONDONTWRITEBYTECODE": "1"}
+    # The caller's interpreter context stays behind: this suite itself runs under a launcher that exports
+    # PYTHONPATH (and may run inside a venv), and none of that is the demo product's.
+    env = {name: value for name, value in os.environ.items()
+           if name not in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV")}
+    env.update({"DELIVERY_ROUTE": "venv", "PYTHONDONTWRITEBYTECODE": "1"})
     if path is not None:
         env["PATH"] = path
     return subprocess.run(["bash", str(root / "demo.sh")], capture_output=True, text=True, env=env,
