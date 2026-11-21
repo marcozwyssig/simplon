@@ -727,24 +727,43 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     # si#347 widened it to the images a multi-platform build bakes alongside this one, because their
     # Dockerfiles are read in the same run; a single-platform build does not build its contexts, so their
     # paths are not this run's business.
-    checked = [cfg, *(dep for _, dep in dependencies(cfg))] if cfg.platforms else [cfg]
-    missing = [line for one in checked for line in missing_declared_paths(one, root)]
+    checked = [(name, cfg), *dependencies(cfg)] if cfg.platforms else [(name, cfg)]
+    missing = [(entry, line) for entry, one in checked for line in missing_declared_paths(one, root)]
     if missing:
-        both = "two paths that do not exist" if len(missing) > 1 else "a path that does not exist"
+        # si#829: the count is computed - the header said "two" for any count above one.
+        count = f"{len(missing)} paths that do not exist" if len(missing) > 1 else "a path that does not exist"
         # si#826: a `contexts:` file a command makes is not a stale declaration - its line already names the
         # command, and "fix the entry" would send the reader to edit a correct manifest. The tail is said only
         # about the keys that may be wrong, and named by key when a made file stands beside them.
-        keys = list(dict.fromkeys(one.key for one in missing if one.key))
-        tail = ""
-        if keys:
-            which = f"`{SECTION}.{name}:` entry"
-            if any(one.key is None for one in missing):
+        # si#829: and about the entry that DECLARES the path - on a multi-platform build a dependency's own
+        # path is checked too, and naming the built image's entry for it sent the reader to a correct entry.
+        fixes = []
+        for entry in dict.fromkeys(entry for entry, _ in missing):
+            own = [one for named, one in missing if named == entry]
+            keys = list(dict.fromkeys(one.key for one in own if one.key))
+            if not keys:
+                continue
+            which = f"`{SECTION}.{entry}:` entry"
+            if any(one.key is None for one in own):
                 lines = " and ".join(f"`{key}:`" for key in keys)
                 which = f"{lines} line{'s' if len(keys) > 1 else ''} of the {which}"
-            tail = (f"\n  fix the {which}, or move what it names - docker would have failed later, about "
+            fixes.append(f"the {which}")
+        tail = ""
+        if fixes:
+            what = "what it names" if len(fixes) == 1 else "what they name"
+            tail = (f"\n  fix {' and '.join(fixes)}, or move {what} - docker would have failed later, about "
                     f"something else")
-        log.error(f"image '{name}' declares {both} under {root}:\n  "
-                  + "\n  ".join(one.line for one in missing) + tail)
+        # si#829: the header's subject is the entry that declares the paths too - "image 'multi' declares"
+        # was false when only `base`'s path is gone.
+        declaring = list(dict.fromkeys(entry for entry, _ in missing))
+        if declaring == [name]:
+            header = f"image '{name}' declares {count} under {root}"
+        else:
+            images = " and ".join(f"'{entry}'" for entry in declaring)
+            header = (f"building image '{name}' found {count} under {root}, declared by "
+                      f"image{'s' if len(declaring) > 1 else ''} {images}")
+        log.error(f"{header}:\n  "
+                  + "\n  ".join(one.line for _, one in missing) + tail)
         return 1
     docker.ensure_docker()
     if cfg.platforms:
