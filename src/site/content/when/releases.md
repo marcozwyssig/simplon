@@ -23,6 +23,43 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.50.0
+
+**What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) if its
+release workflow is derived, or `test generated` reports drift where a release leaf declares
+`env: pass:`. A product without such a leaf sees no change. Beyond that, check these where a product
+relies on the old behaviour:
+
+- **A release leaf's `env: pass:` names are now filled from Actions secrets** of the same names, for
+  that step only (si#836). A step before the cut checks that each one is set and refuses naming every
+  missing secret and the leaf that passes it; a dry run runs that check too. Set the secrets before the
+  next release. A product that worked around this by writing the secret into the workflow's `env:` can
+  delete that.
+- **A `GITHUB_*` name in a release leaf's `env: pass:` is refused when the workflow is rendered**,
+  except `GITHUB_TOKEN` on a `token: github` leaf and `GH_APP_TOKEN` on a `token: app` leaf, which keep
+  their existing mechanisms. GitHub cannot store a secret named `GITHUB_*`.
+
+### Release workflow (si#836, si#851)
+
+- **si#836:** a product task with `publishes: true` and `env: pass:` can now run inside `release all`.
+  firn's Gradle Plugin Portal publish (`GRADLE_PUBLISH_KEY`, `GRADLE_PUBLISH_SECRET`) is the first user;
+  the `.vsix` publish (si#549) can join the same way. The check sees only true or false, never the value,
+  the way si#574's app-secret check does. Only the derived `release` job is affected; CI workflows and
+  product-written jobs are unchanged. The rejected alternative, a catalogue leaf `release:gradle-plugin`,
+  reopens if a second product publishes Gradle plugins.
+- **si#851:** simplon's own release splits its Pages deploy out of `docs` into a job `pages`. `docs`
+  builds and uploads the artifact with `contents: read`; `pages` deploys it and alone holds
+  `pages: write`, `id-token: write` and the `github-pages` environment. On v0.48.0 and v0.49.0,
+  `deploy-pages` listed the run's artifacts one second after the upload, did not see it, and failed, and
+  rerunning the job uploaded a second artifact that made the next attempt fail too. Now a failed `pages`
+  job is rerun alone and finds the one artifact. This changes only simplon: the `docs` job is declared in
+  `simplon.yaml`, and no other reachable product deploys Pages from a derived workflow.
+
+### Also in this release
+
+- **#850** pins `deploy/image/image.pin` to the v0.49.0 kernel image.
+- The pull requests are #850, #852 (si#851) and #853 (si#836).
+
 ## 0.49.0
 
 **What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) and re-render
