@@ -23,6 +23,70 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.49.0
+
+**What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) and re-render
+its launchers (`simplon init --dir . --launchers-only`), or `test generated` reports drift. Every
+generated job gained a step before its checkout (si#756), and the `.sh` launcher template changed
+(si#844). Beyond that, check these where a product relies on the old behaviour:
+
+- **A secret value may no longer appear on a command line.** The kernel refuses to run a command whose
+  argv contains the value of a name it reads as secret (si#833), naming the variable and not the value.
+  A secret has to cross by environment name. Every name in a command's `env: pass:` counts as secret,
+  and so do the names the kernel derives (Portainer token, GHCR password, git credential, carrier
+  password, tokens, ssh key and state passphrase).
+- **An environment may declare `secret:`** beside `required:` and `optional:`. Its values are redacted
+  in everything the kernel prints and masked in GitHub Actions. A name under `secret:` that is in
+  neither list is refused at load. biz-cockpit's prod environment is the first user.
+- **`deploy up` refuses a missing `directories:` path that takes its value from a `secret:` name**
+  (si#840), instead of creating it: creating it would put the value on the carrier's command line. Create
+  the directory on the carrier yourself, or take the name out of `secret:`.
+- **A product whose CI writes `checkout: false` and its own checkout only to reap containers before
+  it** can delete both: the generated job does it now (si#756). firn is the one product that wrote it.
+
+### Secret values (si#833, si#839, si#840)
+
+- **si#833:** new module `simplon.kernel.secrets`. Each kernel reader declares whether the name it
+  derives is secret, and a census test turns red when a reader adds a name without saying so. A value
+  read as secret is redacted to `***` on stdout, stderr, the step log, the run transcript and the step
+  headers, masked with `::add-mask::` in GitHub Actions (a multi-line value line by line, since a
+  workflow command is one line), and refused on argv. The value stays visible in `docker inspect` of the
+  kernel's container: accepted, with its reopen trigger recorded in the module head and on the manifest
+  page.
+- **si#839:** two more census walks over the kernel's syntax trees. Every environment read of a secret
+  name goes through `secrets.read`, and every output primitive either redacts or is named with its
+  reason. They found five direct reads (`GITHUB_TOKEN` in three places, `GH_APP_TOKEN`,
+  `NEXUS_ADMIN_PASSWORD`), the token from `gh auth token` and the Nexus password from its container file
+  unregistered, and the TUI showing a secret in its details pane and copying it to the clipboard
+  unredacted. All are fixed.
+- **si#840:** three places a value still reaches were measured against a real Portainer CE 2.45.0, and
+  decided. The `_stat` probe's request body and a child's output under `capture=False` are accepted,
+  with reopen triggers. Portainer stores the stack env in clear and shows it to anyone the stack is
+  opened to: accepted, and `deploy up` now warns once when an environment with `secret:` deploys a stack
+  that is not administrators-only, or says it could not tell.
+
+### Workflows (si#756)
+
+- **si#756:** every generated job starts with a step that removes containers a cancelled job left
+  running: only those labelled `simplon.run=<product>` with a bind mount inside the job's workspace. It
+  runs on runners that are not GitHub-hosted and not Windows, has a five-minute limit, says how many it
+  removed (zero is green), warns when it cannot look and fails when an orphan survives removal. This also
+  closes #676.
+
+### Launchers (si#844)
+
+- **si#844:** the `.sh` launcher rebuilds a venv whose `pip` names an interpreter that is gone or lies
+  outside the venv (si#717's rule, now in the shell before any Python runs), says so in one line, and
+  stops naming the venv and the way out when a rebuild does not help. A healthy venv reached through a
+  symlink is left alone. The `.cmd` launcher has the same gap and is not changed; measuring it needs a
+  Windows host (si#847).
+
+### Also in this release
+
+- **#837** pins `deploy/image/image.pin` to the v0.48.0 kernel image.
+- The pull requests are #837, #838 (si#833), #841 (si#839), #842 (si#756, si#676), #843 (si#840) and
+  #846 (si#844).
+
 ## 0.48.0
 
 **What a product has to do:** re-render its launchers (`simplon init --dir . --launchers-only`), or
