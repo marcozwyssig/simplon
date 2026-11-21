@@ -1230,6 +1230,62 @@ def _app_secrets_check(jobs: "Sequence[Job]", expanded: "Mapping[str, Sequence[S
                 note=APP_SECRETS_NOTE.format(needs=needs)), note
 
 
+PASS_SECRETS_CHECK_NAME = "Check the secrets every `env: pass:` step needs"
+
+PASS_SECRETS_NOTE = """si#836: a step below whose command declares `env: pass:` reads those names from this
+repository's Actions secrets, in its own `env:` and no other step's. A secret that is not set would reach
+the step as an empty string, and a dry run skips a publishing step, so without this check the real run
+would stop there after the tag and whatever published before it (si#574's lesson). The expression
+`secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too.
+Checked here: {needs}."""
+
+
+def _passed_secrets(leaf: TaskCommand, words: str, where: str) -> dict[str, str]:
+    """si#836: the `env:` a release leaf's `env: pass:` names get - each from the secret of the same name.
+
+    A name the kernel already fills for this leaf keeps that mechanism and is left out here: GITHUB_TOKEN
+    for a `token: github` leaf (the run's own token, si#490 decision 4) and GH_APP_TOKEN for a `token: app`
+    leaf (the token the derived step mints, si#534). Any other `GITHUB_*` name is refused: GitHub refuses a
+    secret by that name, so the check would be red on every run with nothing that could be set, and
+    GITHUB_TOKEN itself reaches only a leaf that declares `token: github`."""
+    filled = {"github": {"GITHUB_TOKEN"}, "app": {APP_TOKEN_ENV}}.get(str(leaf.token), set())
+    out: dict[str, str] = {}
+    for name in leaf.env_pass:
+        if name in filled:
+            continue
+        if name.upper().startswith("GITHUB_"):
+            raise ValueError(
+                f"{where}: '{words}' passes {name} in `env: pass:`, and the release workflow fills such a name "
+                f"from the Actions secret of the same name - but GitHub refuses a secret named GITHUB_*, so "
+                f"there is nothing to set. The run's own GITHUB_TOKEN reaches a leaf whose task declares "
+                f"`token: github`; take {name} out of `env: pass:`, or declare `token: github` for that")
+        out[name] = f"${{{{ secrets.{name} }}}}"
+    return out
+
+
+def _pass_secrets_check(needed: "Mapping[str, Sequence[str]]") -> "Step | None":
+    """si#836: the release job's step that is red when a secret an `env: pass:` leaf is handed is not set,
+    naming each missing one; None when no leaf passes a name. si#574's shape: true/false, never the value."""
+    if not needed:
+        return None
+    names = list(needed)
+    leaves = list(dict.fromkeys(words for words_of in needed.values() for words in words_of))
+    script = ['missing=""',
+              *(f'[ "$SET_{name}" = true ] || missing="$missing {name}"' for name in names),
+              'if [ -n "$missing" ]; then',
+              f'  echo "::error::not set in this repository\'s Actions secrets:$missing - the release job hands '
+              f'each to the step whose command passes it in env: pass: ({", ".join(leaves)}), si#836; store '
+              f'them under Settings, Secrets and variables, Actions before releasing"',
+              "  exit 1",
+              "fi",
+              f'echo "set: {" ".join(names)}"']
+    needs = "; ".join(f"'{words}' passes {', '.join(n for n in names if words in needed[n])}" for words in leaves)
+    return Step(verbatim={"name": PASS_SECRETS_CHECK_NAME,
+                          "env": {f"SET_{name}": f"${{{{ secrets.{name} != '' }}}}" for name in names},
+                          "run": "\n".join(script) + "\n"},
+                note=PASS_SECRETS_NOTE.format(needs=needs))
+
+
 APP_TOKEN_NOTE ="""{version}: si#534 - '{words}' declares `token: app`, so this step mints a GitHub App
 token for {repository} and nothing else, with contents: write, from the secrets {prefix}_CLIENT_ID
 and {prefix}_APP_KEY. The leaf below reads it as ${env} from its own `env:`; no `run:` line
@@ -1310,6 +1366,8 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
     (si#489), and a second ordering here could only disagree with it. What a plan cannot say is added:
     - a leaf whose task `publishes:` is skipped on a dry run (si#490 decision 5);
     - a `token: github` leaf, and only that one, gets the run's GITHUB_TOKEN (decision 4);
+    - a leaf whose command declares `env: pass:` gets those names from the secrets of the same names, in its
+      own `env:`, and the job checks first that each is set (si#836, `_passed_secrets`);
     - a leaf taking a passed parameter unpinned gets it as `"$RELEASE_VERSION"`, the CLI's own reading of
       `passes:` (si#433), so `release all --tag v1.4.0` and the workflow hand the same leaves the version;
     - a first leaf that is `release:check` runs BEFORE the cut and the stamp (si#487). Left after them, a
@@ -1342,6 +1400,7 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
     lifted = 1 if leaves and leaves[0][1].task == RELEASE_CHECK else 0
     steps: list[Step] = []
     notes = ""
+    needed: dict[str, list[str]] = {}
     for words, leaf in leaves:
         if leaf.unattended is not True:
             raise ValueError(
@@ -1354,6 +1413,11 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
             modifiers["if"] = _NOT_DRY_RUN
         if leaf.token == "github":
             modifiers["env"] = dict(_TOKEN)
+        passed_secrets = _passed_secrets(leaf, words, where)
+        if passed_secrets:
+            modifiers["env"] = {**modifiers.get("env", {}), **passed_secrets}     # type: ignore[dict-item]
+            for name in passed_secrets:
+                needed.setdefault(name, []).append(words)
         # The takers are read off the body's signature, as `cli.receivers` reads them, so the command line
         # and the workflow hand the same leaves the version (final review of si#490, Important 3).
         takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{words}'"))}
@@ -1372,6 +1436,9 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
             verbatim={"name": f"Register emulation for {', '.join(workflow.emulates)}", "uses": QEMU_ACTION,
                       "with": {"image": BINFMT_IMAGE, "platforms": ",".join(workflow.emulates)}},
             note=f"si#570: the workflow's `{EMULATES_KEY}:`, registered before anything in the job runs."))
+    check = _pass_secrets_check(needed)
+    if check is not None:
+        steps.insert(0, check)
     tail = (f'echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"\n'
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
