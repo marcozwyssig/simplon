@@ -45,6 +45,8 @@ PYPROJECT = ROOT / "pyproject.toml"
 #: the workflow and the plan out of the manifest, and then asserted each file says what it says, would
 #: hold nothing.
 DOCS_JOB = "docs"
+#: si#851: the job that deploys what `docs` uploaded, alone - so a failed deploy is rerun without a second upload.
+PAGES_JOB = "pages"
 THE_ONE_COMMAND = "exec ./simplon.sh build docs"
 #: si#204 added `acceptance` between them - a second page written into the content tree before Hugo runs.
 EXPECTED_PLAN = ("reference", "acceptance", "site")
@@ -67,6 +69,11 @@ def workflow():
 @pytest.fixture(scope="module")
 def docs_job(workflow):
     return workflow["jobs"][DOCS_JOB]
+
+
+@pytest.fixture(scope="module")
+def pages_job(workflow):
+    return workflow["jobs"][PAGES_JOB]
 
 
 @pytest.fixture(scope="module")
@@ -132,19 +139,20 @@ def test_nothing_in_the_workflow_asks_which_files_changed(workflow):
     assert not [u for u in uses if any(u.startswith(bad) for bad in CHANGED_FILES_ACTIONS)]
 
 
-def test_the_documentation_job_runs_unconditionally(docs_job):
-    """No `if:` on the job, and on its steps only the rehearsal guard on the deploy (si#491): a dry run
+def test_the_documentation_job_runs_unconditionally(docs_job, pages_job):
+    """No `if:` on either job, and on their steps only the rehearsal guard on the deploy (si#491): a dry run
     builds the site and uploads it into the run, and only the deploy waits for a real release. `needs:`
     is a different thing - it orders the job after the upload, it does not decide whether it happens."""
     # Arrange / Act
     opening = ("Cut the tag in this checkout", "The tag is on origin at this commit",  # held below
                workflowgen.REAP_NAME)  # si#756, held in test_workflow_reap.py
-    conditions = [(step.get("uses"), step["if"]) for step in docs_job["steps"]
+    conditions = [(step.get("uses"), step["if"]) for job in (docs_job, pages_job) for step in job["steps"]
                   if "if" in step and step.get("name") not in opening]
 
     # Assert
     assert conditions == [("actions/deploy-pages@v4", "${{ !inputs.dry_run }}")]
     assert "if" not in docs_job
+    assert "if" not in pages_job
 
 
 # --- one command, and the same one a human types ---------------------------------------------------------
@@ -205,25 +213,55 @@ def test_the_site_goes_up_only_after_the_wheel_did(workflow, docs_job):
     assert "publish" in workflow["jobs"]
 
 
-def test_the_deployment_is_the_workflows_and_carries_the_rights(docs_job):
+def _uses(job) -> list[str]:
+    return [str(value) for key, value in _walk(job) if key == "uses"]
+
+
+def test_the_deployment_is_the_workflows_and_carries_the_rights(docs_job, pages_job):
     """The line the owner drew: building is simplon's, deploying is CI/CD's.
 
     Both actions below talk to services that exist only inside an Actions run, which is why they are here
-    rather than in a task - and the two permissions they need are scoped to this job rather than granted
-    to the whole workflow.
+    rather than in a task. Since si#851 they sit in two jobs, and the two write permissions the deploy
+    needs are scoped to the deploying job alone (si#719): the job that builds and uploads reads the
+    checkout and writes nothing outside its own run.
     """
-    # Arrange
-    uses = [str(value) for key, value in _walk(docs_job) if key == "uses"]
-
-    # Act
-    permissions = docs_job["permissions"]
+    # Arrange / Act
+    uploads, deploys = _uses(docs_job), _uses(pages_job)
 
     # Assert
-    assert any(u.startswith("actions/upload-pages-artifact") for u in uses)
-    assert any(u.startswith("actions/deploy-pages") for u in uses)
-    assert permissions["pages"] == "write"
-    assert permissions["id-token"] == "write"
-    assert docs_job["environment"]["name"] == "github-pages"
+    assert any(u.startswith("actions/upload-pages-artifact") for u in uploads)
+    assert any(u.startswith("actions/deploy-pages") for u in deploys)
+    assert docs_job["permissions"] == {"contents": "read"}
+    assert pages_job["permissions"] == {"pages": "write", "id-token": "write"}
+    assert pages_job["environment"]["name"] == "github-pages"
+    assert "environment" not in docs_job
+
+
+def test_a_failed_deploy_is_rerun_without_a_second_upload(workflow, docs_job, pages_job):
+    """si#851, measured twice (runs 44901604309 and 44938156739): `deploy-pages` listed the run's artifacts
+    one second after `upload-pages-artifact` made `github-pages`, found none, and failed. With both in one
+    job, "Re-run failed jobs" re-ran the upload too, and the deploy then refused two `github-pages`
+    artifacts - the way out was deleting them by hand.
+
+    So the upload and the deploy are in two jobs, the deploy `needs:` the upload, and nothing else does
+    either. GitHub re-runs the failed jobs and the jobs that depend on them, not a job upstream that
+    succeeded: a red deploy is rerun alone and finds the one artifact its run already holds. And the
+    upload is the last step of its job, so no step after it can turn that job red with the artifact
+    already made - which would bring the duplicate back through a rerun of the upload job.
+    """
+    # Arrange
+    jobs = workflow["jobs"]
+
+    # Act
+    uploading = {name for name, job in jobs.items()
+                 if any(u.startswith("actions/upload-pages-artifact") for u in _uses(job))}
+    deploying = {name for name, job in jobs.items() if any(u.startswith("actions/deploy-pages") for u in _uses(job))}
+
+    # Assert
+    assert uploading == {DOCS_JOB}
+    assert deploying == {PAGES_JOB}
+    assert pages_job["needs"] == DOCS_JOB
+    assert str(docs_job["steps"][-1].get("uses", "")).startswith("actions/upload-pages-artifact")
 
 
 def test_the_artifact_is_taken_from_the_directory_the_manifest_builds_into(docs_job):
