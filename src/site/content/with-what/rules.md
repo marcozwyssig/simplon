@@ -71,9 +71,25 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 283 | nothing - the declaration had no working meaning |
+| diagnosis | 285 | nothing - the declaration had no working meaning |
 | expression rule | 48 | something it could otherwise have said |
-| **all load-time refusals** | **331** | |
+| **all load-time refusals** | **333** | |
+
+si#820 added two diagnoses and no expression rule, on the carrier name and on the prefixes si#815 left
+open. The name reached `inventory.ini`, a `bash -c` line in the Pulumi container and a path unquoted:
+measured with the pinned images, Ansible read a name with a space and a `key=value` in it as a host with
+that variable set, and the shell ran a `;` in it as a command. **Diagnosis:** a carrier the kernel makes
+whose name Proxmox refuses as a hostname - the name is the container's hostname, so it could not be made,
+and in the same measurement Pulumi and Ansible refused or misread only names Proxmox refuses too.
+**Diagnosis:** a `runner: token_from:`, or a `portainer: url_from:` on a carrier the kernel makes, with
+whitespace in it - the play's `lookup('env', ...)` splits its term and reads nothing, so the Portainer
+play wrote an empty admin password behind a kernel check that had seen the variable set. A `-` in a prefix
+is not refused; it reaches the play whole. **Rejected: an expression rule** that every carrier name be
+lower-case letters, digits and `-`. It was built and struck before it shipped: Proxmox, Pulumi and Ansible
+all take `Haus`, `HAUS` and `haus.lan`, and a Portainer somebody else built reaches none of them, so it
+refused names that would have worked and bought one form, not safety. It reopens if a reader of the name
+is found that refuses or misreads a name Proxmox accepts. Measured 2026-11-21 over the eight reachable
+manifests, one declares a carrier, `hausportainer`, and the diagnosis does not refuse it.
 
 si#815 added one diagnosis: a carrier's `runner: repository:` outside GitHub's own characters (an owner
 is letters, digits and `-`, a name adds `.` and `_`) names no repository a runner could register on. It

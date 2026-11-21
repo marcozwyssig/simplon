@@ -532,9 +532,16 @@ SECRETS = ("auth.json.jwt", "portainer_password", "rawAPIKey")
 def test_every_task_that_sees_a_secret_logs_nothing_but_the_one_that_shows_the_token():
     """THE TOKEN IS SHOWN ONCE, by one task, and every other task in the WHOLE play that sees the JWT, the
     password or the raw key runs with `no_log` - the pre-existing endpoint tasks included, which sent the
-    JWT in a header with nothing hiding it. The display task is the exception and the only one."""
+    JWT in a header with nothing hiding it. The display task is the exception and the only one.
+
+    THE PASSWORD CHECK (si#820) IS NOT AN EXCEPTION, and it is excluded by what it does rather than by
+    name: it reads the password's LENGTH in `when:`, which Ansible does not print, and its message names
+    the variable. Under `no_log` that message would be hidden, and a stop that does not say why is the
+    decoration CLAUDE.md names. `test_the_portainer_play_stops_when_the_password_it_reads_is_empty` holds
+    that it prints no value."""
     # act
-    seeing = [task for task in _tasks() if any(s in str(task) for s in SECRETS)]
+    seeing = [task for task in _tasks() if any(s in str(task) for s in SECRETS)
+              and task["name"] != carrier.PASSWORD_CHECK_TASK]
     loud = [task["name"] for task in seeing if not task.get("no_log")]
 
     # assert
@@ -878,6 +885,24 @@ def test_the_play_reads_the_password_under_the_prefix_the_carrier_names(_lines, 
     assert f'portainer_password_variable: !unsafe "{forwarded}"' in values, (
         "the play reads a variable the kernel did not forward")
     assert "PORTAINER_PASSWORD" not in play + values
+
+
+def test_the_portainer_play_stops_when_the_password_it_reads_is_empty():
+    """si#820, MEASURED BEFORE THE FIX with the pinned ansible image: a `url_from:` with a space in it
+    made `lookup('env', ...)` read nothing while the kernel's own check had seen the variable set, and the
+    play wrote an EMPTY admin password file and went on - the runner play beside it stopped on its empty
+    token. The prefix is refused at load now; this check is what says so if the read comes back empty by
+    any other road. FIRST, so nothing is installed on a machine whose Portainer could not be logged into."""
+    # act
+    tasks = _tasks()
+
+    # assert
+    first = tasks[0]
+    assert first["name"] == carrier.PASSWORD_CHECK_TASK
+    assert "ansible.builtin.fail" in first and first["when"] == "portainer_password | length == 0"
+    assert "{{ portainer_password_variable }}" in first["ansible.builtin.fail"]["msg"], (
+        "the stop names the variable, as the runner play's does")
+    assert "{{ portainer_password }}" not in str(first), "the stop prints the name, never the value"
 
 
 # --- si#815: no manifest string reaches a play as a template ----------------------------------------

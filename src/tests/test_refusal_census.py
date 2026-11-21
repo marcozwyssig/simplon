@@ -419,8 +419,36 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # adds `.` and `_`). Diagnosis: no such repository exists, so the runner registers nowhere. It came
     # with a security finding - the value reached the play as a template - but the template is closed by
     # the `!unsafe` vars file, not by this rule, so the rule claims only what it is: a broken repository.
-    # The labels, the carrier name and the `token_from:` prefix got NO rule, for the same reason.
+    # The labels, the carrier name and the `token_from:` prefix got NO rule, for the same reason. (si#820
+    # then gave the name and the prefixes one, for what the vars file does not reach - see below.)
     ("carrierspec", "_runner", "GitHub would not accept"): DIAGNOSIS,
+    # si#820: the carrier name and a prefix a play reads. Two diagnosis, and no expression rule.
+    #
+    # Measured 2026-11-21, each tool given the same names: Proxmox's `dns-name` format
+    # (pve-common `pve_verify_dns_name`, copied into bpg's provider as `HostnameValidator`), Pulumi's
+    # `stack init` in the pinned pulumi image, and `ansible-inventory` over the line `_ansible` writes, in
+    # the pinned ansible image. Ansible and Pulumi took every name Proxmox took; what they refused or
+    # misread (`c ansible_port=2222` read as host `c` with a port, `haus[1:2]` as two hosts, `;` run as a
+    # command in the `bash -c` line) Proxmox refuses too.
+    #
+    # DIAGNOSIS, `_name`: a carrier with `proxmox:` whose name Proxmox refuses as a hostname. The name IS
+    # the container's hostname, so no such carrier could be made.
+    # DIAGNOSIS, `_readable_prefix`: a `runner: token_from:`, or a `portainer: url_from:` on a carrier the
+    # kernel makes, with whitespace in it. Docker forwards `MY HAUS_PASSWORD` whole and the play's
+    # `lookup('env', ...)` splits its term and reads nothing: the runner play stopped, the Portainer play
+    # wrote an empty admin password. Applied only where a play reads the prefix - a Portainer somebody
+    # else built is read in Python, which takes the name - so it refuses no manifest that worked. `-` is
+    # not refused: `my-haus` was measured to reach the play whole.
+    #
+    # AN EXPRESSION RULE WAS BUILT AND STRUCK (owner, 2026-11-21): every carrier name lower-case letters,
+    # digits and `-`. Proxmox, Pulumi and Ansible all took `Haus`, `HAUS` and `haus.lan`, and a carrier
+    # with no `proxmox:` reaches none of them, so it refused names that would have worked; deleting it
+    # leaves the diagnosis, which alone keeps the name a name in the inventory and the shell. It bought
+    # one form, not safety. What reopens it: a reader of the name that refuses or misreads a name Proxmox
+    # accepts. Measured 2026-11-21 over all eight reachable manifests through the GitHub API: one declares
+    # `carriers:` (biz-cockpit), its one carrier is `hausportainer`, and neither rule refuses it.
+    ("carrierspec", "_name", "is not a hostname Proxmox accepts"): DIAGNOSIS,
+    ("carrierspec", "_readable_prefix", "a prefix with whitespace in it is never read"): DIAGNOSIS,
     ("carrierspec", "_labels", "is not a label"): DIAGNOSIS,
     ("carrierspec", "_labels", "is a label or a list of labels"): DIAGNOSIS,
 
