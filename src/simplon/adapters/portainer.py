@@ -734,7 +734,8 @@ class PortainerBackend:
                 f"deploy that")
         values = {**stack_values(env), VERSION_VAR: version.tag}
         credential = _clone_credential(repository, env)
-        check_directories(target, env, create=not _built_by_kernel(env))  # si#782, si#808
+        # si#782, si#808 - the carrier is only asked about when there is something to check
+        check_directories(target, env, create=bool(env.directories) and not _built_by_kernel(env))
         check_registry_access(target, repository, values)
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(target, repository, credential, env_vars=values)
