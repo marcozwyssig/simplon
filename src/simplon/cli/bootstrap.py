@@ -73,6 +73,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -1190,6 +1191,17 @@ def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
     `--launchers-only` renders. The manifest is READ, never written. One that is not there yields
     no names - the scaffold writes it beside the launchers, so a checkout without it has nothing to say - and
     one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
+    return _launcher_names(name, target, launcherenv.declared)
+
+
+def launcher_left_out(name: str, target: Path) -> tuple[str, ...]:
+    """The derived names the launchers `--launchers-only` renders cannot forward (si#824), for it to name."""
+    return _launcher_names(name, target, launcherenv.left_out)
+
+
+def _launcher_names(name: str, target: Path, reader: Callable[..., tuple[str, ...]]) -> tuple[str, ...]:
+    """`reader` (`launcherenv.declared` or `left_out`) over `<product>.yaml` at `target`, with the deploy
+    tasks' derivation; () when there is no manifest to read."""
     import yaml
 
     from simplon.manifest import yamlkeys
@@ -1206,7 +1218,7 @@ def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
         return ()
     from simplon.tasks import deploy     # si#810/si#812: what the deploy tasks read, derived from the manifest
 
-    return launcherenv.declared(data, str(path), derive=lambda task: deploy.variables_read(data, task))
+    return reader(data, str(path), derive=lambda task: deploy.variables_read(data, task))
 
 
 def write_launchers(name: str, target: Path, orch_dir: str) -> dict[str, str]:
@@ -1394,11 +1406,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.launchers_only:
         try:
             outcome = write_launchers(product, target, launcher_orch_dir(product, target, args.orch_dir))
+            left = launcher_left_out(product, target)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
         for rel, what in outcome.items():
             print(f"simplon init: {rel} {what}")
+        # si#824: a derived name off the list is said here, not discovered as "not set" on a later run.
+        for name in left:
+            print(f"simplon init: {launcherenv.cannot_carry(name)}", file=sys.stderr)
         return 0
     # Read BEFORE the write, because afterwards the three outcomes are indistinguishable from the tree:
     # a `.gitignore` holding the block looks the same whether this run created it, appended it, or found

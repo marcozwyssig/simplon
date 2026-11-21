@@ -34,7 +34,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from simplon.adapters import backend, devcontainer, githubpackages, portainer
-from simplon.manifest import context, deployment, environments
+from simplon.manifest import context, deployment, environments, launcherenv
 from simplon.kernel import log
 from simplon.model import artifactschema, carrierspec
 from simplon.tasks import carrier, image
@@ -209,8 +209,17 @@ def variables_read(data: Mapping[str, object], task: str) -> tuple[str, ...]:
 def variables_kept(*tasks: str) -> tuple[str, ...]:
     """`variables_read` for each of `tasks` against the running product's manifest, each name once - what a
     command bound to one of them keeps when the kernel confines it (`launcherenv.confine`, si#810). Asks
-    nothing of the manifest unless one of `tasks` is in `READS`."""
+    nothing of the manifest unless one of `tasks` is in `READS`.
+
+    ON THE CONTAINER ROUTE, A NAME NO LAUNCHER CAN CARRY IS SAID HERE (si#824), once per command and before
+    its body runs: the launcher left it off its list (`launcherenv.left_out`), so it arrives unset whatever
+    the host set, and the reader's "not set" alone would blame the host."""
     if not any(task in READS for task in tasks):
         return ()
     data = context.current().manifest_data()
-    return tuple(dict.fromkeys(name for task in tasks for name in variables_read(data, task)))
+    names = tuple(dict.fromkeys(name for task in tasks for name in variables_read(data, task)))
+    if os.environ.get("DELIVERY_ROUTE") == "inside":
+        for name in names:
+            if not launcherenv.forwardable(name):
+                log.warn(launcherenv.cannot_carry(name))
+    return names

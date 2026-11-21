@@ -173,7 +173,7 @@ def test_a_derived_name_the_launcher_cannot_forward_is_left_out():
     assert "HOME" not in names and "APP_TITLE" in names
 
 
-def _rendered(tmp_path):
+def _rendered(tmp_path, carriers: str = _CARRIER, prod: str = _PROD):
     """A scaffolded product with the carrier, a portainer environment and the two deploy commands, its
     launchers re-rendered."""
     root = _product(tmp_path)
@@ -182,10 +182,10 @@ def _rendered(tmp_path):
     environments = "    dev: { backend: local, description: \"Local development environment (the default).\" }\n"
     commands = "      up:   { task: up }\n"
     assert text.count(environments) == 1 and text.count(commands) == 1
-    text = (text.replace(environments, environments + _PROD)
+    text = (text.replace(environments, environments + prod)
                 .replace(commands, commands + "      rollout: { task: \"deploy:up\" }\n"
                                               "      teardown: { task: \"deploy:down\" }\n")
-            + _CARRIER)
+            + carriers)
     path.write_text(text, encoding="utf-8")
     assert bootstrap.main(["init", "democtl", "--dir", str(root), "--launchers-only"]) == 0
     return root
@@ -325,3 +325,97 @@ def test_the_generated_module_asks_for_the_derived_names_when_the_command_runs(p
             "lambda: _plan('both', 'deploy'))") in text
     assert "_launcherenv.confined((), lambda: _plan('quiet', 'deploy'))" in text
     assert "_launcherenv.confined((), lambda: _rc(" in text
+
+
+# --- si#824: a prefix bash cannot export (`url_from: my-haus`) still crosses, and nothing drops quietly ----
+
+#: The carrier of the measurement with a `-` in its prefix, which si#820 allows: `my-haus_URL` is a name bash
+#: cannot hold as a variable, and docker, Python and Ansible carry and read whole.
+_HYPHEN = _CARRIER.replace("url_from: HAUS", "url_from: my-haus")
+
+#: A prefix si#820 accepts and no launcher can carry: the `.sh` would expand `$` inside its double quotes.
+_DOLLAR = _CARRIER.replace("url_from: HAUS", "url_from: \"my$haus\"")
+
+
+def test_a_derived_name_with_a_hyphen_is_on_the_launchers_list():
+    # arrange
+    document = _document(carriers=_HYPHEN)
+
+    # act
+    names = launcherenv.declared(document, derive=lambda task: deploy.variables_read(document, task))
+
+    # assert: the launcher forwards it like any other derived name
+    assert "my-haus_URL" in names and "my-haus_TOKEN" in names
+
+
+def test_a_rendered_launcher_forwards_a_hyphenated_name_the_host_sets(tmp_path):
+    """bash never lists `my-haus_URL` in `compgen -e`, though it hands it to every child unchanged. Measured
+    2026-11-21 with a rendered launcher and the real image: before si#824 neither the launcher's list nor
+    the kernel's line carried it, and the kernel said "not set" for a variable the host had set."""
+    # arrange
+    root = _rendered(tmp_path, carriers=_HYPHEN)
+
+    # act
+    done = _run(root, "support", "doctor", env={"my-haus_URL": "https://haus:9443", "my-haus_TOKEN": SECRET})
+
+    # assert: by name on the kernel's line only (si#757), never its value, and on the list the launcher exports
+    assert done.returncode == 0, done.stderr
+    *before, kernel = done.docker
+    assert " -e my-haus_URL " in f" {kernel} " and " -e my-haus_TOKEN " in f" {kernel} "
+    assert "DELIVERY_ENV_PASS=my-haus_URL my-haus_TOKEN " in kernel
+    for line in before:
+        assert " -e my-haus_URL " not in f" {line} ", line
+    for line in done.docker:
+        assert SECRET not in line
+
+
+def test_a_hyphenated_name_the_host_does_not_set_is_not_forwarded(tmp_path):
+    # arrange
+    root = _rendered(tmp_path, carriers=_HYPHEN)
+
+    # act
+    done = _run(root, "support", "doctor", env={"my-haus_URL": "https://haus:9443"})
+
+    # assert: the one the host sets crosses, the one it does not is not on the line at all
+    assert done.returncode == 0, done.stderr
+    kernel = done.docker[-1]
+    assert " -e my-haus_URL " in f" {kernel} "
+    assert " -e my-haus_TOKEN " not in f" {kernel} "
+
+
+def test_a_derived_name_no_launcher_can_carry_is_named_at_render_time_with_the_way_out(tmp_path, capsys):
+    # arrange / act: a prefix with `$`, and a stack value the launcher sets itself
+    root = _rendered(tmp_path, carriers=_DOLLAR, prod=_PROD.replace("[APP_TITLE]", "[APP_TITLE, HOME]"))
+
+    # assert: rendered all the same, and each name it leaves out is said, with why and what to do
+    err = capsys.readouterr().err
+    assert "my$haus_URL" in err and "my$haus_TOKEN" in err and "HOME" in err
+    assert "venv route" in err
+    assert "my$haus" not in (root / "democtl.sh").read_text(encoding="utf-8")
+
+
+def test_the_kernel_names_a_derived_name_its_launcher_could_not_carry_before_the_command_runs(
+        product, seen, monkeypatch):
+    # arrange: the container route, and a carrier whose prefix no launcher can carry
+    product.write_text(yaml.safe_dump(_document(carriers=_DOLLAR)), encoding="utf-8")
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+
+    # act
+    result = CliRunner().invoke(_app(), ["deploy", "rollout"])
+
+    # assert: the command still runs - its reader says "not set" - but the reason is said first
+    assert result.exit_code == 0, result.output
+    assert "my$haus_URL" in result.output and "venv route" in result.output
+
+
+def test_the_venv_route_names_nothing(product, seen, monkeypatch):
+    # arrange: the same carrier on the venv route, which inherits the caller's whole environment
+    product.write_text(yaml.safe_dump(_document(carriers=_DOLLAR)), encoding="utf-8")
+    monkeypatch.delenv("DELIVERY_ROUTE", raising=False)
+
+    # act
+    result = CliRunner().invoke(_app(), ["deploy", "rollout"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert "venv route" not in result.output
