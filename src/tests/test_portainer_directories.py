@@ -582,7 +582,7 @@ def test_the_play_reads_the_directories_as_data_and_creates_parents_plainly(tmp_
 
     # act
     carrier._ansible(carrier.carrierspec.Carrier("haus", portainer=carrier.carrierspec.Portainer("P", 1)),
-                     "10.0.0.9", tmp_path, tmp_path / "key", 9443, items)
+                     "10.0.0.9", tmp_path, 9443, items)
 
     # assert
     play = yaml.safe_load((tmp_path / "carrier.yml").read_text(encoding="utf-8"))[0]

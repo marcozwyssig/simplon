@@ -3,7 +3,7 @@
 si#810 (PR #811) derived what `deploy:up`/`deploy:down` read. `deploy:carrier` had the same gap: it reads the
 Portainer admin password `<url_from>_PASSWORD`, the Proxmox `<token_from>_API_TOKEN`, the runner's
 `<token_from>_RUNNER_TOKEN` (si#781) and the kernel's own `SIMPLON_STATE_PASSPHRASE` and
-`SIMPLON_CARRIER_SSH_KEY`. None of them is a fixed launcher name and none is under a product's own
+`SIMPLON_CARRIER_SSH_KEY` (since si#819 `SIMPLON_CARRIER_SSH_PRIVATE_KEY`). None of them is a fixed launcher name and none is under a product's own
 `<PRODUCT>_*` prefix unless the product happens to be called `simplon`, so on the container route a carrier
 run saw them only when some command repeated them under `env: pass:`.
 
@@ -47,7 +47,7 @@ _PROD = """\
 
 #: Every name a carrier run for `haus` reads, in the order `carrier.up` asks for them.
 CARRIER = ("HAUS_PASSWORD", "COCKPIT_RUNNER_TOKEN", "PVE_API_TOKEN",
-           "SIMPLON_STATE_PASSPHRASE", "SIMPLON_CARRIER_SSH_KEY")
+           "SIMPLON_STATE_PASSPHRASE", "SIMPLON_CARRIER_SSH_PRIVATE_KEY")
 
 
 def _document(commands: str = "", environments: str = _PROD, carriers: str = _CARRIER) -> dict:
@@ -94,12 +94,16 @@ def test_the_names_are_the_ones_the_readers_read(monkeypatch):
     haus = carrierspec.declared(_document())["haus"]
     for name in deploy.variables_read(_document(), "deploy:carrier"):
         monkeypatch.setenv(name, f"{SECRET}-{name}")
+    # The key is checked for its BEGIN line, so it gets a value of the shape it is read as.
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n"
+                                                    "-----END OPENSSH PRIVATE KEY-----\n")
 
     # act / assert
     assert carrier.portainer_password(haus) == f"{SECRET}-HAUS_PASSWORD"
     assert carrier.runner_token(haus) == f"{SECRET}-COCKPIT_RUNNER_TOKEN"
     assert carrier._token(haus, haus.proxmox) == f"{SECRET}-PVE_API_TOKEN"
-    assert os.environ[carrier.PASSPHRASE_ENV] and os.environ[carrier.SSH_KEY_ENV]
+    assert os.environ[carrier.PASSPHRASE_ENV]
+    carrier.private_key(haus)  # no SystemExit: the reader found what the derivation named
 
 
 def test_a_carrier_with_only_the_machine_reads_the_api_token_and_the_state_passphrase():
