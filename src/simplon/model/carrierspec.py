@@ -85,10 +85,6 @@ _GITHUB_REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 #: own name, so a name outside this is one no carrier could be made with.
 _PROXMOX_HOSTNAME = re.compile(r"([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?")
 
-#: The kernel's own form for a carrier's name (si#820, owner 2026-11-20), narrower than Proxmox's: no upper
-#: case and no dot. See `_name` for what that costs.
-_CARRIER_NAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
-
 #: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
 #: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
 #: nothing gets what the tool the owner named would have given it.
@@ -229,7 +225,8 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
     file and needs to know which line."""
     if not isinstance(spec, Mapping):
         raise ValueError(f"{where} must be a mapping, not {type(spec).__name__}")
-    _name(name, "proxmox" in spec, where)
+    if "proxmox" in spec:
+        _name(name, where)
 
     if "proxmox" not in spec:
         # A PORTAINER SOMEBODY ELSE BUILT, which is a complete statement and not half a carrier
@@ -348,39 +345,31 @@ def _runner(block: Mapping, name: str, where: str) -> Runner:
                   token_from=token_from)
 
 
-def _name(name: str, machine: bool, where: str) -> None:
-    """The carrier's name, refused outside the kernel's form (si#820) - TWO refusals, because the census
-    takes one kind per refusal and the names this refuses are of two kinds.
+def _name(name: str, where: str) -> None:
+    """The name of a carrier the kernel makes, refused when Proxmox would refuse it as a hostname (si#820)
+    - a DIAGNOSIS: the name IS the container's hostname, so no such carrier could be made.
 
     WHY A RULE AT ALL, and one place instead of quoting at three: the name reaches `inventory.ini`, a
-    `bash -c` line in the Pulumi container and a path under `build/carrier/` unquoted, and is the
-    container's hostname. Measured 2026-11-21 with the pinned images: Ansible read `c ansible_port=2222`
-    as host `c` with a port set, and `haus[1:2]` as two hosts; pulumi's `bash -c` ran `;`-separated text
-    in the name as commands.
+    `bash -c` line in the Pulumi container and a path under `build/carrier/` unquoted. Measured 2026-11-21
+    with the pinned images: Ansible read `c ansible_port=2222` as host `c` with a port set, and `haus[1:2]`
+    as two hosts; pulumi's `bash -c` ran `;`-separated text in the name as commands. Proxmox's rule alone
+    - letters, digits, `-`, dot-separated labels - keeps the name a name in all three places: Ansible's
+    inventory and Pulumi's stack names took every name Proxmox took in the same measurement, and refused
+    or misread only names Proxmox refuses.
 
-    THE DIAGNOSIS: a carrier with `proxmox:` whose name Proxmox would refuse as a hostname. No such
-    carrier could be made, and Proxmox's rule alone - letters, digits, `-`, dot-separated labels - is
-    what keeps the name a name in all three places: Ansible's inventory and Pulumi's stack names took
-    every name Proxmox took in the same measurement, and refused or misread only names Proxmox refuses.
+    ONLY FOR A CARRIER WITH `proxmox:`. One with none reaches none of the three; its name is a label in a
+    message, and any name works there.
 
-    THE EXPRESSION RULE: everything else outside lower-case letters, digits and `-`. Proxmox, Pulumi and
-    Ansible all took `Haus`, `HAUS` and `haus.lan`, and a carrier with no `proxmox:` reaches none of the
-    three - its name is a label in a message - so each refused name here would have worked. It stands as
-    the owner's decision of 2026-11-20 (one form for every carrier, the one a hostname, a stack, an
-    inventory host and a directory all take), and the census bills it with that measurement.
+    A NARROWER FORM WAS BUILT AND STRUCK (owner, 2026-11-21): lower-case letters, digits and `-` for every
+    carrier. Proxmox, Pulumi and Ansible all took `Haus`, `HAUS` and `haus.lan`, so it refused names that
+    would have worked and bought one form, not safety. What reopens it: a reader of the name that refuses
+    or misreads a name Proxmox accepts - measured, not assumed.
     """
-    if machine and not _PROXMOX_HOSTNAME.fullmatch(name):
+    if not _PROXMOX_HOSTNAME.fullmatch(name):
         raise ValueError(
             f"{where}: the name {name!r} is not a hostname Proxmox accepts, and a carrier's name is its "
             f"container's hostname. Proxmox takes letters, digits and `-`, in dot-separated parts that "
-            f"neither start nor end with `-`; rename the carrier, e.g. to lower-case letters, digits "
-            f"and `-`")
-    if not _CARRIER_NAME.fullmatch(name):
-        raise ValueError(
-            f"{where}: a carrier's name is lower-case letters, digits and `-`, neither starting nor "
-            f"ending with `-`, and {name!r} is not. It is one form for every carrier, the one a hostname, "
-            f"a Pulumi stack, an inventory host and a directory all take; rename the carrier and the "
-            f"`carrier:` lines that point at it")
+            f"neither start nor end with `-`; rename the carrier and the `carrier:` lines that point at it")
 
 
 def _readable_prefix(prefix: str, key: str, where: str) -> None:

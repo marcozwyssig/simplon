@@ -72,10 +72,10 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 284 | nothing - the declaration had no working meaning |
-| expression rule | 48 | something it could otherwise have said |
-| **all load-time refusals** | **332** | |
+| expression rule | 47 | something it could otherwise have said |
+| **all load-time refusals** | **331** | |
 
-si#820 added two diagnoses and one expression rule, on the carrier name and on the prefixes si#815 left
+si#820 added two diagnoses and no expression rule, on the carrier name and on the prefixes si#815 left
 open. The name reached `inventory.ini`, a `bash -c` line in the Pulumi container and a path unquoted:
 measured with the pinned images, Ansible read a name with a space and a `key=value` in it as a host with
 that variable set, and the shell ran a `;` in it as a command. **Diagnosis:** a carrier the kernel makes
@@ -84,11 +84,12 @@ and in the same measurement Pulumi and Ansible refused or misread only names Pro
 **Diagnosis:** a `runner: token_from:`, or a `portainer: url_from:` on a carrier the kernel makes, with
 whitespace in it - the play's `lookup('env', ...)` splits its term and reads nothing, so the Portainer
 play wrote an empty admin password behind a kernel check that had seen the variable set. A `-` in a prefix
-is not refused; it reaches the play whole. **Expression rule:** every carrier name is lower-case letters,
-digits and `-`. Proxmox, Pulumi and Ansible all take `Haus` and `haus.lan`, and a Portainer somebody else
-built reaches none of them, so it refuses names that would have worked; it stands as one form for every
-carrier, by the owner's decision. Measured 2026-11-21 over the eight reachable manifests, one declares a
-carrier, `hausportainer`, and neither rule refuses it.
+is not refused; it reaches the play whole. **Rejected: an expression rule** that every carrier name be
+lower-case letters, digits and `-`. It was built and struck before it shipped: Proxmox, Pulumi and Ansible
+all take `Haus`, `HAUS` and `haus.lan`, and a Portainer somebody else built reaches none of them, so it
+refused names that would have worked and bought one form, not safety. It reopens if a reader of the name
+is found that refuses or misreads a name Proxmox accepts. Measured 2026-11-21 over the eight reachable
+manifests, one declares a carrier, `hausportainer`, and the diagnosis does not refuse it.
 
 si#815 added one diagnosis: a carrier's `runner: repository:` outside GitHub's own characters (an owner
 is letters, digits and `-`, a name adds `.` and `_`) names no repository a runner could register on. It
@@ -229,7 +230,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 41 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 40 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

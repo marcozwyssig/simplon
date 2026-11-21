@@ -466,7 +466,7 @@ def test_a_runner_without_a_machine_is_refused_because_nothing_could_install_it(
 # `#`, `=`, `/`, `[`, `:`, `;`, `$`, `,`, quotes and a non-ASCII letter. Ansible's inventory read
 # `c ansible_port=2222` as host `c` with a port and `haus[1:2]` as two hosts, and the pinned pulumi image
 # ran `;`-separated text in the name as commands. Proxmox, Pulumi and Ansible all accepted `Haus`, `HAUS`
-# and `haus.lan`: those are the names the narrower rule refuses that would have worked.
+# and `haus.lan`, which is why a narrower lower-case form was struck rather than shipped.
 
 @pytest.mark.parametrize("name", ["hausportainer", "h", "1haus", "haus-1", "ghr-9"])
 def test_a_carrier_name_every_tool_takes_is_read(name):
@@ -497,12 +497,12 @@ def test_a_machine_name_proxmox_would_refuse_as_a_hostname_is_a_diagnosis(name):
     ({"portainer": {"url_from": "P"}}, "haus_1"),
     ({"portainer": {"url_from": "P"}}, "Haus Portainer"),
 ])
-def test_a_name_that_would_have_worked_is_refused_by_the_kernels_own_form(spec, name):
-    """THE EXPRESSION RULE. Proxmox, Pulumi and Ansible all took `Haus` and `haus.lan`, and a carrier
-    with no `proxmox:` reaches none of them - its name is only a label in a message. The census bills it."""
+def test_a_name_that_works_is_read(spec, name):
+    """THE NARROWER FORM WAS STRUCK (owner, 2026-11-21). Proxmox, Pulumi and Ansible all took `Haus` and
+    `haus.lan`, and a carrier with no `proxmox:` reaches none of them - its name is only a label in a
+    message. Refusing these would cost a working manifest, so they are read."""
     # act / assert
-    with pytest.raises(ValueError, match="a carrier's name is lower-case letters, digits and `-`"):
-        carrierspec.declared({"carriers": {name: spec}}, "x")
+    assert carrierspec.declared({"carriers": {name: spec}}, "x")[name].name == name
 
 
 def test_a_runner_prefix_with_whitespace_is_refused_because_the_play_reads_nothing():
