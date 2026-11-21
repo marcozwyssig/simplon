@@ -358,8 +358,19 @@ def _declared_for(name: str, coordinate: str) -> tuple[Image, Path]:
     return declared(ctx.manifest_data(), name, source=str(ctx.manifest_path), coordinate=coordinate), ctx.root
 
 
-def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
-    """The declared paths that point at nothing, as ready-made lines - `dockerfile:` first, then `context:`.
+@dataclass(frozen=True)
+class MissingPath:
+    """One line of `missing_declared_paths`, and the manifest key that may be wrong (si#826).
+
+    `key` is None when the path is a `contexts:` file a command produces: the entry is right and nothing has
+    to move, so the way out is that command and not an edit. The line carries the advice either way; `key`
+    is what the caller needs to say "fix the entry" only about the lines where that is the way out."""
+    line: str
+    key: str | None
+
+
+def missing_declared_paths(cfg: Image, root: Path) -> list[MissingPath]:
+    """The declared paths that point at nothing, as ready-made lines with their key - `dockerfile:` first.
 
     WHY BOTH, AND WHY THE ANSWER SAYS WHICH (si#74). An image declaration carries two paths into the
     product's tree and either can go stale on its own; the one that actually moved is the whole content of
@@ -379,20 +390,25 @@ def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
     """
     missing = []
     if not (root / cfg.dockerfile).is_file():
-        missing.append(f"dockerfile: {cfg.dockerfile} - no file under the product root answers to it")
+        missing.append(MissingPath(f"dockerfile: {cfg.dockerfile} - no file under the product root answers to it",
+                                   "dockerfile"))
     # `root / "."` IS `root`, so the normal `context: .` asks whether the product root is a directory and
     # gets yes. A context that named a file rather than a directory would fail in docker with a message
     # about tar, so `is_dir` is the question and not `exists`.
     if not (root / cfg.context).is_dir():
-        missing.append(f"context: {cfg.context} - no directory under the product root answers to it")
+        missing.append(MissingPath(f"context: {cfg.context} - no directory under the product root answers to it",
+                                   "context"))
     # si#343: a file context is fetched, not committed, so its absence is the step that has not run yet.
     for name, path in cfg.files:
         if not (root / path).is_file():
-            missing.append(f"contexts: {name} - no file at {path}; {run_first(name, 'build:fetch')}")
+            made = bool(ports.producers(context.current().manifest(), name))
+            missing.append(MissingPath(f"contexts: {name} - no file at {path}; {run_first(name, 'build:fetch')}",
+                                       None if made else "contexts"))
     # si#664: a directory context is the product's own tree, like `context:`, so `is_dir` again.
     for name, path in cfg.directories:
         if not (root / path).is_dir():
-            missing.append(f"build_contexts: {name} - no directory under the product root answers to {path}")
+            missing.append(MissingPath(f"build_contexts: {name} - no directory under the product root answers to "
+                                       f"{path}", "build_contexts"))
     return missing
 
 
@@ -715,9 +731,20 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     missing = [line for one in checked for line in missing_declared_paths(one, root)]
     if missing:
         both = "two paths that do not exist" if len(missing) > 1 else "a path that does not exist"
-        log.error(f"image '{name}' declares {both} under {root}:\n  " + "\n  ".join(missing)
-                  + f"\n  fix the `{SECTION}.{name}:` entry, or move what it names - docker would have "
-                    f"failed later, about something else")
+        # si#826: a `contexts:` file a command makes is not a stale declaration - its line already names the
+        # command, and "fix the entry" would send the reader to edit a correct manifest. The tail is said only
+        # about the keys that may be wrong, and named by key when a made file stands beside them.
+        keys = list(dict.fromkeys(one.key for one in missing if one.key))
+        tail = ""
+        if keys:
+            which = f"`{SECTION}.{name}:` entry"
+            if any(one.key is None for one in missing):
+                lines = " and ".join(f"`{key}:`" for key in keys)
+                which = f"{lines} line{'s' if len(keys) > 1 else ''} of the {which}"
+            tail = (f"\n  fix the {which}, or move what it names - docker would have failed later, about "
+                    f"something else")
+        log.error(f"image '{name}' declares {both} under {root}:\n  "
+                  + "\n  ".join(one.line for one in missing) + tail)
         return 1
     docker.ensure_docker()
     if cfg.platforms:
