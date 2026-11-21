@@ -35,7 +35,7 @@ def product(tmp_path, monkeypatch):
 def api(monkeypatch, product):
     shared = githubstandin.state()
     base, stop = githubstandin.serve(shared)
-    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-839")
     monkeypatch.setenv("GITHUB_API_URL", base)
     monkeypatch.setenv("GITHUB_REPOSITORY", githubstandin.REPO)
     try:
