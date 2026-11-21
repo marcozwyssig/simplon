@@ -28,20 +28,31 @@ WHAT THE KERNEL DOES WITH IT.
   and traceback render), and the file sinks call it themselves - the step log, the run transcript and a
   streaming step's identity. Asking each of the hundreds of sites would rebuild the per-site defect.
 - `check_argv(argv)` refuses an argv that carries a registered value, naming the variable and never the
-  value. No manifest can trip it, because a manifest literal is never a registered secret; it catches a
-  kernel change that writes `-e NAME=$value` - a diagnosis of a kernel bug, not a rule for products.
+  value. A manifest literal is never a registered secret, but a value RESOLVED from one can be: a missing
+  `directories:` path that names a `secret:` reached it through the helper's `install -d` (si#840), and
+  is now diagnosed before it by `portainer._named_after_a_secret`. What is left for this guard is a kernel
+  change that writes `-e NAME=$value` - a diagnosis of a kernel bug, not a rule for products.
 - In GitHub Actions (`GITHUB_ACTIONS=true`) registering a value prints `::add-mask::<line>` for each of its
   lines, at run time, to the process's real stdout - so the runner masks it in every later line, the
   child processes' included.
 
-WHAT IT DOES NOT COVER, said rather than implied. A child started with `capture=False` writes straight to
-the file descriptor and nothing in Python sees it (in Actions the runtime mask covers it). Portainer stores
-a stack's environment by design. A value split across two separate writes to a stream is not seen whole.
-And `docker inspect` of the kernel's container shows the forwarded values in Config.Env: ACCEPTED, because
-reading another container's Config.Env takes the docker socket, which is root-equivalent on that host - a
-principal who can read it could already read this process's memory. REOPEN TRIGGER: a docker daemon shared
-with a principal who is not root-equivalent on that host (a shared remote DOCKER_HOST, a multi-tenant
-runner). The fix then is #827's pattern, values as files in a tmpfs, taken into the launcher's hop.
+WHAT IT DOES NOT COVER, said rather than implied. A value split across two separate writes to a stream is
+not seen whole. The rest is ACCEPTED, each with what reopens it (si#833, si#840, decided by Marco):
+
+- `docker inspect` of the kernel's container shows the forwarded values in Config.Env. Reading it takes the
+  docker socket, which is root-equivalent on that host - a principal who can read it could already read
+  this process's memory. REOPENS on a docker daemon shared with a principal who is not root-equivalent on
+  that host (a shared remote DOCKER_HOST, a multi-tenant runner); the fix then is #827's pattern, values
+  as files in a tmpfs, taken into the launcher's hop.
+- A `directories:` path resolved from a `secret:` reaches the carrier's daemon as a bind `Source` (the
+  `_stat` probe's, then the stack's own mount), and a `--debug` dockerd logs it. Same terms, same trigger.
+- A child started with `capture=False` writes straight to the file descriptor and nothing in Python sees
+  it; the child holds the value anyway and can print it. In Actions the runtime mask covers it (not yet
+  measured). REOPENS on a terminal run whose output is kept - recorded, piped into a file, shared.
+- Portainer stores a stack's environment in clear (`GET /api/stacks`, `stack.env`, `portainer.db`), and
+  its administrators hold the endpoint's docker socket. REOPENS on a stack opened beyond administrators
+  (`portainer.check_stack_access` warns on every `deploy up`), a Portainer user who is not root-equivalent
+  on the carrier, or a Portainer backup kept outside root custody.
 
 NO MINIMUM LENGTH. A one-character secret would mask that character everywhere; no rule is written until
 a real secret that short is measured (decided 2026-11-21).

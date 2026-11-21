@@ -747,6 +747,7 @@ class PortainerBackend:
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(target, repository, credential, env_vars=values)
         log.ok(f"{message}, {len(values)} value(s) incl. {VERSION_VAR}={version.tag}")
+        check_stack_access(target, env)
         return 0
 
     def destroy(self, env: "Environment") -> int:
@@ -759,6 +760,49 @@ class PortainerBackend:
     def status(self, env: "Environment") -> str:
         target, _ = _target_for(env)
         return describe(target)
+
+
+def check_stack_access(target: PortainerTarget, env: "Environment") -> None:
+    """Warn, once, when the stack's environment can be read by more than Portainer's administrators (si#840).
+
+    PORTAINER KEEPS THE STACK'S ENVIRONMENT IN CLEAR, by design (biz-cockpit#263): `GET /api/stacks` hands
+    it back, and `stack.env` and `portainer.db` hold it on the carrier. Measured on si#840 against
+    Portainer CE 2.45.0: a stack created with the admin's API key is `AdministratorsOnly`, a standard user
+    is denied it even with access to the endpoint, and once its resource control is made public that user
+    reads every value. Marco accepted the store on `docker inspect`'s terms (3b): an administrator holds
+    the endpoint's docker socket, so is root-equivalent on the carrier anyway. This says when those terms
+    no longer hold - one GET and one line, refusing nothing.
+
+    ONLY WHEN `secret:` NAMES SOMETHING: a stack of plain values opened to a team is nobody's leak.
+
+    THREE OUTCOMES, never two: administrators-only is silent, opened is a warning that says to whom, and a
+    GET that could not answer says it could not tell - it is not read as "fine"."""
+    from simplon.kernel import log
+
+    if not env.secret:
+        return
+    held = f"the value(s) of {', '.join(env.secret)}"
+    try:
+        stack = find_stack(target)
+    except PortainerError as error:
+        log.warn(f"stack access: could not tell who can read stack {target.stack_name}'s environment, which "
+                 f"holds {held}: {error}")
+        return
+    control = (stack or {}).get("ResourceControl")
+    if not isinstance(control, dict):
+        why = "it was not found" if stack is None else "Portainer reported no resource control for it"
+        log.warn(f"stack access: could not tell who can read stack {target.stack_name}'s environment, which "
+                 f"holds {held}: {why}")
+        return
+    if control.get("AdministratorsOnly") and not control.get("Public"):
+        return
+    readers = (["every Portainer user (the stack is public)"] if control.get("Public") else []) + [
+        f"{len(control.get(key) or [])} {kind}(s)" for key, kind in
+        (("UserAccesses", "user"), ("TeamAccesses", "team")) if control.get(key)]
+    log.warn(f"stack access: stack {target.stack_name} on {target.url} is not administrators-only - "
+             f"{', '.join(readers) or 'more than the administrators'} can read its environment, which "
+             f"holds {held} in clear. Set its ownership back to administrators in Portainer; a reader "
+             f"who is not root-equivalent on the carrier reopens si#840")
 
 
 def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None) -> dict[str, str]:
@@ -1144,7 +1188,9 @@ def _install_argv(ancestor: str, directory: "Directory") -> "list[str]":
 
     It becomes the helper container's command on the CARRIER, where `docker inspect` and `ps` show it, so
     a path templated from a secret is refused here rather than put there (si#833): a directory named after
-    a secret cannot be created without exposing it."""
+    a secret cannot be created without exposing it. The one way a manifest gets here with one - a missing
+    directory whose path names a `secret:` - is diagnosed first, by `_named_after_a_secret` (si#840), so
+    this guard is left with what it says: a kernel defect."""
     from simplon.kernel import secrets
 
     argv = ["install", "-d"]
@@ -1274,6 +1320,23 @@ def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "li
     return found
 
 
+def _named_after_a_secret(env: "Environment", resolved: "list[tuple[Directory, str]]",
+                          missing: "list[Directory]") -> "list[str]":
+    """One sentence per MISSING directory whose path takes its value from a `secret:` name (si#840).
+
+    A diagnosis, decided by Marco on si#840 (1a): the manifest says this - nothing in the kernel went
+    wrong - so it is said here, by template and name, before the helper's argv guard
+    (`_install_argv`, `secrets.check_argv`) could call it a kernel defect. A directory that EXISTS is
+    only bound, as the stack binds it too, and is accepted on `docker inspect`'s terms."""
+    lost = {d.path for d in missing}
+    said = []
+    for directory, template in resolved:
+        names = [name for name in environments.path_variables(template) if name in env.secret]
+        if directory.path in lost and names:
+            said.append(f"`path: {template}` takes its value from {', '.join(names)}, which `secret:` lists")
+    return said
+
+
 def check_directories(target: PortainerTarget, env: "Environment", create: bool = False,
                       values: "Mapping[str, str] | None" = None) -> None:
     """Refuse a deployment whose bind-mount directories are not on the carrier as declared (si#782), and
@@ -1331,6 +1394,15 @@ def check_directories(target: PortainerTarget, env: "Environment", create: bool 
             wrong.append(problem)
             if seen.isdir():  # `install -d` fixes an existing directory, not a file
                 fixes.append(_install(directory))
+    unmakeable = _named_after_a_secret(env, resolved, missing)
+    if unmakeable:
+        raise PortainerError(
+            f"environment '{env.name}': {'; '.join(unmakeable)}, and the directory is missing on the "
+            f"carrier behind {target.url}. `deploy up` does not create it: the helper's `install -d` would "
+            f"carry the secret on a command line that `docker inspect` shows on the carrier, and a way out printed "
+            f"here could only show the path as ***. Create the directory on the carrier yourself, or take "
+            f"the name out of `secret:` if its value is not a secret, and `deploy up` creates it. Nothing "
+            f"was created and the stack was not touched")
     left = [d for d in missing if d.path not in creatable]
     if wrong or left:
         wrong = [f"{shown[d.path]} is missing" for d in missing] + wrong
