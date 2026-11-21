@@ -371,13 +371,53 @@ command -v python3 >/dev/null 2>&1 || {
     exit 1
 }
 
+# THE INTERPRETER pip RUNS UNDER, as pip's own launcher names it, or nothing when it names none (si#844).
+# pip's script maker writes `#!<python>` on the first line, or, when that path is longer than a shebang
+# takes, `#!/bin/sh` followed by `'''exec' <python> "$0" "$@"` (quoted when the path has a space).
+_pip_interpreter() {
+    local first="" second="" word
+    [ -r "$PIP" ] || return 0
+    { IFS= read -r first || true; IFS= read -r second || true; } < "$PIP"
+    case "$first" in '#!'*) first="${first#\#!}" ;; *) return 0 ;; esac
+    word="${second#\'\'\'exec\' }"
+    if [ "$first" = /bin/sh ] && [ "$word" != "$second" ]; then
+        case "$word" in
+            \"*) word="${word#\"}"; word="${word%%\"*}" ;;
+            \'*) word="${word#\'}"; word="${word%%\'*}" ;;
+            *) word="${word%% *}" ;;
+        esac
+        printf '%s' "$word"
+    else
+        printf '%s' "${first%% *}"
+    fi
+}
+
+# A WHOLE VENV is one whose pip is executable AND runs under an interpreter in this venv's own bin/ -
+# si#717's rule, the one `simplon.adapters.pyvenv` applies to the suite venvs, here in the shell because
+# no Python exists yet. Executable alone passes a venv whose python is gone (Homebrew removed
+# python@3.14 under one, netctl#2022): `bin/pip` is still there, the run then dies on
+# `.venv/bin/python: No such file or directory`, rc 127, naming nothing. It also passes a venv copied
+# with its repository, whose pip runs under the ORIGINAL's python and installs into the original. `-ef`
+# rather than a string comparison, so a venv reached through a symlinked path is not rebuilt every run.
+_venv_is_whole() {
+    local interpreter
+    [ -x "$PIP" ] || return 1
+    interpreter="$(_pip_interpreter)"
+    [ -n "$interpreter" ] && [ -x "$interpreter" ] && [ "${interpreter%/*}" -ef "$VENV/bin" ]
+}
+
 # Create the venv on first use, and REBUILD it when it is broken. The condition is
-# pip, not the directory and not the interpreter: an interrupted first run leaves a
-# venv that has python and no pip, and a check on either of those would call that
+# pip and the interpreter it names, not the directory: an interrupted first run leaves a
+# venv that has python and no pip, and a check on the directory would call that
 # healthy and then fail on the install below, every run, forever. `rm -rf` first so
 # no half-built tree survives into the rebuild - it takes the stamp with it, which
 # is what forces the fresh dependency install afterwards.
-if [ ! -x "$PIP" ]; then
+if ! _venv_is_whole; then
+    if [ -x "$PIP" ]; then
+        printf '%s: the venv at %s has a pip that does not run as this venv (it names %s, which is\n' \
+            "$LAUNCH_PRODUCT" "$VENV" "$(_pip_interpreter || true)" >&2
+        printf '%s: missing or outside %s/bin); rebuilding it\n' "$LAUNCH_PRODUCT" "$VENV" >&2
+    fi
     rm -rf "$VENV"
 
     # python3 has to be able to CREATE a venv, which is not the same as being
@@ -435,6 +475,17 @@ if [ ! -x "$PIP" ]; then
         printf '%s: could not provision pip into the venv. Install venv support: sudo apt install %s\n' \
             "$LAUNCH_PRODUCT" \
             "$(python3 -c 'import sys; print("python%d.%d-venv" % sys.version_info[:2])')" >&2
+        exit 1
+    }
+    # Rebuilt and still bound elsewhere: the tree outlived `rm -rf`, or the python3 that builds it
+    # writes such a pip. Running on would fail later about something else, so stop here.
+    _venv_is_whole || {
+        printf '%s: the venv at %s still has a pip that does not run as this venv (it names %s) after\n' \
+            "$LAUNCH_PRODUCT" "$VENV" "$(_pip_interpreter || true)" >&2
+        printf '%s: rebuilding it. Remove %s by hand and run again; it is rebuilt from scratch\n' \
+            "$LAUNCH_PRODUCT" "$VENV" >&2
+        printf '%s: by %s. If it comes back the same, that python3 is what builds it.\n' \
+            "$LAUNCH_PRODUCT" "$(command -v python3)" >&2
         exit 1
     }
 fi
