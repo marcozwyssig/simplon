@@ -741,3 +741,27 @@ def test_the_carrier_run_names_a_templated_path_it_cannot_resolve_and_never_writ
     assert "$" not in carrier.unsafe_vars(items)
     out = capsys.readouterr().out
     assert "${DATA_DIR} was not created" in out and "environment 'prod'" in out and "`deploy up`" in out
+
+
+# --- the ancestor walk ends on its own (si#825) ------------------------------------------------------
+
+def test_the_ancestor_walk_refuses_a_relative_path_instead_of_walking_forever(monkeypatch) -> None:
+    """`posixpath.dirname` of a relative path ends at "" and never at "/", so a walk that stops only at
+    "/" never ends. `carrier_path` keeps such a path away today, two calls up; this holds the walk to its
+    own end. THE STUB IS THE TIME LIMIT: it gives up after a budget of parents, so the version without the
+    guard fails here instead of hanging the suite (seen red: 'walked 65 parents of a relative path: ['', '', '']')."""
+    # arrange
+    asked: list[str] = []
+
+    def stat(target, path):
+        asked.append(path)
+        if len(asked) > 64:
+            raise AssertionError(f"walked {len(asked)} parents of a relative path: {asked[-3:]}")
+        return None, ""
+
+    monkeypatch.setattr(portainer, "_stat", stat)
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        portainer._nearest(TARGET, "srv/app/data")
+    assert "'srv/app/data'" in str(refused.value) and "not absolute" in str(refused.value)

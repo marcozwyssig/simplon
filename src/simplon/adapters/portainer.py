@@ -1087,7 +1087,16 @@ _INSTALL_REFERENCE = INSTALL_IMAGE.split(":", 1)[0] + "@" + INSTALL_IMAGE.split(
 
 
 def _nearest(target: PortainerTarget, path: str) -> "tuple[str | None, str]":
-    """(the deepest existing ancestor of `path` below `/`, "") or (None, why) - never `/` itself."""
+    """(the deepest existing ancestor of `path` below `/`, "") or (None, why) - never `/` itself.
+
+    `path` is absolute, and that is checked HERE rather than trusted to `carrier_path` two calls up
+    (si#825): the dirname of a relative path ends at "" and never at "/", so without it this loop would
+    never end, and a run that hangs is neither green nor red. Reaching it is a kernel defect, not a
+    refusal of the manifest, so it raises instead of answering a `why`.
+    """
+    if not path.startswith("/"):
+        raise ValueError(f"internal error: the carrier directory {path!r} is not absolute, so its parents "
+                         f"never reach / - `environments.carrier_path` should have refused it")
     parent = posixpath.dirname(path)
     while parent != "/":
         seen, why = _stat(target, parent)
