@@ -51,7 +51,8 @@ and inherits the caller's whole environment, so there is nothing to compare ther
 
 NAMES THE MANIFEST ALREADY DECLARES ARE DERIVED, NOT REPEATED (si#810, decided by Marco 2026-11-20). A
 command bound to `deploy:up` reads the carrier's `<url_from>_*`, the clone credential and the environment's
-`required:`/`optional:`, all named in the manifest already. `declared` takes them from a `derive` its
+`required:`/`optional:`, all named in the manifest already; a `deploy:carrier` command reads the carrier's
+password and tokens (si#812). `declared` takes them from a `derive` its
 callers hand in (`tasks.deploy.variables_read`, above this layer), so they are on the launcher's list and
 in the stale check; the dispatch wrappers add them to that command's keep-list for `confine`, and to no
 other command's.
@@ -187,9 +188,10 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
     assembled. An aggregate's list is not in it: an aggregate runs no `toolchain:run` line (si#492).
 
     `derive(task)` is the names a kernel task reads that this same document already declares elsewhere -
-    `tasks.deploy.variables_read` over it, for `deploy:up` and `deploy:down` (si#810). It is handed in
-    because the readers live above this layer, and it is REQUIRED so that neither caller can render or
-    check a list without it: the launcher and the stale check disagreeing would refuse every run. It is
+    `tasks.deploy.variables_read` over it, for `deploy:up`, `deploy:down` (si#810) and `deploy:carrier`
+    (si#812). It is handed in because the readers live above this layer, and it is REQUIRED so that
+    neither caller can render or check a list without it: the launcher and the stale check disagreeing
+    would refuse every run. It is
     asked only for a task a command is bound to, so a document whose commands bind no such task reads no
     environment at all. It takes the task and not the document, so the census's section walk follows the
     document into the reader by name at the caller (`test_every_hand_off_of_the_document_is_followed`). A
@@ -323,8 +325,8 @@ def stale_launcher(declared_names: tuple[str, ...], environ: Mapping[str, str], 
     if extra:
         said.append(f"still forwards {', '.join(extra)}")
     return (f"{launcher} was rendered for different names than the manifest declares (the commands' `env: "
-            f"pass:` lists, and what a `deploy:up`/`deploy:down` command reads off its environments): it "
-            f"{' and '.join(said)}. A variable it does not forward would arrive here unset, which looks "
-            f"exactly like one the host never set. Re-render the launchers at the product root with "
-            f"`{FIX}` and run again. (Only the container route checks this: the venv route has no "
-            f"container and inherits the whole environment.)")
+            f"pass:` lists, and what a `deploy:up`/`deploy:down`/`deploy:carrier` command reads off its "
+            f"carriers and environments): it {' and '.join(said)}. A variable it does not forward would "
+            f"arrive here unset, which looks exactly like one the host never set. Re-render the launchers "
+            f"at the product root with `{FIX}` and run again. (Only the container route checks this: the "
+            f"venv route has no container and inherits the whole environment.)")

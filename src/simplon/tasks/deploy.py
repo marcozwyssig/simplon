@@ -37,7 +37,7 @@ from simplon.adapters import backend, devcontainer, githubpackages, portainer
 from simplon.manifest import context, deployment, environments
 from simplon.kernel import log
 from simplon.model import artifactschema, carrierspec
-from simplon.tasks import image
+from simplon.tasks import carrier, image
 
 
 def drivable_backends() -> dict[str, backend.Backend]:
@@ -162,12 +162,15 @@ def down(version: str = "") -> int:
     return backend.resolve(env, drivable_backends()).destroy(env)
 
 
-#: THE TASKS WHOSE NAMES THE KERNEL DERIVES (si#810), each with whether its body deploys (`up`) or destroys
-#: (`down`). Read off the catalogue's own body table rather than typed, so the coordinates are whatever
-#: `deploy:up`/`deploy:down` are bound to. `deploy:carrier` is not here: it reads `<url_from>_PASSWORD` and
-#: the Proxmox token, which is a different reader and was not part of the decision.
-READS: dict[str, bool] = {coordinate: ref == f"{__name__}:up" for coordinate, ref in artifactschema.BODIES.items()
-                          if ref in (f"{__name__}:up", f"{__name__}:down")}
+#: The body each derived task runs, as `artifactschema.BODIES` spells it.
+_UP, _DOWN = f"{__name__}:{up.__name__}", f"{__name__}:{down.__name__}"
+_CARRIER = f"{carrier.__name__}:{carrier.up.__name__}"
+
+#: THE TASKS WHOSE NAMES THE KERNEL DERIVES (si#810, si#812), each with the body it runs. Read off the
+#: catalogue's own body table rather than typed, so the coordinates are whatever `deploy:up`, `deploy:down`
+#: and `deploy:carrier` are bound to.
+READS: dict[str, str] = {coordinate: ref for coordinate, ref in artifactschema.BODIES.items()
+                         if ref in (_UP, _DOWN, _CARRIER)}
 
 
 def variables_read(data: Mapping[str, object], task: str) -> tuple[str, ...]:
@@ -185,10 +188,17 @@ def variables_read(data: Mapping[str, object], task: str) -> tuple[str, ...]:
     once for all of them. Another backend contributes nothing, because the kernel does not know what a
     backend it does not ship reads. A manifest with no `cd: environments:` (a client install) derives
     nothing; a malformed one is refused by `parse_data`, with its own sentence.
+
+    `deploy:carrier` had the same gap (si#812) and is answered by `carrier.variables_read`, next to the
+    readers that spell its names: the Portainer admin password, the runner's registration token, the
+    Proxmox API token and the kernel's state passphrase and SSH key path.
     """
-    deploying = READS.get(task)
-    if deploying is None or environments.matrix_section(data)["environments"] is None:
+    body = READS.get(task)
+    if body == _CARRIER:
+        return carrier.variables_read(dict(data))
+    if body is None or environments.matrix_section(data)["environments"] is None:
         return ()
+    deploying = body == _UP
     registry = environments.parse_data(data)
     carriers = carrierspec.declared(data)
     names = (name for env in registry.environments.values() if env.backend == portainer.BACKEND
