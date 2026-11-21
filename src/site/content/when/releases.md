@@ -23,6 +23,92 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.48.0
+
+**What a product has to do:** re-render its launchers (`simplon init --dir . --launchers-only`), or
+`test generated` reports drift: the `.sh` launcher template changed (si#824). Beyond that, check these
+where a product relies on the old behaviour:
+
+- **`SIMPLON_CARRIER_SSH_KEY` is retired.** `deploy carrier` reads the carrier's ssh private key as
+  content from `SIMPLON_CARRIER_SSH_PRIVATE_KEY`, for example
+  `SIMPLON_CARRIER_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"` (si#819). A host path in the old name
+  is no longer read.
+- **A product with a `deploy:carrier` command must re-render its launchers** even where nothing else
+  changed for it: the kernel now derives the names that command reads (si#812, si#819), and a launcher
+  rendered by an earlier kernel fails the stale check.
+- **Three new load-time diagnoses** can refuse a manifest that loaded before: a carrier with
+  `proxmox:` whose name Proxmox refuses as a hostname, whitespace in a `runner: token_from:` or a
+  `portainer: url_from:` prefix on a carrier the kernel makes (si#820), and a `runner: repository:`
+  outside GitHub's characters (si#815). None of these could have worked.
+- **`deploy carrier` mints the Portainer API token** that `deploy up` reads, when run at a terminal
+  outside CI, and shows it once (si#784). A second run mints none.
+- **`deploy up` on a carrier with no `proxmox:` creates a missing declared directory** instead of
+  refusing (si#808). A carrier the kernel builds still refuses and names `deploy carrier`.
+
+### Carriers (si#784, si#812, si#815, si#819, si#820)
+
+- **si#784:** the Portainer play mints the API token right after its admin login and prints it once as
+  `<url_from>_TOKEN=ptr_...`. Only an interactive run mints (`CI` unset and stdout a terminal; the
+  kernel decides and hands the play the decision). A run that may not mint says so and how to mint. A
+  second run finds the token by its description, mints none and prints its prefix and a revoke
+  command. Every task that sees the admin JWT, the password or the raw key runs under `no_log`,
+  including two earlier tasks that sent the JWT unhidden, and each hidden call still says why it
+  failed.
+- **si#812:** on the container route, `deploy:carrier` gets the names its carrier declares without
+  repeating them in `env: pass:`: the Portainer password, the runner token, the Proxmox token, the
+  state passphrase and the ssh key. The list is derived by `carrier.variables_read`, beside the readers.
+- **si#815:** no manifest string is written into a carrier play any more. The runner's repository,
+  name, labels and token variable name, and the Portainer password and token variable names, go into
+  the one vars file both plays read, tagged `!unsafe` (now `manifest_vars.yml`). The plays read every
+  secret by variable name. Before, a hostile label or prefix ran code on the controller.
+- **si#819:** the ssh key crosses into the Ansible container as a variable, is written mode 0600 into
+  a tmpfs and the variable unset before `ansible-playbook` runs; no host path is mounted. A missing,
+  empty or malformed key is a diagnosis before Pulumi creates the machine, and the value is never
+  printed. CRLF line ends and a missing final newline are repaired, because ssh-keygen fails on both
+  with a message that names neither.
+- **si#820:** the carrier name check above covers the three places the name reaches unquoted
+  (inventory, the Pulumi container's shell line, `build/carrier/<name>`). The narrower form for every
+  carrier (lowercase letters, digits and inner hyphens only) was built and struck: it would be an expression
+  rule that buys one form, not safety. The Portainer play now stops first on an empty admin password,
+  naming the variable.
+
+### Carrier directories (si#808, si#809, si#825)
+
+- **si#808:** the directory is made with `install -d` in a short-lived pinned busybox container
+  through Portainer's Docker proxy, binding the deepest existing parent. No parent below `/` is a
+  refusal. No shell is involved; every argv word is a constant, a parsed number or the validated path.
+- **si#809:** a `directories:` `path:` may be or contain `${NAME}`, resolved at `deploy up` from the
+  values the deployment sends, so the checked directory is the one the stack's bind mount names. Every
+  name must be in `required:` or `optional:` or be `SIMPLON_VERSION`; no `$NAME` and no default form.
+  An empty optional name is a diagnosis naming every such path. `deploy carrier` does not resolve a
+  templated path; it names it and leaves it to `deploy up`.
+- **si#825:** the parent walk refuses a relative path as an internal error instead of looping, and a
+  resolved path is printed with its template beside it (`/srv/app/db (from ${DATA_DIR}/db)`). The
+  `install -d` lines keep only the real path, so they stay runnable.
+
+### Launchers (si#824)
+
+- **si#824:** a derived name with `-` (`url_from: my-haus` gives `my-haus_PASSWORD`) is forwarded.
+  Before, the render-time filter and the launcher's `compgen -e` loop both dropped it, and the run
+  ended with "not set" while the host had it set. A name no launcher can carry (`$`, quotes, `%`, `!`,
+  `,`, `;`, `=`, whitespace, or a name the launcher sets itself) is still left off, but now named at
+  render time and by the kernel before the command runs, with the way out.
+
+### Image builds (si#826, si#829)
+
+- **si#826:** a missing `contexts:` file that a command makes ends with that command's advice, not
+  with "fix the entry".
+- **si#829:** the missing-path refusal prints the computed count instead of "two" for any count above
+  one, and on a multi-platform build names the entry that declares each missing path, in the header and
+  in the tail.
+
+### Also in this release
+
+- **#816** pins `deploy/image/image.pin` to the v0.47.0 kernel image.
+- The pull requests are #804 (si#784), #816, #817 (si#812), #818 (si#815), #821 (si#808),
+  #822 (si#820), #823 (si#809), #827 (si#819), #828 (si#826), #830 (si#829), #831 (si#825) and
+  #832 (si#824).
+
 ## 0.47.0
 
 **What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) and its
