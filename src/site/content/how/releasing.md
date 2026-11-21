@@ -249,6 +249,16 @@ upload and skipped the site and the image with it. A red `homebrew-tap` job is f
 failed publish: fix the cause and rerun that job. Its hand-off from `publish` is kept for a day; a rerun
 after that finds nothing to download, and the way out is the one by hand below.
 
+**The site is built in one job and deployed in another** (si#851). `docs` runs `./simplon.sh build docs`
+and uploads the result into the run as the `github-pages` artifact, as its last step; `pages` waits for
+`docs` and runs `actions/deploy-pages`. Until v0.49.0 both ran in `docs`, and twice in a row (v0.48.0 and
+v0.49.0) the deploy listed the run's artifacts one second after the upload and did not see it yet.
+"Re-run failed jobs" then re-ran the upload as well, and the deploy refused the two `github-pages` artifacts
+that left behind. Now a red `pages` job is rerun alone: GitHub reruns the failed jobs and the jobs that need
+them, not a job they need that succeeded, so the rerun deploys the one artifact the run already holds. Only
+`pages` carries `pages: write`, `id-token: write` and the `github-pages` environment; `docs` reads the
+checkout and nothing more.
+
 A dry run therefore carries the placeholder URL `https://pypi.invalid/dry-run/<wheel>` in the formula, and
 the test is `brew audit --strict` and `brew style` only. Nothing goes to PyPI or the tap. The build (for the
 install closure) and the test both run in a pinned brew image; on a fresh runner the build is the step that

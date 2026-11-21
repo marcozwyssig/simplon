@@ -1064,22 +1064,18 @@ workflows:
             if: ${{ !inputs.dry_run }}
       docs:
         note: |
-          The website, built by the one command a person types (`build docs`) and deployed by the two
-          actions that exist only inside a runner. No `paths:` filter: every release republishes the
-          site. After `publish`, so it never documents a version nobody can install.
+          The website, built by the one command a person types (`build docs`) and uploaded into the run
+          by the action that exists only inside a runner. No `paths:` filter: every release republishes
+          the site. After `publish`, so it never documents a version nobody can install. The upload is
+          the LAST step (si#851): no step after it can turn this job red with the artifact already made,
+          so a rerun of this job never meets an upload of its own. It reads the checkout and writes nothing
+          outside the run; the Pages rights are the `pages` job's.
         needs: publish
         runs-on: ubuntu-latest
         python: "3.12"
         env: { RELEASE_VERSION: "${{ inputs.version }}" }
-        environment:
-          name: github-pages
-          url: ${{ steps.deployment.outputs.page_url }}
         permissions:
-          pages: write
-          id-token: write
-        concurrency:
-          group: pages
-          cancel-in-progress: false
+          contents: read
         steps:
           - name: Cut the tag in this checkout
             note: |
@@ -1108,13 +1104,36 @@ workflows:
                 echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
                 exit 1
               fi
-          - uses: actions/configure-pages@v5
-            with:
-              enablement: true
           - command: build docs
           - uses: actions/upload-pages-artifact@v3
             with:
               path: build/site
+      pages:
+        note: |
+          The deploy of what `docs` uploaded, in a job of its own (si#851). In one job with the upload,
+          `deploy-pages` listed the run's artifacts one second after the upload, found no `github-pages`
+          and failed (runs 44901604309, 44938156739); "Re-run failed jobs" then re-ran the upload too, and
+          the deploy refused the two `github-pages` artifacts that left. Here the job boundary stands
+          between the upload and the listing, and a red deploy is rerun alone: GitHub reruns the failed
+          jobs and the jobs that need them, not `docs`, which succeeded, so the rerun finds the one
+          artifact the run holds. No checkout: nothing here reads the repository. `pages: write` and
+          `id-token: write` are this job's alone (si#719), and so are the environment and the queue.
+        needs: docs
+        runs-on: ubuntu-latest
+        checkout: false
+        environment:
+          name: github-pages
+          url: ${{ steps.deployment.outputs.page_url }}
+        permissions:
+          pages: write
+          id-token: write
+        concurrency:
+          group: pages
+          cancel-in-progress: false
+        steps:
+          - uses: actions/configure-pages@v5
+            with:
+              enablement: true
           - id: deployment
             uses: actions/deploy-pages@v4
             if: ${{ !inputs.dry_run }}
