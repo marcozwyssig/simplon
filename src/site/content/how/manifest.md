@@ -1113,7 +1113,18 @@ declared on the task, so a catalogue task brings its own and a task of your own 
   fetch from and push to origin, and hand git the token themselves. A step of your own that runs
   `git push`, or `git fetch` against a private repository, has no credential in a generated job: make it
   a task that declares `token: github` and talks to origin through `simplon.tasks.gitops`, or say
-  `checkout: false` and write the job's checkout yourself. A secret of your own goes in the workflow's `env:`, which every step of the job sees.
+  `checkout: false` and write the job's checkout yourself.
+- **`env: pass:`** on the leaf's command (si#836): a secret a publish reads under its own fixed name, such
+  as the Gradle Plugin Portal's `GRADLE_PUBLISH_KEY` and `GRADLE_PUBLISH_SECRET`, is named there and
+  nowhere else. The leaf's step gets each name in its own `env:` as `${{ secrets.<NAME> }}`, and no other
+  step does; store the secret under that name in the repository's Actions secrets. The release job checks,
+  before the cut and on a dry run too, that every such secret is set, reading `secrets.X != ''` and never
+  the value, and is red naming the ones that are not: a missing secret would otherwise reach a publishing
+  step as an empty string on the real run only, after the tag. A name the kernel fills itself keeps that
+  mechanism: `GITHUB_TOKEN` for a `token: github` leaf, `GH_APP_TOKEN` for a `token: app` leaf. Any other
+  `GITHUB_*` name is refused at render, because GitHub refuses a secret by that name; the run's own
+  `GITHUB_TOKEN` reaches only a `token: github` leaf. Only the derived `release` job fills names this
+  way: a job of your own writes its step's `env:` itself.
 - **`token: app`** (si#534): the task writes to one repository the run's own token cannot reach, such as
   a Homebrew tap. The leaf binds it as `with: { repository: <owner>/<repo> }`, and the generator puts an
   `actions/create-github-app-token` step (pinned, v3.2.0) directly before the leaf's step, in the derived
@@ -1478,6 +1489,11 @@ an aggregate is refused at load, because it would reach nothing - put it on the 
 
 **Each name crosses by name, never as a value.** The value is on no command line and in no log. A name
 your shell does not export stays unset on the far side: it is not forwarded as an empty string.
+
+**In a `release:` workflow the derived job fills the names from the repository's Actions secrets**
+(si#836): the step of a command that declares `env: pass:` gets each name as `${{ secrets.<NAME> }}` in its
+own `env:`, and the job checks before the cut that each is set. The rules are with `token:` under the
+release workflow above.
 
 **The launcher carries its own copy, so re-render it after editing the list.** The launcher is bash and
 builds the container line before any Python exists to read this file with - the reason the image pin is a
