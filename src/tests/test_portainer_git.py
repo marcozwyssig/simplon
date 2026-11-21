@@ -1046,3 +1046,108 @@ def test_the_entry_reaches_a_listening_server_as_portainer_reads_it() -> None:
     assert seen["key"] == "ptr_key"
     assert seen["body"] == {"Name": "ghcr.io", "Type": 3, "URL": "ghcr.io", "Authentication": True,
                             "Username": "acme-bot", "Password": GHCR_TOKEN}
+
+
+# --- who can read the stack's stored environment (si#840, 3b) ----------------------------------------
+#
+# Portainer keeps a stack's environment in clear. Measured on si#840 against Portainer CE 2.45.0: a stack
+# the admin's API key created answers `ResourceControl: {AdministratorsOnly: true, Public: false}`, a
+# standard user is denied it, and once it is public the standard user reads every value. The answers below
+# are those shapes.
+
+def _stack(control: "dict | None") -> dict:
+    stack: dict = {"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP}
+    if control is not None:
+        stack["ResourceControl"] = control
+    return stack
+
+
+ADMINS_ONLY = {"AdministratorsOnly": True, "Public": False, "UserAccesses": [], "TeamAccesses": []}
+
+
+def test_an_administrators_only_stack_says_nothing(monkeypatch, capsys, target) -> None:
+    # arrange
+    monkeypatch.setattr(portainer, "_request", Recorder({"/stacks": [_stack(ADMINS_ONLY)]}))
+
+    # act
+    portainer.check_stack_access(target, _environment(required=("TOKEN",), secret=("TOKEN",)))
+
+    # assert
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("control, readers", [
+    ({"AdministratorsOnly": False, "Public": True}, "every Portainer user (the stack is public)"),
+    ({"AdministratorsOnly": False, "Public": False, "UserAccesses": [{"UserId": 2}], "TeamAccesses": []},
+     "1 user(s)"),
+    ({"AdministratorsOnly": False, "Public": False, "UserAccesses": [], "TeamAccesses": [{"TeamId": 1}]},
+     "1 team(s)"),
+])
+def test_a_stack_opened_beyond_the_administrators_is_a_warning_that_says_to_whom(monkeypatch, capsys,
+                                                                                 target, control,
+                                                                                 readers) -> None:
+    # arrange
+    monkeypatch.setattr(portainer, "_request", Recorder({"/stacks": [_stack(control)]}))
+
+    # act
+    portainer.check_stack_access(target, _environment(required=("TOKEN",), secret=("TOKEN",)))
+
+    # assert
+    out = capsys.readouterr().out
+    assert "stack app-prod on https://portainer.local is not administrators-only" in out
+    assert f"{readers} can read its environment, which holds the value(s) of TOKEN in clear" in out
+    assert out.count("\n") == 1, "one line"
+
+
+@pytest.mark.parametrize("answer, why", [
+    (portainer.PortainerError("Portainer answered 403 to GET /stacks: denied"), "Portainer answered 403"),
+    ([], "it was not found"),
+    ([_stack(None)], "Portainer reported no resource control for it"),
+])
+def test_a_read_that_could_not_answer_says_it_could_not_tell(monkeypatch, capsys, target, answer,
+                                                            why) -> None:
+    """Not silence: "could not tell" is not "administrators-only"."""
+    # arrange
+    def request(*_args, **_kwargs):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr(portainer, "_request", request)
+
+    # act
+    portainer.check_stack_access(target, _environment(required=("TOKEN",), secret=("TOKEN",)))
+
+    # assert
+    out = capsys.readouterr().out
+    assert "could not tell who can read stack app-prod's environment, which holds the value(s) of TOKEN" in out
+    assert why in out
+
+
+def test_a_stack_of_plain_values_is_not_asked_about(monkeypatch, target) -> None:
+    # arrange
+    recorder = Recorder({"/stacks": [_stack({"Public": True})]})
+    monkeypatch.setattr(portainer, "_request", recorder)
+
+    # act
+    portainer.check_stack_access(target, _environment(required=("PORT",)))
+
+    # assert
+    assert recorder.calls == []
+
+
+def test_deploy_up_asks_after_the_stack_is_deployed(monkeypatch, capsys) -> None:
+    # arrange
+    monkeypatch.setenv("TOKEN", "canary-840-token")
+    monkeypatch.setattr(portainer, "_target_for",
+                        lambda env: (portainer.PortainerTarget("u", "t", 3, "app-prod"), REPOSITORY))
+    monkeypatch.setattr(portainer, "deploy_from_repository", lambda *a, **k: "created")
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)
+    monkeypatch.setattr(portainer, "_request", Recorder({"/stacks": [_stack({"Public": True})]}))
+
+    # act
+    portainer.PortainerBackend().deploy(_environment(required=("TOKEN",), secret=("TOKEN",)),
+                                        deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+
+    # assert
+    out = capsys.readouterr().out
+    assert out.index("created") < out.index("is not administrators-only")

@@ -294,7 +294,9 @@ def confine(keep: Iterable[str], environ: MutableMapping[str, str] | None = None
     recorded it when the launcher started it. Only the launcher could keep it off that line, and it cannot
     tell which command runs without a second copy of the CLI's argument grammar (si#757, option B). si#833
     accepted it with a reopen trigger, recorded in `simplon.kernel.secrets`: a docker daemon shared with a
-    principal who is not root-equivalent on that host.
+    principal who is not root-equivalent on that host. The other exposures accepted beside it (si#840: a
+    child's own output under `capture=False`, Portainer's stored stack environment, a secret-named bind
+    source) and their reopen triggers stand in the same place.
     """
     env = os.environ if environ is None else environ
     kept = set(keep)

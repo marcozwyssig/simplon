@@ -306,16 +306,55 @@ def test_a_directory_templated_from_a_secret_never_reaches_the_carrier_or_the_ou
     secrets.install()
 
     # act
-    with pytest.raises(secrets.SecretInArgv) as refused:
+    with pytest.raises(portainer.PortainerError) as refused:
         portainer.PortainerBackend().deploy(env, deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
     said = capsys.readouterr()
 
-    # assert
+    # assert: a DIAGNOSIS (si#840, 1a) - the manifest said this, nothing in the kernel went wrong
+    assert "`path: /srv/${TOGGL_API_TOKEN}` takes its value from TOGGL_API_TOKEN, which `secret:` lists" \
+        in str(refused.value)
+    assert "Create the directory on the carrier yourself, or take the name out of `secret:`" in str(refused.value)
+    assert "kernel defect" not in str(refused.value)
     assert CANARY not in said.out + said.err + str(refused.value)
     assert "canary-833-git-password" not in said.out + said.err
     assert not any(CANARY in " ".join(spec.get("Cmd") or []) for spec in daemon.specs.values()), \
         "no helper on the carrier was started with the secret on its command line"
     assert daemon.written == []
+
+
+def test_an_existing_directory_templated_from_a_secret_is_checked_and_deployed_on_accepted_terms(
+        monkeypatch, capsys):
+    """si#840 1a: an EXISTING directory is only bound - by the probe and then by the stack's own mount -
+    which is accepted on `docker inspect`'s terms. Nothing is refused, created or printed in clear."""
+    # arrange
+    from test_portainer_directories import FakeDaemon
+
+    document = yaml.safe_load(yaml.safe_dump(_BIZ))
+    document["cd"]["environments"]["prod"]["directories"] = [{"path": "/srv/${TOGGL_API_TOKEN}"}]
+    env = environments.parse_data(document).environments["prod"]
+    for name, value in {"TOGGL_API_TOKEN": CANARY, "RESTART_POLICY": "x", "HTTP_BIND": "x",
+                        "HTTP_PORT": "80", "GIT_USER": "x", "GIT_PASSWORD": "canary-833-git-password"}.items():
+        monkeypatch.setenv(name, value)
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755), f"/srv/{CANARY}": (0, 0, 0o755)})
+    deployed: list = []
+    monkeypatch.setattr(portainer, "_request", Recorder({"/stacks": [
+        {"Name": "biz-prod", "EndpointId": 3, "ResourceControl": {"AdministratorsOnly": True}}]}))
+    monkeypatch.setattr(portainer, "_docker", daemon, raising=False)
+    monkeypatch.setattr(portainer, "_target_for", lambda e: (portainer.PortainerTarget("https://p", "t", 3,
+                                                                                       "biz-prod"), env.repository))
+    monkeypatch.setattr(portainer, "_built_by_kernel", lambda e: False, raising=False)
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)
+    monkeypatch.setattr(portainer, "deploy_from_repository", lambda *a, **k: deployed.append(1) or "deployed")
+    secrets.install()
+
+    # act
+    code = portainer.PortainerBackend().deploy(env, deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+    said = capsys.readouterr()
+
+    # assert
+    assert code == 0 and deployed == [1]
+    assert daemon.written == []
+    assert CANARY not in said.out + said.err
 
 
 def test_an_env_pass_name_is_secret_when_its_command_runs(monkeypatch, capsys):

@@ -1775,12 +1775,23 @@ credentials, and everything `deploy carrier` reads (the Portainer admin password
 tokens, the state passphrase, the SSH private key). A command's `env: pass:` names need none either: the
 kernel only forwards them, and treats each as secret.
 
-What this does not cover, said rather than implied: a tool started with its output going straight to the
-terminal (in GitHub Actions the mask covers it), the stack environment Portainer stores by design, and
-`docker inspect` of the kernel's container, whose Config.Env holds every forwarded value. The last is
-accepted: reading it takes the docker socket, which is root on that host, and root can read the process
-anyway. It reopens on a docker daemon shared with someone who is not root-equivalent on that host (a
-shared remote `DOCKER_HOST`, a multi-tenant runner).
+What this does not cover, said rather than implied, is accepted, each with what reopens it (si#833,
+si#840):
+
+- **`docker inspect` of the kernel's container**, whose Config.Env holds every forwarded value. Reading
+  it takes the docker socket, which is root on that host, and root can read the process anyway. It
+  reopens on a docker daemon shared with someone who is not root-equivalent on that host (a shared
+  remote `DOCKER_HOST`, a multi-tenant runner).
+- **A `directories:` path resolved from a secret** reaches the carrier's daemon as a bind source, the
+  stack's own mount included, on the same terms. A missing one is not created: `deploy up` refuses it by
+  template and name, and you create it on the carrier yourself or take the name out of `secret:`.
+- **A tool started with its output going straight to the terminal.** It holds the value anyway and can
+  print it; in GitHub Actions the mask covers it. It reopens on a terminal run whose output is kept
+  (recorded, piped into a file, shared).
+- **The stack environment Portainer stores**, in clear, readable by its administrators, who hold the
+  carrier's docker socket. `deploy up` warns when the stack is not administrators-only, or when it could
+  not tell. It reopens on a stack opened beyond administrators, a Portainer user who is not
+  root-equivalent on the carrier, or a Portainer backup kept outside root custody.
 
 **The version reaches the stack as `SIMPLON_VERSION`.** A compose document writes
 `image: ghcr.io/acme/app:${SIMPLON_VERSION}`, so `deploy up --version 1.4.0` deploys 1.4.0 rather than
