@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -77,9 +78,20 @@ STATE_DIR = "deploy/carriers"
 #: field: it is about how the kernel keeps state, not about any product's Proxmox.
 PASSPHRASE_ENV = "SIMPLON_STATE_PASSPHRASE"
 
-#: The PATH to the private key Ansible reaches the carrier with. A path is not a secret and may be an
-#: environment variable pointing at a file; the key itself never enters this process.
-SSH_KEY_ENV = "SIMPLON_CARRIER_SSH_KEY"
+#: The CONTENT of the private key Ansible reaches the carrier with (si#819). A content and not a path,
+#: because a path is the host's and this kernel may run in a container that sees only the product root:
+#: measured, `~/.ssh/id_ed25519` arrived as `/tmp/.ssh/id_ed25519` and any host path outside the root as
+#: "not a file". The value crosses into the Ansible container by NAME and is written there to a tmpfs,
+#: so no copy of the key lands on the host's disk.
+SSH_PRIVATE_KEY_ENV = "SIMPLON_CARRIER_SSH_PRIVATE_KEY"
+
+#: The PATH variable `SSH_PRIVATE_KEY_ENV` replaced, read only to refuse it by name (si#819). Retired
+#: loudly rather than kept as an alias: one name meaning "a path or a content" is a value whose meaning
+#: depends on which side of the container boundary reads it.
+RETIRED_SSH_KEY_ENV = "SIMPLON_CARRIER_SSH_KEY"
+
+#: Where the key is written INSIDE the Ansible container: a tmpfs, mode 0700, gone with the container.
+KEY_DIR = "/run/simplon"
 
 #: Proxmox's own suffix. `token_from: PROXMOX` therefore means `PROXMOX_API_TOKEN`, which is
 #: `credentials.py`'s convention with the suffix the API's header name asks for.
@@ -178,7 +190,9 @@ def variables_read(document: dict) -> tuple[str, ...]:
 
     Each from its reader's own helper or constant: `password_variable` (`portainer_password`),
     `runner_token_variable` (`runner_token`), `token_variable` (`_token`), `PASSPHRASE_ENV` (`_pulumi`) and
-    `SSH_KEY_ENV` (`up`, only for a carrier with something to install on the machine). Every environment's
+    `SSH_PRIVATE_KEY_ENV` (`private_key`, only for a carrier with something to install on the machine). The
+    retired `RETIRED_SSH_KEY_ENV` is not forwarded: a launcher rendered before si#819 still forwards it, and
+    that is exactly the launcher whose operator needs to hear it is gone. Every environment's
     carrier counts, whatever backend drives the environment, because the launcher is rendered once for all
     of them; a carrier with no `proxmox:` reads nothing, since
     `_carrier_of` refuses it. A carrier this document does not declare is left to `_carrier_of` to refuse.
@@ -200,7 +214,7 @@ def variables_read(document: dict) -> tuple[str, ...]:
             names.append(token_variable(carrier.proxmox))
         names.append(PASSPHRASE_ENV)
         if carrier.portainer is not None or carrier.runner is not None:
-            names.append(SSH_KEY_ENV)
+            names.append(SSH_PRIVATE_KEY_ENV)
     return tuple(dict.fromkeys(names))
 
 
@@ -302,6 +316,42 @@ def runner_token(carrier: carrierspec.Carrier) -> str:
                 f"repos/{repository}/actions/runners/registration-token --jq .token` makes one, valid "
                 f"for an hour. It is read from the environment; the manifest has no field for it")
     return token
+
+
+#: The line every private key format Ansible's ssh reads starts with: OpenSSH's own, and PEM's RSA, EC,
+#: PKCS#8 and encrypted PKCS#8.
+_PRIVATE_KEY_BEGIN = re.compile(r"^-----BEGIN [A-Z ]*PRIVATE KEY-----$", re.MULTILINE)
+
+
+def private_key(carrier: carrierspec.Carrier) -> None:
+    """Check the private key's CONTENT in `SSH_PRIVATE_KEY_ENV` and leave it normalised in this process's
+    environment, where `_ansible`'s bare `docker run -e NAME` takes it from (si#819). Never prints it.
+
+    Asked BEFORE the machine is made, like the Portainer password: until si#819 the key was checked after
+    `_pulumi`, so a missing key cost a whole LXC creation before it was reported.
+
+    Normalised because two spellings an operator really produces fail on the far side with a message that
+    names neither, both measured against `alpine/ansible:2.21.0`: CRLF line ends (a Windows editor, a
+    pasted secret) give ssh-keygen's "error in libcrypto: unsupported", and a missing final newline - which
+    is what `"$(cat key)"` hands over - gives the same. The container writes the value with a newline of
+    its own, so trailing whitespace is stripped here and LF is the only line end.
+    """
+    fill = f'{SSH_PRIVATE_KEY_ENV}="$(cat ~/.ssh/id_ed25519)"'
+    value = os.environ.get(SSH_PRIVATE_KEY_ENV, "")
+    if not value.strip():
+        retired = os.environ.get(RETIRED_SSH_KEY_ENV, "")
+        if retired:
+            log.die(f"{RETIRED_SSH_KEY_ENV} is retired (si#819): it named a PATH, which the kernel cannot "
+                    f"read when it runs in a container that sees only the product root. Export the key's "
+                    f"CONTENT instead - {fill} - and unset {RETIRED_SSH_KEY_ENV}. A launcher rendered "
+                    f"before si#819 does not forward the new name: re-render it")
+        log.die(f"{SSH_PRIVATE_KEY_ENV} is not set, so nothing could be installed on carrier "
+                f"'{carrier.name}'. It holds the CONTENT of the private key whose public half the carrier "
+                f"declares - {fill} - and is read from the environment; the manifest has no field for it")
+    if not _PRIVATE_KEY_BEGIN.search(value.replace("\r\n", "\n")):
+        log.die(f"{SSH_PRIVATE_KEY_ENV} holds no private key: it has no `-----BEGIN ... PRIVATE KEY-----` "
+                f"line. It takes the key's CONTENT, not its path and not its public half - {fill}")
+    os.environ[SSH_PRIVATE_KEY_ENV] = value.replace("\r\n", "\n").strip()
 
 
 def check_no_password(machine: carrierspec.Proxmox) -> None:
@@ -1071,12 +1121,15 @@ def unsafe_vars(directories: "list[dict[str, str]]", values: "Mapping[str, str] 
     return "\n".join(lines) + "\n"
 
 
-def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, port: int,
+def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, port: int,
              directories: "list[dict[str, str]] | None" = None) -> int:
     """Run the play in the pinned image, against the carrier's address, with the operator's own key.
 
-    The key is MOUNTED, never copied into the tree and never passed as a value: what the manifest and
-    the environment carry is a PATH, which is not a secret.
+    THE KEY CROSSES BY NAME AND IS WRITTEN ONLY INSIDE THE CONTAINER (si#819). `private_key` has left its
+    content in this process's environment; a bare `-e NAME` hands it over, and the container's first act
+    writes it, mode 0600, to `KEY_DIR` - a tmpfs - before it execs `ansible-playbook`. So no copy is put
+    in the tree, none on the host's disk, and none on a command line. Before si#819 the key was a host PATH
+    mounted here, which the container route could not see.
 
     Named, labelled, and removed if this run is interrupted (si#412). Unlike `_pulumi` there is no state
     to corrupt: a play stopped half-way leaves a host part-configured, and the next run converges it,
@@ -1104,11 +1157,15 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
     argv = [
         "docker", "run", "--rm", *lifecycle,
         *secrets,
-        "-v", f"{hostpath.translate(work)}:/work",
-        "-v", f"{hostpath.translate(key)}:/key:ro", "-w", "/work",
+        "-e", SSH_PRIVATE_KEY_ENV, "--tmpfs", f"{KEY_DIR}:mode=0700",
+        "-v", f"{hostpath.translate(work)}:/work", "-w", "/work",
         "-e", "ANSIBLE_HOST_KEY_CHECKING=False",
         ANSIBLE_IMAGE,
-        "ansible-playbook", "-i", "inventory.ini", "carrier.yml", "--private-key", "/key",
+        # The script NAMES the variable and never carries its value. The newline is the one `"$(cat key)"`
+        # strips and ssh refuses a key without ("error in libcrypto: unsupported", measured).
+        "sh", "-c", f'umask 077 && printf "%s\\n" "${SSH_PRIVATE_KEY_ENV}" > {KEY_DIR}/key '
+                    f'&& unset {SSH_PRIVATE_KEY_ENV} && exec "$@"', "sh",
+        "ansible-playbook", "-i", "inventory.ini", "carrier.yml", "--private-key", f"{KEY_DIR}/key",
         # A decision and not a secret, so a command-line extra variable is the right carrier for it.
         "-e", f"{MINT_VAR}={'true' if interactive() else 'false'}",
     ]
@@ -1145,6 +1202,10 @@ def up(environment: str = "") -> int:
     # The runner's registration token, for the same reason and with the same skip (si#781).
     if carrier.runner is not None:
         runner_token(carrier)
+    # The key, for the same reason and with the same skip: a carrier with nothing to install reaches no
+    # machine over ssh. Before si#819 this came after `_pulumi`, so a missing key cost an LXC.
+    if carrier.portainer is not None or carrier.runner is not None:
+        private_key(carrier)
     root = context.current().root
     token = _token(carrier, machine)
 
@@ -1184,22 +1245,12 @@ def up(environment: str = "") -> int:
                f"deploy")
         return 0
 
-    key = os.environ.get(SSH_KEY_ENV, "")
-    if not key:
-        log.error(f"{SSH_KEY_ENV} is not set, so the machine exists and nothing could be installed on "
-                  f"it. It names the PATH of the private key whose public half the carrier declares")
-        return 1
-    key_path = Path(key).expanduser()
-    if not key_path.is_file():
-        log.error(f"{SSH_KEY_ENV} points at {key_path}, which is not a file")
-        return 1
-
     address = _address(carrier, machine, token)
     if not address:
         log.error(f"carrier '{carrier.name}' has no address yet - it is created but its interface has "
                   f"not answered. Run this again in a moment; nothing was lost")
         return 1
-    return _ansible(carrier, address, program, key_path, PORTAINER_PORT, directories_on(carrier.name))
+    return _ansible(carrier, address, program, PORTAINER_PORT, directories_on(carrier.name))
 
 
 def _address(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: str) -> str:

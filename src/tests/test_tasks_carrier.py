@@ -42,6 +42,11 @@ def _code(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
+#: A private key's SHAPE (si#819): `private_key` checks for the BEGIN line and nothing more. Not a real key.
+KEY_BODY = "AAAAprivate-key-material-nobody-should-find"
+KEY = f"-----BEGIN OPENSSH PRIVATE KEY-----\n{KEY_BODY}\n-----END OPENSSH PRIVATE KEY-----\n"
+
+
 CARRIER = carrierspec.Carrier(
     name="hausportainer",
     proxmox=carrierspec.Proxmox(node="pve-2", kind="lxc", endpoint="https://10.0.0.6:8006/",
@@ -359,8 +364,7 @@ def test_a_carrier_that_declares_a_portainer_still_gets_one(monkeypatch, tmp_pat
     seen: list[str] = []
     _stub(monkeypatch, tmp_path, CARRIER, seen)
     monkeypatch.setenv("PORTAINER_PASSWORD", "a-long-enough-password")
-    monkeypatch.setenv(carrier.SSH_KEY_ENV, str(tmp_path / "key"))
-    (tmp_path / "key").write_text("notarealkey\n", encoding="utf-8")
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, KEY)
 
     # act
     rc = carrier.up("prod")
@@ -429,7 +433,7 @@ def _interrupted(monkeypatch, seen: list) -> None:
 def test_the_pulumi_and_the_ansible_containers_are_named_and_labelled(_lines, tmp_path):
     # act
     carrier._pulumi(CARRIER, CARRIER.proxmox, "tok", tmp_path, tmp_path / "state", "h")
-    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, 9443)
 
     # assert
     assert [bool(lifecycle_name(line, "p")) for line in _lines] == [True, True]
@@ -442,7 +446,7 @@ def test_an_interrupted_play_removes_the_container_it_named(_lines, monkeypatch,
 
     # act
     with pytest.raises(KeyboardInterrupt):
-        carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+        carrier._ansible(CARRIER, "10.0.0.9", tmp_path, 9443)
 
     # assert
     assert removals == [lifecycle_name(seen[0], "p")]
@@ -602,7 +606,7 @@ def test_a_second_run_says_a_token_exists_and_how_to_replace_it():
 
 def test_the_ansible_run_renders_the_token_tasks(_lines, tmp_path):
     # act
-    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, 9443)
 
     # assert
     assert carrier.MINT_TASK in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
@@ -651,7 +655,7 @@ def test_the_kernels_decision_reaches_the_play(_lines, monkeypatch, tmp_path, tt
     monkeypatch.setattr(carrier.sys, "stdout", _Tty(tty))
 
     # act
-    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, 9443)
 
     # assert
     argv = _lines[0]
@@ -730,8 +734,7 @@ def test_a_carrier_that_declares_a_runner_gets_one(monkeypatch, tmp_path):
     seen: list[str] = []
     _stub(monkeypatch, tmp_path, RUNNER, seen)
     monkeypatch.setenv("COCKPIT_RUNNER_TOKEN", TOKEN)
-    monkeypatch.setenv(carrier.SSH_KEY_ENV, str(tmp_path / "key"))
-    (tmp_path / "key").write_text("notarealkey\n", encoding="utf-8")
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, KEY)
 
     # act
     rc = carrier.up("prod")
@@ -748,7 +751,7 @@ def test_the_token_reaches_no_rendered_file_and_no_command_line(_lines, monkeypa
     monkeypatch.setenv("COCKPIT_RUNNER_TOKEN", TOKEN)
 
     # act
-    carrier._ansible(RUNNER, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+    carrier._ansible(RUNNER, "10.0.0.9", tmp_path, carrier.PORTAINER_PORT)
 
     # assert
     rendered = [p for p in tmp_path.rglob("*") if p.is_file()]
@@ -841,8 +844,8 @@ def test_each_half_renders_only_its_own_play(_lines, monkeypatch, tmp_path):
     (tmp_path / "r").mkdir()
 
     # act
-    carrier._ansible(RUNNER, "10.0.0.9", tmp_path / "r", tmp_path / "key", carrier.PORTAINER_PORT)
-    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+    carrier._ansible(RUNNER, "10.0.0.9", tmp_path / "r", carrier.PORTAINER_PORT)
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, carrier.PORTAINER_PORT)
 
     # assert
     runner_only = (tmp_path / "r" / "carrier.yml").read_text(encoding="utf-8")
@@ -866,7 +869,7 @@ def test_the_play_reads_the_password_under_the_prefix_the_carrier_names(_lines, 
     monkeypatch.setenv(f"COCKPIT{carrier.PASSWORD_SUFFIX}", "a-long-enough-password")
 
     # act
-    carrier._ansible(cockpit, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+    carrier._ansible(cockpit, "10.0.0.9", tmp_path, 9443)
 
     # assert
     argv = _lines[0]
@@ -927,7 +930,7 @@ def test_no_manifest_string_is_written_into_a_play(_lines, monkeypatch, tmp_path
     loader, tagged = _unsafe_loader()
 
     # act
-    carrier._ansible(HOSTILE, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+    carrier._ansible(HOSTILE, "10.0.0.9", tmp_path, carrier.PORTAINER_PORT)
 
     # assert
     plays = (tmp_path / "carrier.yml").read_text(encoding="utf-8")
@@ -941,3 +944,105 @@ def test_no_manifest_string_is_written_into_a_play(_lines, monkeypatch, tmp_path
     assert values["portainer_token_variable"] == f"{SPLICE}_TOKEN", "si#784's shown name, the same way"
     assert sorted(tagged) == sorted(v for k, v in values.items() if k != "carrier_directories"), (
         "every manifest value carries the tag - an untagged one is a template again")
+
+
+# --- si#819: the key is a CONTENT, checked before the machine, handed over by name --------------------
+
+
+@pytest.mark.parametrize("value", ["", "   \n", "/home/me/.ssh/id_ed25519", "ssh-ed25519 AAAAC3Nz you@host",
+                                   f"-----BEGIN OPENSSH PUBLIC KEY-----\n{KEY_BODY}\n"])
+def test_a_key_that_is_not_a_private_key_is_refused_before_the_machine_is_made(
+        monkeypatch, tmp_path, capsys, value):
+    """Before si#819 the key was checked after `_pulumi`, so a missing key cost a whole LXC. A path, a
+    public half or nothing at all is refused now, before anything runs - and the value is never printed."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, CARRIER, seen)
+    monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: seen.append("pulumi") or 0)
+    monkeypatch.setenv("PORTAINER_PASSWORD", "a-long-enough-password")
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, value)
+    monkeypatch.delenv(carrier.RETIRED_SSH_KEY_ENV, raising=False)
+
+    # act
+    with pytest.raises(SystemExit):
+        carrier.up("prod")
+
+    # assert
+    assert seen == [], "the refusal has to come before the machine is made"
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert carrier.SSH_PRIVATE_KEY_ENV in said and "cat ~/.ssh/id_ed25519" in said, said
+    if value.strip():
+        assert value.strip() not in said, "the value itself is never printed"
+
+
+def test_the_retired_path_variable_is_refused_by_name_and_names_its_successor(monkeypatch, tmp_path, capsys):
+    """Retired loudly, not kept as an alias: one name that meant "a path" on one side of the container
+    boundary and "nothing" on the other is the defect si#819 measured."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, CARRIER, seen)
+    monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: seen.append("pulumi") or 0)
+    monkeypatch.setenv("PORTAINER_PASSWORD", "a-long-enough-password")
+    monkeypatch.delenv(carrier.SSH_PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.setenv(carrier.RETIRED_SSH_KEY_ENV, str(tmp_path / "id_ed25519"))
+
+    # act
+    with pytest.raises(SystemExit):
+        carrier.up("prod")
+
+    # assert
+    assert seen == []
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert f"{carrier.RETIRED_SSH_KEY_ENV} is retired" in said, said
+    assert f'{carrier.SSH_PRIVATE_KEY_ENV}="$(cat ~/.ssh/id_ed25519)"' in said
+    assert "re-render" in said
+
+
+def test_a_machine_only_carrier_needs_no_key(monkeypatch, tmp_path):
+    """Nothing reaches the machine over ssh, so nothing may demand a key for it."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, MACHINE, seen)
+    monkeypatch.delenv(carrier.SSH_PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.delenv(carrier.RETIRED_SSH_KEY_ENV, raising=False)
+
+    # act / assert - no SystemExit
+    assert carrier.up("prod") == 0
+
+
+@pytest.mark.parametrize("given", [KEY.rstrip("\n"), KEY.replace("\n", "\r\n"), KEY + "\n\n"])
+def test_the_key_is_left_normalised_for_the_container(monkeypatch, given):
+    """Measured against `alpine/ansible:2.21.0`: CRLF line ends and a missing final newline each give
+    ssh-keygen's "error in libcrypto: unsupported". LF only and no trailing whitespace here; the container
+    writes the one newline itself."""
+    # arrange
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, given)
+
+    # act
+    carrier.private_key(CARRIER)
+
+    # assert
+    import os
+    assert os.environ[carrier.SSH_PRIVATE_KEY_ENV] == KEY.rstrip("\n")
+
+
+def test_the_key_crosses_by_name_into_a_tmpfs_and_reaches_no_file_and_no_command_line(
+        _lines, monkeypatch, tmp_path):
+    """The key's content is on no argv, in no rendered file, and the container is told to write it into
+    a tmpfs - not a mount of the host's disk, which is what si#819 replaced."""
+    # arrange
+    monkeypatch.setenv(carrier.SSH_PRIVATE_KEY_ENV, KEY)
+
+    # act
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, carrier.PORTAINER_PORT)
+
+    # assert
+    (argv,) = _lines
+    assert not any(KEY_BODY in arg for arg in argv)
+    assert [p.name for p in tmp_path.rglob("*") if p.is_file() and KEY_BODY in p.read_text("utf-8")] == []
+    assert argv[argv.index(carrier.SSH_PRIVATE_KEY_ENV) - 1] == "-e", "by NAME, `docker run -e NAME`"
+    assert argv[argv.index("--tmpfs") + 1] == f"{carrier.KEY_DIR}:mode=0700"
+    assert argv[argv.index("--private-key") + 1] == f"{carrier.KEY_DIR}/key"
+    assert not any(arg.endswith(":/key:ro") for arg in argv), "no host file is mounted as the key any more"

@@ -1522,7 +1522,7 @@ derived, and neither is a name no manifest writes (`PORTAINER_STACK`, `PORTAINER
 `proxmox:`, whatever its backend, the kernel derives what making that carrier reads: the Proxmox
 `<token_from>_API_TOKEN`, the Portainer admin password `<url_from>_PASSWORD` when the carrier declares
 `portainer:`, the registration token `<token_from>_RUNNER_TOKEN` when it declares `runner:`, and the
-kernel's own `SIMPLON_STATE_PASSPHRASE` and, when there is something to install, `SIMPLON_CARRIER_SSH_KEY`.
+kernel's own `SIMPLON_STATE_PASSPHRASE` and, when there is something to install, `SIMPLON_CARRIER_SSH_PRIVATE_KEY`.
 They reach the carrier command and no other.
 
 ### `carriers:` - what an environment is realised on
@@ -1619,6 +1619,24 @@ output is a log somebody keeps.
 
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
+
+**The private half is a variable holding the key's CONTENT** (si#819): `SIMPLON_CARRIER_SSH_PRIVATE_KEY`,
+read only by a carrier that declares `portainer:` or `runner:`, and asked before the machine is made, so a
+missing or malformed key costs no LXC.
+
+```bash
+export SIMPLON_CARRIER_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"
+```
+
+A content and not a path, because a path is the host's and the kernel may run in a container that sees
+only the product root: measured, `~/.ssh/id_ed25519` arrived there as `/tmp/.ssh/id_ed25519`. The value
+must carry a `-----BEGIN ... PRIVATE KEY-----` line; a path, a public half or nothing is refused, and the
+value is never printed. CRLF line ends and the final newline `$(cat ...)` strips are both repaired, since
+ssh refuses either. The key crosses into the Ansible container by name (`docker run -e NAME`), which
+writes it to a tmpfs with mode 0600 - no copy lands in the tree or on the host's disk. What that costs:
+like every other secret the carrier reads, the value is visible to `docker inspect` of the containers
+it runs in while they run. `SIMPLON_CARRIER_SSH_KEY`, the path it replaced, is retired: set on its own,
+it is refused with the new name and how to fill it.
 
 **One feature the kernel sets and you cannot get wrong:** an unprivileged LXC will not start a Docker
 daemon without `nesting`, so it is not a field - it is what a carrier *is*, set on every container the
