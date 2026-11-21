@@ -69,6 +69,12 @@ def _section(body: str) -> dict:
     return yaml.safe_load(textwrap.dedent(body))
 
 
+def _reaps(step: dict) -> bool:
+    """si#756's step, which every generated job starts with; `test_workflow_reap.py` holds it, so a test
+    about the product's own steps looks past it."""
+    return step.get("name") == workflowgen.REAP_NAME
+
+
 def _render(manifest, body: str, key: str = "ci") -> str:
     workflows = workflowgen.parse(_section(body))
     picked = next(w for w in workflows if w.key == key)
@@ -238,7 +244,7 @@ def test_a_command_step_becomes_the_launcher_line_a_developer_types(manifest):
     doc = yaml.safe_load(_render(manifest, _MINIMAL))
 
     # Assert
-    assert [step["run"] for step in doc["jobs"]["build"]["steps"] if "run" in step] == \
+    assert [step["run"] for step in doc["jobs"]["build"]["steps"] if "run" in step and not _reaps(step)] == \
         ["exec ./sample.sh test all"]
 
 
@@ -314,7 +320,7 @@ def test_every_job_gets_the_full_history_without_asking_for_it(manifest):
     doc = yaml.safe_load(_render(manifest, _MINIMAL))
 
     # Assert
-    checkout = doc["jobs"]["build"]["steps"][0]
+    checkout = doc["jobs"]["build"]["steps"][1]
     assert checkout["uses"].startswith("actions/checkout")
     assert checkout["with"]["fetch-depth"] == 0
 
@@ -328,7 +334,7 @@ def test_every_job_checks_out_without_leaving_the_token_in_git_config(manifest):
     doc = yaml.safe_load(text)
 
     # Assert
-    checkout = doc["jobs"]["build"]["steps"][0]
+    checkout = doc["jobs"]["build"]["steps"][1]
     assert checkout["uses"].startswith("actions/checkout")
     assert checkout["with"]["persist-credentials"] is False
     assert "# si#622: the job's token is not left in .git/config" in text
@@ -384,8 +390,9 @@ def test_a_job_may_decline_the_checkout(manifest):
     """))
 
     # Assert
-    assert [step["uses"] for step in doc["jobs"]["build"]["steps"]] == ["actions/checkout@v4"]
-    assert doc["jobs"]["build"]["steps"][0]["with"]["fetch-depth"] == 1
+    own = [step for step in doc["jobs"]["build"]["steps"] if not _reaps(step)]
+    assert [step["uses"] for step in own] == ["actions/checkout@v4"]
+    assert own[0]["with"]["fetch-depth"] == 1
 
 
 def test_the_interpreter_version_stays_a_string(manifest):
@@ -405,7 +412,7 @@ def test_the_interpreter_version_stays_a_string(manifest):
     """)
 
     # Assert
-    assert yaml.safe_load(text)["jobs"]["build"]["steps"][1]["with"]["python-version"] == "3.12"
+    assert yaml.safe_load(text)["jobs"]["build"]["steps"][2]["with"]["python-version"] == "3.12"
     assert "python-version: '3.12'" in text
 
 
@@ -1699,7 +1706,7 @@ def test_a_derived_step_is_rendered_through_the_products_launcher(derive_manifes
 def test_a_derived_workflow_is_something_github_would_run(derive_manifest):
     doc = yaml.safe_load(_render(derive_manifest, _DERIVED))
 
-    assert [step["run"] for step in doc["jobs"]["gate"]["steps"] if "run" in step] == [
+    assert [step["run"] for step in doc["jobs"]["gate"]["steps"] if "run" in step and not _reaps(step)] == [
         "exec ./sample.sh build wheel", "exec ./sample.sh test suite"]
 
 
@@ -1760,7 +1767,7 @@ def test_a_derived_block_sits_beside_a_products_own_steps_in_the_order_it_wrote_
     """)
     doc = yaml.safe_load(text)
 
-    assert [sorted(step)[0] for step in doc["jobs"]["gate"]["steps"]] == [
+    assert [sorted(step)[0] for step in doc["jobs"]["gate"]["steps"] if not _reaps(step)] == [
         "uses", "uses", "run", "run"]
     assert doc["jobs"]["gate"]["steps"][-1] == {"run": "echo done"}
 
@@ -1873,7 +1880,7 @@ def test_a_stage_becomes_a_job_that_deploys_what_its_environment_declares(rollou
     Neither declaration carries the other's answer."""
     doc = yaml.safe_load(_rolled(rollout_manifest))
 
-    runs = {name: [s["run"] for s in job["steps"] if "run" in s]
+    runs = {name: [s["run"] for s in job["steps"] if "run" in s and not _reaps(s)]
             for name, job in doc["jobs"].items()}
 
     assert runs == {"deploy-test": ["exec ./app.sh deploy up --version latest"],
@@ -2047,7 +2054,7 @@ def disk_manifest():
 def test_a_self_hosted_job_is_given_a_disk_preflight_before_its_own_first_step(disk_manifest):
     # arrange / act
     doc = yaml.safe_load(_render(disk_manifest, _SELF_HOSTED))
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert: FIRST of the runs, so a machine that cannot finish the job says so in one second rather
     # than eight minutes into a docker build
@@ -2081,7 +2088,7 @@ def test_a_github_hosted_job_gets_no_disk_steps(disk_manifest):
     """))
 
     # act
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert: exactly the product's own step and nothing added
     assert runs == ["exec ./sample.sh test all"]
@@ -2103,7 +2110,7 @@ def test_a_job_that_names_its_own_machine_gets_no_disk_steps(disk_manifest):
     """))
 
     # act
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert
     assert runs == ["exec ./sample.sh test all"]
@@ -2118,7 +2125,7 @@ def test_a_product_that_placed_neither_coordinate_is_told_so_in_the_generated_fi
     doc = yaml.safe_load(text)
 
     # act
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert
     assert runs == ["exec ./sample.sh test all"]
@@ -2149,7 +2156,7 @@ def docker_manifest():
 def test_a_self_hosted_job_probes_docker_before_anything_else(docker_manifest):
     # arrange / act
     doc = yaml.safe_load(_render(docker_manifest, _SELF_HOSTED))
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert: FIRST, ahead of the disk preflight - on ghr-8 that one was green while docker was refused
     assert runs[:3] == ["exec ./sample.sh support ci-docker-preflight", "exec ./sample.sh support ci-disk-preflight",
@@ -2170,7 +2177,7 @@ def test_a_github_hosted_job_gets_no_docker_probe(docker_manifest):
     """))
 
     # act
-    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert
     assert runs == ["exec ./sample.sh test all"]
@@ -2180,7 +2187,7 @@ def test_a_product_without_the_probe_keeps_its_disk_steps_and_is_told(disk_manif
     # arrange / act: the probe is a separate placement, so a product that placed only the disk pair loses
     # nothing at the kernel bump - and is told, in the file, what it is not getting
     text = _render(disk_manifest, _SELF_HOSTED)
-    runs = [s.get("run") for s in yaml.safe_load(text)["jobs"]["build"]["steps"] if "run" in s]
+    runs = [s.get("run") for s in yaml.safe_load(text)["jobs"]["build"]["steps"] if "run" in s and not _reaps(s)]
 
     # assert
     assert runs[0] == "exec ./sample.sh support ci-disk-preflight"
@@ -2670,7 +2677,7 @@ def _release_text(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WOR
 
 
 def _release_steps(text: str) -> list[dict]:
-    return yaml.safe_load(text)["jobs"]["release"]["steps"]
+    return [step for step in yaml.safe_load(text)["jobs"]["release"]["steps"] if not _reaps(step)]
 
 
 def _runs(text: str) -> list[str]:

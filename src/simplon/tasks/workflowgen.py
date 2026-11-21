@@ -69,7 +69,7 @@ import yaml
 
 from simplon.manifest import artifactsection, context, runners, signatures
 from simplon.model import task
-from simplon.adapters import disk
+from simplon.adapters import disk, docker, tools
 from simplon.model.command import ReleaseCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
@@ -164,6 +164,98 @@ rule instead of somebody having to remember it."""
 #: file asks why the checkout departs from actions/checkout's default.
 NO_PERSIST_NOTE = """si#622: the job's token is not left in .git/config for every step, build and tests
 included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself."""
+
+#: si#756: the step every generated job starts with, ahead of its checkout. Named, because it is the one step
+#: in the file whose `run:` is not a line a developer types, and the Actions UI shows the name.
+REAP_NAME = "Remove the containers a cancelled job left running"
+
+#: Where the step runs: wherever the machine outlives the job. A GitHub-hosted machine is destroyed after
+#: every job, so nothing it started can reach the next one; Windows is left out because `shell: bash` is
+#: not a given there. Decided at RUN time from what GitHub says about the machine, not at generation from
+#: the runner kind, because `runs-on: <label>` names a self-hosted machine as often as `runner:` does and
+#: the kernel cannot read the machine off a label (firn's jobs are `runs-on: firn`). `!=` and not
+#: `== 'self-hosted'`: a runner too old to set `runner.environment` gives an empty string, and an unknown
+#: machine errs toward looking, never toward a skip that reads like "nothing to do".
+REAP_CONDITION = "runner.environment != 'github-hosted' && runner.os != 'Windows'"
+
+#: A hung daemon would otherwise hold the job for GitHub's 360 minutes with no verdict. Each orphan is given
+#: REAP_WAIT_SECONDS to disappear after `rm --force`; five minutes is room for a pile of them.
+REAP_TIMEOUT_MINUTES = 5
+REAP_WAIT_SECONDS = 10
+
+REAP_NOTE = """si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+
+It removes a container only when BOTH hold: it carries `{label}`, the label the kernel puts on
+every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+runner runs one job at a time and this step runs before this job has started anything, so such a
+container is an orphan by definition; a container of another checkout or of a developer's gate on the
+same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+
+Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+own first docker step meets the same daemon and says why. An orphan that is still there after
+`rm --force` fails the step: it would be writing into this job's checkout."""
+
+REAP_SCRIPT = """ws="${GITHUB_WORKSPACE:?}"
+if command -v docker >/dev/null 2>&1; then
+  d=docker
+elif [ -x "$ws/@BIN_DIR@/docker" ]; then
+  d="$ws/@BIN_DIR@/docker"
+else
+  echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/@BIN_DIR@/docker"
+  exit 0
+fi
+err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+if ! ids="$("$d" ps --all --quiet --no-trunc --filter @FILTER@ 2>"$err")"; then
+  echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+  rm -f "$err"
+  exit 0
+fi
+rm -f "$err"
+# Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+removed=0
+left=0
+for id in $ids; do
+  if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+    gone "$id" && continue
+    echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+    left=$((left + 1))
+    continue
+  fi
+  printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+  echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+  "$d" rm --force "$id" >/dev/null 2>&1 || true
+  waited=0
+  until gone "$id" || [ "$waited" -ge @WAIT@ ]; do sleep 1; waited=$((waited + 1)); done
+  if gone "$id"; then
+    echo "  removed"
+    removed=$((removed + 1))
+  else
+    echo "::error::orphan $id is still there @WAIT@ s after docker rm --force"
+    left=$((left + 1))
+  fi
+done
+echo "$removed orphaned container(s) removed"
+if [ "$left" -ne 0 ]; then
+  echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+  exit 1
+fi"""
+
+
+def _reap_step(product: str) -> Step:
+    """The step every generated job starts with (si#756), valued with the product its label names."""
+    label = f"{docker.RUN_LABEL}={product}"
+    script = (REAP_SCRIPT.replace("@BIN_DIR@", tools.BIN_DIR)
+              .replace("@FILTER@", shlex.quote(f"label={label}"))
+              .replace("@WAIT@", str(REAP_WAIT_SECONDS)))
+    return Step(verbatim={"name": REAP_NAME, "if": REAP_CONDITION, "timeout-minutes": REAP_TIMEOUT_MINUTES,
+                          "shell": "bash", "run": script + "\n"},
+                note=REAP_NOTE.format(label=label))
+
 
 _HEADER = ("GENERATED from {source} by `{product} support workflows`. Do not edit.",
            "",
@@ -1757,6 +1849,11 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         lines += _key_and_value(key, value, "    ")
     lines.append("    steps:")
 
+    # si#756: FIRST, ahead of the checkout, and on every job - including one that declines the generated
+    # checkout, because its own steps start containers in the same workspace. See REAP_NOTE.
+    reap = _reap_step(product)
+    lines += _comment(reap.note, "      ")
+    lines += _dumped_step(reap.verbatim or {}, "      ")
     if job.checkout:
         # si#3's invariant, emitted rather than declared - see the module docstring. A job that wants a
         # different checkout says `checkout: false` and writes its own, which is visible in the manifest

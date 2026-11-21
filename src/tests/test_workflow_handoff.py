@@ -60,7 +60,8 @@ def _render(body, key="ci"):
 
 
 def _steps(doc, job):
-    return doc["jobs"][job]["steps"]
+    """The job's steps after si#756's reap, which every generated job starts with (`test_workflow_reap.py`)."""
+    return [step for step in doc["jobs"][job]["steps"] if step.get("name") != workflowgen.REAP_NAME]
 
 
 def test_the_producing_job_archives_and_uploads_after_its_producing_step():
@@ -85,7 +86,7 @@ def test_the_consuming_job_needs_the_producer_and_downloads_before_its_consuming
     # assert: checkout, build image, download, untar, push
     job = doc["jobs"]["release"]
     assert job["needs"] == "test"
-    steps = job["steps"]
+    steps = _steps(doc, "release")
     assert steps[2] == {"uses": "actions/download-artifact@v4",
                         "with": {"name": "app-checked", "path": "${{ runner.temp }}"}}
     assert steps[3]["run"] == 'tar -xf "${{ runner.temp }}/simplon-handoff-app-checked.tar"'
@@ -171,7 +172,7 @@ def test_an_aggregate_step_hands_over_what_its_leaves_produce():
                                             artifacts=artifactsection.declared(yaml.safe_load(text))))
 
     # assert
-    assert doc["jobs"]["test"]["steps"][4]["with"]["name"] == "app-checked"
+    assert _steps(doc, "test")[4]["with"]["name"] == "app-checked"
 
 
 def test_a_refusal_stops_generation_and_names_the_workflow():

@@ -44,6 +44,71 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
       # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
@@ -141,6 +206,71 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
       # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
@@ -269,6 +399,71 @@ jobs:
       contents: read
     needs: publish
     steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
       # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
@@ -351,6 +546,71 @@ jobs:
       group: pages
       cancel-in-progress: false
     steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
       # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
@@ -416,6 +676,71 @@ jobs:
       pull-requests: write
       actions: write
     steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
       # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
