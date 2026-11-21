@@ -593,3 +593,151 @@ def test_the_play_reads_the_directories_as_data_and_creates_parents_plainly(tmp_
     parents = names.index("The parents of those directories are there, as the system makes them")
     assert names[parents + 1] == "The directories the stacks bind are there, with their owner and mode"
     assert set(play["tasks"][parents]["ansible.builtin.file"]) == {"path", "state"}
+
+
+# --- a path written as ${VAR}, resolved from the values the deployment sends (si#809) ----------------
+#
+# LOAD TIME sees the template and nothing else: it checks the SHAPE (`${NAME}` and only that form, the
+# text around it in the path set, absolute or starting with a variable) and that every name is one the
+# deployment sends. RUN TIME, in `deploy up`, resolves it against `stack_values` - the very values Portainer
+# is handed - and puts the RESOLVED string through `carrier_path` before anything is asked of the carrier.
+
+def _templated(directories: list, required: "tuple[str, ...]" = ("DATA_DIR",),
+               optional: "tuple[str, ...]" = ()) -> environments.Environment:
+    document = _document(directories, required=list(required), optional=list(optional))
+    return environments.parse_data(document, ("portainer",)).environments["prod"]
+
+
+def test_a_path_may_be_a_value_the_deployment_sends_and_is_kept_as_written() -> None:
+    # act
+    env = _templated([{"path": "${DATA_DIR}", "owner": "1000"}, {"path": "${ROOT}/backups/"},
+                      {"path": "/srv/${ENV_NAME}/cache"}],
+                     required=("DATA_DIR", "ROOT"), optional=("ENV_NAME",))
+
+    # assert
+    assert [d.path for d in env.directories] == ["${DATA_DIR}", "${ROOT}/backups", "/srv/${ENV_NAME}/cache"]
+
+
+def test_a_variable_the_deployment_does_not_send_is_refused_by_name() -> None:
+    """Only `required:` and `optional:` travel, so a name in neither could never resolve."""
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _templated([{"path": "${COCKPIT_DATA}"}], required=("COCKPIT_DATA_DIR",))
+    assert "from COCKPIT_DATA," in str(refused.value) and "does not send" in str(refused.value)
+
+
+@pytest.mark.parametrize("path", ["$DATA_DIR", "${DATA_DIR:-/srv/app}", "${DATA_DIR-/srv/app}",
+                                  "/srv/${DATA_DIR}/{{ 7*7 }}", "${DATA_DIR}/$(id)", "${data dir}",
+                                  "/srv/${DATA_DIR}/../etc"])
+def test_a_template_of_any_other_shape_is_refused_at_load(path) -> None:
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _templated([{"path": path}])
+    assert "may only use letters, digits" in str(refused.value)
+
+
+def test_a_relative_path_around_a_variable_is_still_relative() -> None:
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _templated([{"path": "srv/${DATA_DIR}"}])
+    assert "names no absolute `path:`" in str(refused.value)
+
+
+def _deploy_templated(monkeypatch, daemon: FakeDaemon, directories: list, values: "dict[str, str]",
+                      builds: bool = False, optional: "tuple[str, ...]" = ()) -> Recorder:
+    recorder = Recorder({"/stacks": [{"Name": "app-prod", "EndpointId": 3, "Id": 9,
+                                      "Status": portainer.STATUS_UP}]})
+    for name in ("DATA_DIR", *optional):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(portainer, "_request", recorder)
+    monkeypatch.setattr(portainer, "_docker", daemon, raising=False)
+    monkeypatch.setattr(portainer, "_target_for", lambda env: (TARGET, REPOSITORY))
+    monkeypatch.setattr(portainer, "_built_by_kernel", lambda env: builds, raising=False)
+    monkeypatch.setattr(portainer, "check_registry_access", lambda *args: None)
+    portainer.PortainerBackend().deploy(
+        _templated(directories, optional=optional),
+        deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+    return recorder
+
+
+def test_a_templated_path_is_resolved_from_the_deployments_values_and_created(monkeypatch, capsys) -> None:
+    """THE TICKET'S ACCEPTANCE, seen red first: before si#809 the loader refused `${DATA_DIR}` as a path
+    outside the path set."""
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755)})
+
+    # act
+    recorder = _deploy_templated(monkeypatch, daemon, [{"path": "${DATA_DIR}/db", "owner": "1000:1000"}],
+                                 {"DATA_DIR": "/srv/app"})
+
+    # assert
+    assert daemon.written == ["/srv/app", "/srv/app/db"]
+    assert daemon.tree["/srv/app/db"] == (1000, 1000, 0o755)
+    assert "created /srv/app/db on the carrier, owner 1000:1000" in capsys.readouterr().out
+    assert any(call[0] == "PUT" for call in recorder.calls), "the stack was deployed"
+
+
+@pytest.mark.parametrize("value", ["/srv/app/{{ 7*7 }}", "/srv/../etc", "srv/app", "/srv/app;id",
+                                   "/srv/$(id)"])
+def test_a_resolved_value_goes_through_the_path_rule_before_the_carrier_is_asked(monkeypatch, value) -> None:
+    """A value from the environment is no safer than one from the file."""
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755)})
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _deploy_templated(monkeypatch, daemon, [{"path": "${DATA_DIR}"}], {"DATA_DIR": value})
+    assert "resolved from the deployment's values" in str(refused.value)
+    assert daemon.calls == [], "nothing reached the carrier"
+
+
+def test_an_unresolved_variable_is_a_diagnosis_that_names_it(monkeypatch) -> None:
+    """Only an `optional:` value can be absent here - `stack_values` refuses a missing `required:` one."""
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755)})
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _deploy_templated(monkeypatch, daemon, [{"path": "/srv/${TENANT}/data"}, {"path": "${DATA_DIR}"}],
+                          {"DATA_DIR": "/srv/app"}, optional=("TENANT",))
+    message = str(refused.value)
+    assert "sends no value for TENANT" in message and "/srv/${TENANT}/data" in message
+    assert "DATA_DIR" not in message
+    assert daemon.calls == [] and daemon.written == []
+
+
+def test_on_a_carrier_deploy_carrier_builds_a_templated_one_is_still_created_by_deploy_up(monkeypatch) -> None:
+    """`deploy carrier` does not have the deployment's values, so it leaves a templated path alone - and
+    then nothing but `deploy up` could make it."""
+    # arrange
+    daemon = FakeDaemon({"/srv": (0, 0, 0o755)})
+
+    # act
+    _deploy_templated(monkeypatch, daemon, [{"path": "${DATA_DIR}", "owner": "1000"}],
+                      {"DATA_DIR": "/srv/app"}, builds=True)
+
+    # assert
+    assert daemon.written == ["/srv/app"]
+
+
+def test_the_carrier_run_names_a_templated_path_it_cannot_resolve_and_never_writes_it(monkeypatch, tmp_path,
+                                                                                    capsys) -> None:
+    """MEASURED: `deploy carrier` forwards no `required:` value (`carrier.variables_read`), and one run
+    serves every environment on the carrier, where `test` and `prod` give one name two values."""
+    # arrange
+    document = _document([{"path": "${DATA_DIR}", "owner": "1000"}, {"path": "/srv/app/literal"}],
+                         required=["DATA_DIR"])
+    monkeypatch.setattr(context, "_current", context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+    monkeypatch.setattr(context.ProductContext, "manifest_data", lambda self: document)
+    monkeypatch.setenv("DATA_DIR", "/srv/from-the-shell")
+
+    # act
+    items = carrier.directories_on("haus")
+
+    # assert
+    assert items == [{"path": "/srv/app/literal"}]
+    assert "$" not in carrier.unsafe_vars(items)
+    out = capsys.readouterr().out
+    assert "${DATA_DIR} was not created" in out and "environment 'prod'" in out and "`deploy up`" in out
