@@ -416,6 +416,10 @@ def test_a_single_runner_label_may_be_a_string():
     ({"repository": "https://github.com/o/r", "token_from": "P"}, "is not an owner/name pair"),
     ({"repository": "o/r/x", "token_from": "P"}, "is not an owner/name pair"),
     ({"repository": "o", "token_from": "P"}, "names an owner and no repository"),
+    # si#815: outside GitHub's own characters - and the first is a template on the Ansible controller.
+    ({"repository": "o/{{lookup('pipe','id')}}", "token_from": "P"}, "GitHub would not accept"),
+    ({"repository": "o$(id)/r", "token_from": "P"}, "GitHub would not accept"),
+    ({"repository": "o_x/r", "token_from": "P"}, "GitHub would not accept"),
     ({"repository": "o/r"}, "declares no `token_from:`"),
     ({"repository": "o/r", "token_from": "P", "labels": [1]}, "is not a label"),
     ({"repository": "o/r", "token_from": "P", "labels": {"a": 1}}, "is a label or a list of labels"),
@@ -428,6 +432,17 @@ def test_every_broken_runner_half_is_refused_by_the_line_it_names(runner, fragme
     # act / assert
     with pytest.raises(ValueError, match=fragment):
         carrierspec.declared(document, "x")
+
+
+@pytest.mark.parametrize("repository", ["marcozwyssig/biz-cockpit", "Some-Org/repo.name_2", "o/.github"])
+def test_every_repository_github_can_name_is_read(repository):
+    """si#815's charset is GitHub's own, so it refuses no repository that exists: an owner is letters,
+    digits and `-`, a name adds `.` and `_`."""
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "runner": {"repository": repository, "token_from": "P"}}
+
+    # act / assert
+    assert carrierspec.declared({"carriers": {"c": spec}}, "x")["c"].runner.repository == repository
 
 
 def test_a_runner_without_a_machine_is_refused_because_nothing_could_install_it():

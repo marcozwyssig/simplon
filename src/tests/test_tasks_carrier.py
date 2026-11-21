@@ -152,7 +152,7 @@ def test_a_storage_serves_containers_only_when_all_three_fields_say_so(storage, 
 
 def _play() -> str:
     return carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
-                                   password="not-a-real-password", password_from="PORTAINER_PASSWORD")
+                                   password="not-a-real-password", vars_file=carrier.VARS_FILE)
 
 
 def test_portainer_is_started_already_initialised():
@@ -255,11 +255,11 @@ def test_the_rendered_playbook_carries_no_password():
 
     # act
     rendered = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
-                                       password_from="PORTAINER_PASSWORD")
+                                       vars_file=carrier.VARS_FILE)
 
     # assert
     assert secret not in rendered
-    assert "lookup('env', 'PORTAINER_PASSWORD')" in rendered, (
+    assert "lookup('env', portainer_password_variable)" in rendered, (
         "the play has to NAME the variable, or it reads nothing and Portainer starts uninitialised")
     assert "{password}" not in carrier.PLAYBOOK, (
         "a format field for the value is the defect itself, waiting for a caller to fill it")
@@ -573,7 +573,9 @@ def test_the_token_is_shown_under_the_variable_deploy_up_reads():
     # arrange
     from simplon.adapters import portainer
     shown = _task(carrier.SHOW_TASK)["ansible.builtin.debug"]["msg"][0]
-    variable = shown.split("=", 1)[0]
+    assert shown.split("=", 1)[0] == "{{ portainer_token_variable }}", (
+        "the name is read from the !unsafe vars file, never spliced into the play (si#815)")
+    variable = carrier.manifest_values(CARRIER)["portainer_token_variable"]
     environ = {"PORTAINER_URL": "https://10.0.0.9:9443", variable: "ptr_x"}
 
     env = environments.Environment("prod", portainer.BACKEND, "", carrier=CARRIER.name)
@@ -756,7 +758,9 @@ def test_the_token_reaches_no_rendered_file_and_no_command_line(_lines, monkeypa
     assert not any(TOKEN in arg for arg in argv)
     assert argv[argv.index("COCKPIT_RUNNER_TOKEN") - 1] == "-e", (
         "the variable crosses into the Ansible container by NAME, `docker run -e NAME`")
-    assert "lookup('env', 'COCKPIT_RUNNER_TOKEN')" in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    assert "lookup('env', runner_token_variable)" in (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    assert 'runner_token_variable: !unsafe "COCKPIT_RUNNER_TOKEN"' in (
+        tmp_path / carrier.VARS_FILE).read_text(encoding="utf-8")
 
 
 def test_the_registration_reads_the_token_from_stdin_and_logs_nothing():
@@ -807,9 +811,11 @@ def test_the_runner_registers_on_its_repository_with_its_labels_as_a_service():
     text = carrier.runner_play(RUNNER)
 
     # assert
-    assert play["vars"]["runner_url"] == "https://github.com/marcozwyssig/biz-cockpit"
-    assert play["vars"]["runner_labels"] == "cockpit-runner,x64"
-    assert play["vars"]["runner_name"] == "cockpit-runner"
+    values = carrier.manifest_values(RUNNER)
+    assert values["runner_url"] == "https://github.com/marcozwyssig/biz-cockpit"
+    assert values["runner_labels"] == "cockpit-runner,x64"
+    assert values["runner_name"] == "cockpit-runner"
+    assert play["vars_files"] == [carrier.VARS_FILE]
     assert "./svc.sh install" in text
     assert "Listening for Jobs" in text, "the play waits for the runner to say it is online"
 
@@ -866,6 +872,72 @@ def test_the_play_reads_the_password_under_the_prefix_the_carrier_names(_lines, 
     argv = _lines[0]
     forwarded = argv[argv.index("-e") + 1]
     play = (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    values = (tmp_path / carrier.VARS_FILE).read_text(encoding="utf-8")
     assert forwarded == "COCKPIT_PASSWORD"
-    assert f"lookup('env', '{forwarded}')" in play, "the play reads a variable the kernel did not forward"
-    assert "PORTAINER_PASSWORD" not in play
+    assert "lookup('env', portainer_password_variable)" in play
+    assert f'portainer_password_variable: !unsafe "{forwarded}"' in values, (
+        "the play reads a variable the kernel did not forward")
+    assert "PORTAINER_PASSWORD" not in play + values
+
+
+# --- si#815: no manifest string reaches a play as a template ----------------------------------------
+
+#: What a hostile manifest could write: a template for each value the plays take from the file, and a
+#: prefix that closes the `lookup('env', '...')` it used to be spliced into.
+TEMPLATE = "{{ lookup('pipe','id') }}"
+SPLICE = "X') }}{{ lookup('pipe','id') }}{{ ('"
+
+HOSTILE = carrierspec.Carrier(
+    name="c" + TEMPLATE,
+    proxmox=MACHINE.proxmox,
+    portainer=carrierspec.Portainer(url_from=SPLICE, endpoint=1),
+    runner=carrierspec.Runner(repository="o/r", labels=(TEMPLATE, "x64"), token_from=SPLICE),
+)
+
+
+def _unsafe_loader():
+    """A YAML loader that reads `!unsafe` as Ansible does - the tagged scalar, as it is - and remembers
+    which values carried the tag."""
+    import yaml
+
+    tagged: list[str] = []
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    def unsafe(loader, node):
+        tagged.append(loader.construct_scalar(node))
+        return tagged[-1]
+
+    Loader.add_constructor("!unsafe", unsafe)
+    return Loader, tagged
+
+
+def test_no_manifest_string_is_written_into_a_play(_lines, monkeypatch, tmp_path):
+    """MEASURED BEFORE THE FIX with the pinned ansible image (si#815): a label written as
+    `{{ lookup('pipe','id') }}` reached the play as `uid=0(root) ...`, and a `token_from` or `url_from`
+    holding `') }}{{ ... }}{{ ('` closed the env lookup it was spliced into and ran what followed - on the
+    controller, which holds the carrier's ssh key and the forwarded secrets. So the plays carry NONE of the
+    manifest's strings: each one is in the vars file, tagged `!unsafe`, and read there as it was written."""
+    # arrange
+    import yaml
+
+    monkeypatch.setenv(f"{SPLICE}{carrier.RUNNER_TOKEN_SUFFIX}", TOKEN)
+    monkeypatch.setenv(f"{SPLICE}{carrier.PASSWORD_SUFFIX}", "a-long-enough-password")
+    loader, tagged = _unsafe_loader()
+
+    # act
+    carrier._ansible(HOSTILE, "10.0.0.9", tmp_path, tmp_path / "key", carrier.PORTAINER_PORT)
+
+    # assert
+    plays = (tmp_path / "carrier.yml").read_text(encoding="utf-8")
+    assert "lookup('pipe'" not in plays, "a manifest string was written into a play, where Ansible templates it"
+    assert [play.get("vars_files") for play in yaml.safe_load(plays)] == [[carrier.VARS_FILE]] * 2
+    values = yaml.load((tmp_path / carrier.VARS_FILE).read_text(encoding="utf-8"), Loader=loader)
+    assert values["runner_labels"] == f"{TEMPLATE},x64"
+    assert values["runner_name"] == HOSTILE.name
+    assert values["runner_token_variable"] == f"{SPLICE}{carrier.RUNNER_TOKEN_SUFFIX}"
+    assert values["portainer_password_variable"] == f"{SPLICE}{carrier.PASSWORD_SUFFIX}"
+    assert values["portainer_token_variable"] == f"{SPLICE}_TOKEN", "si#784's shown name, the same way"
+    assert sorted(tagged) == sorted(v for k, v in values.items() if k != "carrier_directories"), (
+        "every manifest value carries the tag - an untagged one is a template again")
