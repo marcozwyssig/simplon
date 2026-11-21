@@ -79,6 +79,16 @@ RUNNER_KEYS = ("repository", "labels", "token_from")
 #: name adds `.` and `_`.
 _GITHUB_REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 
+#: Proxmox's own rule for a container's hostname (si#820): its `dns-name` format, read off pve-common's
+#: `pve_verify_dns_name` (fetched 2026-11-21) - LXC `hostname` is `format => 'dns-name'` - and copied as it
+#: stands into bpg's provider as `HostnameValidator`. A carrier with `proxmox:` names its container by its
+#: own name, so a name outside this is one no carrier could be made with.
+_PROXMOX_HOSTNAME = re.compile(r"([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?")
+
+#: The kernel's own form for a carrier's name (si#820, owner 2026-11-20), narrower than Proxmox's: no upper
+#: case and no dot. See `_name` for what that costs.
+_CARRIER_NAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
+
 #: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
 #: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
 #: nothing gets what the tool the owner named would have given it.
@@ -219,6 +229,7 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
     file and needs to know which line."""
     if not isinstance(spec, Mapping):
         raise ValueError(f"{where} must be a mapping, not {type(spec).__name__}")
+    _name(name, "proxmox" in spec, where)
 
     if "proxmox" not in spec:
         # A PORTAINER SOMEBODY ELSE BUILT, which is a complete statement and not half a carrier
@@ -273,6 +284,11 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
             f"{where}'s `portainer:` declares no `url_from:`, so nothing says where the URL and the "
             f"token are read from. It is a PREFIX, not a value: `url_from: PORTAINER` means "
             f"PORTAINER_URL and PORTAINER_TOKEN")
+    if machine is not None:
+        # ONLY WHERE A PLAY READS IT (si#820): a carrier the kernel makes gets the Portainer play, which
+        # reads `<url_from>_PASSWORD`. A Portainer somebody else built gets no play, and the backend reads
+        # its prefix in Python, which takes any name - refusing it there would cost a working manifest.
+        _readable_prefix(url_from, "portainer: url_from:", where)
     raw_endpoint = portainer.get("endpoint", DEFAULT_ENDPOINT)
     try:
         endpoint = int(raw_endpoint)
@@ -326,8 +342,61 @@ def _runner(block: Mapping, name: str, where: str) -> Runner:
         raise ValueError(
             f"{where}'s `runner:` declares no `token_from:`, so nothing says where the registration token "
             f"is read from. It is a PREFIX, not a value: `token_from: COCKPIT` means COCKPIT_RUNNER_TOKEN")
+    # A runner always gets the play - it is refused above without a machine - so this always applies.
+    _readable_prefix(token_from, "runner: token_from:", where)
     return Runner(repository=repository, labels=_labels(block.get("labels"), where) or (name,),
                   token_from=token_from)
+
+
+def _name(name: str, machine: bool, where: str) -> None:
+    """The carrier's name, refused outside the kernel's form (si#820) - TWO refusals, because the census
+    takes one kind per refusal and the names this refuses are of two kinds.
+
+    WHY A RULE AT ALL, and one place instead of quoting at three: the name reaches `inventory.ini`, a
+    `bash -c` line in the Pulumi container and a path under `build/carrier/` unquoted, and is the
+    container's hostname. Measured 2026-11-21 with the pinned images: Ansible read `c ansible_port=2222`
+    as host `c` with a port set, and `haus[1:2]` as two hosts; pulumi's `bash -c` ran `;`-separated text
+    in the name as commands.
+
+    THE DIAGNOSIS: a carrier with `proxmox:` whose name Proxmox would refuse as a hostname. No such
+    carrier could be made, and Proxmox's rule alone - letters, digits, `-`, dot-separated labels - is
+    what keeps the name a name in all three places: Ansible's inventory and Pulumi's stack names took
+    every name Proxmox took in the same measurement, and refused or misread only names Proxmox refuses.
+
+    THE EXPRESSION RULE: everything else outside lower-case letters, digits and `-`. Proxmox, Pulumi and
+    Ansible all took `Haus`, `HAUS` and `haus.lan`, and a carrier with no `proxmox:` reaches none of the
+    three - its name is a label in a message - so each refused name here would have worked. It stands as
+    the owner's decision of 2026-11-20 (one form for every carrier, the one a hostname, a stack, an
+    inventory host and a directory all take), and the census bills it with that measurement.
+    """
+    if machine and not _PROXMOX_HOSTNAME.fullmatch(name):
+        raise ValueError(
+            f"{where}: the name {name!r} is not a hostname Proxmox accepts, and a carrier's name is its "
+            f"container's hostname. Proxmox takes letters, digits and `-`, in dot-separated parts that "
+            f"neither start nor end with `-`; rename the carrier, e.g. to lower-case letters, digits "
+            f"and `-`")
+    if not _CARRIER_NAME.fullmatch(name):
+        raise ValueError(
+            f"{where}: a carrier's name is lower-case letters, digits and `-`, neither starting nor "
+            f"ending with `-`, and {name!r} is not. It is one form for every carrier, the one a hostname, "
+            f"a Pulumi stack, an inventory host and a directory all take; rename the carrier and the "
+            f"`carrier:` lines that point at it")
+
+
+def _readable_prefix(prefix: str, key: str, where: str) -> None:
+    """A credential prefix a play reads, refused when it carries whitespace (si#820) - a DIAGNOSIS.
+
+    Measured with the pinned ansible image: docker forwarded `MY HAUS_PASSWORD` whole, and the play's
+    `lookup('env', ...)` read nothing, because it splits its term on whitespace. The runner play then
+    stopped on its empty token; the Portainer play wrote an empty admin password, behind a kernel check
+    that had seen the variable set. `-` is NOT refused: `my-haus` was measured to reach the play whole.
+    """
+    if any(c.isspace() for c in prefix):
+        suggestion = "_".join(prefix.split())
+        raise ValueError(
+            f"{where}'s `{key}` is {prefix!r}, and a prefix with whitespace in it is never read: the play "
+            f"reads the variable it names with Ansible's `lookup('env', ...)`, which splits its term on "
+            f"whitespace and reads nothing. Write it without the space, e.g. `{suggestion}`")
 
 
 def _labels(declared: object, where: str) -> tuple[str, ...]:

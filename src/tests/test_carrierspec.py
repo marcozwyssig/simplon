@@ -455,3 +455,97 @@ def test_a_runner_without_a_machine_is_refused_because_nothing_could_install_it(
     # act / assert
     with pytest.raises(ValueError, match="is installed only on a machine the kernel makes"):
         carrierspec.declared(document, "x")
+
+
+# --- si#820: the carrier name, and a prefix the play can read ---------------------------------------
+#
+# The carrier name reaches three places unquoted - a line of `inventory.ini`, a `bash -c` line in the
+# Pulumi container, a path under `build/carrier/` - and is the container's hostname. Measured 2026-11-21,
+# each tool given the same names: Proxmox's `dns-name` format (pve-common `pve_verify_dns_name`, which
+# bpg's provider copies as `HostnameValidator`) refuses `haus_1`, `-haus`, `haus-`, `haus..lan`, a space,
+# `#`, `=`, `/`, `[`, `:`, `;`, `$`, `,`, quotes and a non-ASCII letter. Ansible's inventory read
+# `c ansible_port=2222` as host `c` with a port and `haus[1:2]` as two hosts, and the pinned pulumi image
+# ran `;`-separated text in the name as commands. Proxmox, Pulumi and Ansible all accepted `Haus`, `HAUS`
+# and `haus.lan`: those are the names the narrower rule refuses that would have worked.
+
+@pytest.mark.parametrize("name", ["hausportainer", "h", "1haus", "haus-1", "ghr-9"])
+def test_a_carrier_name_every_tool_takes_is_read(name):
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE}
+
+    # act / assert
+    assert carrierspec.declared({"carriers": {name: spec}}, "x")[name].name == name
+
+
+@pytest.mark.parametrize("name", ["haus_1", "-haus", "haus-", "haus..lan", "c ansible_port=2222",
+                                  "haus[1:2]", "c;id", "c$(id)", "hä", ""])
+def test_a_machine_name_proxmox_would_refuse_as_a_hostname_is_a_diagnosis(name):
+    """A carrier with `proxmox:` names its container by its own name, and Proxmox refuses each of these as
+    a hostname, so no such carrier could be made. The same refusal is what keeps the name out of the
+    inventory line and the `bash -c` line as anything but a name."""
+    # arrange
+    document = {"carriers": {name: {"proxmox": RUNNER_MACHINE}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="not a hostname Proxmox accepts"):
+        carrierspec.declared(document, "x")
+
+
+@pytest.mark.parametrize("spec, name", [
+    ({"proxmox": RUNNER_MACHINE}, "Haus"),
+    ({"proxmox": RUNNER_MACHINE}, "haus.lan"),
+    ({"portainer": {"url_from": "P"}}, "haus_1"),
+    ({"portainer": {"url_from": "P"}}, "Haus Portainer"),
+])
+def test_a_name_that_would_have_worked_is_refused_by_the_kernels_own_form(spec, name):
+    """THE EXPRESSION RULE. Proxmox, Pulumi and Ansible all took `Haus` and `haus.lan`, and a carrier
+    with no `proxmox:` reaches none of them - its name is only a label in a message. The census bills it."""
+    # act / assert
+    with pytest.raises(ValueError, match="a carrier's name is lower-case letters, digits and `-`"):
+        carrierspec.declared({"carriers": {name: spec}}, "x")
+
+
+def test_a_runner_prefix_with_whitespace_is_refused_because_the_play_reads_nothing():
+    """Measured with the pinned ansible image: `lookup('env', 'MY HAUS_RUNNER_TOKEN')` splits its term on
+    the space and reads empty, although docker forwarded the variable whole."""
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "runner": {"repository": "o/r", "token_from": "MY HAUS"}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="splits its term on whitespace"):
+        carrierspec.declared({"carriers": {"c": spec}}, "x")
+
+
+def test_a_portainer_prefix_with_whitespace_is_refused_where_the_play_reads_it():
+    """The Portainer play reads `<url_from>_PASSWORD` the same way, so on a carrier the kernel makes the
+    password arrived empty while the kernel's own check had seen it set."""
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "portainer": {"url_from": "MY HAUS"}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="splits its term on whitespace"):
+        carrierspec.declared({"carriers": {"c": spec}}, "x")
+
+
+def test_a_portainer_prefix_with_whitespace_is_read_where_no_play_reads_it():
+    """A Portainer somebody else built gets no play; its prefix is read by the backend in Python, which
+    takes any name. Refusing it there would be an expression rule the census does not carry."""
+    # arrange
+    spec = {"portainer": {"url_from": "MY HAUS"}}
+
+    # act / assert
+    assert carrierspec.declared({"carriers": {"c": spec}}, "x")["c"].portainer.url_from == "MY HAUS"
+
+
+@pytest.mark.parametrize("prefix", ["my-haus", "COCKPIT", "proxmox_2"])
+def test_a_prefix_without_whitespace_is_read(prefix):
+    """`my-haus` was measured to reach the play whole: the rule is whitespace, not a character set."""
+    # arrange
+    spec = {"proxmox": RUNNER_MACHINE, "portainer": {"url_from": prefix},
+            "runner": {"repository": "o/r", "token_from": prefix}}
+
+    # act
+    carrier = carrierspec.declared({"carriers": {"c": spec}}, "x")["c"]
+
+    # assert
+    assert (carrier.portainer.url_from, carrier.runner.token_from) == (prefix, prefix)
