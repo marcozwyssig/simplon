@@ -37,6 +37,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import ssl
 import tarfile
@@ -48,6 +49,7 @@ from typing import IO, TYPE_CHECKING, Callable, Mapping
 
 import yaml
 
+from simplon.adapters import docker
 from simplon.manifest import environments
 
 if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
@@ -435,7 +437,7 @@ def _compose_text(repository: "Repository") -> "str | None":
     that is the same document, give or take the ref; for one that is not, the file is absent and the
     caller says the check did not run rather than reading that as "no image".
     """
-    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
 
     try:
         return (context.current().root / repository.compose).read_text(encoding="utf-8")
@@ -733,7 +735,9 @@ class PortainerBackend:
                 f"deploy that")
         values = {**stack_values(env), VERSION_VAR: version.tag}
         credential = _clone_credential(repository, env)
-        check_directories(target, env)  # si#782
+        # si#782, si#808 - the carrier is only asked about when there is something to check
+        check_directories(target, env, create=bool(env.directories) and not _built_by_kernel(env),
+                          values=values)
         check_registry_access(target, repository, values)
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(target, repository, credential, env_vars=values)
@@ -841,7 +845,7 @@ def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
     all three are there and "portainer backend failed" would send the reader through the whole file.
     """
     from simplon.model import carrierspec
-    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
 
     if not env.carrier:
         raise ValueError(
@@ -858,6 +862,18 @@ def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
             f"the repository root")
     carriers = carrierspec.declared(context.current().manifest_data())
     return PortainerTarget.from_carrier(carriers[env.carrier], env.stack), env.repository
+
+
+def _built_by_kernel(env: "Environment") -> bool:
+    """True when `deploy carrier` builds this environment's carrier, which it does for one with `proxmox:`.
+
+    That run creates the declared directories, so `deploy up` leaves them to it and only checks. On any
+    other carrier nothing in the kernel would ever create them, so `deploy up` does (si#808).
+    """
+    from simplon.model import carrierspec
+    from simplon.manifest import context  # was local for a leaf; si#808: `docker` loads it at import
+
+    return carrierspec.declared(context.current().manifest_data())[str(env.carrier)].proxmox is not None
 
 
 def _clone_credential(repository: "Repository", env: "Environment") -> "tuple[str, str] | None":
@@ -912,9 +928,8 @@ def _clone_credential(repository: "Repository", env: "Environment") -> "tuple[st
 #: The image the probe container is created from, never pulled and never run. NOT declared through
 #: `docker.pinned_image`, and the rule that asks for it does not apply: its reason is a registry tag that
 #: means different bytes next month, and these bytes are `_probe_image()`'s own, loaded by this module and
-#: by nothing else. Importing `docker` here would also end this module being a leaf (it imports the
-#: manifest context at its head). Named `_REFERENCE` so the sweep for `*_IMAGE` constants does not read it
-#: as a pull nobody pinned.
+#: by nothing else. Named `_REFERENCE` so the sweep for `*_IMAGE` constants does not read it as a pull
+#: nobody pinned. (`INSTALL_IMAGE` below IS pulled, so it is pinned through `docker.pinned_image`, si#808.)
 PROBE_REFERENCE = "simplon-dirprobe:empty"
 PROBE_LABEL = "simplon.probe"
 _PROBE_TARGET = "/probe"
@@ -1038,13 +1053,189 @@ def _install(directory: "Directory") -> str:
     return f"install -d{owner}{group}{mode} {directory.path}"
 
 
-def check_directories(target: PortainerTarget, env: "Environment") -> None:
-    """Refuse a deployment whose bind-mount directories are not on the carrier as declared (si#782).
+# --- creating a missing one, on a carrier `deploy carrier` never builds (si#808) ---------------------
+#
+# A carrier with no `proxmox:` is a Portainer somebody else built, so `deploy carrier` never runs for it and
+# nothing in the kernel would create its directories: si#782 left `deploy up` refusing with the
+# `install -d` lines until somebody typed them on the host. Here `deploy up` runs that same line itself,
+# through the same proxy. An existing directory with the wrong owner or mode is never touched: that stays a
+# refusal, because rewriting it would change a tree somebody else may own.
+#
+# HOW. A short-lived container from `INSTALL_IMAGE` (busybox, pinned by digest, pulled through the proxy
+# when the daemon lacks it) binds the deepest existing parent writable and runs `install -d [-o uid]
+# [-g gid] [-m mode] <path below it>`, then is removed. The command is an argv list handed to Docker as
+# JSON - no shell is involved anywhere - and every word of it is either a constant, a number the parser
+# made (`Directory.uid`/`gid`/`mode` are ints), or the path, which has passed `environments.carrier_path`
+# at load or, written as `${NAME}`, after resolution (si#809, `resolved_directories`). MEASURED 2026-11-21 with this image on Docker 29.10: `install -d -o 1000 -g 1000 -m 02770
+# /probe/a/b/c` made `a` and `b` `0:0 755` and `c` `1000:1000 2770`, so one run makes the parents plainly,
+# the way `deploy carrier`'s parents task does. The directory is then checked again, so a daemon that did
+# something else (userns-remap, an Agent that proxies differently) is a refusal, not a "created".
+#
+# NOT `/`. When no parent below `/` exists, the helper would have to bind the carrier's root writable.
+# That is refused instead, with the `install -d` line: a carrier without even `/srv` is not one a
+# deployment should be laying out by itself.
+
+#: What the directories are made with: `install` and nothing it needs from outside. The same pin as
+#: `tasks.imagefile.FILE_TEST_IMAGE` (an adapter does not import a task); the index digest, so each
+#: platform resolves to its own manifest.
+INSTALL_IMAGE = docker.pinned_image(
+    "busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
+    "simplon.adapters.portainer")
+
+#: The reference Docker's API is given: name and digest. The tag is for the reader; the digest is the pin.
+_INSTALL_REFERENCE = INSTALL_IMAGE.split(":", 1)[0] + "@" + INSTALL_IMAGE.split("@", 1)[1]
+
+
+def _nearest(target: PortainerTarget, path: str) -> "tuple[str | None, str]":
+    """(the deepest existing ancestor of `path` below `/`, "") or (None, why) - never `/` itself."""
+    parent = posixpath.dirname(path)
+    while parent != "/":
+        seen, why = _stat(target, parent)
+        if why:
+            return None, f"its parent {parent} could not be read: {why}"
+        if seen is not None:
+            return (parent, "") if seen.isdir() else (None, f"{parent} is not a directory")
+        parent = posixpath.dirname(parent)
+    return None, (f"no parent of it below / exists on the carrier, and `deploy up` does not bind the "
+                  f"carrier's root writable to lay out a top-level tree")
+
+
+def _install_argv(ancestor: str, directory: "Directory") -> "list[str]":
+    """`install -d` for `directory`, as the helper sees it below `ancestor` - an argv, never a string."""
+    argv = ["install", "-d"]
+    if directory.uid is not None:
+        argv += ["-o", str(directory.uid)]
+    if directory.gid is not None:
+        argv += ["-g", str(directory.gid)]
+    if directory.mode is not None:
+        argv += ["-m", f"0{directory.mode:o}"]
+    return [*argv, posixpath.join(_PROBE_TARGET, posixpath.relpath(directory.path, ancestor))]
+
+
+def _ensure_install_image(target: PortainerTarget) -> None:
+    """Pull `INSTALL_IMAGE` through the proxy when the daemon lacks it. Raises when it cannot.
+
+    Docker answers a pull 200 and streams its progress, and a failed pull is an `error` line INSIDE that
+    200 - read as the status code alone it would be a pull that worked and an image that is not there.
+    """
+    from urllib.parse import quote
+
+    try:
+        with _docker(target, "GET", f"/images/{quote(_INSTALL_REFERENCE, safe='')}/json"):
+            return
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    with _docker(target, "POST", f"/images/create?fromImage={quote(_INSTALL_REFERENCE, safe='')}",
+                 b"") as answer:
+        for line in answer.read().decode(errors="replace").splitlines():
+            try:
+                said = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(said, dict) and said.get("error"):
+                raise OSError(f"the pull of {INSTALL_IMAGE} said: {said['error']}")
+
+
+def _create(target: PortainerTarget, directory: "Directory") -> str:
+    """Make a missing `directory` on the carrier. "" when `install -d` exited 0, otherwise why not."""
+    from simplon.kernel import log
+
+    ancestor, why = _nearest(target, directory.path)
+    if ancestor is None:
+        return why
+    try:
+        _ensure_install_image(target)
+    except OSError as error:
+        return f"{INSTALL_IMAGE} could not be found or pulled on the carrier ({_said(error)})"
+    spec = {"Image": _INSTALL_REFERENCE, "Cmd": _install_argv(ancestor, directory), "Entrypoint": [],
+            "User": "0:0", "NetworkDisabled": True, "Labels": {PROBE_LABEL: "create"},
+            "HostConfig": {"Mounts": [{"Type": "bind", "Source": ancestor, "Target": _PROBE_TARGET,
+                                       "ReadOnly": False}]}}
+    try:
+        with _docker(target, "POST", "/containers/create", json.dumps(spec).encode()) as answer:
+            container = str(json.loads(answer.read())["Id"])
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return f"the helper container could not be created ({_said(error)})"
+    try:
+        with _docker(target, "POST", f"/containers/{container}/start", b""):
+            pass
+        with _docker(target, "POST", f"/containers/{container}/wait", b"") as answer:
+            code = json.loads(answer.read()).get("StatusCode")
+        if code == 0:
+            return ""
+        with _docker(target, "GET", f"/containers/{container}/logs?stdout=1&stderr=1") as answer:
+            said = answer.read().decode(errors="replace")
+        return f"install -d exited {code}: {''.join(c for c in said if c.isprintable()).strip()[:300]}"
+    except (OSError, ValueError, AttributeError) as error:
+        return f"the helper container did not run to the end ({_said(error)})"
+    finally:
+        try:
+            with _docker(target, "DELETE", f"/containers/{container}?force=1"):
+                pass
+        except OSError as error:
+            log.warn(f"directory creation: the helper container {container[:12]} (label {PROBE_LABEL}) "
+                     f"could not be removed ({_said(error)}). It binds {ancestor} writable")
+
+
+def resolved_directories(env: "Environment", values: "Mapping[str, str]") -> "list[tuple[Directory, bool]]":
+    """Every declared directory with its path resolved against the values this deployment sends, each
+    paired with whether it was templated (si#809). Raises before the carrier is asked anything.
+
+    THE SAME RESOLUTION AS A COMPOSE IMAGE (`_resolved`, si#785), over the same values - `stack_values`
+    plus the version, exactly what Portainer is handed - so the directory checked and created is the one
+    the stack's `${NAME}` bind mount will name, and not a second reading of the environment.
+
+    THE RESOLVED STRING PASSES `carrier_path`, the rule a literal path passed at load: it reaches Docker
+    as an argv word and the refusal's `install -d` line, and a value from the environment is no safer
+    than one from the file. A name with no value is a refusal that names it, every one at once: the
+    directory's place is not known, so there is nothing honest to check. Only an `optional:` name can get
+    here empty; `stack_values` has already refused a missing `required:` one.
+    """
+    found: "list[tuple[Directory, bool]]" = []
+    unresolved: "dict[str, list[str]]" = {}
+    for directory in env.directories:
+        names = environments.path_variables(directory.path)
+        if not names:
+            found.append((directory, False))
+            continue
+        missing = [name for name in names if not values.get(name)]
+        if missing:
+            for name in missing:
+                unresolved.setdefault(name, []).append(directory.path)
+            continue
+        where = f"environment '{env.name}', `path: {directory.path}` resolved from the deployment's values"
+        path = environments.carrier_path(_resolved(directory.path, values), where)
+        found.append((directory._replace(path=path.rstrip("/") or "/"), True))
+    if unresolved:
+        named = "; ".join(f"{name} in {', '.join(paths)}" for name, paths in unresolved.items())
+        one = len(unresolved) == 1
+        raise ValueError(
+            f"environment '{env.name}': this deployment sends no value for {', '.join(unresolved)}, and "
+            f"`directories:` names {'it' if one else 'them'} ({named}) - so where that directory is is "
+            f"not known, and the carrier was asked about none. Export {'it' if one else 'them'} where "
+            f"the deploy command runs")
+    return found
+
+
+def check_directories(target: PortainerTarget, env: "Environment", create: bool = False,
+                      values: "Mapping[str, str] | None" = None) -> None:
+    """Refuse a deployment whose bind-mount directories are not on the carrier as declared (si#782), and
+    with `create`, make the missing ones first (si#808).
 
     WHY BEFORE: Docker would create a missing one as root at stack start, and the service would die on
     the far side of the seam with "unable to open database file" - after the stack exists. Every
     directory is checked and every wrong one named in ONE refusal; an operator repairing eight
     directories one run at a time is being made to do the kernel's work.
+
+    A path written as `${NAME}` is resolved from `values` first (si#809, `resolved_directories`), and a
+    resolved one is created whatever `create` says: `deploy carrier` does not have the deployment's
+    values and leaves it alone, so nothing but this would make it.
+
+    `create` is for a carrier `deploy carrier` never builds. It makes a MISSING directory and nothing else:
+    one that exists with the wrong owner, mode or type is refused exactly as without it, and while anything
+    is refused nothing is created, so a refused run leaves the carrier as it found it. A directory it
+    could not make is a refusal too - it is known to be missing, and Docker would make it as root.
 
     A directory the probe could not tell about is said by name and refuses nothing - it is neither ready
     nor missing - and when the probe image cannot be put on the endpoint at all, nothing is checked and
@@ -1054,36 +1245,68 @@ def check_directories(target: PortainerTarget, env: "Environment") -> None:
 
     if not env.directories:
         return
+    resolved = resolved_directories(env, values or {})
+    directories = [directory for directory, _ in resolved]
+    creatable = {directory.path for directory, templated in resolved if create or templated}
     try:
         _ensure_probe_image(target)
     except OSError as error:
         log.warn(f"directory check did not run: the probe image could not be found or loaded on endpoint "
                  f"{target.endpoint_id} of {target.url} ({_said(error)}), so none of "
-                 f"{', '.join(d.path for d in env.directories)} was checked")
+                 f"{', '.join(d.path for d in directories)} was checked")
         return
     wrong: list[str] = []
     fixes: list[str] = []
+    missing: "list[Directory]" = []
     unchecked = 0
-    for directory in env.directories:
+    for directory in directories:
         seen, why = _stat(target, directory.path)
         if why:
             unchecked += 1
             log.warn(f"directory check: could not tell whether {directory.path} is ready on the "
                      f"carrier: {why}")
             continue
-        problem = f"{directory.path} is missing" if seen is None else _wrong(directory, seen)
+        if seen is None:
+            missing.append(directory)
+            continue
+        problem = _wrong(directory, seen)
         if problem:
             wrong.append(problem)
-            if seen is None or seen.isdir():  # `install -d` fixes an existing directory, not a file
+            if seen.isdir():  # `install -d` fixes an existing directory, not a file
                 fixes.append(_install(directory))
-    if wrong:
+    left = [d for d in missing if d.path not in creatable]
+    if wrong or left:
+        wrong = [f"{d.path} is missing" for d in missing] + wrong
+        fixes = [_install(d) for d in missing] + fixes
+        way = ("`deploy up` creates a missing one on this carrier, and created none because of the rest; "
+               "it never rewrites one that exists, so run on the carrier: " if not left else
+               "`deploy carrier` creates them on a carrier the kernel builds; on any other, run on the "
+               "carrier: ")
         raise PortainerError(
             f"environment '{env.name}': {'; '.join(wrong)} on the carrier behind {target.url}, so the "
             f"stack was not touched - Docker would create a missing directory as root, and a service "
-            f"running as another user fails at start. `deploy carrier` creates them on a carrier the "
-            f"kernel builds; on any other, run on the carrier: "
+            f"running as another user fails at start. {way}"
             f"{'; '.join(fixes) or 'nothing until the file standing at that path is moved away'}")
-    ready = len(env.directories) - unchecked
+    failed: "list[Directory]" = []
+    for directory in missing:
+        why = _create(target, directory)
+        if not why:
+            seen, why = _stat(target, directory.path)
+            why = why or ("it is still missing afterwards" if seen is None else _wrong(directory, seen))
+        if why:
+            failed.append(directory)
+            log.error(f"directory creation: {directory.path} was not made as declared: {why}")
+            continue
+        log.ok(f"created {directory.path} on the carrier"
+               f"{f', owner {directory.owner()}' if directory.uid is not None else ''}"
+               f"{f', mode 0{directory.mode:o}' if directory.mode is not None else ''}")
+    if failed:
+        raise PortainerError(
+            f"environment '{env.name}': {', '.join(d.path for d in failed)} could not be made as declared "
+            f"through {target.url} (said above), so the stack was not touched - Docker would create a "
+            f"missing directory as root. Run on the carrier: {'; '.join(_install(d) for d in failed)}")
+    ready = len(directories) - unchecked
     if ready:
         log.ok(f"{ready} of {len(env.directories)} declared director"
-               f"{'y' if len(env.directories) == 1 else 'ies'} ready on the carrier")
+               f"{'y' if len(env.directories) == 1 else 'ies'} ready on the carrier"
+               f"{', nothing to create' if create and not missing else ''}")

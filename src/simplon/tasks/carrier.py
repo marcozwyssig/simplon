@@ -1034,6 +1034,13 @@ def directories_on(carrier_name: str) -> "list[dict[str, str]]":
     and `test` and `prod` on one carrier would otherwise each need a carrier run of their own before their
     first `deploy up` stopped refusing. A path two environments both declare is created once, as the first
     declares it; if they disagree, `deploy up` of the other one says so on the carrier.
+
+    A PATH WRITTEN AS `${NAME}` IS NOT CREATED HERE, and is named, never written literally (si#809). Its
+    value is one the DEPLOYMENT sends, and this command does not have it: `variables_read` forwards none
+    of an environment's `required:`/`optional:` on the container route, and the shell it runs in holds
+    one value per name while `test` and `prod` on this carrier give one name two. Resolving here would
+    be a second reading of the environment that `deploy up` might not agree with, so `deploy up` - which
+    resolves it from the very values Portainer is handed - creates it, on this carrier too.
     """
     document = context.current().manifest_data()
     registry = environments.parse_data(document, _backends(document))
@@ -1042,6 +1049,11 @@ def directories_on(carrier_name: str) -> "list[dict[str, str]]":
         if environment.carrier != carrier_name:
             continue
         for directory in environment.directories:
+            if environments.path_variables(directory.path):
+                log.warn(f"environment '{environment.name}': {directory.path} was not created - its path "
+                         f"is resolved from the values the deployment sends, which this command does not "
+                         f"have. `deploy up` for '{environment.name}' resolves it and creates it")
+                continue
             item = {"path": directory.path}
             if directory.uid is not None:
                 item["owner"] = str(directory.uid)

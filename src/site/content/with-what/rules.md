@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 284 | nothing - the declaration had no working meaning |
-| expression rule | 47 | something it could otherwise have said |
-| **all load-time refusals** | **331** | |
+| diagnosis | 285 | nothing - the declaration had no working meaning |
+| expression rule | 48 | something it could otherwise have said |
+| **all load-time refusals** | **333** | |
 
 si#820 added two diagnoses and no expression rule, on the carrier name and on the prefixes si#815 left
 open. The name reached `inventory.ini`, a `bash -c` line in the Pulumi container and a path unquoted:
@@ -97,6 +97,13 @@ came with a security finding - the runner's repository, labels, name and token p
 `url_from:`, reached the Ansible play as templates - and that is closed by writing every manifest value
 into a vars file tagged `!unsafe`, not by a rule. So the labels, the carrier name and the prefixes take
 any character they took before, and no expression rule was added for them.
+
+si#809 added one of each, for a `directories:` path written as `${NAME}`. The diagnosis: a name that is in
+neither `required:` nor `optional:`, which the deployment never sends, so the path could never resolve.
+The expression rule: any other template shape - `$NAME`, `${NAME:-default}`, or text around the variable
+outside the path set. A default would have worked, and is refused because a missing value would put the
+directory where nobody declared it; every form it refuses was already refused by the path set before
+si#809. What the path resolves to is decided at run time, by `deploy up`, on the resolved string.
 
 si#492 left the diagnosis count where it was, by two moves. `launcher: env: pass:` became a command's own
 `env: { pass: [...] }`, so the seven checks on the top-level section became five on the command's key plus
@@ -230,7 +237,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 40 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 41 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

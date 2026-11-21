@@ -253,10 +253,10 @@ _CARRIER_PATH = re.compile(r"/[A-Za-z0-9._/-]+")
 def carrier_path(path: str, where: str) -> str:
     """`path` when it may stand on a carrier as a directory, or a refusal that says why not (si#782).
 
-    A FUNCTION OF ITS OWN, AND PUBLIC, BECAUSE IT HAS A SECOND CALLER COMING: a path written as `${VAR}`
-    and resolved from the deployment's values (the follow-up the owner decided, like si#785's image
-    resolution) has to pass the same rule AFTER resolution - a value from the environment is no safer
-    than one from the file. Apply this to the resolved string, not to the template.
+    A FUNCTION OF ITS OWN, AND PUBLIC, BECAUSE IT HAS A SECOND CALLER: a path written as `${VAR}` is
+    resolved by `deploy up` from the deployment's values (si#809, `portainer.resolved_directories`) and
+    the RESOLVED string passes this same rule - a value from the environment is no safer than one from
+    the file. At load such a path is checked in shape only, by `directory_path`.
 
     WHY A STRICT SET: the path travels into Ansible on the carrier and into a shell line in the refusal's
     way out. Measured 2026-11-20 with the pinned ansible image: `/srv/app/{{ 7*7 }}` made the play create
@@ -275,8 +275,58 @@ def carrier_path(path: str, where: str) -> str:
     return path
 
 
-def _directories(raw: object, where: str) -> "tuple[Directory, ...]":
-    """The `directories:` list of one environment, validated (si#782)."""
+#: A value named in a `directories:` path (si#809): `${NAME}` and only that form. Resolved by `deploy up`
+#: against the values the deployment sends, the way si#785 resolves a compose image reference.
+_PATH_VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_PATH_SHAPE = re.compile(r"[A-Za-z0-9._/-]+")
+
+
+def path_variables(path: str) -> "tuple[str, ...]":
+    """The names a `directories:` path takes its value from, in order and once each (si#809)."""
+    return tuple(dict.fromkeys(_PATH_VARIABLE.findall(path)))
+
+
+def directory_path(path: str, where: str, sent: "Iterable[str]") -> str:
+    """A `directories:` path as the manifest may write it, literal or naming `${NAME}` (si#809).
+
+    A LITERAL PATH goes through `carrier_path` and is decided here. A TEMPLATED ONE CAN ONLY BE DECIDED IN
+    SHAPE HERE, because its value is not in the file: each `${NAME}` counts as one segment of the path set,
+    the text around it must fit that set with no `..` segment, the path is absolute unless a variable
+    stands first (its value then supplies the root), and every name is one the deployment sends. What the
+    path IS - absolute, in the set, no `..` - is decided by `deploy up` on the RESOLVED string, through
+    `carrier_path` again, before anything is asked of the carrier: a value from the environment is no
+    safer than one from the file.
+
+    NO `$NAME` AND NO `${NAME:-default}`, though compose reads both. A default is the defect `stack_values`
+    refuses for `required:` - a missing value falling back to a directory nobody declared - and one form
+    is one less thing to resolve differently on the two sides.
+    """
+    if "$" not in path:
+        return carrier_path(path, where)
+    shape = _PATH_VARIABLE.sub("x", path)
+    if not _PATH_SHAPE.fullmatch(shape) or ".." in shape.split("/"):
+        raise ValueError(
+            f"{where}: `path: {path!r}` may only use letters, digits, `.`, `_`, `-` and `/`, with no `..` "
+            f"segment, and name a value only as `${{NAME}}` - not `$NAME`, not `${{NAME:-default}}`, "
+            f"because a default would put the directory where nobody declared it when the value is "
+            f"missing. The rest reaches Ansible and a shell on the carrier, where `{{{{ ... }}}}` is a "
+            f"template")
+    if not path.startswith(("/", "${")):
+        carrier_path(path, where)  # refuses it as not absolute, in the words a literal path gets
+    sent = set(sent)
+    unsent = [name for name in path_variables(path) if name not in sent]
+    if unsent:
+        raise ValueError(
+            f"{where}: `path: {path}` takes its value from {', '.join(unsent)}, which the deployment "
+            f"does not send - only the names in `required:` and `optional:` travel, and "
+            f"{KERNEL_VARIABLE}. Add {'it' if len(unsent) == 1 else 'them'} to `required:`, or write the "
+            f"path out")
+    return path
+
+
+def _directories(raw: object, where: str, sent: "Iterable[str]" = ()) -> "tuple[Directory, ...]":
+    """The `directories:` list of one environment, validated (si#782). `sent` is what a `${NAME}` in a
+    path may name: the environment's `required:` and `optional:` and the kernel's own variable (si#809)."""
     if raw is None:
         return ()
     if isinstance(raw, (str, Mapping)) or not isinstance(raw, (list, tuple)):
@@ -294,7 +344,7 @@ def _directories(raw: object, where: str) -> "tuple[Directory, ...]":
                 f"{where}: a `directories:` entry does not take {', '.join(unknown)} - it takes "
                 f"{', '.join(DIRECTORY_KEYS)}. A key that was ignored would leave what it meant unchecked, "
                 f"and the directory would be reported as ready on a check that never ran")
-        path = carrier_path(str(entry.get("path") or "").strip(), where)
+        path = directory_path(str(entry.get("path") or "").strip(), where, sent)
         owner, mode = _quoted(entry, "owner", where), _quoted(entry, "mode", where)
         ids = _OWNER.fullmatch(owner) if owner is not None else None
         if owner is not None and ids is None:
@@ -417,7 +467,8 @@ def parse_data(data: Mapping[str, object],
         # clones, so there is nothing on this machine for it to deploy". A second refusal here would be
         # the same verdict with less context.
         deploys = str(spec.get("deploys", "")).strip()
-        directories = _directories(spec.get("directories"), f"environment '{name}'")
+        directories = _directories(spec.get("directories"), f"environment '{name}'",
+                                   (*required, *optional, KERNEL_VARIABLE))
         if directories and not carrier:
             raise ValueError(
                 f"environment '{name}': declares `directories:` and no `carrier:`, so there is no "
