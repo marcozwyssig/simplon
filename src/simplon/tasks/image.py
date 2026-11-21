@@ -753,7 +753,16 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
             what = "what it names" if len(fixes) == 1 else "what they name"
             tail = (f"\n  fix {' and '.join(fixes)}, or move {what} - docker would have failed later, about "
                     f"something else")
-        log.error(f"image '{name}' declares {count} under {root}:\n  "
+        # si#829: the header's subject is the entry that declares the paths too - "image 'multi' declares"
+        # was false when only `base`'s path is gone.
+        declaring = list(dict.fromkeys(entry for entry, _ in missing))
+        if declaring == [name]:
+            header = f"image '{name}' declares {count} under {root}"
+        else:
+            images = " and ".join(f"'{entry}'" for entry in declaring)
+            header = (f"building image '{name}' found {count} under {root}, declared by "
+                      f"image{'s' if len(declaring) > 1 else ''} {images}")
+        log.error(f"{header}:\n  "
                   + "\n  ".join(one.line for _, one in missing) + tail)
         return 1
     docker.ensure_docker()

@@ -2597,6 +2597,8 @@ def test_a_dependencys_missing_path_names_the_dependencys_entry(monkeypatch, _no
     assert ("fix the `artifacts.base:` entry, or move what it names - docker would have failed later, "
             "about something else" in err)
     assert "artifacts.multi:" not in err
+    assert "image 'multi' declares" not in err
+    assert f"building image 'multi' found a path that does not exist under {_multi}, declared by image 'base':" in err
 
 
 def test_missing_paths_in_two_entries_name_each_entry(monkeypatch, _no_provenance, _multi, capsys):
@@ -2613,6 +2615,8 @@ def test_missing_paths_in_two_entries_name_each_entry(monkeypatch, _no_provenanc
     assert rc == 1
     assert ("fix the `artifacts.multi:` entry and the `artifacts.base:` entry, or move what they name - "
             "docker would have failed later, about something else" in err)
+    assert (f"building image 'multi' found 2 paths that do not exist under {_multi}, declared by images "
+            "'multi' and 'base':" in err)
 
 
 def test_a_multi_platform_build_records_every_platform_it_loaded(monkeypatch, _no_provenance, _multi):
