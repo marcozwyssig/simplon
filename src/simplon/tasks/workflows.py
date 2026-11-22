@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from simplon.manifest import artifactsection, context
 from simplon.kernel import log
-from simplon.tasks import workflowgen
+from simplon.tasks import cipipeline, workflowgen
 
 
 def generate(check: bool = False) -> int:
@@ -41,8 +41,9 @@ def generate(check: bool = False) -> int:
     """
     ctx = context.current()
     source = ctx.manifest_path.name
-    workflows = workflowgen.parse(ctx.manifest_data())
     manifest = ctx.manifest()
+    # si#858: the declared workflows, and ci.yml derived from the CI leaves where no entry declares it.
+    workflows = cipipeline.workflows(manifest, ctx.manifest_data())
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,

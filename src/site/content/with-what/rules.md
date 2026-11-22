@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 290 | nothing - the declaration had no working meaning |
+| diagnosis | 295 | nothing - the declaration had no working meaning |
 | expression rule | 50 | something it could otherwise have said |
-| **all load-time refusals** | **340** | |
+| **all load-time refusals** | **345** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -81,6 +81,12 @@ a leaf is not verified, which is the one thing a reader of the opt-out needs. **
 some other non-mapping, a key under it other than `skip` (a typo would leave the leaf running), and a skip on
 an aggregate (the key would do nothing, since a derived CI runs leaves). **Rejected: accepting `ci: false`.**
 It reopens if a product shows a skip whose reason is the same on every line.
+
+Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
+refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI
+does not run, a cycle through the leaves' artifacts, no leaf a machine may run, an `after_all` leaf that
+produces for another, a report upload with no `suites: reports:`, and a leaf that has not ruled on
+`unattended:`. An absent `workflows:` section is no longer refused: it is what switches the derivation on.
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
 is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no

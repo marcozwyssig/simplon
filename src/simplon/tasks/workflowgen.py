@@ -439,12 +439,14 @@ def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     Loud on every defect, like `simplon.manifest.environments.parse_data` and every other section parser here: a
     manifest that says something this module cannot render is a manifest defect, and the message names
     the workflow it is talking about.
+
+    An ABSENT section declares nothing and is answered with `()` (si#858): it is no longer "nothing to
+    generate", because `cipipeline.workflows` derives ci.yml where no entry declares it. An EMPTY one is
+    still refused below - somebody halfway through a thought, not a statement.
     """
     section = data.get(SECTION)
     if section is None:
-        raise ValueError(
-            f"the manifest declares no '{SECTION}' section, so there is nothing to generate - declare "
-            f"one workflow per file under `{SECTION}:` (si#858 will derive a product's workflows without one)")
+        return ()
     if not isinstance(section, Mapping) or not section:
         raise ValueError(f"'{SECTION}' must be a non-empty mapping of workflow name -> its declaration")
 
@@ -2187,14 +2189,40 @@ def trigger_of(doc: Mapping[object, object]) -> object:
 # --- write, check ----------------------------------------------------------------------------------------------
 
 
+#: How every file this module writes begins: `render`'s first header line, as a YAML comment.
+GENERATED_PREFIX = "# GENERATED from "
+
+
+def _refuse_foreign_files(workflows: Sequence[Workflow], root: Path) -> None:
+    """Refuse to touch a file at a DERIVED workflow's path that this module did not write (si#858, Review Focus 3).
+
+    A product that wrote its own ci.yml and never declared it would otherwise lose it to a kernel upgrade, and
+    `--check` would call the loss drift. Only a derived workflow is asked: a declared generated one has owned its
+    file since si#40, by the product's own entry. Checked for every workflow before any is written, so a refusal
+    leaves the directory as it was.
+    """
+    for workflow in workflows:
+        if not workflow.derived:
+            continue
+        target = root / workflow.path
+        if target.exists() and not target.read_text(encoding="utf-8").startswith(GENERATED_PREFIX):
+            raise ValueError(
+                f"{workflow.path} exists and was not generated (it does not start with '{GENERATED_PREFIX}'), and "
+                f"the manifest declares no `{SECTION}: {workflow.key}:`, so the kernel would derive this file over "
+                f"it. Keep it by declaring it under `{SECTION}: {workflow.key}:` as `handwritten: \"<why>\"`, or "
+                f"delete the file so the kernel derives it")
+
+
 def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
           source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None,
           reports: "str | None" = None) -> tuple[str, ...]:
     """Render every generated workflow under `root`. Returns the paths whose bytes CHANGED.
 
     A hand-written entry is skipped rather than touched: the manifest declared it somebody's own, and a
-    generator that wrote to it anyway would have made the declaration a lie.
+    generator that wrote to it anyway would have made the declaration a lie. A hand-written file that is
+    NOT declared, under a derived workflow's path, is refused (`_refuse_foreign_files`).
     """
+    _refuse_foreign_files(workflows, root)
     changed = []
     for workflow in workflows:
         if not workflow.generated:
@@ -2219,6 +2247,7 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
     checkout that has never generated has to be told what to run, and a gate that raised there would read
     as a broken gate rather than as the ordinary thing it is.
     """
+    _refuse_foreign_files(workflows, root)
     agreed: list[str] = []
     drifted: list[Drift] = []
     handwritten: list[str] = []

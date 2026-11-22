@@ -6,9 +6,10 @@ import textwrap
 import pytest
 import yaml
 
-from simplon.manifest import artifactsection, catalogue, load as manifest_mod
+from simplon.manifest import artifactsection, catalogue, context, load as manifest_mod
 from simplon.model import workflowschema
 from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import workflows as workflows_task
 
 
 def test_no_runner_means_github_ubuntu() -> None:
@@ -489,3 +490,102 @@ def test_a_report_without_suites_names_the_upload():
     loaded = _load(body)
     with pytest.raises(ValueError, match=r"report upload.*`suites: reports:`.*the 'suites' section is missing"):
         cipipeline.derive(loaded, yaml.safe_load(_text(body)))
+
+
+# --- the switch: `support github workflows` derives ci.yml where no entry declares it (si#858 task 7) -----
+
+_CI_PATH = ".github/workflows/ci.yml"
+
+_DECLARED_CI = """
+        workflows:
+          ci:
+            on: [push]
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - command: build one
+        """
+
+
+def _product(tmp_path, monkeypatch, body: str) -> context.ProductContext:
+    """`tmp_path` as a product's repository root, `_HEAD` + `body` as its manifest, registered as current."""
+    manifest_path = tmp_path / "demo.yaml"
+    manifest_path.write_text(_text(body), encoding="utf-8")
+    ctx = context.ProductContext(name="demo", root=tmp_path, manifest_path=manifest_path)
+    monkeypatch.setattr(context, "_current", ctx)
+    return ctx
+
+
+def test_a_product_with_no_workflows_section_gets_ci(tmp_path, monkeypatch):
+    _product(tmp_path, monkeypatch, _THREE)
+
+    rc = workflows_task.generate()
+
+    assert rc == 0
+    text = (tmp_path / _CI_PATH).read_text(encoding="utf-8")
+    assert text.startswith("# GENERATED from demo.yaml")
+    assert workflows_task.generate(check=True) == 0
+
+
+def test_a_declared_ci_switches_the_derivation_off(tmp_path, monkeypatch):
+    ctx = _product(tmp_path, monkeypatch, _THREE + _DECLARED_CI)
+    (declared,) = workflowgen.parse(ctx.manifest_data())
+
+    assert workflows_task.generate() == 0
+
+    expected = workflowgen.render(declared, manifest=ctx.manifest(), product="demo", source="demo.yaml",
+                                  artifacts=artifactsection.declared(ctx.manifest_data()))
+    assert (tmp_path / _CI_PATH).read_text(encoding="utf-8") == expected
+    assert not declared.derived
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_a_hand_written_ci_file_is_not_overwritten(tmp_path, monkeypatch, check):
+    """Review Focus 3: a product that wrote its own ci.yml and never declared it loses nothing to an upgrade."""
+    _product(tmp_path, monkeypatch, _THREE)
+    target = tmp_path / _CI_PATH
+    target.parent.mkdir(parents=True)
+    own = b"name: mine\non: [push]\njobs: {}\n"
+    target.write_bytes(own)
+
+    with pytest.raises(ValueError) as refused:
+        workflows_task.generate(check=check)
+
+    said = str(refused.value)
+    assert _CI_PATH in said
+    assert "handwritten:" in said and "workflows: ci:" in said
+    assert "delete" in said
+    assert target.read_bytes() == own
+
+
+def test_another_entry_writing_ci_yml_is_refused(tmp_path, monkeypatch):
+    """Review Focus 4: an entry under another key that writes ci.yml would collide with the derived one."""
+    _product(tmp_path, monkeypatch, _THREE + """
+        workflows:
+          checks:
+            path: .github/workflows/ci.yml
+            on: [push]
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - command: build one
+        """)
+
+    with pytest.raises(ValueError, match=r"workflows 'checks' and 'ci' both declare '\.github/workflows/ci\.yml'"):
+        workflows_task.generate()
+
+
+def test_check_reports_a_stale_derived_file(tmp_path, monkeypatch, capsys):
+    _product(tmp_path, monkeypatch, _THREE)
+    assert workflows_task.generate() == 0
+    target = tmp_path / _CI_PATH
+    target.write_text(target.read_text(encoding="utf-8") + "# edited by hand\n", encoding="utf-8")
+    capsys.readouterr()
+
+    rc = workflows_task.generate(check=True)
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert f"{_CI_PATH} disagrees with demo.yaml" in captured.out + captured.err

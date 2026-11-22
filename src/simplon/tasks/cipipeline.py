@@ -16,7 +16,7 @@ import textwrap
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
-from simplon.manifest import artifactsection, context, runners
+from simplon.manifest import artifactsection, runners
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
 from simplon.model.command import TaskCommand
@@ -36,16 +36,6 @@ def runner_of(data: Mapping[str, object]) -> tuple[runners.Runner, tuple[str, ..
     test find a section by its literal key (si#435).
     """
     return runners.resolve(data.get("runner"), "runner:")
-
-
-def runner() -> tuple[runners.Runner, tuple[str, ...]]:
-    """`runner_of` for the registered product.
-
-    The document is fetched and HANDED ON rather than read here: the refusal census walks what the
-    kernel passes `manifest_data()` to, so this is what makes `runner:` a section the kernel reads
-    (and `Product.runner` a modelled one) without this module being excused by hand.
-    """
-    return runner_of(context.current().manifest_data())
 
 
 #: The phases whose leaves a derived CI runs; `release` is the CD half's business (si#858).
@@ -392,3 +382,22 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **workflowgen._workflow_extras({})}
     return workflowgen.Workflow(key=KEY, path=derivation.model.path, name=derivation.model.title,
                                 on=workflowgen._CI_TRIGGER, jobs=(ci,), extras=extras, derived=True)
+
+
+# --- the switch (si#858 task 7) ----------------------------------------------------------------------------
+
+
+def workflows(manifest: Manifest, data: Mapping[str, object]) -> tuple[workflowgen.Workflow, ...]:
+    """Every workflow `support github workflows` writes or checks: the declared ones, and the derived ci.yml.
+
+    THE DERIVATION IS SWITCHED OFF BY DECLARING `workflows: ci:`, and by nothing else: a product that declares
+    its CI keeps exactly what it renders today. Every other product gets the derived workflow beside whatever it
+    declares, and `_reject_duplicate_paths` runs over both together, so an entry under another key that writes
+    ci.yml is refused as two owners of one file (Review Focus 4) rather than overwritten by either.
+    """
+    declared = workflowgen.parse(data)
+    if any(workflow.key == KEY for workflow in declared):
+        return declared
+    out = (*declared, to_workflow(derive(manifest, data), manifest, data))
+    workflowgen._reject_duplicate_paths(out)
+    return out

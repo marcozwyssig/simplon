@@ -1164,7 +1164,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("site", "_str", "must be a non-empty string"): DIAGNOSIS,
 
     # --- workflowgen: the `workflows:` section (simplon's own manifest declares one) -------------------
-    ("workflowgen", "parse", "so there is nothing to generate"): DIAGNOSIS,
     ("workflowgen", "parse", "must be a non-empty mapping of workflow name"): DIAGNOSIS,
     ("workflowgen", "_workflow", "must be a mapping, not {type(body)"): DIAGNOSIS,
     # An empty `handwritten:` would generate nothing and work. The kernel demands the SENTENCE, which is
@@ -1251,6 +1250,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_derived_groups", "names the command GROUPS whose leaves"): DIAGNOSIS,
     ("workflowgen", "_derived_groups", "takes group NAMES, and {item!r}"): DIAGNOSIS,
     ("workflowgen", "_step", "stands in for every step the named groups imply"): DIAGNOSIS,
+
+    # --- cipipeline: the derived ci.yml (si#858), reached since `support github workflows` derives it for a
+    # product that declares no `workflows: ci:`. Every one is a diagnosis: the workflow it refuses would fail
+    # on a missing file, run a leaf nobody ruled on, or go green over nothing.
+    ("workflowgen", "require_unattended", "does not say whether it can run with nobody watching"): DIAGNOSIS,
+    ("cipipeline", "_refuse_consumers_of_absent_producers", "is not run by the CI"): DIAGNOSIS,
+    ("cipipeline", "order", "_cycle(leaves, before, done)"): DIAGNOSIS,
+    ("cipipeline", "derive", "_nothing_to_run(manifest, selection)"): DIAGNOSIS,
+    ("cipipeline", "_refuse_producers_moved_last", "runs after all the other leaves (`after_all`)"): DIAGNOSIS,
+    ("cipipeline", "_reports", "archives `suites: reports:`, and it cannot be read"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

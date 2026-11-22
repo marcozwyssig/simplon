@@ -663,12 +663,12 @@ def test_the_generator_carries_no_list_of_workflow_kinds():
 # --- refusals over the declaration -------------------------------------------------------------------
 
 
-def test_a_product_with_no_workflows_section_is_told_so():
-    """Not handed an empty report. "Nothing declared" and "nothing wrong" are different answers, and a
-    check that cannot tell them apart is this repository's recurring defect."""
+def test_a_product_with_no_workflows_section_declares_none():
+    """si#858: an absent section declares no workflow, and that is all `parse` says about it. It is no longer
+    "nothing to generate": `cipipeline.workflows` derives ci.yml for such a product, so the empty answer is
+    the declared half only, and the derived half is asserted in test_cipipeline.py."""
     # Arrange / Act / Assert
-    with pytest.raises(ValueError, match="declares no 'workflows' section"):
-        workflowgen.parse({})
+    assert workflowgen.parse({}) == ()
 
 
 def test_an_empty_workflows_section_is_refused():
