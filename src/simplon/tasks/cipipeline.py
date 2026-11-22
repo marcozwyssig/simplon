@@ -16,6 +16,7 @@ import textwrap
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
+from simplon.kernel import log
 from simplon.manifest import artifactsection, runners
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
@@ -260,6 +261,11 @@ def _nothing_to_run(manifest: Manifest, selection: Selection) -> str:
               "`unattended: true` under `ci build` or `ci test`, or declare `workflows: ci:` yourself")
 
 
+def _runs(selection: Selection) -> list[Leaf]:
+    """The leaves that run in order, every one but the `after_all` ones; none of them means no derived ci.yml."""
+    return [leaf for leaf in selection.leaves if not leaf.spec.after_all]
+
+
 def _refuse_producers_moved_last(runs: Sequence[Leaf], last: Sequence[Leaf]) -> None:
     """An `after_all` leaf runs after every other leaf, so one that produces what another leaf consumes would run
     after its consumer: `order` put it first, and moving it last undoes that. Refused, naming both, because the
@@ -297,7 +303,7 @@ def derive(manifest: Manifest, data: Mapping[str, object]) -> Derivation:
     `to_workflow` writes them.
     """
     selection = select(manifest, artifacts=artifactsection.declared(data))
-    runs = [leaf for leaf in selection.leaves if not leaf.spec.after_all]
+    runs = _runs(selection)
     last = [leaf for leaf in selection.leaves if leaf.spec.after_all]
     if not runs:
         raise ValueError(_nothing_to_run(manifest, selection))
@@ -394,9 +400,19 @@ def workflows(manifest: Manifest, data: Mapping[str, object]) -> tuple[workflowg
     its CI keeps exactly what it renders today. Every other product gets the derived workflow beside whatever it
     declares, and `_reject_duplicate_paths` runs over both together, so an entry under another key that writes
     ci.yml is refused as two owners of one file (Review Focus 4) rather than overwritten by either.
+
+    A PRODUCT WITH NO LEAF A MACHINE MAY RUN gets no ci.yml when it declares other workflows: there is something
+    to generate, and a refusal would withhold it over a file nobody asked for, so the run says why in one line.
+    With nothing declared, `derive`'s refusal stands: the run would otherwise generate nothing and look green.
+    Only that case is told apart, and before deriving, so every other refusal of the derivation still reaches
+    the caller.
     """
     declared = workflowgen.parse(data)
     if any(workflow.key == KEY for workflow in declared):
+        return declared
+    if declared and not _runs(select(manifest, artifacts=artifactsection.declared(data))):
+        log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
+                 f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
         return declared
     out = (*declared, to_workflow(derive(manifest, data), manifest, data))
     workflowgen._reject_duplicate_paths(out)

@@ -87,6 +87,8 @@ refusals are reached from the manifest and counted, all of them diagnoses: a con
 does not run, a cycle through the leaves' artifacts, no leaf a machine may run, an `after_all` leaf that
 produces for another, a report upload with no `suites: reports:`, and a leaf that has not ruled on
 `unattended:`. An absent `workflows:` section is no longer refused: it is what switches the derivation on.
+The refusal to overwrite a file at the derived path that the kernel did not generate is not counted here:
+it is decided by the file on disk, not by the manifest.
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
 is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no

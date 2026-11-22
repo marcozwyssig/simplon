@@ -38,6 +38,14 @@ def generate(check: bool = False) -> int:
     legitimate answer - some files really are hand-work, and simplon's own release workflow is two-thirds
     prose - but it is an answer somebody chose, so it is said out loud each time rather than becoming a
     thing nobody remembers is true.
+
+    si#858: A PRODUCT THAT DECLARES NO `workflows: ci:` GETS ONE DERIVED, `.github/workflows/ci.yml`, built by
+    `cipipeline.workflows` from its unattended `ci build` and `ci test` leaves and written and checked like
+    any declared workflow. Declaring `workflows: ci:` switches the derivation off. A product whose leaves give
+    a machine nothing to run gets no ci.yml when it declares other workflows (the run says why) and a refusal
+    when it declares none. A file already at the derived path that this kernel did not generate (it lacks the
+    `# GENERATED from ` header) is refused on both a write and a `--check`, untouched: it is somebody's own,
+    and the way out is to declare it `handwritten:` under `workflows: ci:` or to delete it.
     """
     ctx = context.current()
     source = ctx.manifest_path.name

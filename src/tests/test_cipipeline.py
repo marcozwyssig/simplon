@@ -589,3 +589,67 @@ def test_check_reports_a_stale_derived_file(tmp_path, monkeypatch, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     assert f"{_CI_PATH} disagrees with demo.yaml" in captured.out + captured.err
+
+
+_NO_LEAF = """
+        ci:
+          test:
+            commands:
+              walk: { task: ship, unattended: false }
+        """
+
+_OTHER_WORKFLOW = """
+        workflows:
+          release:
+            handwritten: two shell scripts and a great deal of reasoning
+        """
+
+
+def test_declared_workflows_and_no_runnable_leaf_derive_no_ci(tmp_path, monkeypatch, capsys):
+    """Fix round 1: a product that declares other workflows and has no leaf a machine may run gets its declared
+    workflows and no ci.yml, and the run says why in one line rather than refusing what it can generate."""
+    _product(tmp_path, monkeypatch, _NO_LEAF + _OTHER_WORKFLOW)
+    release = tmp_path / ".github/workflows/release.yml"
+    release.parent.mkdir(parents=True)
+    release.write_text("name: release\n", encoding="utf-8")
+
+    rc = workflows_task.generate()
+
+    assert rc == 0
+    assert not (tmp_path / _CI_PATH).exists()
+    captured = capsys.readouterr()
+    said = captured.out + captured.err
+    assert "no ci.yml is derived" in said and "workflows: ci:" in said
+
+
+def test_no_workflows_section_and_no_runnable_leaf_is_refused(tmp_path, monkeypatch):
+    """With nothing declared there would be nothing to generate at all: the refusal stays."""
+    _product(tmp_path, monkeypatch, _NO_LEAF)
+
+    with pytest.raises(ValueError, match="hold no leaf a machine may run"):
+        workflows_task.generate()
+    assert not (tmp_path / _CI_PATH).exists()
+
+
+def test_declared_workflows_do_not_swallow_the_other_refusals_of_the_derivation(tmp_path, monkeypatch):
+    """Only the no-runnable-leaf case is told apart; a cycle stays a refusal beside declared workflows."""
+    _product(tmp_path, monkeypatch, """
+        ci:
+          build:
+            commands:
+              loop: { task: "toolchain:run", unattended: true, consumes: { source: doc }, produces: { out: doc } }
+        """ + _OTHER_WORKFLOW)
+
+    with pytest.raises(ValueError, match="cycle"):
+        workflows_task.generate()
+
+
+def test_check_before_any_generate_reports_the_absent_derived_file(tmp_path, monkeypatch, capsys):
+    _product(tmp_path, monkeypatch, _THREE)
+
+    rc = workflows_task.generate(check=True)
+
+    assert rc == 1
+    assert not (tmp_path / _CI_PATH).exists()
+    captured = capsys.readouterr()
+    assert f"{_CI_PATH} disagrees with demo.yaml" in captured.out + captured.err

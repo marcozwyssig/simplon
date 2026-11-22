@@ -2199,7 +2199,8 @@ def _refuse_foreign_files(workflows: Sequence[Workflow], root: Path) -> None:
     A product that wrote its own ci.yml and never declared it would otherwise lose it to a kernel upgrade, and
     `--check` would call the loss drift. Only a derived workflow is asked: a declared generated one has owned its
     file since si#40, by the product's own entry. Checked for every workflow before any is written, so a refusal
-    leaves the directory as it was.
+    leaves the directory as it was. The ownership test is a prefix match on `GENERATED_PREFIX`, which every
+    generator of this kernel writes, so a file another kernel generator wrote at this path counts as owned.
     """
     for workflow in workflows:
         if not workflow.derived:

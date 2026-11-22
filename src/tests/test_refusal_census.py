@@ -40,6 +40,11 @@ The `NOT_LOAD_TIME` class list this docstring used to describe is GONE and its a
 them, because nothing reaches them from either seam. One exclusion is left, `_validation_message`'s
 funnel, and `test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model` holds it at exactly one.
 
+NOT COUNTED BY RULING, and named so nobody adds it back: `workflowgen._refuse_foreign_files` (si#858), the
+refusal to overwrite a file at the derived ci.yml's path that this kernel did not generate. It is decided by
+a file on disk, not by the manifest, so it is not a manifest decision with no tool consulted; the walk does
+not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing.
+
 WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest
 document INLINE, in the middle of a task body, so the reading and the tool-running are one function and no
 static rule separates them. They are named in `READS_INLINE` with the reason - and which modules read the
