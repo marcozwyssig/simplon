@@ -7,7 +7,8 @@ import pytest
 import yaml
 
 from simplon.manifest import artifactsection, catalogue, load as manifest_mod
-from simplon.tasks import cipipeline
+from simplon.model import workflowschema
+from simplon.tasks import cipipeline, workflowgen
 
 
 def test_no_runner_means_github_ubuntu() -> None:
@@ -81,7 +82,8 @@ _PORTS = """
 
 def test_a_consumer_moves_after_its_producer_and_nothing_else_moves():
     loaded = _load(_PORTS)
-    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == ["build a", "build b-produce", "build t-consume", "build c"]
+    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == [
+        "build a", "build b-produce", "build t-consume", "build c"]
 
 
 def test_aggregates_are_not_leaves():
@@ -197,7 +199,8 @@ _SKIPPED_PRODUCER = """
               t-consume: { task: "test:file", unattended: true, consumes: { file: doc } }
           build:
             commands:
-              b-produce: { task: "build:fetch", unattended: true, produces: { file: doc }, ci: { skip: "needs the lab" } }
+              b-produce:
+                { task: "build:fetch", unattended: true, produces: { file: doc }, ci: { skip: "needs the lab" } }
         """
 
 
@@ -254,3 +257,197 @@ def test_a_leaf_that_consumes_what_it_produces_is_a_one_leaf_cycle():
         """)
     with pytest.raises(ValueError, match="cycle.*'build loop' consumes 'doc' from 'build loop'"):
         cipipeline.select(loaded, artifacts=_DECLARED)
+
+
+# --- the derived workflow, as a model and as a rendered file (si#858 task 6) -----------------------------
+
+_SUITES = """
+suites:
+  reports: tests/reports
+  gates:
+    - { name: unit, command: "test one", results: clear }
+"""
+
+_SELF_HOSTED = """
+runner: { kind: self-hosted-debian, labels: ghr-8 }
+support:
+  commands:
+    ci-docker-preflight: { task: "support:ci-docker-preflight" }
+    ci-disk-preflight: { task: "support:ci-disk-preflight" }
+    ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+"""
+
+_TOOLCHAINS = """
+toolchains:
+  - python
+"""
+
+
+def _rendered(body: str, *extra: str) -> tuple[dict, str]:
+    """The derived ci.yml for `_HEAD` + `body` + `extra`, rendered and read back."""
+    text = _text(body) + "".join(textwrap.dedent(part) for part in extra)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data)
+    out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
+                             artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), out
+
+
+def _steps(doc: dict) -> list[dict]:
+    return [step for step in doc["jobs"]["ci"]["steps"] if step.get("name") != workflowgen.REAP_NAME]
+
+
+def _runs(doc: dict) -> list[str]:
+    return [step["run"].removeprefix("exec ./demo.sh ") for step in _steps(doc) if "run" in step]
+
+
+def _step(doc: dict, words: str) -> dict:
+    return next(step for step in _steps(doc) if step.get("run") == f"exec ./demo.sh {words}")
+
+
+_THREE = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              two: { task: ship, unattended: true }
+              three: { task: ship, unattended: true }
+        """
+
+
+def test_the_derived_job_runs_every_leaf_in_order():
+    loaded = _load(_PORTS)
+    doc, _ = _rendered(_PORTS)
+    assert _runs(doc) == _words(cipipeline.select(loaded, artifacts=_DECLARED))
+
+
+def test_every_leaf_after_the_first_runs_unless_cancelled():
+    doc, _ = _rendered(_THREE)
+    assert _runs(doc) == ["build one", "test two", "test three"]
+    assert "if" not in _step(doc, "build one")
+    assert _step(doc, "test two")["if"] == "${{ !cancelled() }}"
+    assert _step(doc, "test three")["if"] == "${{ !cancelled() }}"
+
+
+def test_a_red_preparation_stops_the_leaves():
+    doc, _ = _rendered(_THREE, _SELF_HOSTED, _TOOLCHAINS)
+    assert _runs(doc)[:3] == ["support ci-docker-preflight", "support ci-disk-preflight", "support install"]
+    prepared = [_step(doc, words) for words in _runs(doc)[:3]]
+    assert [step["id"] for step in prepared] == ["prepare_docker", "prepare_disk", "prepare_install"]
+    assert all("if" not in step for step in prepared)
+    assert "if" not in _step(doc, "build one")
+    gate = ("${{ !cancelled() && steps.prepare_docker.outcome == 'success' && "
+            "steps.prepare_disk.outcome == 'success' && steps.prepare_install.outcome == 'success' }}")
+    assert _step(doc, "test two")["if"] == gate
+    assert _step(doc, "test three")["if"] == gate
+    cleanup = _step(doc, "support ci-disk-cleanup")
+    assert cleanup["if"] == "always()" and cleanup["continue-on-error"] is True
+    assert _runs(doc)[-1] == "support ci-disk-cleanup"
+
+
+def test_the_report_runs_last_and_always():
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              one: { task: ship, unattended: true }
+              two: { task: ship, unattended: true }
+        """
+    doc, _ = _rendered(body, _SUITES)
+    assert _runs(doc) == ["test one", "test two", "test report"]
+    steps = _steps(doc)
+    report = steps.index(_step(doc, "test report"))
+    upload = steps[report + 1]
+    assert steps[report]["if"] == "always()"
+    assert upload["uses"] == workflowgen.UPLOAD_ACTION
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == "allure-report"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["path"] == "tests/reports/*.html"
+
+
+def test_install_comes_first_when_the_product_declares_toolchains():
+    doc, _ = _rendered(_THREE, _TOOLCHAINS)
+    assert _runs(doc)[0] == "support install"
+    assert _step(doc, "support install")["id"] == "prepare_install"
+    assert _step(doc, "test two")["if"] == "${{ !cancelled() && steps.prepare_install.outcome == 'success' }}"
+
+
+def test_no_install_without_toolchains():
+    doc, _ = _rendered(_THREE)
+    assert "support install" not in _runs(doc)
+
+
+def test_every_skipped_leaf_is_named_with_its_reason_in_the_file():
+    body = """
+        ci:
+          test:
+            commands:
+              lab: { task: ship, unattended: true, ci: { skip: "needs the lab" } }
+              walk: { task: ship, unattended: false }
+              one: { task: ship, unattended: true }
+        """
+    doc, text = _rendered(body)
+    assert _runs(doc) == ["test one"]
+    comment = " ".join(line.strip().removeprefix("#").strip() for line in text.splitlines()
+                       if line.strip().startswith("#"))
+    assert "`test lab` - needs the lab" in comment
+    assert f"`test walk` - {cipipeline.ATTENDED}" in comment
+    assert comment.index("`test lab`") < comment.index("`test walk`")
+    assert "manifest order" in comment
+
+
+def test_the_job_is_keyed_ci_and_runs_on_the_product_runner():
+    doc, _ = _rendered(_THREE, _SELF_HOSTED)
+    assert list(doc["jobs"]) == ["ci"]
+    assert doc["jobs"]["ci"]["runs-on"] == "ghr-8"
+    assert doc["jobs"]["ci"]["env"]["DELIVERY_DOCKER_BOOTSTRAP"] == "1"
+
+
+def test_the_model_carries_the_steps_and_no_conditions():
+    text = _text(_THREE)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    derivation = cipipeline.derive(loaded, yaml.safe_load(text))
+    assert derivation.model.path == cipipeline.PATH
+    (job,) = derivation.model.job
+    assert job.key == cipipeline.JOB
+    assert job.runner.kind is workflowschema.RUNNER_KINDS["github-ubuntu"]
+    assert [step.command for step in job.step] == [leaf.spec for leaf in derivation.selection.leaves]
+    assert [t.event for t in derivation.model.trigger] == ["pull_request", "push_main", "dispatch"]
+
+
+@pytest.mark.parametrize("body", [
+    """
+        ci:
+          test:
+            commands:
+              walk: { task: ship, unattended: false }
+              lab: { task: ship, unattended: true, ci: { skip: "needs the lab" } }
+              all: { depends_on: [walk], help: "All." }
+        """,
+    """
+        cd:
+          deploy:
+            commands:
+              up: { task: ship, unattended: true }
+        """,
+])
+def test_a_product_with_no_runnable_leaf_is_refused(body):
+    text = _text(body)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    with pytest.raises(ValueError, match="no leaf a machine may run") as raised:
+        cipipeline.derive(loaded, yaml.safe_load(text))
+    assert "green tick over nothing" in str(raised.value)
+    if "walk" in body:
+        assert "`test`" in str(raised.value) and "`test walk`" in str(raised.value)
+
+
+def test_the_release_archive_is_unchanged():
+    upload = workflowgen.report_upload("tests/reports/")
+    assert upload.verbatim == {"uses": workflowgen.UPLOAD_ACTION, "if": "always()",
+                               "with": {"name": workflowgen.RELEASE_ARCHIVE, "path": "tests/reports/*.html",
+                                        "if-no-files-found": "error", "retention-days": 90}}

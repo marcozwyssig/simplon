@@ -344,6 +344,10 @@ class Job:
     #: itself away. That was enough while every consequence was a value; it is not enough for one that is
     #: a STEP, because a step has to be written at render time, next to the product's own.
     runner: "runners.Runner | None" = None
+    #: si#858: the job already carries its preparation (the docker probe, the disk preflight and cleanup) as
+    #: steps of its own, with the ids its leaves' conditions read. Rendering inserts them only for a job
+    #: that does not, so a derived job gets them once and in the place its conditions expect.
+    prepared: bool = False
 
 
 @dataclass(frozen=True)
@@ -379,6 +383,8 @@ class Workflow:
     emulates: tuple[str, ...] = ()
     #: si#720: the derived release job's `timeout-minutes`.
     timeout_minutes: int = RELEASE_TIMEOUT_MINUTES
+    #: si#858: derived by `cipipeline` from the CI leaves rather than declared under `workflows:`.
+    derived: bool = False
 
     @property
     def generated(self) -> bool:
@@ -1484,12 +1490,17 @@ def _release_archive(manifest: Manifest, reports: "str | None" = None) -> "tuple
     if reports is None:
         reports = report_dir(context.current().manifest_data())
     group, name = leaves[0]
-    path = f"{reports.rstrip('/')}/*.html"
     return (Step(command=f"{group.replace('.', ' ')} {name}", modifiers={"if": "always()"},
                  note=RELEASE_ARCHIVE_NOTE),
-            Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
-                           "with": {"name": RELEASE_ARCHIVE, "path": path, "if-no-files-found": "error",
-                                    "retention-days": 90}})), ""
+            report_upload(reports)), ""
+
+
+def report_upload(reports: str) -> Step:
+    """The upload of the rendered test report under `reports` (si#509), shared by the release job and the
+    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green."""
+    return Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
+                          "with": {"name": RELEASE_ARCHIVE, "path": f"{reports.rstrip('/')}/*.html",
+                                   "if-no-files-found": "error", "retention-days": 90}})
 
 
 def report_dir(data: Mapping[str, object]) -> str:
@@ -1951,7 +1962,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
     # preflight is one of the PRODUCT's commands (si#8 - every step in a generated file is a string a
     # developer can type), and a command needs the checkout it lives in. A checkout is cheap; what the
     # preflight buys is everything after it, which is where the expensive steps and the real failures are.
-    preflight, cleanup, unplaced = _disk_steps(job, manifest)
+    # A `prepared` job (si#858) carries both pairs already, with the ids its leaves read, and its note says
+    # what is unplaced; inserting them again here would run each twice.
+    preflight, cleanup, unplaced = _disk_steps(job, manifest) if not job.prepared else (None, None, "")
     if unplaced:
         lines += _comment(unplaced, "      ")
     if preflight is not None:
@@ -1960,7 +1973,7 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         steps.append(cleanup)
     # si#623: the docker probe before even the disk preflight, and placed on its own, so a product that
     # placed only the disk pair keeps it.
-    probe, probe_unplaced = _docker_step(job, manifest)
+    probe, probe_unplaced = _docker_step(job, manifest) if not job.prepared else (None, "")
     if probe_unplaced:
         lines += _comment(probe_unplaced, "      ")
     if probe is not None:
