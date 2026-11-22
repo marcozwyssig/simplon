@@ -76,7 +76,7 @@ an argument.
 | **all load-time refusals** | **340** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
-a boolean `ci:` (`ci: false`) and a skip with an empty reason. Both would have worked, and both say nowhere why
+a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
 some other non-mapping, a key under it other than `skip` (a typo would leave the leaf running), and a skip on
 an aggregate (the key would do nothing, since a derived CI runs leaves). **Rejected: accepting `ci: false`.**

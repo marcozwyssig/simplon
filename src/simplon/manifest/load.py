@@ -27,8 +27,8 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
-import re
 import json
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable, NamedTuple, cast
 
@@ -1062,8 +1062,8 @@ def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
     reason = raw.get("skip")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
-            f"'{where}' declares `ci: skip: {json.dumps(reason, default=str)}`. `ci: skip:` says why: write the reason a hosted "
-            f"runner cannot run this command, as a non-empty string")
+            f"'{where}' declares `ci: skip: {json.dumps(reason, default=str)}`. `ci: skip:` says why: write "
+            f"the reason a hosted runner cannot run this command, as a non-empty string")
     return reason.strip()
 
 
