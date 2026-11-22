@@ -103,10 +103,13 @@ Generated output: a template (`Workflow.firnt`, builder's naming) generates the 
 manifest and renders YAML from them. The rendered text format (notes as comments, the YAML 1.1 `on:`
 trap) stays workflowgen's job.
 
-Builder's call: whether the derivation itself (the selectors) runs inside firn over the exported
-manifest model (si#522 `test manifest-model` already exports one) or in Python over the generated
-classes. Decision D5 binds the vocabulary to the model; the place the selector is evaluated may follow
-whatever firn can do at the pinned version. Record which and why in the model ticket.
+Decided in #857 (2026-11-22): the selectors (which leaves, which jobs, which order) run in Python over the
+generated classes, inside `support github workflows`. Running them in firn over the exported manifest model
+(si#522 `test manifest-model` exports one) would put docker and the firn image on every generation and every
+`--check`, including a pre-commit hook. The vocabulary is the model's (D5); the evaluation is the kernel's.
+Reopens when firn can be evaluated in-process without a container, or when the manifest becomes the firn
+model (#456). #857 also measured what the generated classes rest on: a firn template reads each property's
+kind, range and cardinality, so the dataclass fields are generated, not typed.
 
 ## 5. The CI workflow
 
