@@ -1,0 +1,104 @@
+template WorkflowSchema {
+
+  // src/simplon/model/workflowschema.py (si#857, the si#788 spec section 4): one frozen dataclass per class of
+  // simplon.workflow, a field per property read reflectively off the metamodel (as taskkeys.firnt reads
+  // CatalogueTask), and the runner kinds as data. A WHOLE module with no protected region. The `file` block
+  // stands outside every `for`, so a selector that answers nothing leaves a module without classes rather than
+  // no module, and src/tests/test_generated_workflowschema.py refuses that module.
+  //
+  // A field's type follows its range and cardinality: a literal is `str`/`bool`/`int`, a class of this package
+  // is its name, anything else (Step.command, a simplon.pipeline.TaskCommand) is `object`; 1..1 has no default,
+  // 0..1 defaults to empty or None, 0..N and 1..N are tuples defaulting to (). The classes are kw_only, so a
+  // required field may follow a defaulted one and the fields keep the model's order.
+  file "model/workflowschema.py" language python {
+    |# GENERATED from src/firn/model/simplon/workflow/workflow.firn (the classes) and runners.firn (the runner
+    |# kinds) by `./simplon.sh build model`. Do not edit: firn rewrites the whole file on every run, and this
+    |# file has no protected region. If it is missing or empty, every `./simplon.sh` command stops at import:
+    |# `git checkout -- src/simplon/model/workflowschema.py`.
+    |"""The vocabulary of a derived GitHub workflow (si#857), and the runner kinds the kernel knows (si#267)."""
+    |from __future__ import annotations
+    |
+    |from dataclasses import dataclass
+    for c : `firn.core.Class`[.fullName().startsWith("simplon.workflow.")] {
+      |
+      |
+      |@dataclass(frozen=True, kw_only=True)
+      |class ${c.name}:
+      |    """simplon.workflow.${c.name}."""
+      |
+      for p : c.property {
+        if p.range.fullName() == "firn.core.StringLiteral" {
+          if p.subjectCardinality == "Cardinality1_1" {
+            |    ${p.name}: str
+          }
+          if p.subjectCardinality == "Cardinality0_1" {
+            |    ${p.name}: str = ""
+          }
+          if p.subjectCardinality == "Cardinality0_N" or p.subjectCardinality == "Cardinality1_N" {
+            |    ${p.name}: tuple[str, ...] = ()
+          }
+        }
+        if p.range.fullName() == "firn.core.BooleanLiteral" {
+          if p.subjectCardinality == "Cardinality1_1" {
+            |    ${p.name}: bool
+          }
+          if p.subjectCardinality == "Cardinality0_1" {
+            |    ${p.name}: bool = False
+          }
+        }
+        if p.range.fullName() == "firn.core.IntegerLiteral" {
+          if p.subjectCardinality == "Cardinality1_1" {
+            |    ${p.name}: int
+          }
+          if p.subjectCardinality == "Cardinality0_1" {
+            |    ${p.name}: int | None = None
+          }
+        }
+        if p.range.fullName().startsWith("simplon.workflow.") {
+          if p.subjectCardinality == "Cardinality1_1" {
+            |    ${p.name}: ${p.range.name}
+          }
+          if p.subjectCardinality == "Cardinality0_1" {
+            |    ${p.name}: ${p.range.name} | None = None
+          }
+          if p.subjectCardinality == "Cardinality0_N" or p.subjectCardinality == "Cardinality1_N" {
+            |    ${p.name}: tuple[${p.range.name}, ...] = ()
+          }
+        }
+        if not p.range.fullName().startsWith("simplon.workflow.") and not p.range.fullName().startsWith("firn.core.") {
+          |    ${p.name}: object = None
+        }
+      }
+    }
+    |
+    |
+    |#: Each runner kind -> what follows from it, keyed by the kernel's spelling, in model order.
+    |RUNNER_KINDS: dict[str, RunnerKind] = {
+    for k : `simplon.workflow.RunnerKind` {
+      |    "${k.name.replace("_", "-")}": RunnerKind(
+      |        labels=(<<for l : k.labels>>"${l}", <<end>>),
+      if k.setup_python {
+        |        setup_python=True,
+      }
+      if not k.setup_python {
+        |        setup_python=False,
+      }
+      if k.disk_persists {
+        |        disk_persists=True,
+      }
+      if not k.disk_persists {
+        |        disk_persists=False,
+      }
+      if k.can_emulate {
+        |        can_emulate=True,
+      }
+      if not k.can_emulate {
+        |        can_emulate=False,
+      }
+      |        why="${k.why}",
+      |        env=(<<for e : k.env>>RunnerEnv(env_name="${e.env_name}", env_value="${e.env_value}"), <<end>>),
+      |    ),
+    }
+    |}
+  }
+}
