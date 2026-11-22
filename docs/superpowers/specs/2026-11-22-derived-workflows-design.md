@@ -54,7 +54,7 @@ Anti-goals (a result that works and is still a failure):
 |---|----------|----------|
 | D1 | What runs in CI | Every `unattended` leaf under `ci build` and `ci test`, the rule of `derive:` (si#267). Aggregates are skipped. |
 | D2 | Opt-out | A new key on the command, `ci: { skip: "<reason>" }`. `unattended` keeps meaning "needs no human". |
-| D3 | Job split | One job per runner need; a cut only where an artifact crosses it. #448 (order from artifacts) is prerequisite work. |
+| D3 | Job split | One job per runner need; a cut only where an artifact crosses it. The order is manifest order with port edges as the only extra precedence (amended 2026-11-22, see 5.2). |
 | D4 | The machine | A top-level manifest key `runner: {kind, labels}`. Absent: `github-ubuntu`. |
 | D5 | Model | Model first: Workflow, Job, Step, Runner, Trigger become classes in `pipeline.firn`; workflowgen consumes the generated classes. This slice of P3 M5 is pulled into P2 M9. |
 | D6 | firn projects in dependency order | firn's own command (`--all`, ordered by `firn.toml [dependencies]`, parallel where independent). The kernel calls one command. |
@@ -130,9 +130,12 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 
 ### 5.2 Order and job split (D3)
 
-1. **Order** inside the set comes from artifacts (#448): a consumer after its producer. Ties keep
-   manifest order. This keeps simplon's "release-notes last" without a key, because it is last in the
-   manifest. #448 moves from P5 M6 to P2 M9 and lands before the derivation.
+1. **Order** inside the set is manifest order, with one extra precedence: a consumer after its producer
+   (a stable topological sort). This keeps simplon's "release-notes last" without a key, because it is last
+   in the manifest. Amended 2026-11-22 (Marco, on #448's measurement): ports imply 36 of 1540 ordered leaf
+   pairs across every reachable plan (netctl 0 of 1001, though its `web-jar`, `aot` and image steps really
+   depend on each other), so an order from artifacts alone is measured out; ports only complete list order.
+   #858 does this sort itself; #448 is not a prerequisite and stays in P5 M6.
 2. **Runner need**: a leaf runs on the product's Runner (D4) unless its task needs something that
    Runner cannot give. The first such need the derivation knows is `platforms:` (D8). A leaf on a
    different Runner is a different Job.
@@ -267,8 +270,7 @@ Each step is a ticket in P2 M9 (unless noted) and lands with a verification.
 1. **Model** (D5): workflow classes in the firn model, template, generated Python; runner kinds as
    instances. Verify: `test model` green, generated classes used by workflowgen, simplon's rendered
    workflows byte-identical before and after.
-2. **#448** moved to P2 M9: plan order from artifacts. Verify: a fixture whose manifest order is wrong
-   against its artifacts is planned producer-first; see it red with ordering off.
+2. *(Struck 2026-11-22: #448 is no longer a prerequisite; #858 sorts its leaves, see 5.2.)*
 3. **Derivation core**: D1, D2, D3, D4, sections 5.1 to 5.3. A product with no `workflows:` gets
    `ci.yml`. Verify: simplon's manifest with its `workflows.ci` deleted renders a CI workflow running
    today's leaves in today's order plus the D13 leaves, the report last; every skipped leaf is named
