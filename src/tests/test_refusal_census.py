@@ -721,10 +721,11 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_strict_bool", "'publishes' is true or false, got"): DIAGNOSIS,
     # si#858: the task field a derived CI job reads to put a leaf last; a written value with no reading is refused.
     ("load", "_strict_after_all", "'after_all' is true or false, got"): DIAGNOSIS,
-    # si#858: a command's `ci: { skip: "<reason>" }`. A skip with no reason is the one expression rule: it
-    # forbids the bare `ci: false` spelling, which would have worked and said why nowhere. The rest name a
-    # declaration with no working reading (not a mapping, a key nothing reads, a skip on an aggregate).
+    # si#858: a command's `ci: { skip: "<reason>" }`. An empty reason and a boolean `ci:` are expression rules:
+    # the bare `ci: false` spelling would have worked and said why nowhere. The rest name a declaration with
+    # no working reading (not a mapping, a key nothing reads, a skip on an aggregate).
     ("load", "_ci_skip", "`ci: skip:` says why"): EXPRESSION,
+    ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): EXPRESSION,
     ("load", "_ci_skip", "but `ci:` on a command is a mapping"): DIAGNOSIS,
     ("load", "_ci_skip", "The only key this kernel reads under a command's `ci:` is `skip`"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs leaves, never an aggregate"): DIAGNOSIS,
@@ -1256,6 +1257,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
 REACH: dict[tuple[str, str, str], str] = {
     # si#858: MERGED - the kernel's own catalogue places its commands through the same `_command`.
     ("load", "_ci_skip", "`ci: skip:` says why"): REACH_MERGED,
+    ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): REACH_MERGED,
     # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,

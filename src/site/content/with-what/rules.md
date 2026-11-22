@@ -72,15 +72,15 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 290 | nothing - the declaration had no working meaning |
-| expression rule | 49 | something it could otherwise have said |
-| **all load-time refusals** | **339** | |
+| expression rule | 50 | something it could otherwise have said |
+| **all load-time refusals** | **340** | |
 
-si#858 added three diagnoses and one expression rule, on a command's `ci: { skip: "<reason>" }`, the opt-out
-from the derived CI. **Expression rule:** a skip with no reason, which refuses the bare `ci: false`; it would
-have worked, and said nowhere why a leaf is not verified. **Diagnoses:** a `ci:` that is not a mapping, a key
-under it other than `skip` (a typo would leave the leaf running), and a skip on an aggregate (the key would do
-nothing, since a derived CI runs leaves). **Rejected: accepting `ci: false`.** It reopens if a product shows
-a skip whose reason is the same on every line.
+si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
+a boolean `ci:` (`ci: false`) and a skip with an empty reason. Both would have worked, and both say nowhere why
+a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
+some other non-mapping, a key under it other than `skip` (a typo would leave the leaf running), and a skip on
+an aggregate (the key would do nothing, since a derived CI runs leaves). **Rejected: accepting `ci: false`.**
+It reopens if a product shows a skip whose reason is the same on every line.
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
 is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no
@@ -251,7 +251,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 42 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 43 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

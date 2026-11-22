@@ -42,9 +42,15 @@ def test_a_skip_without_a_reason_is_refused(written):
         _loaded(written)
 
 
-def test_a_bare_ci_false_is_refused():
-    with pytest.raises(ValueError, match=r'\{ skip: "<reason>" \}'):
-        _loaded("ci: false")
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_a_boolean_ci_is_refused_as_echoed_and_names_the_form(value):
+    with pytest.raises(ValueError, match=rf'`ci: {value}`.*nobody can read back.*\{{ skip: "<reason>" \}}'):
+        _loaded(f"ci: {value}")
+
+
+def test_a_ci_that_is_not_a_mapping_is_a_diagnosis():
+    with pytest.raises(ValueError, match='`ci: "nope"`, but `ci:` on a command is a mapping'):
+        _loaded('ci: "nope"')
 
 
 def test_an_unknown_key_under_ci_is_refused():

@@ -28,6 +28,7 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 from __future__ import annotations
 
 import re
+import json
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable, NamedTuple, cast
 
@@ -1045,10 +1046,14 @@ def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
         raise ValueError(
             f"aggregate '{where}' declares `ci: skip:`, and a derived CI runs leaves, never an aggregate, so "
             f"the key would do nothing - declare it on the member commands that cannot run in CI")
+    if isinstance(raw, bool):
+        raise ValueError(
+            f"'{where}' declares `ci: {json.dumps(raw)}`. An opt-out without a reason is one nobody can read "
+            f"back: to keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
     if not isinstance(raw, Mapping):
         raise ValueError(
-            f"'{where}' declares `ci: {raw}`, but `ci:` on a command is a mapping. To keep it out of the "
-            f"derived CI write `ci: {{ skip: \"<reason>\" }}`")
+            f"'{where}' declares `ci: {json.dumps(raw, default=str)}`, but `ci:` on a command is a mapping. "
+            f"To keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
     unknown = [str(key) for key in raw if key != "skip"]
     if unknown:
         raise ValueError(
@@ -1057,7 +1062,7 @@ def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
     reason = raw.get("skip")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
-            f"'{where}' declares `ci: skip: {reason!r}`. `ci: skip:` says why: write the reason a hosted "
+            f"'{where}' declares `ci: skip: {json.dumps(reason, default=str)}`. `ci: skip:` says why: write the reason a hosted "
             f"runner cannot run this command, as a non-empty string")
     return reason.strip()
 
@@ -1104,9 +1109,8 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
-                publishes=spec.publishes, after_all=spec.after_all, ci_skip=ci_skip, token=spec.token,
-                env_pass=env_pass,
-                task=spec.task, produces=spec.produces, consumes=spec.consumes,
+                publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,
+                ci_skip=ci_skip, task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,
                                                  metavar=p.metavar, short_first=p.short_first)
