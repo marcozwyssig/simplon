@@ -55,7 +55,7 @@ impl   help   passthrough_args   params   unattended   publishes   token   after
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
 
 ```text
-task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override
+task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override   ci
 ```
 
 Six of the task's keys are **inherited** by every command that instantiates it unless the command says
@@ -87,6 +87,10 @@ and `token: gitlab` are refused.
 `after_all` (si#858) is the same kind of fact: an `after_all: true` task runs after every other leaf of its CI job and
 whatever they did (`if: always()`), so a failed leaf still leaves its report. `test:report` is the one that says it.
 A quoted value is refused.
+
+`ci` (si#858) is a command's own key, not a task's: `ci: { skip: "<reason>" }` keeps one command out of the
+derived CI and says why. It is a mapping with that one key. A bare `ci: false`, an empty reason, any other key
+under it and a skip on an aggregate are all refused, the last because a derived CI runs leaves.
 
 A `token: app` task (si#534) writes to one repository the run's own token cannot reach. Its leaf binds that
 repository with `with: { repository: <owner>/<repo> }`, and every generated job, the derived release job

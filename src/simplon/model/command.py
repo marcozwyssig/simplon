@@ -102,6 +102,9 @@ class TaskCommand(Command):
     #: si#858: inherited from the task like `publishes` - a derived CI job places this leaf after every other
     #: one and runs it `if: always()`, so a failed leaf still leaves its report.
     after_all: bool = False
+    #: si#858: why this command stays out of the derived CI, from its `ci: { skip: "<reason>" }`. Empty means
+    #: it runs there.
+    ci_skip: str = ""
     with_: Mapping[str, object] = field(default_factory=dict)
     params: Mapping[str, ParamPresentation] = field(default_factory=dict)
     produces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)

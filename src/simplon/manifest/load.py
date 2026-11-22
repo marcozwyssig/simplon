@@ -336,6 +336,8 @@ class _CommandSpecModel(BaseModel):
     consumes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     # si#492: raw, validated in `_command` by `launcherenv.of_command`, where the command's path is known.
     env: object = None
+    # si#858: raw, validated in `_command` (`_ci_skip`), where the command's path is known.
+    ci: object = None
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -1025,6 +1027,41 @@ def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
             if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
 
 
+def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
+    """The reason a command opts out of the derived CI (si#858), "" when it does not.
+
+    Only `ci: { skip: "<reason>" }` is read. A bare `ci: false` is refused rather than accepted as a
+    shorthand: the opt-out is the one place a manifest says a leaf is NOT verified by CI, so it carries its
+    reason where the next reader finds it. An unknown key is refused because a typo would leave the leaf
+    running, the "nothing to do" that is really a failure. On an aggregate the key would do nothing, since a
+    derived CI selects leaves only.
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on.
+    """
+    raw = spec.ci
+    if raw is None:
+        return ""
+    if spec.depends_on:
+        raise ValueError(
+            f"aggregate '{where}' declares `ci: skip:`, and a derived CI runs leaves, never an aggregate, so "
+            f"the key would do nothing - declare it on the member commands that cannot run in CI")
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"'{where}' declares `ci: {raw}`, but `ci:` on a command is a mapping. To keep it out of the "
+            f"derived CI write `ci: {{ skip: \"<reason>\" }}`")
+    unknown = [str(key) for key in raw if key != "skip"]
+    if unknown:
+        raise ValueError(
+            f"'{where}' declares `ci:` key {', '.join(unknown)}. The only key this kernel reads under a "
+            f"command's `ci:` is `skip` - a misspelt one would leave the command running in CI")
+    reason = raw.get("skip")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError(
+            f"'{where}' declares `ci: skip: {reason!r}`. `ci: skip:` says why: write the reason a hosted "
+            f"runner cannot run this command, as a non-empty string")
+    return reason.strip()
+
+
 def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,
              areas: dict[str, str], product_tasks: dict) -> Command:
     """The object of the class a validated spec's kind names (si#400 4d), carrying only that kind's fields:
@@ -1044,6 +1081,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
             f"`toolchain:run` line of its own, so the names would reach nothing - declare `env: {{ pass: "
             f"[...] }}` on the member commands whose toolchain needs them")
     env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
+    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}")
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1066,7 +1104,8 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
-                publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,
+                publishes=spec.publishes, after_all=spec.after_all, ci_skip=ci_skip, token=spec.token,
+                env_pass=env_pass,
                 task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,
