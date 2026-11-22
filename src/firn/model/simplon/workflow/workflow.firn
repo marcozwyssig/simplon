@@ -114,6 +114,11 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
 // One GitHub job: a machine, its steps in order, the jobs it needs, its cells, its condition and its time limit
 // (si#720's default when absent).
 Job typeOf firn.core.Class extends firn.core.NamedResource {
+  // GitHub's job id, read for `jobs:` and `needs:` (#858).
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
   property runner typeOf firn.core.Composition {
     range = simplon.workflow.Runner
     subjectCardinality = 1..1
