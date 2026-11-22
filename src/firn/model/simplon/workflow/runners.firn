@@ -1,0 +1,43 @@
+// The runner kinds the kernel knows (si#267, si#857), as M1 instances of simplon.workflow.RunnerKind. A firn name
+// has no `-`: `self_hosted_debian` is the kernel's `self-hosted-debian`. These were the hand-typed table in
+// src/simplon/manifest/runners.py until si#857; the measurements behind them moved here with them.
+//
+// Every kind the kernel knows, and no more than were measured.
+//
+// `github-ubuntu` is what every product in this family used before 2026-09-16, and it is the shape the
+// generator emitted by default: `actions/setup-python` works, docker is already on the machine.
+//
+// `self-hosted-debian` is `ghr-8`, measured on 2026-09-16 while moving this repository's CI onto it:
+//
+//   * `actions/setup-python` REFUSES. It does not install Python, it unpacks prebuilt archives, and its
+//     manifest carries Ubuntu 22.04/24.04/26.04 and RHEL 9/10 and nothing else. The answer on a Debian
+//     runner is "not found for this operating system" and no version pin could have changed it. The
+//     machine's own `python3` is what the launcher builds its venv with, which is netctl's shape too.
+//   * DOCKER ARRIVES THROUGH THE BOOTSTRAP. A container job was tried first and is not the answer: it
+//     needs docker on the runner in order to START, so it cannot be the thing that gets docker onto the
+//     runner. `DELIVERY_DOCKER_BOOTSTRAP=1` lets `simplon.adapters.docker.ensure_docker()` install the engine as
+//     root, or fetch the static client when it is not root - docker-outside-of-docker, started from
+//     inside the job.
+//   * THE LABEL IS THE PRODUCT'S. `[self-hosted, Linux, X64]` would describe any self-hosted Linux
+//     machine an account ever registers, so the day a second one joins the jobs are shared out with
+//     nothing saying so. A label of the machine's own is the answer, and the kernel cannot know it.
+package simplon.workflow.runners
+
+github_ubuntu typeOf simplon.workflow.RunnerKind {
+  labels = "ubuntu-latest"
+  setupPython = true
+  // Destroyed after every job, so there is no disk to look after.
+  diskPersists = false
+  canEmulate = true
+  why = "GitHub-hosted Ubuntu: `actions/setup-python` unpacks an interpreter here, and docker is already on the machine."
+}
+self_hosted_debian typeOf simplon.workflow.RunnerKind {
+  setupPython = false
+  diskPersists = true
+  canEmulate = true
+  why = "A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is reached through the bootstrap, because a container job would need docker in order to start."
+  env e_bootstrap typeOf simplon.workflow.RunnerEnv {
+    envName = "DELIVERY_DOCKER_BOOTSTRAP"
+    envValue = "1"
+  }
+}

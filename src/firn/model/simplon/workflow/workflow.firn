@@ -1,0 +1,181 @@
+// simplon.workflow (si#857, the si#788 spec section 4, decision D5): the vocabulary of a derived GitHub workflow,
+// written as a firn metamodel before the kernel derives anything from it. Marco chose "model first"
+// (2026-11-22): the kernel's workflow classes are generated from here (src/firn/templates/workflowschema.firnt
+// writes src/simplon/model/workflowschema.py), never typed by hand.
+//
+// THE PROPERTIES ARE READ, in this order: the template writes one frozen dataclass per class below and one field
+// per property, so a property added here is a field there. Which leaves, which jobs and which order is decided in
+// Python over those classes (the spec, section 4), not by selectors here.
+package simplon.workflow
+
+// A kind of machine a job runs on, and what follows from it (si#267). The instances are in runners.firn.
+RunnerKind typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  // The labels the kind brings itself; a self-hosted kind brings none, and the product names its machine.
+  property labels typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+  // Does `actions/setup-python` work on it.
+  property setupPython typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+  // Does the machine survive the job (si#327): a disk that can fill.
+  property diskPersists typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+  // Can a job on it register QEMU for an emulated platform (#722 reads it).
+  property canEmulate typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+  property why typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  // The environment every job on the kind gets.
+  property env typeOf firn.core.Composition {
+    range = simplon.workflow.RunnerEnv
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// One variable of a runner kind's environment.
+RunnerEnv typeOf firn.core.Class extends firn.core.NamedResource {
+  property envName typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property envValue typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// A product's machine: a kind and the product's own labels (the manifest's top-level `runner:`, spec D4).
+Runner typeOf firn.core.Class extends firn.core.NamedResource {
+  property kind typeOf firn.core.Association {
+    range = simplon.workflow.RunnerKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property labels typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+}
+
+// What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch` or `schedule`; a string, not an
+// enum, so the template needs no enum case. `cron` belongs to `schedule`, `input` to `dispatch`.
+Trigger typeOf firn.core.Class extends firn.core.NamedResource {
+  property event typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property cron typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property input typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+}
+
+// The cells of a job: platforms and Python versions (spec D8).
+Matrix typeOf firn.core.Class extends firn.core.NamedResource {
+  property platform typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+  property python typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+}
+
+// One step: a product command, or a step the kernel owns (checkout, reaper, docker probe, disk preflight, upload,
+// download, app-token mint). Exactly one of the two; a product cannot name a kernel step.
+Step typeOf firn.core.Class extends firn.core.NamedResource {
+  property command typeOf firn.core.Association {
+    range = simplon.pipeline.TaskCommand
+    subjectCardinality = 0..1
+    objectCardinality = 0..N
+  }
+  property kernelStep typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+// One GitHub job: a machine, its steps in order, the jobs it needs, its cells, its condition and its time limit
+// (si#720's default when absent).
+Job typeOf firn.core.Class extends firn.core.NamedResource {
+  property runner typeOf firn.core.Composition {
+    range = simplon.workflow.Runner
+    subjectCardinality = 1..1
+    objectCardinality = 0..1
+  }
+  property step typeOf firn.core.Composition {
+    range = simplon.workflow.Step
+    subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+  property needs typeOf firn.core.Association {
+    range = simplon.workflow.Job
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
+  property matrix typeOf firn.core.Composition {
+    range = simplon.workflow.Matrix
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property condition typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }  property timeoutMinutes typeOf firn.core.Attribute {
+    range = firn.core.IntegerLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+// One workflow file. `title` is GitHub's `name:` (every firn resource already has a `name`). No permissions or
+// concurrency: both are kernel constants today (si#719), and nothing would read them from here yet.
+Workflow typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property title typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property trigger typeOf firn.core.Composition {
+    range = simplon.workflow.Trigger
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property job typeOf firn.core.Composition {
+    range = simplon.workflow.Job
+    subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+}
+
+// A product-written workflow that names why no datum expresses it yet (spec section 6.3); the census counts it.
+WorkflowException typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
