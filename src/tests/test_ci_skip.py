@@ -7,12 +7,15 @@ area, so a test holds that a command's `ci:` is read as the command key it is.
 """
 from __future__ import annotations
 
+import re
 import textwrap
 
 import pytest
 
 from simplon.manifest import catalogue
 from simplon.manifest import load as manifest
+
+from conftest import ROOT
 
 
 def _loaded(written: str):
@@ -69,3 +72,14 @@ def test_ci_skip_on_an_aggregate_is_refused():
                   lab: { task: ship }
                   all: { depends_on: [lab], help: "All.", ci: { skip: "no" } }
             """), catalogue=catalogue.load())
+
+
+def test_the_manifest_chapter_s_skip_example_loads_as_written():
+    """how/manifest.md shows `ci: { skip: }` on a placed catalogue leaf; the snippet is read from the page itself
+    and loaded, so the example a reader copies is one the kernel accepts and reads the reason from."""
+    page = (ROOT / "src" / "site" / "content" / "how" / "manifest.md").read_text(encoding="utf-8")
+    (snippet,) = [block for block in re.findall(r"```yaml\n(.*?)```", page, re.S) if "ci: { skip:" in block]
+
+    loaded = manifest.load(snippet, catalogue=catalogue.load())
+
+    assert loaded.commands["test"]["lab"].ci_skip == "needs a running lab; run by hand before a release"

@@ -1196,73 +1196,6 @@ A job-level `derive:` would have had to refuse `steps:` beside it — and that r
 expression rule, forbidding something a product legitimately wants and sending it back to writing the
 whole file by hand, which is the work this feature exists to remove.
 
-#### A product with no `workflows: ci:`
-
-**`support github workflows` derives `.github/workflows/ci.yml` from the command tree** when no entry
-under `workflows:` is keyed `ci` (si#858). Declaring `workflows: ci:` is the switch, and the only one: a
-product that declares its CI keeps exactly the file it renders today, and every other product gets the
-derived one beside whatever else it declares. A product with no `workflows:` section at all gets it too.
-
-**What runs** is the rule of `derive:`: every leaf of a `build` or `test` group of the `ci` area,
-nested groups included, that says `unattended: true`. Aggregates are passed over, because their members
-are leaves in their own right. A leaf that has not ruled on `unattended:` is refused by name; a leaf
-with `unattended: false` is left out and named in the file with that reason, as `test walk` is.
-
-**`ci: { skip: "<reason>" }` on a command keeps one leaf out** and says why, in the file, beside the
-leaves left out for `unattended: false`. A skip wins even where `unattended:` is undeclared, which only
-matters to a leaf that would run. A bare `ci: false` and a skip with no reason are refused: they would
-have worked, and they say nowhere why a leaf is not verified ([the rules](../../with-what/rules/)).
-
-```yaml
-test:
-  lab: { task: "test:gate", ci: { skip: "needs a running lab; run by hand before a release" } }
-```
-
-**The order is manifest order, a consumer after its producer.** Manifest order is the loaded
-manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
-catalogue order) and, inside a group, the order your YAML writes. The one extra precedence is a port: a
-leaf that `consumes:` an artifact runs after the leaves that `produces:` it, and moves no further than
-that. A cycle through the leaves' artifacts is refused, naming the loop, and so is a leaf that consumes
-what a leaf the CI does not run produces, unless the artifact has a `registry:` it is fetched from. So
-every `build` leaf runs before every `test` leaf, and no `test` leaf is last because the YAML lists it
-last: it does not need to be, as the next paragraph says.
-
-**One red leaf hides none of the others.** A GitHub job stops at its first red step, so every leaf after
-the first runs `if: ${{ !cancelled() && ... }}` and the job is red if any leaf was. The `...` is the
-preparation: the docker probe and the disk preflight where the machine's disk persists and the product
-places them, and `support install` where it declares `toolchains:`. They run first, carry the ids
-`prepare_docker`, `prepare_disk` and `prepare_install`, and every later leaf also asks that each one
-present succeeded, so a red preparation stops the job as one red step instead of turning every leaf red
-for the same cause.
-
-**`after_all: true` on a task puts its leaf last** and runs it `if: always()`: `test:report` says it,
-so the report is written over every verdict, red ones included. Its upload follows it, `if: always()`,
-archiving `suites: reports:`, which a product with a `test:report` leaf therefore has to declare. An
-`after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
-consumer.
-
-**The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
-it is `github-ubuntu`:
-
-```yaml
-runner: { kind: self-hosted-debian, labels: ghr-8 }
-```
-
-The derived workflow is one job, `ci`, on that machine, triggered on a pull request, a push to `main`
-and by dispatch, and it reads only (`permissions: { contents: read }`).
-
-**When nothing can run, there is no file.** A product that declares other workflows and has no leaf a
-machine may run gets no ci.yml and one log line saying why; with no workflow declared at all, the
-derivation is refused, because generating nothing would look green.
-
-**A ci.yml the kernel did not write is refused, not overwritten.** If `.github/workflows/ci.yml` exists
-without the generated header and nothing declares `workflows: ci:`, the run stops and names the file:
-keep it by declaring it as `handwritten: "<why>"`, or delete it and let the kernel derive it. Without the
-refusal a kernel upgrade would replace a product's own CI silently, and `--check` would call the loss
-drift. A misspelt `workflows:` key cannot be told from a missing one, so a product whose ci.yml is
-already generated gets the derived file over it; that shows as a diff to review, and as drift under
-`--check`.
-
 **An artifact that crosses a job boundary is handed over** (si#344). Every job starts on a fresh machine, so
 a file one job writes is not there for the next. When a command in one job `produces:` an artifact that a
 command in another job of the same workflow `consumes:`, the generated file says so itself:
@@ -1395,6 +1328,76 @@ not by `"on"`. Write the trigger the natural way here - the loader reads both sp
 parse a workflow yourself, look under `True`, or you will search a section you never had and read the
 miss as an answer.
 {{< /callout >}}
+
+#### A product with no `workflows: ci:`
+
+**`support github workflows` derives `.github/workflows/ci.yml` from the command tree** when no entry
+under `workflows:` is keyed `ci` (si#858). Declaring `workflows: ci:` is the switch, and the only one: a
+product that declares its CI keeps exactly the file it renders today, and every other product gets the
+derived one beside whatever else it declares. A product with no `workflows:` section at all gets it too.
+
+**What runs** is the rule of `derive:`: every leaf of a `build` or `test` group of the `ci` area,
+nested groups included, that says `unattended: true`. Aggregates are passed over, because their members
+are leaves in their own right. A leaf that has not ruled on `unattended:` is refused by name; a leaf
+with `unattended: false` is left out and named in the file with that reason, as `test walk` is.
+
+**`ci: { skip: "<reason>" }` on a command keeps one leaf out** and says why, in the file, beside the
+leaves left out for `unattended: false`. A skip wins even where `unattended:` is undeclared, which only
+matters to a leaf that would run. A bare `ci: false` and a skip with no reason are refused: they would
+have worked, and they say nowhere why a leaf is not verified ([the rules](../../with-what/rules/)).
+
+```yaml
+ci:
+  test:
+    commands:
+      lab: { task: "test:gate", ci: { skip: "needs a running lab; run by hand before a release" } }
+```
+
+**The order is manifest order, a consumer after its producer.** Manifest order is the loaded
+manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
+catalogue order) and, inside a group, the order your YAML writes. The one extra precedence is a port: a
+leaf that `consumes:` an artifact runs after the leaves that `produces:` it, and moves no further than
+that. A cycle through the leaves' artifacts is refused, naming the loop, and so is a leaf that consumes
+what a leaf the CI does not run produces, unless the artifact has a `registry:` it is fetched from. So
+every `build` leaf runs before every `test` leaf, and no `test` leaf is last because the YAML lists it
+last: it does not need to be, as the next paragraph says.
+
+**One red leaf hides none of the others.** A GitHub job stops at its first red step, so every leaf after
+the first runs `if: ${{ !cancelled() && ... }}` and the job is red if any leaf was. The `...` is the
+preparation: the docker probe and the disk preflight where the machine's disk persists and the product
+places them, and `support install` where it declares `toolchains:`. They run first, carry the ids
+`prepare_docker`, `prepare_disk` and `prepare_install`, and every later leaf also asks that each one
+present succeeded, so a red preparation stops the job as one red step instead of turning every leaf red
+for the same cause.
+
+**`after_all: true` on a task puts its leaf last** and runs it `if: always()`: `test:report` says it,
+so the report is written over every verdict, red ones included. Its upload follows it, `if: always()`,
+archiving `suites: reports:`, which a product with a `test:report` leaf therefore has to declare. An
+`after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
+consumer.
+
+**The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
+it is `github-ubuntu`:
+
+```yaml
+runner: { kind: self-hosted-debian, labels: ghr-8 }
+```
+
+The derived workflow is one job, `ci`, on that machine, triggered on a pull request, a push to `main`
+and by dispatch, and it reads only (`permissions: { contents: read }`).
+
+**When nothing can run, there is no file.** A product that declares other workflows and has no leaf a
+machine may run gets no ci.yml and one log line saying why; with no workflow declared at all, the
+derivation is refused, because generating nothing would look green.
+
+**A ci.yml the kernel did not write is refused, not overwritten.** If `.github/workflows/ci.yml` exists
+without the generated header and nothing declares `workflows: ci:`, the run stops and names the file:
+keep it by declaring it as `handwritten: "<why>"`, or delete it and let the kernel derive it. Without the
+refusal a kernel upgrade would replace a product's own CI silently, and `--check` would call the loss
+drift. This refusal is not counted in [the refusal census](../../with-what/rules/): it is decided by a
+file on disk, not by the manifest. A misspelt `workflows:` key cannot be told from a missing one, so a
+product whose ci.yml is already generated gets the derived file over it; that shows as a diff to review,
+and as drift under `--check`.
 
 #### `--check`, and the file nobody owns
 

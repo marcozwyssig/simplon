@@ -411,7 +411,13 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     # port forces turns this red too: no leaf of this manifest consumes from a later one, so the two agree.
     walked = [f"{group.replace('.', ' ')} {name}" for group, members in manifest.commands.items()
               for name in members]
-    in_manifest_order = [words for words in walked if words in set(expected[:-1])]
+    ordered = set(expected[:-1])
+    in_manifest_order = [words for words in walked if words in ordered]
+    by_leaf = {step["run"].removeprefix(launcher): step for step in job["steps"]
+               if step.get("run", "").startswith(launcher)}
+    prepared = [step["id"] for step in job["steps"] if step.get("id", "").startswith("prepare_")]
+    gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in prepared)]) + " }}"
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
 
     assert expected != ["test report"]
     assert leaves == expected
@@ -420,3 +426,10 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     assert "test walk" not in leaves
     assert f"# `test walk` - {cipipeline.ATTENDED}" in rendered
     assert job["runs-on"] == "ghr-8"
+    # The gate (spec 5.2): on ghr-8 simplon places all three preparation steps, the first leaf waits on them by
+    # GitHub's default, every later one runs unless cancelled or a preparation went red, the report always.
+    assert prepared == ["prepare_docker", "prepare_disk", "prepare_install"]
+    assert "if" not in by_leaf[leaves[0]]
+    assert {words: by_leaf[words].get("if") for words in leaves[1:-1]} == {words: gate for words in leaves[1:-1]}
+    assert by_leaf["test report"].get("if") == "always()"
+    assert upload.get("if") == "always()"
