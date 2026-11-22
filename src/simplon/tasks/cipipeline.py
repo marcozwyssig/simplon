@@ -75,7 +75,7 @@ def _words(group: str, name: str) -> str:
     return f"{group.replace('.', ' ')} {name}"
 
 
-def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared] | None" = None) -> Selection:
+def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]") -> Selection:
     """The leaves a derived CI runs, in an order every consumer can be run in (si#858, spec section 4).
 
     A leaf is a `TaskCommand` in a `build` or `test` group (nested groups included) of the CI area, in the
@@ -98,14 +98,17 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared] | None" = N
             if not isinstance(spec, TaskCommand):
                 continue
             words = _words(group, name)
-            workflowgen.require_unattended(spec, words, "derived CI")
             if spec.ci_skip:
+                # Opted out by the product: skipped even where `unattended:` is undeclared, which only
+                # matters to a leaf that would run.
                 skipped.append(Skipped(words, spec.ci_skip))
-            elif not spec.unattended:
+                continue
+            workflowgen.require_unattended(spec, words, "derived CI")
+            if not spec.unattended:
                 skipped.append(Skipped(words, ATTENDED))
             else:
                 chosen.append(Leaf(words, spec))
-    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts or {})
+    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts)
     return Selection(order(chosen), tuple(skipped))
 
 
