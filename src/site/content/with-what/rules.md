@@ -79,7 +79,8 @@ si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derive
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
 some other non-mapping, a key under it other than `skip` (a typo would leave the leaf running), and a skip on
-an aggregate (the key would do nothing, since a derived CI runs leaves). **Rejected: accepting `ci: false`.**
+an aggregate or on a command no derived CI selects (outside `ci build` and `ci test`): there the key would do
+nothing, since a derived CI runs only those leaves. **Rejected: accepting `ci: false`.**
 It reopens if a product shows a skip whose reason is the same on every line.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
