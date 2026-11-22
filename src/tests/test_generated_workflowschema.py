@@ -66,3 +66,26 @@ def test_job_fields_follow_the_model_and_the_class_is_frozen():
     # assert
     assert fields == ["runner", "step", "needs", "matrix", "condition", "timeout_minutes"]
     assert workflowschema.Job.__dataclass_params__.frozen
+
+
+def _model_properties() -> dict[str, list[str]]:
+    """Each class of workflow.firn -> its own property names, in declaration order."""
+    text = WORKFLOW_MODEL.read_text(encoding="utf-8")
+    classes = re.split(r"^(?=\w+ typeOf firn\.core\.Class)", text, flags=re.M)[1:]
+    found = {block.split()[0]: re.findall(r"^\s+property (\w+) typeOf", block, re.M) for block in classes}
+    assert found and all(found.values()), "the model parse found no class or a class with no property"
+    return found
+
+
+def test_every_model_property_is_a_field_of_its_dataclass():
+    """The template writes a field only for the ranges and cardinalities it has a branch for, and drops any
+    other property with rc 0 - `test generated` stays green, because regenerating writes the same short file.
+    So every class's fields are held to the model's own property list, not only Job's."""
+    # arrange
+    model = _model_properties()
+
+    # act
+    generated = {name: [f.name for f in dataclasses.fields(getattr(workflowschema, name))] for name in model}
+
+    # assert
+    assert generated == model
