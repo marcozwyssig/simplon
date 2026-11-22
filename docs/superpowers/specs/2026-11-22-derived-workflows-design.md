@@ -126,6 +126,9 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
   `ci: false` spelling, which would have worked). Measured cost before shipping: zero manifests carry a
   `ci:` key on a command today; the builder re-measures over every reachable manifest
   (`reachable-manifests` memory: eight) before the ticket merges.
+- (corrected 2026-11-22, #858) `ci:` on an aggregate, or on a command that is not a leaf under `ci
+  build` or `ci test` (a cd, support or `ci release` command, a Deploy), is refused. Census kind:
+  diagnosis (no derived CI selects the command, so the key would do nothing).
 - Every skipped leaf is named in the rendered file as a comment with its reason.
 - `test:gate` and other leaves that need a running lab are the expected users of `skip`, or of
   `gate:` (section 5.5).
@@ -165,9 +168,12 @@ preparation steps (the docker probe, the disk preflight, `support install`, each
 places it) carry the ids `prepare_docker`, `prepare_disk` and `prepare_install` and no condition; the
 first leaf has none either, since GitHub's default already waits on every step before it; every later
 leaf runs `if: ${{ !cancelled() && steps.<id>.outcome == 'success' ... }}` over each preparation step
-present, so one red leaf hides none of the others while one red preparation stops them all and shows as
-one red step instead of every leaf red for the same cause. An `after_all` leaf and the report upload run
-`if: always()`.
+present, so one red leaf hides none of the others while after one red preparation the leaves are
+skipped instead of every one red for the same cause; the `after_all` report and its upload still run and
+say what they found. A leaf that consumes what another leaf produces also waits for that producer: the
+producer carries a step id from its command words (`leaf_build_handoff_canary`), and the consumer adds
+`steps.<that id>.outcome == 'success'`, so a red producer leaves its consumer skipped, not a second red
+step for one cause (final review, #858). An `after_all` leaf and the report upload run `if: always()`.
 
 ### 5.3 Report steps
 

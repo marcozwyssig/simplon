@@ -1,6 +1,8 @@
 """The product's `runner:` section, read by `simplon.tasks.cipipeline` (si#858)."""
 from __future__ import annotations
 
+import dataclasses
+import dataclasses
 import textwrap
 
 import pytest
@@ -347,6 +349,57 @@ def test_a_red_preparation_stops_the_leaves():
     cleanup = _step(doc, "support ci-disk-cleanup")
     assert cleanup["if"] == "always()" and cleanup["continue-on-error"] is True
     assert _runs(doc)[-1] == "support ci-disk-cleanup"
+
+
+def test_a_consumer_is_skipped_when_its_producer_went_red():
+    """si#858 final review: a consumer whose producer failed would go red on the missing file, so one cause
+    showed as two red steps. The producer carries an id and the consumer waits for its success; a leaf that
+    consumes nothing keeps the plain gate."""
+    doc, _ = _rendered(_PORTS)
+    assert _runs(doc) == ["build a", "build b-produce", "build t-consume", "build c"]
+    assert _step(doc, "build b-produce")["id"] == "leaf_build_b_produce"
+    assert "id" not in _step(doc, "build a") and "id" not in _step(doc, "build c")
+    assert _step(doc, "build t-consume")["if"] == (
+        "${{ !cancelled() && steps.leaf_build_b_produce.outcome == 'success' }}")
+    assert _step(doc, "build c")["if"] == "${{ !cancelled() }}"
+
+
+def test_a_consumer_waits_for_the_preparation_and_its_producer():
+    doc, _ = _rendered(_PORTS, _TOOLCHAINS)
+    assert _step(doc, "build t-consume")["if"] == (
+        "${{ !cancelled() && steps.prepare_install.outcome == 'success' && "
+        "steps.leaf_build_b_produce.outcome == 'success' }}")
+
+
+def test_an_after_all_consumer_still_runs_always():
+    body = """
+        ci:
+          build:
+            commands:
+              make: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+              late: { task: "toolchain:run", unattended: true, after_all: true, consumes: { source: doc } }
+        """
+    doc, _ = _rendered(body)
+    assert _step(doc, "build late")["if"] == "always()"
+
+
+def test_a_leaf_id_is_unique_in_the_job_and_valid_in_an_expression():
+    ids = cipipeline._leaf_ids(["build b-produce", "build b_produce", "test lab.x"])
+    assert ids == {"build b-produce": "leaf_build_b_produce", "build b_produce": "leaf_build_b_produce_2",
+                   "test lab.x": "leaf_test_lab_x"}
+
+
+def test_the_trigger_is_rendered_from_the_model():
+    """si#858 final review: `derive` stores the triggers in the model, and the file says what the model says,
+    so there is one source. The default set renders the kernel's `_CI_TRIGGER` unchanged."""
+    text = _text(_THREE)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+    derivation = cipipeline.derive(loaded, data)
+    assert cipipeline.to_workflow(derivation, loaded, data).on == workflowgen._CI_TRIGGER
+    only_pr = derivation._replace(model=dataclasses.replace(
+        derivation.model, trigger=(workflowschema.Trigger(event="pull_request"),)))
+    assert cipipeline.to_workflow(only_pr, loaded, data).on == {"pull_request": None}
 
 
 def test_the_report_runs_last_and_always():

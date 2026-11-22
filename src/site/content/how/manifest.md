@@ -540,6 +540,10 @@ refuses the same way, naming the key it looked for. The ones that say nothing sa
   si#314 wrote down a convention rather than inventing one, so a manifest that says nothing writes where
   it wrote yesterday. Same cost as `layout:`, stated for the same reason: `otuput: build-out` is silent
   too, and the build lands in `build/`.
+- **`runner:`** - an absent section is the normal case (si#858): the derived CI workflow then runs on
+  `github-ubuntu`, which is what a product that never named a machine has always had. The cost, stated:
+  `runnre:` is silent too, and the jobs stay on `github-ubuntu`. A kind the table does not carry, and a
+  self-hosted kind with no label, are refused inside a correctly spelled section.
 
 Each is driven in the test module above, so the silence is measured rather than assumed.
 
@@ -1345,6 +1349,9 @@ with `unattended: false` is left out and named in the file with that reason, as 
 leaves left out for `unattended: false`. A skip wins even where `unattended:` is undeclared, which only
 matters to a leaf that would run. A bare `ci: false` and a skip with no reason are refused: they would
 have worked, and they say nowhere why a leaf is not verified ([the rules](../../with-what/rules/)).
+`ci:` on an aggregate, or on any command that is not a leaf under `ci build` or `ci test` (a `cd`,
+`support` or `ci release` command), is refused too: no derived CI selects it, so the key would do
+nothing.
 
 ```yaml
 ci:
@@ -1367,8 +1374,15 @@ the first runs `if: ${{ !cancelled() && ... }}` and the job is red if any leaf w
 preparation: the docker probe and the disk preflight where the machine's disk persists and the product
 places them, and `support install` where it declares `toolchains:`. They run first, carry the ids
 `prepare_docker`, `prepare_disk` and `prepare_install`, and every later leaf also asks that each one
-present succeeded, so a red preparation stops the job as one red step instead of turning every leaf red
-for the same cause.
+present succeeded, so after a red preparation the leaves are skipped instead of every one turning red
+for the same cause. The report and its upload still run (`after_all`, below) and say what they found.
+
+**A consumer waits for its producer.** A leaf that consumes what another leaf produces would go red on
+the missing file if its producer went red, so one cause would show as two red steps. The producer
+carries a step id made from its command words (`build handoff-canary` gets `leaf_build_handoff_canary`),
+and the consumer's condition also asks `steps.<that id>.outcome == 'success'`: a red producer leaves
+its consumer skipped, not red. An artifact fetched from its `registry:` has no producer in the job and
+adds nothing to the condition.
 
 **`after_all: true` on a task puts its leaf last** and runs it `if: always()`: `test:report` says it,
 so the report is written over every verdict, red ones included. Its upload follows it, `if: always()`,

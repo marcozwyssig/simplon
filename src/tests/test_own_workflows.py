@@ -430,6 +430,18 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     # GitHub's default, every later one runs unless cancelled or a preparation went red, the report always.
     assert prepared == ["prepare_docker", "prepare_disk", "prepare_install"]
     assert "if" not in by_leaf[leaves[0]]
-    assert {words: by_leaf[words].get("if") for words in leaves[1:-1]} == {words: gate for words in leaves[1:-1]}
+    # A consumer also waits for its producer (si#858 final review): `test handoff-canary` reads the file `build
+    # handoff-canary` writes, so a red producer leaves it skipped rather than red on the missing file.
+    producer = by_leaf["build handoff-canary"]["id"]
+    canary = gate.removesuffix(" }}") + f" && steps.{producer}.outcome == 'success' }}}}"
+    assert producer == "leaf_build_handoff_canary"
+    assert by_leaf["test handoff-canary"].get("if") == canary
+    # Every other later leaf has the gate, and at most the success of leaves that ran before it.
+    for at, words in enumerate(leaves[1:-1], start=1):
+        extra = by_leaf[words]["if"].removeprefix(gate.removesuffix(" }}")).removesuffix(" }}")
+        earlier = {by_leaf[before].get("id") for before in leaves[:at]}
+        assert all(clause.removeprefix("steps.").removesuffix(".outcome == 'success'") in earlier
+                   for clause in extra.split(" && ")[1:]), (words, extra)
+        assert extra == "" or extra.startswith(" && steps.leaf_"), (words, extra)
     assert by_leaf["test report"].get("if") == "always()"
     assert upload.get("if") == "always()"

@@ -12,6 +12,7 @@ the generated model (`simplon.model.workflowschema`, #857), and `to_workflow` tu
 """
 from __future__ import annotations
 
+import re
 import textwrap
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple
@@ -196,6 +197,15 @@ DISK_CLEANUP = "disk-cleanup"
 PREPARE = {"docker": "prepare_docker", "disk": "prepare_disk", "install": "prepare_install"}
 _PREPARES = {DOCKER_PREFLIGHT: PREPARE["docker"], DISK_PREFLIGHT: PREPARE["disk"], INSTALL: PREPARE["install"]}
 
+#: The model's trigger events, as the `on:` keys and bodies GitHub reads. `derive` names the events and
+#: `to_workflow` writes them from here, so the rendered `on:` is the model's and not a second copy; the default
+#: set renders exactly `workflowgen._CI_TRIGGER`.
+_TRIGGERS: Mapping[str, tuple[str, object]] = {
+    "pull_request": ("pull_request", None),
+    "push_main": ("push", {"branches": [workflowgen.DEFAULT_BRANCH]}),
+    "dispatch": ("workflow_dispatch", None),
+}
+
 #: The coordinate `support install` instantiates; found in the product's tree by impl, as `runners.PREFLIGHT` is.
 INSTALL_TASK = "support:install"
 
@@ -333,12 +343,46 @@ def _derived_note(selection: Selection) -> str:
         "si#858: derived from this product's command tree, which declares no `workflows: ci:`. This job runs "
         "every unattended leaf of `ci build` and `ci test` in manifest order, a consumer after its producer. "
         "Every leaf after the first runs unless the run is cancelled or a preparation step went red, so one "
-        "red gate hides none of the others; a leaf that runs after all the others (the report) runs last and "
-        "always.", width=95)
+        "red gate hides none of the others; a consumer also waits for its producer's success, so a red "
+        "producer shows as one red step and its consumer as skipped. A leaf that runs after all the others "
+        "(the report) runs last and always.", width=95)
     if not selection.skipped:
         return head
     return head + "\n\nLeft out:\n" + "\n".join(
         textwrap.fill(f"`{s.words}` - {s.reason}", width=95, subsequent_indent="  ") for s in selection.skipped)
+
+
+def _leaf_ids(words: Sequence[str]) -> dict[str, str]:
+    """A step id for each leaf's command words: `leaf_` and the words with every character GitHub does not allow
+    in an id, and `-`, turned into `_` (a `-` in `steps.<id>` would be a subtraction, as `PREPARE` says). Two
+    command lines that spell the same id get `_2`, `_3` in the order given, so each id is unique in the job."""
+    out: dict[str, str] = {}
+    taken: set[str] = set(PREPARE.values())
+    for line in words:
+        base = "leaf_" + re.sub(r"[^A-Za-z0-9_]", "_", line)
+        candidate, n = base, 1
+        while candidate in taken:
+            n += 1
+            candidate = f"{base}_{n}"
+        taken.add(candidate)
+        out[line] = candidate
+    return out
+
+
+def _producers(leaves: Sequence[Leaf]) -> dict[str, list[str]]:
+    """For each leaf that consumes what another leaf of the job produces, the command words of those producers,
+    in job order; a consumer of a fetched artifact (`registry:`) or of nothing is absent."""
+    makers: dict[str, list[str]] = {}
+    for leaf in leaves:
+        for artifact in handoff._bound(leaf.spec.produces):
+            makers.setdefault(artifact, []).append(leaf.words)
+    out: dict[str, list[str]] = {}
+    for leaf in leaves:
+        found = [maker for artifact in handoff._bound(leaf.spec.consumes) for maker in makers.get(artifact, ())
+                 if maker != leaf.words]
+        if found:
+            out[leaf.words] = list(dict.fromkeys(found))
+    return out
 
 
 def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, object]) -> workflowgen.Workflow:
@@ -347,8 +391,11 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     THE CONDITIONS ARE WRITTEN HERE AND NOWHERE ELSE. A preparation step carries its id and no `if:`. The first
     leaf has none either: GitHub's default, `success()`, already waits for every step before it. Every later
     leaf runs `!cancelled()` and the success of each preparation step present, so one red leaf hides none of
-    the others while one red preflight stops them all and shows as one red step. An `after_all` leaf and the
-    upload run `always()`; the cleanup keeps `_disk_steps`'s `always()` and `continue-on-error`.
+    the others while a red preflight skips every leaf after it. A leaf that consumes what another leaf produces
+    also waits for that producer's success (the producer carries an id for it): a consumer whose producer went
+    red is skipped rather than red on the missing file, so one cause shows as one red step. An `after_all` leaf
+    and the upload run `always()`, so the report still says what it found; the cleanup keeps `_disk_steps`'s
+    `always()` and `continue-on-error`. `on:` is the model's triggers, written through `_TRIGGERS`.
     """
     (job,) = derivation.model.job
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
@@ -356,7 +403,13 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     kernel, unplaced = _kernel_steps(manifest, data, runner)
     words = {id(leaf.spec): leaf.words for leaf in derivation.selection.leaves}
     ids = [_PREPARES[step.kernel_step] for step in job.step if step.kernel_step in _PREPARES]
-    gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in ids)]) + " }}"
+    producers = _producers(derivation.selection.leaves)
+    leaf_ids = _leaf_ids(list(dict.fromkeys(maker for makers in producers.values() for maker in makers)))
+
+    def gate(line: str) -> str:
+        waits = [*ids, *(leaf_ids[maker] for maker in producers.get(line, ()))]
+        return "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in waits)]) + " }}"
+
     steps: list[workflowgen.Step] = []
     first = True
     for step in job.step:
@@ -370,13 +423,14 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         else:
             spec = step.command
             assert isinstance(spec, TaskCommand)
-            modifiers: dict[str, object] = {}
+            line = words[id(spec)]
+            modifiers: dict[str, object] = {"id": leaf_ids[line]} if line in leaf_ids else {}
             if spec.after_all:
                 modifiers["if"] = "always()"
             elif not first:
-                modifiers["if"] = gate
+                modifiers["if"] = gate(line)
             first = False
-            steps.append(workflowgen.Step(command=words[id(spec)], modifiers=modifiers))
+            steps.append(workflowgen.Step(command=line, modifiers=modifiers))
     labels = job.runner.labels
     note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced,
                                           _derived_note(derivation.selection)) if part)
@@ -387,7 +441,7 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     # repository's default token scopes, which can include write.
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **workflowgen._workflow_extras({})}
     return workflowgen.Workflow(key=KEY, path=derivation.model.path, name=derivation.model.title,
-                                on=workflowgen._CI_TRIGGER, jobs=(ci,), extras=extras, derived=True)
+                                on=dict(_TRIGGERS[t.event] for t in derivation.model.trigger), jobs=(ci,), extras=extras, derived=True)
 
 
 # --- the switch (si#858 task 7) ----------------------------------------------------------------------------
