@@ -893,14 +893,16 @@ def test_an_artifacts_section_the_loader_would_refuse_is_cannot_migrate_not_curr
 #: What the migrated surface may differ by, and nothing else: si#344 places one new command for every
 #: product (`support manifest migrate`), and si#346 a second (`support manifest model`). The goldens are
 #: not refreshed (fixtures/manifests/README.md), so each kernel command is named here instead.
-NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
+NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"],
+                        # si#867: the claude helpers and the workflows verb, in subgroups of their own.
+                        "support.claude": ["plugins", "md"], "support.github": ["workflows"]}
 
 #: A command si#525 placed in an EXISTING group, `support claude-plugins`, so it is not a new group to pop.
 #: The catalogue places it first after `install`; a product that declared its own (netctl) keeps its own
 #: help and impl, and only its position in the group moved - that is what is taken back out here.
-#: si#714 places `clean` in `support git` the same way.
-NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "claude-plugins"), ("support", "claude-md"), ("support", "toolchain"),
-                                ("support.git", "clean"))
+#: si#714 places `clean` in `support git` the same way. si#867 moved the two claude commands into
+#: `support claude` (above); a product that placed `claude-plugins` itself still has it where it put it.
+NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "toolchain"), ("support.git", "clean"))
 
 
 @pytest.mark.parametrize("product", PRODUCTS)
@@ -933,12 +935,13 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     for group, member in NEW_MEMBERS_IN_EVERY_PRODUCT:
         if member in golden["groups"][group]:
             surface["groups"][group].insert(golden["groups"][group].index(member), member)
-            # a product that took the coordinate's own help (simplon, swi) sees its new wording, only that
-            ours = surface["commands"][group][member]
-            if ours["help"].startswith("Install the Claude Code plugins of the `claude` toolchain"):
-                ours["help"] = golden["commands"][group][member]["help"]
         else:
             surface["commands"][group].pop(member)
+    # a product that placed `support:claude-plugins` itself with the coordinate's own help (simplon, swi) sees
+    # its new wording, only that
+    ours = surface["commands"]["support"].get("claude-plugins")
+    if ours and ours["help"].startswith("Install the Claude Code plugins of the `claude` toolchain"):
+        ours["help"] = golden["commands"]["support"]["claude-plugins"]["help"]
     assert surface == golden
 
 

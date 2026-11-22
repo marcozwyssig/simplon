@@ -23,7 +23,7 @@ its guard are unchanged. The rest of this chapter is the record of the run it de
 
 Four support commands sit beside those steps rather than in a phase of their own.
 `./simplon.sh test typecheck-python` runs alone what `test all` runs as its second step, which is what
-you want while fixing one file. `./simplon.sh support workflows --check` and
+you want while fixing one file. `./simplon.sh support github workflows --check` and
 `./simplon.sh support completion --check` belong immediately before a commit: both are generated from
 the manifest, so both go stale silently, and each exits 1 when it has. And `simplon init` is the one
 command that comes before all of them - it is in [Getting started](../../how/getting-started/).
@@ -69,7 +69,7 @@ Every such row carries the ticket where the decision is still open.
 
 | # | Step | Command | Label | Evidence |
 |---|---|---|---|---|
-| 1 | Generate the CI workflow from the manifest | `./simplon.sh support workflows --check` | run | this checkout, 2026-09-07; output below |
+| 1 | Generate the CI workflow from the manifest | `./simplon.sh support github workflows --check` | run | this checkout, 2026-09-07, when the command was `support workflows` (renamed in si#867); output below |
 | 2 | Generate the shell completion from the manifest | `./simplon.sh support completion --check` | run | this checkout, 2026-09-07; output below |
 | 3 | Build the wheel, version derived from the tag | `./simplon.sh build wheel` | run | this checkout, 2026-09-07; transcript below |
 | 4 | Build the container image | `./agile-cockpit.sh build` (`build:image`) | run | agile-cockpit CI, every push; green 2026-09-06 |
@@ -98,7 +98,7 @@ nothing and returns 1 on drift - a pre-commit hook and a CI step in one command.
 $ ./simplon.sh support completion --check
 [07:15:18]  OK deploy/completions/simplon.bash agrees with simplon.yaml
 
-$ ./simplon.sh support workflows --check
+$ ./simplon.sh support github workflows --check
 [07:15:19]  OK .github/workflows/ci.yml agrees with simplon.yaml
 [07:15:19] ==> .github/workflows/release.yml is declared hand-written: two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it
 ```

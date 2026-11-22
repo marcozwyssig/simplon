@@ -607,7 +607,7 @@ instead.
 - **`claude`:** `support install` installs simplon's plugin default (eight base plugins, plus one LSP
   plugin for each language in the list), and so does the launcher right after it refreshed its deps. A
   product adds to the set or excludes from it in a `claude:` section and never restates it.
-  `support claude-md` writes `CLAUDE.md` (simplon's central working agreements, then the product's own
+  `support claude md` writes `CLAUDE.md` (simplon's central working agreements, then the product's own
   region between two markers, kept byte for byte) and the `enabledPlugins` of `.claude/settings.json`.
   List both under `generated:` and `test generated` holds them.
 - **The step's five outcomes, which never read alike:**

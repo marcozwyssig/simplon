@@ -68,7 +68,7 @@ def generate(check: bool = False) -> int:
     _report_handwritten(workflows, report.absent)
     for drift in report.drifted:
         log.warn(f"{drift.path} disagrees with {source} - regenerate with "
-                 f"`{ctx.name} support workflows`")
+                 f"`{ctx.name} support github workflows`")
         print(drift.diff)
     rc = _report_unmanaged(report.unmanaged, source)
     return 1 if (report.drifted or report.absent) else rc

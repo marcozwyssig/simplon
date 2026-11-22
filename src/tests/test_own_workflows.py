@@ -74,7 +74,7 @@ def test_the_committed_workflows_agree_with_the_manifest():
     # Assert
     assert [drift.path for drift in report.drifted] == [], (
         "a committed workflow no longer says what simplon.yaml says; regenerate with "
-        "`./simplon.sh support workflows`\n" + "\n".join(d.diff for d in report.drifted))
+        "`./simplon.sh support github workflows`\n" + "\n".join(d.diff for d in report.drifted))
 
 
 def test_every_file_in_the_workflows_directory_has_an_owner():

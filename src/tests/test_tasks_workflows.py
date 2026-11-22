@@ -173,7 +173,7 @@ def test_check_names_the_command_that_regenerates(product, capsys):
     workflows_task.generate(check=True)
 
     # Assert
-    assert "sample support workflows" in capsys.readouterr().out
+    assert "sample support github workflows" in capsys.readouterr().out
 
 
 def test_a_workflow_that_was_never_generated_makes_check_red(product):
@@ -301,8 +301,8 @@ def test_a_hand_written_workflow_is_left_exactly_as_it_was(product):
 
 
 def test_a_product_with_no_workflows_section_is_refused_loudly(tmp_path, monkeypatch):
-    """And this is why the coordinate is OFFERED rather than placed (si#39's bar): the command reads a
-    section, so a product without one would get a command that dies on its first line.
+    """The coordinate is placed for every product since si#867 (`support github workflows`), so a product
+    without a section now HAS this command, and this is what it hears until si#858 derives the workflows.
 
     Refused rather than reported as an empty success, because "this product declares no workflows" and
     "this product's workflows are fine" are different answers, and a run that gave the second for the

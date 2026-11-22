@@ -269,8 +269,8 @@ being talked about? The second one is the one that keeps going missing.
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
 rule is asked what it was actually handed. The catalogue holds **73** coordinates and its own tree places
-**15** of them; those 15 are the platform's half - in the merged tree because the catalogue put them there,
-not because this product asked - and all 15 reach every rule the table calls *held to it too*. Exactly two
+**16** of them; those 16 are the platform's half - in the merged tree because the catalogue put them there,
+not because this product asked - and all 16 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown
 the catalogue until si#85, for the rewrite it no longer prints) and the one that enforces which groups
 exist, and every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's

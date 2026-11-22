@@ -1,4 +1,4 @@
-# GENERATED from app.yaml by `app support workflows`. Do not edit.
+# GENERATED from app.yaml by `app support github workflows`. Do not edit.
 #
 # The steps below are the product's own commands, resolved against app.yaml's command tree, so
 # a command that is renamed or removed breaks generation instead of leaving a workflow calling

@@ -441,16 +441,6 @@ ci:
 support:
   commands:
     doctor: { task: doctor }
-    # The manifest's second output (si#40), declared here rather than placed by the catalogue for the
-    # reason stated there: it reads the `workflows:` section below, so a product without one would get
-    # a command that refuses on its first line. Simplon has the section, so simplon declares the
-    # command - the same "used in its own house" rule that makes this repository build and test itself
-    # with the kernel it ships.
-    #
-    # It lands in `support` because the coordinate opens with a group name, and si#34 makes that a
-    # placement rather than a preference.
-    workflows: { task: "support:workflows" }
-
 
     # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
     # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants
@@ -596,14 +586,14 @@ generated:
     by: support completion
   ci-workflow:
     path: .github/workflows/ci.yml
-    by: support workflows
+    by: support github workflows
   # si#525: the central working agreements plus simplon's own region, and the plugins' native half.
   claude-md:
     path: CLAUDE.md
-    by: support claude-md
+    by: support claude md
   claude-settings:
     path: .claude/settings.json
-    by: support claude-md
+    by: support claude md
   # simplon's own manifest as a firn model (si#346). `test generated` regenerates it and fails on drift;
   # `test model` runs `firn validate` over it with the M2 beside it, so a manifest change the model cannot
   # carry is red in CI rather than discovered when parts B and C generate from it.
@@ -1251,6 +1241,6 @@ workflows:
 
 # NO `claude:` SECTION, since si#525: simplon's own plugin set is exactly the kernel's default for the
 # `python` and `claude` toolchains below (eight base plugins plus pyright-lsp, and `node` for
-# token-optimizer's status line), so there is nothing to add. `support claude-plugins -n` shows each
-# plugin's origin. `.claude/settings.json` and CLAUDE.md are written by `support claude-md` and held by
+# token-optimizer's status line), so there is nothing to add. `support claude plugins -n` shows each
+# plugin's origin. `.claude/settings.json` and CLAUDE.md are written by `support claude md` and held by
 # `test generated` (si#292's "no settings.json here" is withdrawn: the file is generated, not hand-kept).
