@@ -513,6 +513,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
+| `runner:` | the derived CI workflow (si#858) | the machine its jobs run on: a kind such as `github-ubuntu` (the default), or `{ kind: self-hosted-debian, labels: <label> }` |
 | `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
 | `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |

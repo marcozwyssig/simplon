@@ -81,7 +81,7 @@ from simplon.model import carrierspec
 from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
 from simplon.adapters import gh, labegress, labinstance, nexusproxy, tracker
 from simplon.tasks import workflowgen
-from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated,
+from simplon.tasks import (artifact, asset, buildfiles, cipipeline, claudeplugins, docs, env, generated,
                            releasenotes,
                            site, testrun)
 
@@ -117,6 +117,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     "manifest.deployment": ("deploy", "artifacts"),
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
+    # si#858: the machine the derived CI workflow runs on; `runner_of` hands it to `runners.resolve`, which
+    # owns the validation, so `runner` is this module's one key
+    "tasks.cipipeline": ("runner",),
     # hands the document to `environments.parse_data` and `carrierspec.declared`, the same shape as
     # `tasks.deploy` - it declares no key of its own
     "tasks.carrier": (),
@@ -213,6 +216,11 @@ SILENT_ON_ABSENCE = {
               "mistyped as `layotu:` is silent too, and only a key mistyped INSIDE a correctly spelled "
               "section is refused. Making an unrecognised top-level key loud is a rule about every "
               "section and not about this one.",
+    "runner": "an absent `runner:` section is the NORMAL case (si#858): the derived CI workflow then runs "
+              "on `github-ubuntu`, which is what a product that never named a machine has always had. "
+              "WHAT THAT COSTS: `runnre:` is silent too, and the jobs stay on GitHub's own runner. A kind "
+              "the table does not carry, and a self-hosted kind with no label, are refused inside a "
+              "correctly spelled section.",
     "build": "an absent `build:` section is the NORMAL case - `build cmake-files` renders the build "
              "files from the SOURCES, and `build: targets:` only adds the dependency edges a directory "
              "cannot show. `_declared_targets` says so at its own docstring and returns an empty "
@@ -287,6 +295,7 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "env_var": ({"cd": {"environments": {"dev": {}}, "default": "dev"}, "env_var": "SAMPLE_ENV"},
                 env.environments),
     "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
+    "runner": ({"runner": "github-ubuntu"}, cipipeline.runner),
     "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
 }
 

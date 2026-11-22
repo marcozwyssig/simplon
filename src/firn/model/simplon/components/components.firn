@@ -291,6 +291,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_cidisk typeOf simplon.architecture.Module {
     path = "tasks.cidisk"
   }
+  module m_tasks_cipipeline typeOf simplon.architecture.Module {
+    path = "tasks.cipipeline"
+  }
   module m_tasks_ciprivileges typeOf simplon.architecture.Module {
     path = "tasks.ciprivileges"
   }

@@ -76,7 +76,7 @@ from simplon.model.task import mangle
 KERNEL_SECTIONS: tuple[str, ...] = (
     "artifacts", "assets", "build", "carriers", "cd", "ci", "claude", "deploy", "doctoolchain_version",
     "env_var", "generate", "generated", "gh", "instance", "lab_egress", "layout", "nexus", "output",
-    "releases", "suites", "support", "tasks", "taxonomy", "toolchains", "tracker", "website",
+    "releases", "runner", "suites", "support", "tasks", "taxonomy", "toolchains", "tracker", "website",
     "workflows",
 )
 
