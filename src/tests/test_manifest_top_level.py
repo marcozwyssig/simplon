@@ -194,12 +194,12 @@ SILENT_ON_ABSENCE = {
     "claude": "an absent `claude:` section is the NORMAL case since si#525: simplon ships the plugin default, "
               "and the section only ADDS to it or excludes from it, so a product with nothing to add writes "
               "nothing. WHAT THAT COSTS, said rather than left to be found: `claued:` is silent too, and the "
-              "product gets the default without its additions. `support claude-plugins -n` lists every "
+              "product gets the default without its additions. `support claude plugins -n` lists every "
               "plugin with its origin, which is where a missing `(product)` line shows.",
     "toolchains": "an absent `toolchains:` list is the NORMAL case for a product scaffolded before si#525: it "
                   "uses no host toolchain, and `support install` says nothing about Claude. WHAT THAT COSTS: "
                   "`toolchain: [claude]` (singular) is silent too, and Claude support stays off - which "
-                  "`support claude-plugins` then says in so many words ('claude' is not in toolchains:). An "
+                  "`support claude plugins` then says in so many words ('claude' is not in toolchains:). An "
                   "unknown NAME inside a correctly spelled list is refused (si#525).",
     "gh": "an absent `gh:` section is the NORMAL case since si#630: a product that needs no gh extension "
           "declares none, and `support install` installs none and says nothing beyond the gh gate (Marco, "

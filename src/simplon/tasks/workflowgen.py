@@ -257,7 +257,7 @@ def _reap_step(product: str) -> Step:
                 note=REAP_NOTE.format(label=label))
 
 
-_HEADER = ("GENERATED from {source} by `{product} support workflows`. Do not edit.",
+_HEADER = ("GENERATED from {source} by `{product} support github workflows`. Do not edit.",
            "",
            "The steps below are the product's own commands, resolved against {source}'s command tree, so",
            "a command that is renamed or removed breaks generation instead of leaving a workflow calling",
@@ -438,7 +438,7 @@ def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     if section is None:
         raise ValueError(
             f"the manifest declares no '{SECTION}' section, so there is nothing to generate - declare "
-            f"one workflow per file under `{SECTION}:`, or drop the command if this product has none")
+            f"one workflow per file under `{SECTION}:` (si#858 will derive a product's workflows without one)")
     if not isinstance(section, Mapping) or not section:
         raise ValueError(f"'{SECTION}' must be a non-empty mapping of workflow name -> its declaration")
 

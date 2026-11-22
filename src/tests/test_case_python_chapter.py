@@ -297,11 +297,14 @@ def test_every_command_the_chapter_types_is_one_this_product_assembles():
     assert typed, "the chapter types no command at all, so this test is ruling on nothing"
     ruled = 0
     for tokens in typed:
-        group = tokens[0]
+        group, rest = tokens[0], tokens[1:]
         assert group in mf.groups, f"'{' '.join(tokens)}': simplon has no group '{group}'"
-        assert len(tokens) > 1, f"'{' '.join(tokens)}' names a group and no command"
-        assert tokens[1] in mf.groups[group], (
-            f"'{' '.join(tokens)}': group '{group}' has no command '{tokens[1]}' "
+        # A nested group (`support github workflows`, si#867) is keyed by its dotted path.
+        while rest and f"{group}.{rest[0]}" in mf.groups:
+            group, rest = f"{group}.{rest[0]}", rest[1:]
+        assert rest, f"'{' '.join(tokens)}' names a group and no command"
+        assert rest[0] in mf.groups[group], (
+            f"'{' '.join(tokens)}': group '{group}' has no command '{rest[0]}' "
             f"(it has {sorted(mf.groups[group])})")
         ruled += 1
 

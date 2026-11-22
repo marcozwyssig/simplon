@@ -1,4 +1,4 @@
-# GENERATED from simplon.yaml by `simplon support workflows`. Do not edit.
+# GENERATED from simplon.yaml by `simplon support github workflows`. Do not edit.
 #
 # The steps below are the product's own commands, resolved against simplon.yaml's command tree, so
 # a command that is renamed or removed breaks generation instead of leaving a workflow calling

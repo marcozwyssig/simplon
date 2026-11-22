@@ -119,16 +119,6 @@ support typeOf simplon.pipeline.CatalogueGroup {
   command install typeOf simplon.pipeline.CatalogueCommand {
     task = simplon.catalogue.support_install
   }
-  // PLACED since si#525, which made it useful in every product: without the `claude` toolchain it
-  // says Claude support is off and exits 0, so a product with no Claude Code pays one help line.
-  // Before si#525 it read a `claude:` section every product had to write, and was a task only.
-  command claude_plugins typeOf simplon.pipeline.CatalogueCommand {
-    task = simplon.catalogue.support_claude_plugins
-  }
-  // Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
-  command claude_md typeOf simplon.pipeline.CatalogueCommand {
-    task = simplon.catalogue.support_claude_md
-  }
   // PLACED since si#550, by the same bar. si#525 made `toolchains:` a list every product has (init
   // writes claude and gh), and this is the command that adds to it, so a product without a compiled
   // language uses it too. Unplaced, the scaffold's comment promised a command nobody had.
@@ -151,6 +141,34 @@ support typeOf simplon.pipeline.CatalogueGroup {
   // the placement would be a second source for one option's help text.
   command completion typeOf simplon.pipeline.CatalogueCommand {
     task = simplon.catalogue.support_completion
+  }
+  // `support claude` (si#867, Marco 2026-11-22): the Claude Code helpers as one agnostic subgroup, like
+  // `support git`. The words `claude-md` / `claude-plugins` that stood at the support level until then
+  // are gone and fail as unknown commands; there is no alias.
+  group claude typeOf simplon.pipeline.CatalogueGroup {
+    help = "Claude Code helpers."
+    // PLACED since si#525, which made it useful in every product: without the `claude` toolchain it
+    // says Claude support is off and exits 0, so a product with no Claude Code pays one help line.
+    // Before si#525 it read a `claude:` section every product had to write, and was a task only.
+    command plugins typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.support_claude_plugins
+    }
+    // Placed by the same argument (si#525): without the `claude` toolchain it says so and exits 0.
+    command md typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.support_claude_md
+    }
+  }
+  // `support github` (si#867): the GitHub-facing helpers. `workflows` was a task every product had to place
+  // itself until then; it is placed for every product now, because a product that has to name a command to
+  // get its workflows is a product doing something (si#788 spec, section 9). Without a `workflows:` section
+  // it still REFUSES, naming the section: "declares no workflows" and "its workflows are fine" are different
+  // answers, and an empty success would give the second for the first. si#858 turns the missing section
+  // into the derived case.
+  group github typeOf simplon.pipeline.CatalogueGroup {
+    help = "GitHub helpers."
+    command workflows typeOf simplon.pipeline.CatalogueCommand {
+      task = simplon.catalogue.support_workflows
+    }
   }
   group git typeOf simplon.pipeline.CatalogueGroup {
     help = "Version-control helpers."

@@ -1,4 +1,4 @@
-"""`support claude-md`: the central CLAUDE.md, and the product's own region kept (si#525).
+"""`support claude md`: the central CLAUDE.md, and the product's own region kept (si#525).
 
 Every product developed with Claude Code needs the same working agreements, and before si#525 each one
 wrote them again (netctl, biz-cockpit and agile-cockpit each kept a CLAUDE.md of its own, 5-28 KB). The
@@ -62,7 +62,7 @@ def region_of(text: str, source: str) -> str:
                          f"{ends} end marker(s), in that order: {BEGIN!r} ... {END!r}). Repair them by hand; "
                          f"nothing was written")
     if _WRITTEN_BY_US not in text[:text.index(BEGIN)]:
-        raise ValueError(f"{source}: holds the product region's markers, but `support claude-md` did not write "
+        raise ValueError(f"{source}: holds the product region's markers, but `support claude md` did not write "
                          f"it (the central part's first paragraph is missing), so the text outside them would "
                          f"be lost. Move them out of the file, or wrap it between them, then run again; "
                          f"nothing was written")
@@ -138,7 +138,7 @@ def generate(check: bool = False) -> int:
     drift = [path for path, text in wanted.items() if _read(path) != text]
     if check:
         for path in drift:
-            log.error(f"{path.relative_to(root)} is not what `support claude-md` writes; run it and commit "
+            log.error(f"{path.relative_to(root)} is not what `support claude md` writes; run it and commit "
                       f"the result")
         return 1 if drift else 0
     for path in drift:

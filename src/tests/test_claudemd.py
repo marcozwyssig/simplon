@@ -1,4 +1,4 @@
-"""si#525: `support claude-md` writes the central CLAUDE.md and keeps the product's own region.
+"""si#525: `support claude md` writes the central CLAUDE.md and keeps the product's own region.
 
 The central part is the kernel's, versioned with the simplon pin, so no product writes the working
 agreements again. The product's part sits between two markers and survives every regeneration, byte for
@@ -57,7 +57,7 @@ def test_a_fresh_product_gets_the_central_part_and_an_empty_region(product):
     # assert
     text = product.md.read_bytes().decode()
     assert text.startswith("# demo - working agreements\n")
-    assert "`./demo.sh support claude-md`" in text
+    assert "`./demo.sh support claude md`" in text
     assert "{{" not in text
     assert text.endswith(f"{claudemd.BEGIN}\n{claudemd.END}\n")
     assert "—" not in text
@@ -103,7 +103,7 @@ def test_check_is_red_after_an_edit_outside_the_region(product, monkeypatch):
     # assert
     assert rc == 1
     said = " ".join(msg for _, msg in lines)
-    assert "CLAUDE.md" in said and "support claude-md" in said
+    assert "CLAUDE.md" in said and "support claude md" in said
 
 
 def test_check_is_green_after_an_edit_inside_the_region(product):

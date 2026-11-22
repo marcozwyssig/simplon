@@ -43,7 +43,7 @@ directory when there is no remote yet.
     tests/README.md                                        what belongs in tests/, and how to move it
 
 The starter manifest turns on two host toolchains, `toolchains: [claude, gh]` (si#525). The first run's
-setup installs simplon's Claude Code plugin set, and `./myctl.sh support claude-md` writes a `CLAUDE.md`
+setup installs simplon's Claude Code plugin set, and `./myctl.sh support claude md` writes a `CLAUDE.md`
 with the central working agreements and a region of your own. Remove `claude` from the list to turn
 that off.
 

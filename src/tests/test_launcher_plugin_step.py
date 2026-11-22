@@ -1,6 +1,6 @@
 """si#525: the launcher installs the `claude` toolchain's plugins when it has just refreshed its deps.
 
-Not on every launch - measured, `support claude-plugins -n` takes 1421 ms against 382 ms for a bare
+Not on every launch - measured, `support claude plugins -n` takes 1421 ms against 382 ms for a bare
 `./simplon.sh --help` - and never on the container route, where `claude` is on the host and not in the
 image. The launcher is bash and the step is Python, so the launcher only SAYS that the deps were refreshed
 (one exported variable) and the kernel's `main`, which has the product context, runs the one

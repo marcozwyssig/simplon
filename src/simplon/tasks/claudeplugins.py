@@ -221,7 +221,7 @@ class Effective:
     origin: Mapping[str, str]
     needs: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     #: False when the product turned the LAUNCHER's automatic step off (si#583); an explicit
-    #: `support install` or `support claude-plugins` installs regardless.
+    #: `support install` or `support claude plugins` installs regardless.
     auto_install: bool = True
 
 
@@ -609,7 +609,7 @@ def _rc(outcome: Outcome) -> int:
 
 
 def install(dry_run: bool = False) -> int:
-    """`support claude-plugins`: the step, reported; 1 when it FAILED or an executable the product's
+    """`support claude plugins`: the step, reported; 1 when it FAILED or an executable the product's
     `claude.requires:` names is missing. A default or toolchain plugin this machine cannot run is skipped
     and named, and is not red (si#582).
 

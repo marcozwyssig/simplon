@@ -136,7 +136,7 @@ def _plan(step: str) -> tuple[str, ...]:
     fails loudly rather than resolving to `()`. Swallowing it would be the quiet defect: a typo would drop
     the step out of every population below, the job would match no spelling in VERIFIES either, and the
     whole file would go green over a workflow that runs nothing. `ci.yml` cannot reach that state -
-    `support workflows --check` regenerates it from this manifest - but `release.yml` is hand-written, so
+    `support github workflows --check` regenerates it from this manifest - but `release.yml` is hand-written, so
     the message is written out here rather than left as a traceback into the loader.
     """
     parts = step.split()

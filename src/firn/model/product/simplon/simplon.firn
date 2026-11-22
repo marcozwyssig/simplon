@@ -168,14 +168,6 @@ simplon typeOf simplon.manifest.Product {
       key = "install"
       task = simplon.catalogue.support_install
     }
-    command claude_plugins typeOf simplon.pipeline.TaskCommand {
-      key = "claude-plugins"
-      task = simplon.catalogue.support_claude_plugins
-    }
-    command claude_md typeOf simplon.pipeline.TaskCommand {
-      key = "claude-md"
-      task = simplon.catalogue.support_claude_md
-    }
     command toolchain typeOf simplon.pipeline.TaskCommand {
       key = "toolchain"
       task = simplon.catalogue.support_toolchain
@@ -187,10 +179,6 @@ simplon typeOf simplon.manifest.Product {
     command doctor typeOf simplon.pipeline.TaskCommand {
       key = "doctor"
       task = product.simplon.simplon.t_doctor
-    }
-    command workflows typeOf simplon.pipeline.TaskCommand {
-      key = "workflows"
-      task = simplon.catalogue.support_workflows
     }
     command ci_privileges typeOf simplon.pipeline.TaskCommand {
       key = "ci-privileges"
@@ -215,6 +203,26 @@ simplon typeOf simplon.manifest.Product {
     command ci_docker_preflight typeOf simplon.pipeline.TaskCommand {
       key = "ci-docker-preflight"
       task = simplon.catalogue.support_ci_docker_preflight
+    }
+    group claude typeOf simplon.pipeline.Group {
+      key = "claude"
+      area = simplon.pipeline.Area.support
+      command plugins typeOf simplon.pipeline.TaskCommand {
+        key = "plugins"
+        task = simplon.catalogue.support_claude_plugins
+      }
+      command md typeOf simplon.pipeline.TaskCommand {
+        key = "md"
+        task = simplon.catalogue.support_claude_md
+      }
+    }
+    group github typeOf simplon.pipeline.Group {
+      key = "github"
+      area = simplon.pipeline.Area.support
+      command workflows typeOf simplon.pipeline.TaskCommand {
+        key = "workflows"
+        task = simplon.catalogue.support_workflows
+      }
     }
     group git typeOf simplon.pipeline.Group {
       key = "git"

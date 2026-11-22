@@ -758,10 +758,14 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # and this is the command that adds to it. It writes only the product's own manifest.
     # `vcs:clean` (si#714) joins beside the other git verbs: it needs nothing but the repository root, and
     # without `--force` it only lists.
+    # `support:workflows` (si#867) is the ONE placed coordinate that does not meet this bar: without a
+    # `workflows:` section it refuses, naming the section. Marco placed it anyway (2026-11-22), because a
+    # product that has to name a command to get its workflows is a product doing something (si#788 spec,
+    # section 9), and si#858 turns the missing section into the derived case.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:clean", "vcs:submodules",
                       "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
                       "support:model", "support:claude-plugins", "support:claude-md", "support:toolchain",
-                      "tasks:catalogue", "tasks:generate"}
+                      "support:workflows", "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is
     # unchanged - but the kernel places none of its own there (#39): a command that publishes has to be
@@ -806,7 +810,7 @@ def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
     # assert: the shape every *ctl product inherits, and the two env-first groups - env-first because
     # they stand under `cd`, which says it once for both
     assert set(visible) == {"build", "test", "release", "deploy", "monitor", "support"}
-    assert set(visible["support"]["groups"]) == {"git", "tasks", "manifest"}
+    assert set(visible["support"]["groups"]) == {"git", "tasks", "manifest", "claude", "github"}
     assert visible["deploy"]["env_first"] is True
     assert visible["monitor"]["env_first"] is True
 
