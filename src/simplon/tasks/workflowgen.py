@@ -1593,12 +1593,7 @@ def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
                 # An aggregate, whose members are leaves of this same group and are emitted in their own
                 # right. Nothing is missing from the file, so nothing needs saying about it.
                 continue
-            if spec.unattended is None:
-                raise ValueError(
-                    f"{where}: command '{group} {name}' does not say whether it can run with nobody "
-                    f"watching, so this job cannot know whether to run it. Declare `unattended:` on it, "
-                    f"or on the task it instantiates - a task in the platform catalogue declares it "
-                    f"once for every product that imports the coordinate")
+            require_unattended(spec, f"{group} {name}", where)
             if not spec.unattended:
                 skipped.append(name)
                 continue
@@ -1610,6 +1605,20 @@ def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
             f"carry no leaf a machine may run, or the wrong groups were named - and a job with no steps "
             f"is a green tick over nothing, which is worse than the error you are reading")
     return Derived(steps=tuple(steps), note="\n".join(notes))
+
+
+def require_unattended(spec: TaskCommand, command: str, where: str) -> None:
+    """Refuse a leaf that has not ruled on `unattended:`; `derive` and the derived CI (si#858) share the wording.
+
+    One function so there is one message and one census entry: a leaf nobody has ruled on is the same defect
+    in whichever derivation meets it.
+    """
+    if spec.unattended is None:
+        raise ValueError(
+            f"{where}: command '{command}' does not say whether it can run with nobody "
+            f"watching, so this job cannot know whether to run it. Declare `unattended:` on it, "
+            f"or on the task it instantiates - a task in the platform catalogue declares it "
+            f"once for every product that imports the coordinate")
 
 
 def _derived_note(group: str, skipped: Sequence[str]) -> str:

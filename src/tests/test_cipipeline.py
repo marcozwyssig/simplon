@@ -21,3 +21,195 @@ def test_a_self_hosted_runner_names_its_labels() -> None:
 def test_a_self_hosted_runner_without_labels_is_refused() -> None:
     with pytest.raises(ValueError, match="carries no label of its own"):
         cipipeline.runner_of({"runner": "self-hosted-debian"})
+
+
+# --- the leaves, and their order (si#858 task 5) ---------------------------------------------------------
+
+import textwrap  # noqa: E402
+
+import yaml  # noqa: E402
+
+from simplon.manifest import artifactsection, catalogue, load as manifest_mod  # noqa: E402
+
+_HEAD = """
+tasks:
+  ship: { impl: "simplon.test_impls:nullary", help: "Ship." }
+artifacts:
+  doc: { kind: file, path: build/doc.txt }
+  note: { kind: file, path: build/note.txt, registry: ghcr.io/o/note }
+  img: { kind: image, dockerfile: Dockerfile, context: ., registry: ghcr.io/o, repository: img }
+"""
+
+
+def _text(body: str) -> str:
+    return _HEAD + textwrap.dedent(body)
+
+
+def _load(body: str):
+    return manifest_mod.load(_text(body), catalogue=catalogue.load(), manifest_path="demo.yaml")
+
+
+def _words(selection) -> list[str]:
+    return [leaf.words for leaf in selection.leaves]
+
+
+def test_leaves_come_in_manifest_order():
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              two: { task: ship, unattended: true }
+          test:
+            commands:
+              three: { task: ship, unattended: true }
+        """)
+    assert _words(cipipeline.select(loaded)) == ["build one", "build two", "test three"]
+
+
+_PORTS = """
+        ci:
+          build:
+            commands:
+              t-consume: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+              a: { task: ship, unattended: true }
+              b-produce: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+              c: { task: ship, unattended: true }
+        """
+
+
+def test_a_consumer_moves_after_its_producer_and_nothing_else_moves():
+    loaded = _load(_PORTS)
+    assert _words(cipipeline.select(loaded)) == ["build a", "build b-produce", "build t-consume", "build c"]
+
+
+def test_aggregates_are_not_leaves():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              all: { depends_on: [one], help: "All." }
+        """)
+    assert _words(cipipeline.select(loaded)) == ["test one"]
+
+
+def test_an_attended_leaf_is_skipped_with_the_reason():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              walk: { task: ship, unattended: false }
+        """)
+    selection = cipipeline.select(loaded)
+    assert _words(selection) == ["test one"]
+    assert [(s.words, s.reason) for s in selection.skipped] == [("test walk", cipipeline.ATTENDED)]
+
+
+def test_a_ci_skip_is_skipped_with_its_reason():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              lab: { task: ship, unattended: true, ci: { skip: "needs the lab" } }
+              walk: { task: ship, unattended: false }
+              one: { task: ship, unattended: true }
+        """)
+    selection = cipipeline.select(loaded)
+    assert _words(selection) == ["test one"]
+    assert [(s.words, s.reason) for s in selection.skipped] == [
+        ("test lab", "needs the lab"), ("test walk", cipipeline.ATTENDED)]
+
+
+def test_an_undeclared_unattended_is_refused():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              one: { task: ship }
+        """)
+    with pytest.raises(ValueError, match="'test one' does not say whether it can run with nobody watching"):
+        cipipeline.select(loaded)
+
+
+def test_a_nested_group_leaf_is_selected():
+    nested = catalogue.loads(textwrap.dedent("""
+        groups:
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:
+                help: "Verify them."
+                groups:
+                  lab: { help: "Needs the lab." }
+        """))
+    loaded = manifest_mod.load(_text("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+            groups:
+              lab:
+                commands:
+                  smoke: { task: ship, unattended: true }
+        """), catalogue=nested, manifest_path="demo.yaml")
+    assert _words(cipipeline.select(loaded)) == ["test one", "test lab smoke"]
+
+
+def test_cd_groups_are_not_selected():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+        cd:
+          deploy:
+            commands:
+              up: { task: ship, unattended: true }
+              walk: { task: ship, unattended: false }
+        """)
+    selection = cipipeline.select(loaded)
+    assert _words(selection) == ["test one"]
+    assert selection.skipped == ()
+
+
+def test_a_port_cycle_is_refused_naming_the_loop():
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              pack: { task: "toolchain:run", unattended: true, consumes: { source: img }, produces: { out: doc } }
+              image: { task: "toolchain:run", unattended: true, consumes: { source: doc }, produces: { out: img } }
+        """)
+    with pytest.raises(ValueError, match="cycle") as raised:
+        cipipeline.select(loaded)
+    for named in ("'build pack'", "'build image'", "'doc'", "'img'"):
+        assert named in str(raised.value)
+
+
+_SKIPPED_PRODUCER = """
+        ci:
+          test:
+            commands:
+              t-consume: { task: "test:file", unattended: true, consumes: { file: doc } }
+          build:
+            commands:
+              b-produce: { task: "build:fetch", unattended: true, produces: { file: doc }, ci: { skip: "needs the lab" } }
+        """
+
+
+def test_a_consumer_of_a_skipped_producer_is_refused():
+    loaded = _load(_SKIPPED_PRODUCER)
+    with pytest.raises(ValueError, match="'test t-consume' consumes 'doc'.*'build b-produce'.*needs the lab"):
+        cipipeline.select(loaded)
+
+
+def test_an_artifact_with_a_registry_is_exempt_when_the_registry_is_known():
+    body = _SKIPPED_PRODUCER.replace("file: doc", "file: note")
+    loaded = _load(body)
+    artifacts = artifactsection.declared(yaml.safe_load(_text(body)))
+    assert _words(cipipeline.select(loaded, artifacts=artifacts)) == ["test t-consume"]
+    with pytest.raises(ValueError, match="consumes 'note'"):
+        cipipeline.select(loaded)
