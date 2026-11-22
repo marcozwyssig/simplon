@@ -270,6 +270,31 @@ def _nothing_to_run(manifest: Manifest, selection: Selection) -> str:
               "`unattended: true` under `ci build` or `ci test`, or declare `workflows: ci:` yourself")
 
 
+def _refuse_producers_moved_last(runs: Sequence[Leaf], last: Sequence[Leaf]) -> None:
+    """An `after_all` leaf runs after every other leaf, so one that produces what another leaf consumes would run
+    after its consumer: `order` put it first, and moving it last undoes that. Refused, naming both, because the
+    run would fail on a missing file far from the cause."""
+    for late in last:
+        for artifact in handoff._bound(late.spec.produces):
+            for leaf in runs:
+                if artifact in handoff._bound(leaf.spec.consumes):
+                    raise ValueError(
+                        f"derived CI: '{leaf.words}' consumes '{artifact}', which '{late.words}' produces, and "
+                        f"'{late.words}' runs after all the other leaves (`after_all`), so after its consumer - "
+                        f"the run would fail on a missing file. Take `after_all` off '{late.words}', or produce "
+                        f"'{artifact}' in a leaf that runs in order")
+
+
+def _reports(data: Mapping[str, object]) -> str:
+    """The directory the report upload archives, with testrun's refusal saying who asked for it."""
+    try:
+        return workflowgen.report_dir(data)
+    except ValueError as missing:
+        raise ValueError(
+            f"derived CI: the report upload after `{workflowgen.REPORT_TASK}` archives `suites: reports:`, "
+            f"and it cannot be read: {missing}") from missing
+
+
 def derive(manifest: Manifest, data: Mapping[str, object]) -> Derivation:
     """The derived CI workflow of a product, as the generated model (si#858, spec section 5).
 
@@ -286,12 +311,14 @@ def derive(manifest: Manifest, data: Mapping[str, object]) -> Derivation:
     last = [leaf for leaf in selection.leaves if leaf.spec.after_all]
     if not runs:
         raise ValueError(_nothing_to_run(manifest, selection))
+    _refuse_producers_moved_last(runs, last)
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     steps = [workflowschema.Step(kernel_step=name) for name in (DOCKER_PREFLIGHT, DISK_PREFLIGHT, INSTALL)
              if name in kernel]
     steps += [workflowschema.Step(command=leaf.spec) for leaf in (*runs, *last)]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
+        _reports(data)  # refused here, at the decision, rather than when the step is written
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
     if DISK_CLEANUP in kernel:
         steps.append(workflowschema.Step(kernel_step=DISK_CLEANUP))
@@ -340,12 +367,10 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         if step.kernel_step in _PREPARES:
             prepared = kernel[step.kernel_step]
             steps.append(prepared._replace(modifiers={"id": _PREPARES[step.kernel_step], **prepared.modifiers}))
-        elif step.kernel_step == DISK_CLEANUP:
-            steps.append(kernel[DISK_CLEANUP])
         elif step.kernel_step == REPORT_UPLOAD:
-            steps.append(workflowgen.report_upload(workflowgen.report_dir(data)))
+            steps.append(workflowgen.report_upload(_reports(data)))
         elif step.kernel_step:
-            raise ValueError(f"derived CI: the model names a kernel step '{step.kernel_step}' nothing renders")
+            steps.append(kernel[step.kernel_step])  # DISK_CLEANUP: only `derive` builds the model
         else:
             spec = step.command
             assert isinstance(spec, TaskCommand)
@@ -354,7 +379,7 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
                 modifiers["if"] = "always()"
             elif not first:
                 modifiers["if"] = gate
-            first = first and spec.after_all
+            first = False
             steps.append(workflowgen.Step(command=words[id(spec)], modifiers=modifiers))
     labels = job.runner.labels
     note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced,
@@ -362,6 +387,8 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     ci = workflowgen.Job(name=JOB, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                          note=note, runner=runner, prepared=True,
                          extras=workflowgen._with_runner_env(runner, {}, f"derived workflow '{KEY}', job '{JOB}'"))
+    # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
+    # repository's default token scopes, which can include write.
+    extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **workflowgen._workflow_extras({})}
     return workflowgen.Workflow(key=KEY, path=derivation.model.path, name=derivation.model.title,
-                                on=workflowgen._CI_TRIGGER, jobs=(ci,), extras=workflowgen._workflow_extras({}),
-                                derived=True)
+                                on=workflowgen._CI_TRIGGER, jobs=(ci,), extras=extras, derived=True)

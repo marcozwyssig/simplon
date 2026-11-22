@@ -446,8 +446,46 @@ def test_a_product_with_no_runnable_leaf_is_refused(body):
         assert "`test`" in str(raised.value) and "`test walk`" in str(raised.value)
 
 
-def test_the_release_archive_is_unchanged():
-    upload = workflowgen.report_upload("tests/reports/")
-    assert upload.verbatim == {"uses": workflowgen.UPLOAD_ACTION, "if": "always()",
-                               "with": {"name": workflowgen.RELEASE_ARCHIVE, "path": "tests/reports/*.html",
-                                        "if-no-files-found": "error", "retention-days": 90}}
+def test_the_release_archive_uploads_with_report_upload():
+    """The release's own archive goes through the extracted `report_upload`; that release.yml's bytes did not
+    move is `test_own_workflows.py::test_the_committed_workflows_agree_with_the_manifest`."""
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+        """)
+    archive, _ = workflowgen._release_archive(loaded, "tests/reports/")
+    assert archive[-1] == workflowgen.report_upload("tests/reports/")
+    assert archive[-1].verbatim["with"]["path"] == "tests/reports/*.html"
+
+
+def test_the_derived_workflow_reads_the_repository_and_writes_nothing():
+    doc, _ = _rendered(_THREE)
+    assert doc["permissions"] == {"contents": "read"}
+    assert "permissions" not in doc["jobs"]["ci"]
+
+
+def test_an_after_all_leaf_that_produces_for_a_leaf_is_refused():
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              late: { task: "toolchain:run", unattended: true, after_all: true, produces: { out: doc } }
+              use: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+        """)
+    with pytest.raises(ValueError, match="'build use' consumes 'doc', which 'build late' produces.*after_all"):
+        cipipeline.derive(loaded, {})
+
+
+def test_a_report_without_suites_names_the_upload():
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              report: { task: "test:report" }
+        """
+    loaded = _load(body)
+    with pytest.raises(ValueError, match=r"report upload.*`suites: reports:`.*the 'suites' section is missing"):
+        cipipeline.derive(loaded, yaml.safe_load(_text(body)))
