@@ -34,6 +34,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
+from simplon.model import workflowschema
 from simplon.model.task import class_ref
 
 #: The manifest key a job names a kind with.
@@ -67,48 +68,13 @@ class Runner(NamedTuple):
     disk_persists: bool = False
 
 
-#: Every kind the kernel knows, and no more than were measured.
-#:
-#: `github-ubuntu` is what every product in this family used before 2026-09-16, and it is the shape the
-#: generator emitted by default: `actions/setup-python` works, docker is already on the machine.
-#:
-#: `self-hosted-debian` is `ghr-8`, measured on 2026-09-16 while moving this repository's CI onto it:
-#:
-#:   * `actions/setup-python` REFUSES. It does not install Python, it unpacks prebuilt archives, and its
-#:     manifest carries Ubuntu 22.04/24.04/26.04 and RHEL 9/10 and nothing else. The answer on a Debian
-#:     runner is "not found for this operating system" and no version pin could have changed it. The
-#:     machine's own `python3` is what the launcher builds its venv with, which is netctl's shape too.
-#:   * DOCKER ARRIVES THROUGH THE BOOTSTRAP. A container job was tried first and is not the answer: it
-#:     needs docker on the runner in order to START, so it cannot be the thing that gets docker onto the
-#:     runner. `DELIVERY_DOCKER_BOOTSTRAP=1` lets `simplon.adapters.docker.ensure_docker()` install the engine as
-#:     root, or fetch the static client when it is not root - docker-outside-of-docker, started from
-#:     inside the job.
-#:   * THE LABEL IS THE PRODUCT'S. `[self-hosted, Linux, X64]` would describe any self-hosted Linux
-#:     machine an account ever registers, so the day a second one joins the jobs are shared out with
-#:     nothing saying so. A label of the machine's own is the answer, and the kernel cannot know it.
+#: Every kind the kernel knows, and no more than were measured. The kinds and the measurements behind them are
+#: the firn model's since si#857 (src/firn/model/simplon/workflow/runners.firn); this is the shape the rest of
+#: the kernel reads them in, built from the generated module rather than typed a second time.
 TABLE: Mapping[str, Runner] = {
-    "github-ubuntu": Runner(
-        kind="github-ubuntu",
-        labels=("ubuntu-latest",),
-        setup_python=True,
-        env={},
-        why="GitHub-hosted Ubuntu: `actions/setup-python` unpacks an interpreter here, and docker is "
-            "already on the machine.",
-        # Destroyed after every job, so there is no disk to look after. Emitting a guard here would cost
-        # every product two steps for a machine that cannot have the problem.
-        disk_persists=False,
-    ),
-    "self-hosted-debian": Runner(
-        kind="self-hosted-debian",
-        labels=(),
-        setup_python=False,
-        env={BOOTSTRAP: "1"},
-        why="A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries "
-            "none for Debian, so the runner's own python3 is what the launcher builds its venv with; "
-            "docker is reached through the bootstrap, because a container job would need docker in "
-            "order to start.",
-        disk_persists=True,
-    ),
+    kind: Runner(kind=kind, labels=data.labels, setup_python=data.setup_python,
+                 env={e.env_name: e.env_value for e in data.env}, why=data.why, disk_persists=data.disk_persists)
+    for kind, data in workflowschema.RUNNER_KINDS.items()
 }
 
 #: The two commands a job on a persistent-disk machine is given, and the task each one is (si#327).
