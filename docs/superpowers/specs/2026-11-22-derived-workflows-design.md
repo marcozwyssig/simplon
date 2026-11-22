@@ -131,8 +131,14 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 ### 5.2 Order and job split (D3)
 
 1. **Order** inside the set is manifest order, with one extra precedence: a consumer after its producer
-   (a stable topological sort). This keeps simplon's "release-notes last" without a key, because it is last
-   in the manifest. Amended 2026-11-22 (Marco, on #448's measurement): ports imply 36 of 1540 ordered leaf
+   (a stable topological sort). *(Corrected 2026-11-22, #858: this item said the order "keeps simplon's
+   'release-notes last' without a key, because it is last in the manifest". Measured on simplon's manifest
+   with `workflows.ci` deleted, it is not: manifest order is the loaded manifest's order, the platform's
+   group order (`build`, then `test`, then nested groups such as `test.x` in catalogue order) and inside a
+   group the order the YAML writes, so every `build` leaf runs before every `test` leaf and `test
+   release-notes` is not the last leaf. It need not be: every leaf runs unless the run is cancelled or a
+   preparation step went red (below), so no verdict hides another and "last" buys nothing. Only an
+   `after_all` leaf, the report, is placed last.)* Amended 2026-11-22 (Marco, on #448's measurement): ports imply 36 of 1540 ordered leaf
    pairs across every reachable plan (netctl 0 of 1001, though its `web-jar`, `aot` and image steps really
    depend on each other), so an order from artifacts alone is measured out; ports only complete list order.
    #858 does this sort itself; #448 is not a prerequisite and stays in P5 M6.
@@ -149,7 +155,15 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 A red step must not hide the verdicts after it. A Job stops at its first failed step, so every leaf
 step after the first gets `if: ${{ !cancelled() }}` and the Job is red if any step was. Builder's call
 how the failure is collected; the requirement is that a run answers *what went wrong* for every leaf,
-not only the first (CLAUDE.md "usable").
+not only the first (CLAUDE.md "usable"). *(Corrected 2026-11-22, #858, saying how: each leaf is its own
+step and GitHub marks the Job red when any step was, so nothing more collects the failure. The
+preparation steps (the docker probe, the disk preflight, `support install`, each where the product
+places it) carry the ids `prepare_docker`, `prepare_disk` and `prepare_install` and no condition; the
+first leaf has none either, since GitHub's default already waits on every step before it; every later
+leaf runs `if: ${{ !cancelled() && steps.<id>.outcome == 'success' ... }}` over each preparation step
+present, so one red leaf hides none of the others while one red preparation stops them all and shows as
+one red step instead of every leaf red for the same cause. An `after_all` leaf and the report upload run
+`if: always()`.)*
 
 ### 5.3 Report steps
 
@@ -273,8 +287,10 @@ Each step is a ticket in P2 M9 (unless noted) and lands with a verification.
 2. *(Struck 2026-11-22: #448 is no longer a prerequisite; #858 sorts its leaves, see 5.2.)*
 3. **Derivation core**: D1, D2, D3, D4, sections 5.1 to 5.3. A product with no `workflows:` gets
    `ci.yml`. Verify: simplon's manifest with its `workflows.ci` deleted renders a CI workflow running
-   today's leaves in today's order plus the D13 leaves, the report last; every skipped leaf is named
-   with its reason; `support workflows --check` green.
+   every unattended leaf, the D13 leaves among them, in manifest order completed by ports, the report
+   last *(corrected 2026-11-22, #858: this said "today's leaves in today's order plus the D13 leaves";
+   today's order puts the prose gate last by hand, and manifest order does not, see 5.2 item 1)*; every
+   skipped leaf is named with its reason; `support workflows --check` green.
 4. **Runner kind** `self-hosted-container` (D10, closes #722).
 5. **`test:unit`** (D7).
 6. **Variant keys** (D8): `cadence`, `platforms`, `python`, `{input:}`.
