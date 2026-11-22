@@ -297,16 +297,14 @@ def test_a_hand_written_workflow_is_left_exactly_as_it_was(product):
     assert target.read_text(encoding="utf-8") == "name: release\n"
 
 
-# --- the refusal a product with nothing to generate gets ---------------------------------------------------
+# --- a product with no `workflows:` section (si#858) -----------------------------------------------------
 
 
-def test_a_product_with_no_workflows_section_is_refused_loudly(tmp_path, monkeypatch):
-    """The coordinate is placed for every product since si#867 (`support github workflows`), so a product
-    without a section now HAS this command, and this is what it hears until si#858 derives the workflows.
-
-    Refused rather than reported as an empty success, because "this product declares no workflows" and
-    "this product's workflows are fine" are different answers, and a run that gave the second for the
-    first is the defect this repository keeps finding.
+def test_a_product_with_no_workflows_section_gets_a_derived_ci(tmp_path, monkeypatch):
+    """The coordinate is placed for every product since si#867 (`support github workflows`); since si#858 a
+    product without a section gets `.github/workflows/ci.yml` derived from its CI leaves, rather than the
+    refusal it heard before. The derivation itself is test_cipipeline.py's; this holds the seam: a written
+    file, and a check that agrees with it afterwards.
     """
     # Arrange
     manifest_path = tmp_path / "bare.yaml"
@@ -316,15 +314,20 @@ def test_a_product_with_no_workflows_section_is_refused_loudly(tmp_path, monkeyp
         ci:
           test:
             commands:
-              all: { task: suite }
+              all: { task: suite, unattended: true }
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         context.ProductContext(name="bare", root=tmp_path,
                                                manifest_path=manifest_path))
 
-    # Act / Assert
-    with pytest.raises(ValueError, match="declares no 'workflows' section"):
-        workflows_task.generate(check=True)
+    # Act
+    rc = workflows_task.generate()
+
+    # Assert
+    assert rc == 0
+    assert (tmp_path / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8").startswith(
+        "# GENERATED from bare.yaml")
+    assert workflows_task.generate(check=True) == 0
 
 
 # --- a declaration with no file behind it (review B2) --------------------------------------------------

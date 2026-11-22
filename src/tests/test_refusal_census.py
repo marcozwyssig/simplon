@@ -40,6 +40,11 @@ The `NOT_LOAD_TIME` class list this docstring used to describe is GONE and its a
 them, because nothing reaches them from either seam. One exclusion is left, `_validation_message`'s
 funnel, and `test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model` holds it at exactly one.
 
+NOT COUNTED BY RULING, and named so nobody adds it back: `workflowgen._refuse_foreign_files` (si#858), the
+refusal to overwrite a file at the derived ci.yml's path that this kernel did not generate. It is decided by
+a file on disk, not by the manifest, so it is not a manifest decision with no tool consulted; the walk does
+not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing.
+
 WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest
 document INLINE, in the middle of a task body, so the reading and the tool-running are one function and no
 static rule separates them. They are named in `READS_INLINE` with the reason - and which modules read the
@@ -719,6 +724,18 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
     # si#490: the two task fields a derived release reads; a written value with no reading is refused.
     ("load", "_strict_bool", "'publishes' is true or false, got"): DIAGNOSIS,
+    # si#858: the task field a derived CI job reads to put a leaf last; a written value with no reading is refused.
+    ("load", "_strict_after_all", "'after_all' is true or false, got"): DIAGNOSIS,
+    # si#858: a command's `ci: { skip: "<reason>" }`. An empty reason and a boolean `ci:` are expression rules:
+    # the bare `ci: false` spelling would have worked and said why nowhere. The rest name a declaration with
+    # no working reading (not a mapping, a key nothing reads, a skip on an aggregate or on a command a derived
+    # CI never selects).
+    ("load", "_ci_skip", "`ci: skip:` says why"): EXPRESSION,
+    ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): EXPRESSION,
+    ("load", "_ci_skip", "but `ci:` on a command is a mapping"): DIAGNOSIS,
+    ("load", "_ci_skip", "The only key this kernel reads under a command's `ci:` is `skip`"): DIAGNOSIS,
+    ("load", "_ci_skip", "a derived CI runs leaves, never an aggregate"): DIAGNOSIS,
+    ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
@@ -1154,7 +1171,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("site", "_str", "must be a non-empty string"): DIAGNOSIS,
 
     # --- workflowgen: the `workflows:` section (simplon's own manifest declares one) -------------------
-    ("workflowgen", "parse", "so there is nothing to generate"): DIAGNOSIS,
     ("workflowgen", "parse", "must be a non-empty mapping of workflow name"): DIAGNOSIS,
     ("workflowgen", "_workflow", "must be a mapping, not {type(body)"): DIAGNOSIS,
     # An empty `handwritten:` would generate nothing and work. The kernel demands the SENTENCE, which is
@@ -1241,10 +1257,23 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_derived_groups", "names the command GROUPS whose leaves"): DIAGNOSIS,
     ("workflowgen", "_derived_groups", "takes group NAMES, and {item!r}"): DIAGNOSIS,
     ("workflowgen", "_step", "stands in for every step the named groups imply"): DIAGNOSIS,
+
+    # --- cipipeline: the derived ci.yml (si#858), reached since `support github workflows` derives it for a
+    # product that declares no `workflows: ci:`. Every one is a diagnosis: the workflow it refuses would fail
+    # on a missing file, run a leaf nobody ruled on, or go green over nothing.
+    ("workflowgen", "require_unattended", "does not say whether it can run with nobody watching"): DIAGNOSIS,
+    ("cipipeline", "_refuse_consumers_of_absent_producers", "is not run by the CI"): DIAGNOSIS,
+    ("cipipeline", "order", "_cycle(leaves, before, done)"): DIAGNOSIS,
+    ("cipipeline", "derive", "_nothing_to_run(manifest, selection)"): DIAGNOSIS,
+    ("cipipeline", "_refuse_producers_moved_last", "runs after all the other leaves (`after_all`)"): DIAGNOSIS,
+    ("cipipeline", "_reports", "archives `suites: reports:`, and it cannot be read"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
 REACH: dict[tuple[str, str, str], str] = {
+    # si#858: MERGED - the kernel's own catalogue places its commands through the same `_command`.
+    ("load", "_ci_skip", "`ci: skip:` says why"): REACH_MERGED,
+    ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): REACH_MERGED,
     # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,

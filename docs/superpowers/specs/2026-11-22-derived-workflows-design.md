@@ -21,7 +21,9 @@ steps.
 Goals:
 
 - A product with no `workflows:` section gets a complete CI workflow and, when it declares a release,
-  a complete release workflow. Adding a command to `ci build` or `ci test` puts it in CI with no
+  a complete release workflow. (corrected 2026-11-22, #858) For the CI the switch is `workflows: ci:`:
+  a product with no such entry gets the derived ci.yml beside whatever else it declares, and a product
+  that declares other workflows and has no leaf a machine may run gets no ci.yml and one log line. Adding a command to `ci build` or `ci test` puts it in CI with no
   second edit.
 - Every case in #788's "Why the hand-written files exist" is expressible as a key on a command, on a
   runner or on the product. None of them needs a step.
@@ -64,7 +66,7 @@ Anti-goals (a result that works and is still a failure):
 | D10 | Runner facts (empty `DOCKER_CONFIG`, no binfmt) | A new runner kind `self-hosted-container` carries them. |
 | D11 | Migration order | simplon first, then cleon-firn, firn, secure-windows-images, biz-cockpit, agile-cockpit, cleon, asbundle, netctl. |
 | D12 | simplon's release jobs beyond `release`, `docs`, `pages` (`publish`, `homebrew-tap`, `image`) | Counted `exception:` entries with the reason "waits on #789" until #789 lands; simplon's CI migrates at once. |
-| D13 | Leaves D1 adds to simplon's CI (`docs reference`, `docs acceptance`, `docs site`, `build model`, `build homebrew-formula`, `test image`, `test homebrew-formula`, as of 2026-11-22) | Default: they run. simplon's migration ticket measures each on ghr-8; one not worth its price gets `ci: { skip: }` with the measured reason. |
+| D13 | Leaves D1 adds to simplon's CI (`build reference`, `build acceptance`, `build site`, `build model`, `build homebrew-formula`, `test image`, `test homebrew-formula`, as of 2026-11-22; (corrected 2026-11-22, #858) the first three were written `docs ...`, and simplon's commands are `build ...`) | Default: they run. simplon's migration ticket measures each on ghr-8; one not worth its price gets `ci: { skip: }` with the measured reason. |
 | D14 | Default branch (`main` is a constant, cleon and agile-cockpit use `master`) | Those products rename `master` to `main` in their migration ticket. No new datum, no API call at generation time. |
 
 Earlier decisions this spec builds on and does not reopen: triggers are PR plus push to `main` plus
@@ -124,6 +126,9 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
   `ci: false` spelling, which would have worked). Measured cost before shipping: zero manifests carry a
   `ci:` key on a command today; the builder re-measures over every reachable manifest
   (`reachable-manifests` memory: eight) before the ticket merges.
+- (corrected 2026-11-22, #858) `ci:` on an aggregate, or on a command that is not a leaf under `ci
+  build` or `ci test` (a cd, support or `ci release` command, a Deploy), is refused. Census kind:
+  diagnosis (no derived CI selects the command, so the key would do nothing).
 - Every skipped leaf is named in the rendered file as a comment with its reason.
 - `test:gate` and other leaves that need a running lab are the expected users of `skip`, or of
   `gate:` (section 5.5).
@@ -131,11 +136,19 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 ### 5.2 Order and job split (D3)
 
 1. **Order** inside the set is manifest order, with one extra precedence: a consumer after its producer
-   (a stable topological sort). This keeps simplon's "release-notes last" without a key, because it is last
-   in the manifest. Amended 2026-11-22 (Marco, on #448's measurement): ports imply 36 of 1540 ordered leaf
+   (a stable topological sort). Amended 2026-11-22 (Marco, on #448's measurement): ports imply 36 of 1540 ordered leaf
    pairs across every reachable plan (netctl 0 of 1001, though its `web-jar`, `aot` and image steps really
    depend on each other), so an order from artifacts alone is measured out; ports only complete list order.
    #858 does this sort itself; #448 is not a prerequisite and stays in P5 M6.
+
+   (corrected 2026-11-22, #858) This item also said the order "keeps simplon's 'release-notes last'
+   without a key, because it is last in the manifest". Measured on simplon's manifest with
+   `workflows.ci` deleted, it does not: manifest order is the loaded manifest's order, the platform's
+   group order (`build`, then `test`, then nested groups such as `test.x` in catalogue order) and inside
+   a group the order the YAML writes, so every `build` leaf runs before every `test` leaf and `test
+   release-notes` is not the last leaf. It need not be: every leaf runs unless the run is cancelled or a
+   preparation step went red (below), so no verdict hides another and "last" buys nothing. Only an
+   `after_all` leaf, the report, is placed last.
 2. **Runner need**: a leaf runs on the product's Runner (D4) unless its task needs something that
    Runner cannot give. The first such need the derivation knows is `platforms:` (D8). A leaf on a
    different Runner is a different Job.
@@ -149,7 +162,18 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 A red step must not hide the verdicts after it. A Job stops at its first failed step, so every leaf
 step after the first gets `if: ${{ !cancelled() }}` and the Job is red if any step was. Builder's call
 how the failure is collected; the requirement is that a run answers *what went wrong* for every leaf,
-not only the first (CLAUDE.md "usable").
+not only the first (CLAUDE.md "usable"). (corrected 2026-11-22, #858) How: each leaf is its own
+step and GitHub marks the Job red when any step was, so nothing more collects the failure. The
+preparation steps (the docker probe, the disk preflight, `support install`, each where the product
+places it) carry the ids `prepare_docker`, `prepare_disk` and `prepare_install` and no condition; the
+first leaf has none either, since GitHub's default already waits on every step before it; every later
+leaf runs `if: ${{ !cancelled() && steps.<id>.outcome == 'success' ... }}` over each preparation step
+present, so one red leaf hides none of the others while after one red preparation the leaves are
+skipped instead of every one red for the same cause; the `after_all` report and its upload still run and
+say what they found. A leaf that consumes what another leaf produces also waits for that producer: the
+producer carries a step id from its command words (`leaf_build_handoff_canary`), and the consumer adds
+`steps.<that id>.outcome == 'success'`, so a red producer leaves its consumer skipped, not a second red
+step for one cause (final review, #858). An `after_all` leaf and the report upload run `if: always()`.
 
 ### 5.3 Report steps
 
@@ -271,10 +295,15 @@ Each step is a ticket in P2 M9 (unless noted) and lands with a verification.
    instances. Verify: `test model` green, generated classes used by workflowgen, simplon's rendered
    workflows byte-identical before and after.
 2. *(Struck 2026-11-22: #448 is no longer a prerequisite; #858 sorts its leaves, see 5.2.)*
-3. **Derivation core**: D1, D2, D3, D4, sections 5.1 to 5.3. A product with no `workflows:` gets
+3. **Derivation core**: D1, D2, D3, D4, sections 5.1 to 5.3. A product with no `workflows: ci:` gets
    `ci.yml`. Verify: simplon's manifest with its `workflows.ci` deleted renders a CI workflow running
-   today's leaves in today's order plus the D13 leaves, the report last; every skipped leaf is named
-   with its reason; `support workflows --check` green.
+   every unattended leaf, the D13 leaves among them, in manifest order completed by ports, the report
+   last; every skipped leaf is named with its reason; `support workflows --check` green.
+   (corrected 2026-11-22, #858) The switch is `workflows: ci:`, not the whole section: this said "a
+   product with no `workflows:`", and a product that declares other workflows gets the derived ci.yml
+   beside them, or none, with one log line, when it has no leaf a machine may run. The verification said
+   "today's leaves in today's order plus the D13 leaves"; today's order puts the prose gate last by hand,
+   and manifest order does not (5.2 item 1).
 4. **Runner kind** `self-hosted-container` (D10, closes #722).
 5. **`test:unit`** (D7).
 6. **Variant keys** (D8): `cadence`, `platforms`, `python`, `{input:}`.
@@ -290,7 +319,8 @@ kernel bump that ships steps 3 to 8 changes nothing in a product that does not r
 exactly the four fully hand-written products today, so the D11 order holds. Where a derived file would
 land on a path that holds a file without the generated header, generation refuses and names the file
 (diagnosis: without it a hand-written file would be overwritten silently). A product's migration ticket
-is the moment it starts running the verb.
+is the moment it starts running the verb. (corrected 2026-11-22, #858) This refusal is not in the
+refusal census: it is decided by a file on disk, not by the manifest.
 10. **The rule** (section 6.3), last, with its census entry.
 
 Outside the kernel: a ticket at firn for `--all` in dependency order (D6), raised by message to the

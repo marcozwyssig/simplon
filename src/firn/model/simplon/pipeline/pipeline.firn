@@ -141,6 +141,11 @@ CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
   }
+  // placed after every other leaf of its job, `if: always()` (#858, spec 5.3)
+  property after_all typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
 }
 
 // One entry of a `params:` block (si#561), on a catalogue task or on a command the catalogue places: how a body

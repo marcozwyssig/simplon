@@ -80,8 +80,7 @@ import yaml
 from simplon.model import carrierspec
 from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
 from simplon.adapters import gh, labegress, labinstance, nexusproxy, tracker
-from simplon.tasks import workflowgen
-from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated,
+from simplon.tasks import (artifact, asset, buildfiles, cipipeline, claudeplugins, docs, env, generated,
                            releasenotes,
                            site, testrun)
 
@@ -109,7 +108,7 @@ PUBLISHED_UNDER = "### The names the kernel has claimed"
 #: `completiongen.environments_of`, which reads the matrix under `cd:` - a key `tasks.env` already
 #: declares. It is here because the derivation finds it, and a module that reads the document is a module
 #: this mapping must rule on, whether or not it has a key of its own. (`tasks.workflows` hands the
-#: document on too, to `workflowgen.parse`, but `workflows:` is read for that command and nobody else's,
+#: document on too, to `cipipeline.workflows`, but `workflows:` is read for that command and nobody else's,
 #: so it is declared here rather than left to a module that does not appear in the walk at all.)
 MODULES: dict[str, tuple[str, ...]] = {
     # `deploy:` is its own; `artifacts:` is READ BUT NOT OWNED - si#235's section POINTS at an entry of it
@@ -179,7 +178,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.releasenotes": ("releases",),
     "tasks.site": ("website",),
     "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands
-    "tasks.workflows": ("workflows",),  # hands the document to `workflowgen.parse`
+    # hands the document to `cipipeline.workflows`, which parses `workflows:` and, where no entry is keyed
+    # `ci`, derives ci.yml on the machine `runner:` names (si#858); `runners.resolve` owns its validation
+    "tasks.workflows": ("workflows", "runner"),
     # A rollout workflow (`flow:`) is written from the ENVIRONMENT MATRIX: the flow says the order, the
     # matrix says what each environment receives. So the generator reads the two sections the matrix
     # lives in, and only when a workflow declares stages - a product with no `flow:` hands it nothing.
@@ -213,6 +214,11 @@ SILENT_ON_ABSENCE = {
               "mistyped as `layotu:` is silent too, and only a key mistyped INSIDE a correctly spelled "
               "section is refused. Making an unrecognised top-level key loud is a rule about every "
               "section and not about this one.",
+    "runner": "an absent `runner:` section is the NORMAL case (si#858): the derived CI workflow then runs "
+              "on `github-ubuntu`, which is what a product that never named a machine has always had. "
+              "WHAT THAT COSTS: `runnre:` is silent too, and the jobs stay on GitHub's own runner. A kind "
+              "the table does not carry, and a self-hosted kind with no label, are refused inside a "
+              "correctly spelled section.",
     "build": "an absent `build:` section is the NORMAL case - `build cmake-files` renders the build "
              "files from the SOURCES, and `build: targets:` only adds the dependency edges a directory "
              "cannot show. `_declared_targets` says so at its own docstring and returns an empty "
@@ -253,8 +259,11 @@ DRIVERS: dict[str, tuple[dict, object]] = {
            lambda: gh.declared_extensions(context.current().manifest_data(), ("gh",))),
     "nexus": ({"nexus": {"proxy_repositories": []}},
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
+    # Driven the way `support github workflows` reads it (si#858). An absent section is no longer refused by
+    # `parse`: it is the product with no `workflows: ci:`, whose ci.yml is derived, and a product with no CI
+    # leaf to derive it from is told to declare `workflows: ci:` itself.
     "workflows": ({"workflows": {"ci": {}}},
-                  lambda: workflowgen.parse(context.current().manifest_data())),
+                  lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data())),
     # si#314: a SCALAR key rather than a section, and the only one here - the driver reads it the way
     # every producing coordinate does, through the product context.
     "output": ({"output": "build-out"}, lambda: outputs.root()),
@@ -287,6 +296,12 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "env_var": ({"cd": {"environments": {"dev": {}}, "default": "dev"}, "env_var": "SAMPLE_ENV"},
                 env.environments),
     "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
+    # si#858: driven the way `support github workflows` reads it, so the document carries a CI leaf for the
+    # derivation to reach the machine with; a mistyped `runner:` is then the only thing that can go wrong.
+    "runner": ({"tasks": {"suite": {"impl": "simplon.test_impls:nullary", "help": "Run every test."}},
+                "ci": {"test": {"commands": {"all": {"task": "suite", "unattended": True}}}},
+                "runner": "github-ubuntu"},
+               lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data())),
     "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
 }
 

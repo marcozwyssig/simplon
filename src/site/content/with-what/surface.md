@@ -144,8 +144,9 @@ take.
 
 The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
 coordinate points its body at is reachable, by coordinate first and by import where a composition
-root has reason to. A module in there that **no** coordinate names is innards (`allure`, `gitops`,
+root has reason to. A module in there that **no** coordinate names is innards (`allure`, `cipipeline`, `gitops`,
 `handoff`, `homebrewclosure`, `profiles` and `proxmoxapi` today), and nothing outside the directory imports any of them.
+`cipipeline` decides what a product's derived CI workflow contains (si#858); only `tasks.workflows`, the body of `support github workflows`, calls it.
 `handoff` works out which artifacts cross a job boundary of a generated workflow; only `workflowgen` calls it.
 `homebrewclosure` measures a wheel's install closure in the pinned brew image; only `build:homebrew-formula`'s
 body calls it.

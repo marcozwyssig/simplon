@@ -46,20 +46,20 @@ different answer to the second one twice over.
 
 ## Which keys belong to which
 
-A task takes exactly nine keys:
+A task takes exactly ten keys:
 
 ```text
-impl   help   passthrough_args   params   unattended   publishes   token   input   output
+impl   help   passthrough_args   params   unattended   publishes   token   after_all   input   output
 ```
 
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
 
 ```text
-task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override
+task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override   ci
 ```
 
-Five of the task's keys are **inherited** by every command that instantiates it unless the command says
-otherwise: `help`, `passthrough_args`, `unattended`, `publishes` and `token`. That is the template doing its job - one task
+Six of the task's keys are **inherited** by every command that instantiates it unless the command says
+otherwise: `help`, `passthrough_args`, `unattended`, `publishes`, `token` and `after_all`. That is the template doing its job - one task
 documents itself once, and every placement gets that wording for free while remaining free to override
 it.
 
@@ -83,6 +83,14 @@ run skips its step. A `token: github` task authenticates to GitHub, so its step'
 step's, carries the run's `GITHUB_TOKEN`. No generated checkout persists a credential (si#507, si#622),
 so a task that talks to origin with git declares `token: github` too. Neither is coerced: `publishes: "yes"`
 and `token: gitlab` are refused.
+
+`after_all` (si#858) is the same kind of fact: an `after_all: true` task runs after every other leaf of its CI job and
+whatever they did (`if: always()`), so a failed leaf still leaves its report. `test:report` is the one that says it.
+A quoted value is refused.
+
+`ci` (si#858) is a command's own key, not a task's: `ci: { skip: "<reason>" }` keeps one command out of the
+derived CI and says why. It is a mapping with that one key. A bare `ci: false`, an empty reason, any other key
+under it and a skip on an aggregate are all refused, the last because a derived CI runs leaves.
 
 A `token: app` task (si#534) writes to one repository the run's own token cannot reach. Its leaf binds that
 repository with `with: { repository: <owner>/<repo> }`, and every generated job, the derived release job
@@ -114,11 +122,11 @@ are worth reading as a group, because together they are the whole of the rule.
 > task 'wheel' declares `with:`, which belongs on a command rather than on the task it instantiates. Move
 > it to the command under `ci:`, `cd:` or `support:`.
 
-**A task that declares a key nobody reads.** Anything outside the nine is rejected rather than dropped,
+**A task that declares a key nobody reads.** Anything outside the ten is rejected rather than dropped,
 including keys that read as entirely plausible on a template:
 
 > task 'wheel' declares unknown key `group:`. A task takes impl, help, passthrough_args, params,
-> unattended, publishes, token, input, output - check the spelling.
+> unattended, publishes, token, after_all, input, output - check the spelling.
 
 **A task with no body at all.** The message names the alternative, because the mistake it usually
 represents is reaching for the wrong construct:

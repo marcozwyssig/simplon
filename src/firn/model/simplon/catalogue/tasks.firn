@@ -284,6 +284,7 @@ test_report typeOf simplon.pipeline.CatalogueTask {
   body = "simplon.tasks.testrun:report_cmd"
   help = "Merge the unit results into the shared Allure results and render the HTML archive."
   unattended = true
+  after_all = true
 }
 test_accept typeOf simplon.pipeline.CatalogueTask {
   key = "test:accept"

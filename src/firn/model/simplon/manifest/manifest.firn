@@ -143,6 +143,11 @@ Product typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..1
     objectCardinality = 0..1
   }
+  property runner typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
   property suites typeOf firn.core.Composition {
     range = simplon.manifest.KernelSection
     subjectCardinality = 0..1

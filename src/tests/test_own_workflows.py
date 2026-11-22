@@ -24,11 +24,13 @@ every one of them, which is the "gegengeprüft, nicht behauptet" half of si#40's
 generated file does what the hand-written file did, measured by assertions written before the generator
 existed and by somebody who was not trying to make it pass.
 """
+import copy
+
 import yaml
 
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import artifactsection
-from simplon.tasks import workflowgen
+from simplon.tasks import cipipeline, workflowgen
 from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
@@ -371,3 +373,75 @@ def test_the_handoff_canary_crosses_a_job_boundary_in_ci():
     assert w_steps[w_at + 2].startswith("actions/upload-artifact")
     assert c_steps[c_at - 2].startswith("actions/download-artifact")
     assert c_steps[c_at - 1] == f'tar -xf "{archive}"'
+
+
+# --- the derived ci.yml, over this manifest (si#858) ---------------------------------------------------
+
+#: The leaves spec section 3 D13 names: the ones a derived ci.yml runs here and the declared one does not. Typed
+#: once, as the spec's named population: the test holds that the derivation reaches every one of them.
+D13 = ("build reference", "build acceptance", "build site", "build model", "build homebrew-formula", "test image",
+       "test homebrew-formula")
+
+
+def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
+    """si#858's verification on the one manifest this repository can measure: take `workflows: ci:` away and
+    the switch derives ci.yml from the command tree.
+
+    It holds WHICH steps and in WHICH order - every unattended `ci build` and `ci test` leaf in manifest order
+    completed by their ports, the `after_all` leaf (`test report`) last - not that each would run bare: two of
+    the D13 leaves do not (si#537, above), and measuring them on ghr-8 is #863's. `runner:` is passed into a
+    copy of the data because simplon declares none yet; the manifest itself does not change here (#863).
+    """
+    text = MANIFEST.read_text(encoding="utf-8")
+    manifest = _loaded()
+    data = copy.deepcopy(yaml.safe_load(text))
+    del data["workflows"]["ci"]
+    data["runner"] = {"kind": "self-hosted-debian", "labels": "ghr-8"}
+
+    (ci,) = [w for w in cipipeline.workflows(manifest, data) if w.key == cipipeline.KEY]
+    rendered = workflowgen.render(ci, manifest=manifest, product=PRODUCT, source=MANIFEST.name,
+                                  artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
+    (job,) = yaml.safe_load(rendered)["jobs"].values()
+    launcher = f"exec ./{PRODUCT}.sh "
+    ran = [step["run"].removeprefix(launcher) for step in job["steps"] if step.get("run", "").startswith(launcher)]
+    leaves = [words for words in ran if words.split(" ", 1)[0] in cipipeline.CI_PHASES]
+    selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data))
+    expected = [leaf.words for leaf in selection.leaves if not leaf.spec.after_all] + ["test report"]
+    # The manifest's own order, walked here rather than read off `select`, so a sort that reshuffles what no
+    # port forces turns this red too: no leaf of this manifest consumes from a later one, so the two agree.
+    walked = [f"{group.replace('.', ' ')} {name}" for group, members in manifest.commands.items()
+              for name in members]
+    ordered = set(expected[:-1])
+    in_manifest_order = [words for words in walked if words in ordered]
+    by_leaf = {step["run"].removeprefix(launcher): step for step in job["steps"]
+               if step.get("run", "").startswith(launcher)}
+    prepared = [step["id"] for step in job["steps"] if step.get("id", "").startswith("prepare_")]
+    gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in prepared)]) + " }}"
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
+
+    assert expected != ["test report"]
+    assert leaves == expected
+    assert leaves[:-1] == in_manifest_order
+    assert [words for words in D13 if words not in leaves] == []
+    assert "test walk" not in leaves
+    assert f"# `test walk` - {cipipeline.ATTENDED}" in rendered
+    assert job["runs-on"] == "ghr-8"
+    # The gate (spec 5.2): on ghr-8 simplon places all three preparation steps, the first leaf waits on them by
+    # GitHub's default, every later one runs unless cancelled or a preparation went red, the report always.
+    assert prepared == ["prepare_docker", "prepare_disk", "prepare_install"]
+    assert "if" not in by_leaf[leaves[0]]
+    # A consumer also waits for its producer (si#858 final review): `test handoff-canary` reads the file `build
+    # handoff-canary` writes, so a red producer leaves it skipped rather than red on the missing file.
+    producer = by_leaf["build handoff-canary"]["id"]
+    canary = gate.removesuffix(" }}") + f" && steps.{producer}.outcome == 'success' }}}}"
+    assert producer == "leaf_build_handoff_canary"
+    assert by_leaf["test handoff-canary"].get("if") == canary
+    # Every other later leaf has the gate, and at most the success of leaves that ran before it.
+    for at, words in enumerate(leaves[1:-1], start=1):
+        extra = by_leaf[words]["if"].removeprefix(gate.removesuffix(" }}")).removesuffix(" }}")
+        earlier = {by_leaf[before].get("id") for before in leaves[:at]}
+        assert all(clause.removeprefix("steps.").removesuffix(".outcome == 'success'") in earlier
+                   for clause in extra.split(" && ")[1:]), (words, extra)
+        assert extra == "" or extra.startswith(" && steps.leaf_"), (words, extra)
+    assert by_leaf["test report"].get("if") == "always()"
+    assert upload.get("if") == "always()"

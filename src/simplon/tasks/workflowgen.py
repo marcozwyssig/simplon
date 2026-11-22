@@ -344,6 +344,10 @@ class Job:
     #: itself away. That was enough while every consequence was a value; it is not enough for one that is
     #: a STEP, because a step has to be written at render time, next to the product's own.
     runner: "runners.Runner | None" = None
+    #: si#858: the job already carries its preparation (the docker probe, the disk preflight and cleanup) as
+    #: steps of its own, with the ids its leaves' conditions read. Rendering inserts them only for a job
+    #: that does not, so a derived job gets them once and in the place its conditions expect.
+    prepared: bool = False
 
 
 @dataclass(frozen=True)
@@ -379,6 +383,8 @@ class Workflow:
     emulates: tuple[str, ...] = ()
     #: si#720: the derived release job's `timeout-minutes`.
     timeout_minutes: int = RELEASE_TIMEOUT_MINUTES
+    #: si#858: derived by `cipipeline` from the CI leaves rather than declared under `workflows:`.
+    derived: bool = False
 
     @property
     def generated(self) -> bool:
@@ -433,12 +439,14 @@ def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     Loud on every defect, like `simplon.manifest.environments.parse_data` and every other section parser here: a
     manifest that says something this module cannot render is a manifest defect, and the message names
     the workflow it is talking about.
+
+    An ABSENT section declares nothing and is answered with `()` (si#858): it is no longer "nothing to
+    generate", because `cipipeline.workflows` derives ci.yml where no entry declares it. An EMPTY one is
+    still refused below - somebody halfway through a thought, not a statement.
     """
     section = data.get(SECTION)
     if section is None:
-        raise ValueError(
-            f"the manifest declares no '{SECTION}' section, so there is nothing to generate - declare "
-            f"one workflow per file under `{SECTION}:` (si#858 will derive a product's workflows without one)")
+        return ()
     if not isinstance(section, Mapping) or not section:
         raise ValueError(f"'{SECTION}' must be a non-empty mapping of workflow name -> its declaration")
 
@@ -1484,12 +1492,17 @@ def _release_archive(manifest: Manifest, reports: "str | None" = None) -> "tuple
     if reports is None:
         reports = report_dir(context.current().manifest_data())
     group, name = leaves[0]
-    path = f"{reports.rstrip('/')}/*.html"
     return (Step(command=f"{group.replace('.', ' ')} {name}", modifiers={"if": "always()"},
                  note=RELEASE_ARCHIVE_NOTE),
-            Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
-                           "with": {"name": RELEASE_ARCHIVE, "path": path, "if-no-files-found": "error",
-                                    "retention-days": 90}})), ""
+            report_upload(reports)), ""
+
+
+def report_upload(reports: str) -> Step:
+    """The upload of the rendered test report under `reports` (si#509), shared by the release job and the
+    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green."""
+    return Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
+                          "with": {"name": RELEASE_ARCHIVE, "path": f"{reports.rstrip('/')}/*.html",
+                                   "if-no-files-found": "error", "retention-days": 90}})
 
 
 def report_dir(data: Mapping[str, object]) -> str:
@@ -1593,12 +1606,7 @@ def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
                 # An aggregate, whose members are leaves of this same group and are emitted in their own
                 # right. Nothing is missing from the file, so nothing needs saying about it.
                 continue
-            if spec.unattended is None:
-                raise ValueError(
-                    f"{where}: command '{group} {name}' does not say whether it can run with nobody "
-                    f"watching, so this job cannot know whether to run it. Declare `unattended:` on it, "
-                    f"or on the task it instantiates - a task in the platform catalogue declares it "
-                    f"once for every product that imports the coordinate")
+            require_unattended(spec, f"{group} {name}", where)
             if not spec.unattended:
                 skipped.append(name)
                 continue
@@ -1610,6 +1618,20 @@ def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
             f"carry no leaf a machine may run, or the wrong groups were named - and a job with no steps "
             f"is a green tick over nothing, which is worse than the error you are reading")
     return Derived(steps=tuple(steps), note="\n".join(notes))
+
+
+def require_unattended(spec: TaskCommand, command: str, where: str) -> None:
+    """Refuse a leaf that has not ruled on `unattended:`; `derive` and the derived CI (si#858) share the wording.
+
+    One function so there is one message and one census entry: a leaf nobody has ruled on is the same defect
+    in whichever derivation meets it.
+    """
+    if spec.unattended is None:
+        raise ValueError(
+            f"{where}: command '{command}' does not say whether it can run with nobody "
+            f"watching, so this job cannot know whether to run it. Declare `unattended:` on it, "
+            f"or on the task it instantiates - a task in the platform catalogue declares it "
+            f"once for every product that imports the coordinate")
 
 
 def _derived_note(group: str, skipped: Sequence[str]) -> str:
@@ -1942,7 +1964,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
     # preflight is one of the PRODUCT's commands (si#8 - every step in a generated file is a string a
     # developer can type), and a command needs the checkout it lives in. A checkout is cheap; what the
     # preflight buys is everything after it, which is where the expensive steps and the real failures are.
-    preflight, cleanup, unplaced = _disk_steps(job, manifest)
+    # A `prepared` job (si#858) carries both pairs already, with the ids its leaves read, and its note says
+    # what is unplaced; inserting them again here would run each twice.
+    preflight, cleanup, unplaced = _disk_steps(job, manifest) if not job.prepared else (None, None, "")
     if unplaced:
         lines += _comment(unplaced, "      ")
     if preflight is not None:
@@ -1951,7 +1975,7 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         steps.append(cleanup)
     # si#623: the docker probe before even the disk preflight, and placed on its own, so a product that
     # placed only the disk pair keeps it.
-    probe, probe_unplaced = _docker_step(job, manifest)
+    probe, probe_unplaced = _docker_step(job, manifest) if not job.prepared else (None, "")
     if probe_unplaced:
         lines += _comment(probe_unplaced, "      ")
     if probe is not None:
@@ -2165,14 +2189,41 @@ def trigger_of(doc: Mapping[object, object]) -> object:
 # --- write, check ----------------------------------------------------------------------------------------------
 
 
+#: How every file this module writes begins: `render`'s first header line, as a YAML comment.
+GENERATED_PREFIX = "# GENERATED from "
+
+
+def _refuse_foreign_files(workflows: Sequence[Workflow], root: Path) -> None:
+    """Refuse to touch a file at a DERIVED workflow's path that this module did not write (si#858, Review Focus 3).
+
+    A product that wrote its own ci.yml and never declared it would otherwise lose it to a kernel upgrade, and
+    `--check` would call the loss drift. Only a derived workflow is asked: a declared generated one has owned its
+    file since si#40, by the product's own entry. Checked for every workflow before any is written, so a refusal
+    leaves the directory as it was. The ownership test is a prefix match on `GENERATED_PREFIX`, which every
+    generator of this kernel writes, so a file another kernel generator wrote at this path counts as owned.
+    """
+    for workflow in workflows:
+        if not workflow.derived:
+            continue
+        target = root / workflow.path
+        if target.exists() and not target.read_text(encoding="utf-8").startswith(GENERATED_PREFIX):
+            raise ValueError(
+                f"{workflow.path} exists and was not generated (it does not start with '{GENERATED_PREFIX}'), and "
+                f"the manifest declares no `{SECTION}: {workflow.key}:`, so the kernel would derive this file over "
+                f"it. Keep it by declaring it under `{SECTION}: {workflow.key}:` as `handwritten: \"<why>\"`, or "
+                f"delete the file so the kernel derives it")
+
+
 def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
           source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None,
           reports: "str | None" = None) -> tuple[str, ...]:
     """Render every generated workflow under `root`. Returns the paths whose bytes CHANGED.
 
     A hand-written entry is skipped rather than touched: the manifest declared it somebody's own, and a
-    generator that wrote to it anyway would have made the declaration a lie.
+    generator that wrote to it anyway would have made the declaration a lie. A hand-written file that is
+    NOT declared, under a derived workflow's path, is refused (`_refuse_foreign_files`).
     """
+    _refuse_foreign_files(workflows, root)
     changed = []
     for workflow in workflows:
         if not workflow.generated:
@@ -2197,6 +2248,7 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
     checkout that has never generated has to be told what to run, and a gate that raised there would read
     as a broken gate rather than as the ordinary thing it is.
     """
+    _refuse_foreign_files(workflows, root)
     agreed: list[str] = []
     drifted: list[Drift] = []
     handwritten: list[str] = []

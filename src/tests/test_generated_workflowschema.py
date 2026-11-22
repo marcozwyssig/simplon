@@ -64,8 +64,19 @@ def test_job_fields_follow_the_model_and_the_class_is_frozen():
     fields = [f.name for f in dataclasses.fields(workflowschema.Job)]
 
     # assert
-    assert fields == ["runner", "step", "needs", "matrix", "condition", "timeout_minutes"]
+    assert fields == ["key", "runner", "step", "needs", "matrix", "condition", "timeout_minutes"]
     assert workflowschema.Job.__dataclass_params__.frozen
+
+
+def test_a_job_carries_the_key_github_names_it_by():
+    """si#858: `jobs:` and `needs:` read GitHub's job id, which no other property of Job carries."""
+    # act
+    key = {f.name: f for f in dataclasses.fields(workflowschema.Job)}.get("key")
+
+    # assert
+    assert key is not None, "Job has no field `key`"
+    assert key.type in (str, "str")
+    assert key.default is dataclasses.MISSING and key.default_factory is dataclasses.MISSING
 
 
 def _model_properties() -> dict[str, list[str]]:

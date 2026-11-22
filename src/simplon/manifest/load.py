@@ -27,6 +27,7 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable, NamedTuple, cast
@@ -329,12 +330,15 @@ class _CommandSpecModel(BaseModel):
     hidden: bool = False
     unattended: bool | None = None
     publishes: bool = False
+    after_all: bool = False
     token: str = ""
     task: str = ""
     produces: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     consumes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     # si#492: raw, validated in `_command` by `launcherenv.of_command`, where the command's path is known.
     env: object = None
+    # si#858: raw, validated in `_command` (`_ci_skip`), where the command's path is known.
+    ci: object = None
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -388,6 +392,19 @@ class _CommandSpecModel(BaseModel):
             raise ValueError(
                 f"'publishes' is true or false, got '{value}'. It says whether this task's act cannot be "
                 f"taken back, so a derived release's dry run skips it")
+        return value
+
+    @field_validator("after_all", mode="before")
+    @classmethod
+    def _strict_after_all(cls, value: object) -> bool:
+        # si#858: strict for `_strict_bool`'s reason. A quoted "false" that coerced would be a report that
+        # runs only when everything before it passed, which is the one time nobody reads it.
+        if value is None:
+            return False
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"'after_all' is true or false, got '{value}'. It says whether this command waits for every "
+                f"other leaf of its CI job and runs whatever they did")
         return value
 
     @field_validator("token", mode="before")
@@ -1011,6 +1028,51 @@ def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
             if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
 
 
+def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
+    """The reason a command opts out of the derived CI (si#858), "" when it does not.
+
+    Only `ci: { skip: "<reason>" }` is read. A bare `ci: false` is refused rather than accepted as a
+    shorthand: the opt-out is the one place a manifest says a leaf is NOT verified by CI, so it carries its
+    reason where the next reader finds it. An unknown key is refused because a typo would leave the leaf
+    running, the "nothing to do" that is really a failure. On an aggregate the key would do nothing, since a
+    derived CI selects leaves only; and so it would on any command that is not a leaf under `ci build` or
+    `ci test` (`ci_leaf` false: a cd, support or `ci release` command, a Deploy), which a derived CI never
+    selects - both are diagnoses, refused with the reason (si#858 final review).
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on.
+    """
+    raw = spec.ci
+    if raw is None:
+        return ""
+    if spec.depends_on:
+        raise ValueError(
+            f"aggregate '{where}' declares `ci: skip:`, and a derived CI runs leaves, never an aggregate, so "
+            f"the key would do nothing - declare it on the member commands that cannot run in CI")
+    if not ci_leaf:
+        raise ValueError(
+            f"'{where}' declares `ci: skip:`, and a derived CI runs only the leaves under `ci build` and "
+            f"`ci test`, so the key would do nothing here - take it off")
+    if isinstance(raw, bool):
+        raise ValueError(
+            f"'{where}' declares `ci: {json.dumps(raw)}`. An opt-out without a reason is one nobody can read "
+            f"back: to keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"'{where}' declares `ci: {json.dumps(raw, default=str)}`, but `ci:` on a command is a mapping. "
+            f"To keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
+    unknown = [str(key) for key in raw if key != "skip"]
+    if unknown:
+        raise ValueError(
+            f"'{where}' declares `ci:` key {', '.join(unknown)}. The only key this kernel reads under a "
+            f"command's `ci:` is `skip` - a misspelt one would leave the command running in CI")
+    reason = raw.get("skip")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError(
+            f"'{where}' declares `ci: skip: {json.dumps(reason, default=str)}`. `ci: skip:` says why: write "
+            f"the reason a hosted runner cannot run this command, as a non-empty string")
+    return reason.strip()
+
+
 def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,
              areas: dict[str, str], product_tasks: dict) -> Command:
     """The object of the class a validated spec's kind names (si#400 4d), carrying only that kind's fields:
@@ -1030,6 +1092,9 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
             f"`toolchain:run` line of its own, so the names would reach nothing - declare `env: {{ pass: "
             f"[...] }}` on the member commands whose toolchain needs them")
     env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
+    top = group.split(".", 1)[0]
+    ci_leaf = areas.get(top) == "ci" and top in ("build", "test") and not taxonomy.group_requires_env(group)
+    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}", ci_leaf)
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1040,7 +1105,6 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         # refused here, where the written map is still in hand. Placement first: a misplaced aggregate's
         # fix is to drop `produces:`, and naming its shape first would send the reader to reshape it (final
         # review of 4d). What the bundle must be stays in `ports._check_bundles`.
-        top = group.split(".", 1)[0]
         if (areas.get(top), top) != ("ci", "release"):
             raise ValueError(
                 f"aggregate '{group} {name}' names an output, and only an aggregate under `ci: release:` does - "
@@ -1052,8 +1116,8 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
-                publishes=spec.publishes, token=spec.token, env_pass=env_pass,
-                task=spec.task, produces=spec.produces, consumes=spec.consumes,
+                publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,
+                ci_skip=ci_skip, task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,
                                                  metavar=p.metavar, short_first=p.short_first)
