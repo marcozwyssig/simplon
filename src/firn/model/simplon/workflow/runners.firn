@@ -25,19 +25,19 @@ package simplon.workflow.runners
 
 github_ubuntu typeOf simplon.workflow.RunnerKind {
   labels = "ubuntu-latest"
-  setupPython = true
+  setup_python = true
   // Destroyed after every job, so there is no disk to look after.
-  diskPersists = false
-  canEmulate = true
+  disk_persists = false
+  can_emulate = true
   why = "GitHub-hosted Ubuntu: `actions/setup-python` unpacks an interpreter here, and docker is already on the machine."
 }
 self_hosted_debian typeOf simplon.workflow.RunnerKind {
-  setupPython = false
-  diskPersists = true
-  canEmulate = true
+  setup_python = false
+  disk_persists = true
+  can_emulate = true
   why = "A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is reached through the bootstrap, because a container job would need docker in order to start."
   env e_bootstrap typeOf simplon.workflow.RunnerEnv {
-    envName = "DELIVERY_DOCKER_BOOTSTRAP"
-    envValue = "1"
+    env_name = "DELIVERY_DOCKER_BOOTSTRAP"
+    env_value = "1"
   }
 }

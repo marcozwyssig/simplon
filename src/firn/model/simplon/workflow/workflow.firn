@@ -17,17 +17,17 @@ RunnerKind typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
   }
   // Does `actions/setup-python` work on it.
-  property setupPython typeOf firn.core.Attribute {
+  property setup_python typeOf firn.core.Attribute {
     range = firn.core.BooleanLiteral
     subjectCardinality = 1..1
   }
   // Does the machine survive the job (si#327): a disk that can fill.
-  property diskPersists typeOf firn.core.Attribute {
+  property disk_persists typeOf firn.core.Attribute {
     range = firn.core.BooleanLiteral
     subjectCardinality = 1..1
   }
   // Can a job on it register QEMU for an emulated platform (#722 reads it).
-  property canEmulate typeOf firn.core.Attribute {
+  property can_emulate typeOf firn.core.Attribute {
     range = firn.core.BooleanLiteral
     subjectCardinality = 1..1
   }
@@ -45,11 +45,11 @@ RunnerKind typeOf firn.core.Class extends firn.core.NamedResource {
 
 // One variable of a runner kind's environment.
 RunnerEnv typeOf firn.core.Class extends firn.core.NamedResource {
-  property envName typeOf firn.core.Attribute {
+  property env_name typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 1..1
   }
-  property envValue typeOf firn.core.Attribute {
+  property env_value typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 1..1
   }
@@ -105,7 +105,7 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..1
     objectCardinality = 0..N
   }
-  property kernelStep typeOf firn.core.Attribute {
+  property kernel_step typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
   }
@@ -137,7 +137,7 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
   property condition typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
-  }  property timeoutMinutes typeOf firn.core.Attribute {
+  }  property timeout_minutes typeOf firn.core.Attribute {
     range = firn.core.IntegerLiteral
     subjectCardinality = 0..1
   }
