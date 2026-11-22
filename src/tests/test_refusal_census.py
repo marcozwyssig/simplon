@@ -728,12 +728,14 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_strict_after_all", "'after_all' is true or false, got"): DIAGNOSIS,
     # si#858: a command's `ci: { skip: "<reason>" }`. An empty reason and a boolean `ci:` are expression rules:
     # the bare `ci: false` spelling would have worked and said why nowhere. The rest name a declaration with
-    # no working reading (not a mapping, a key nothing reads, a skip on an aggregate).
+    # no working reading (not a mapping, a key nothing reads, a skip on an aggregate or on a command a derived
+    # CI never selects).
     ("load", "_ci_skip", "`ci: skip:` says why"): EXPRESSION,
     ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): EXPRESSION,
     ("load", "_ci_skip", "but `ci:` on a command is a mapping"): DIAGNOSIS,
     ("load", "_ci_skip", "The only key this kernel reads under a command's `ci:` is `skip`"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs leaves, never an aggregate"): DIAGNOSIS,
+    ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,

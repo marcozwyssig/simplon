@@ -1028,14 +1028,16 @@ def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
             if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
 
 
-def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
+def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     """The reason a command opts out of the derived CI (si#858), "" when it does not.
 
     Only `ci: { skip: "<reason>" }` is read. A bare `ci: false` is refused rather than accepted as a
     shorthand: the opt-out is the one place a manifest says a leaf is NOT verified by CI, so it carries its
     reason where the next reader finds it. An unknown key is refused because a typo would leave the leaf
     running, the "nothing to do" that is really a failure. On an aggregate the key would do nothing, since a
-    derived CI selects leaves only.
+    derived CI selects leaves only; and so it would on any command that is not a leaf under `ci build` or
+    `ci test` (`ci_leaf` false: a cd, support or `ci release` command, a Deploy), which a derived CI never
+    selects - both are diagnoses, refused with the reason (si#858 final review).
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on.
     """
@@ -1046,6 +1048,10 @@ def _ci_skip(spec: "_CommandSpecModel", where: str) -> str:
         raise ValueError(
             f"aggregate '{where}' declares `ci: skip:`, and a derived CI runs leaves, never an aggregate, so "
             f"the key would do nothing - declare it on the member commands that cannot run in CI")
+    if not ci_leaf:
+        raise ValueError(
+            f"'{where}' declares `ci: skip:`, and a derived CI runs only the leaves under `ci build` and "
+            f"`ci test`, so the key would do nothing here - take it off")
     if isinstance(raw, bool):
         raise ValueError(
             f"'{where}' declares `ci: {json.dumps(raw)}`. An opt-out without a reason is one nobody can read "
@@ -1086,7 +1092,9 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
             f"`toolchain:run` line of its own, so the names would reach nothing - declare `env: {{ pass: "
             f"[...] }}` on the member commands whose toolchain needs them")
     env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
-    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}")
+    top = group.split(".", 1)[0]
+    ci_leaf = areas.get(top) == "ci" and top in ("build", "test") and not taxonomy.group_requires_env(group)
+    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}", ci_leaf)
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1097,7 +1105,6 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         # refused here, where the written map is still in hand. Placement first: a misplaced aggregate's
         # fix is to drop `produces:`, and naming its shape first would send the reader to reshape it (final
         # review of 4d). What the bundle must be stays in `ports._check_bundles`.
-        top = group.split(".", 1)[0]
         if (areas.get(top), top) != ("ci", "release"):
             raise ValueError(
                 f"aggregate '{group} {name}' names an output, and only an aggregate under `ci: release:` does - "
