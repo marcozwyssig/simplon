@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 286 | nothing - the declaration had no working meaning |
+| diagnosis | 287 | nothing - the declaration had no working meaning |
 | expression rule | 48 | something it could otherwise have said |
-| **all load-time refusals** | **334** | |
+| **all load-time refusals** | **335** | |
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
 is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no

@@ -99,6 +99,9 @@ class TaskCommand(Command):
     #: the one repository this leaf's `repository` names instead.
     publishes: bool = False
     token: str = ""
+    #: si#858: inherited from the task like `publishes` - a derived CI job places this leaf after every other
+    #: one and runs it `if: always()`, so a failed leaf still leaves its report.
+    after_all: bool = False
     with_: Mapping[str, object] = field(default_factory=dict)
     params: Mapping[str, ParamPresentation] = field(default_factory=dict)
     produces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)

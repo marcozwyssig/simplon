@@ -329,6 +329,7 @@ class _CommandSpecModel(BaseModel):
     hidden: bool = False
     unattended: bool | None = None
     publishes: bool = False
+    after_all: bool = False
     token: str = ""
     task: str = ""
     produces: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -388,6 +389,19 @@ class _CommandSpecModel(BaseModel):
             raise ValueError(
                 f"'publishes' is true or false, got '{value}'. It says whether this task's act cannot be "
                 f"taken back, so a derived release's dry run skips it")
+        return value
+
+    @field_validator("after_all", mode="before")
+    @classmethod
+    def _strict_after_all(cls, value: object) -> bool:
+        # si#858: strict for `_strict_bool`'s reason. A quoted "false" that coerced would be a report that
+        # runs only when everything before it passed, which is the one time nobody reads it.
+        if value is None:
+            return False
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"'after_all' is true or false, got '{value}'. It says whether this command waits for every "
+                f"other leaf of its CI job and runs whatever they did")
         return value
 
     @field_validator("token", mode="before")
@@ -1052,7 +1066,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
-                publishes=spec.publishes, token=spec.token, env_pass=env_pass,
+                publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,
                 task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,

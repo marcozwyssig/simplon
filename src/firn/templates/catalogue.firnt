@@ -72,6 +72,9 @@ template Catalogue {
       if t.publishes {
         |    publishes: true
       }
+      if t.after_all {
+        |    after_all: true
+      }
       if t.token {
         |    token: ${t.token}
       }

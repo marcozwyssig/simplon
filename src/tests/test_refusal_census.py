@@ -719,6 +719,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
     # si#490: the two task fields a derived release reads; a written value with no reading is refused.
     ("load", "_strict_bool", "'publishes' is true or false, got"): DIAGNOSIS,
+    # si#858: the task field a derived CI job reads to put a leaf last; a written value with no reading is refused.
+    ("load", "_strict_after_all", "'after_all' is true or false, got"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
