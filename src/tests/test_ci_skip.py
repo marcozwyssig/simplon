@@ -186,7 +186,7 @@ def test_a_skip_beside_another_key_is_refused():
 
 
 def test_a_variant_key_on_an_aggregate_names_that_key():
-    with pytest.raises(ValueError, match="aggregate 'test all' declares `ci: cadence:`.*never an aggregate"):
+    with pytest.raises(ValueError, match="aggregate 'test all' declares `ci: cadence:` without `gate:`.*holds `gate:`"):
         manifest.load(textwrap.dedent("""
             tasks:
               ship: { impl: "simplon.test_impls:nullary", help: "Ship." }

@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 308 | nothing - the declaration had no working meaning |
-| expression rule | 52 | something it could otherwise have said |
-| **all load-time refusals** | **360** | |
+| diagnosis | 318 | nothing - the declaration had no working meaning |
+| expression rule | 53 | something it could otherwise have said |
+| **all load-time refusals** | **371** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -96,6 +96,16 @@ to register an emulator with and a native `linux-arm64` cell makes emulating arm
 kernel's catalogue too. What they cost, measured 2026-11-23 over the eight reachable manifests: nothing, since
 none writes `ci:` on a command. **Rejected: a cross product, and emulation in a platform cell.** Each reopens
 when a product asks for that combination on one leaf.
+
+si#861 added `ci: { gate: { paths, label, env } }` on an aggregate. **Diagnoses:** a gate that is not a mapping,
+a key under it other than `paths`, `label` and `env`, a `paths:` that is not a non-empty list of non-empty
+globs, a `label:` that is not a non-empty string, an `env:` name that is no variable name or a value that is no
+scalar or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
+neither `paths:` nor `label:`, which no event could start, and on an aggregate any `ci:` key but `gate:`,
+`cadence:` and `timeout_minutes:`. **Expression rule:** `gate:` on a leaf, which could have been rendered as a
+gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too, and costs
+nothing measured 2026-11-23 over the eight reachable manifests, since none writes `ci:` on a command. It
+reopens when a product asks to gate a single leaf without wrapping it.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
 refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI
@@ -280,7 +290,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 45 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 46 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

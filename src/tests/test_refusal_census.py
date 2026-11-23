@@ -734,7 +734,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): EXPRESSION,
     ("load", "_ci_skip", "but `ci:` on a command is a mapping"): DIAGNOSIS,
     ("load", "_ci_skip", "The keys this kernel reads under a command's `ci:` are"): DIAGNOSIS,
-    ("load", "_ci_skip", "a derived CI runs leaves, never an aggregate"): DIAGNOSIS,
+    # si#861: an aggregate's `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it. Any other key
+    # (a leaf's variant key, `skip:`) or a `cadence:` with no `gate:` shapes nothing on an aggregate: diagnoses.
+    ("load", "_ci_skip", "a derived CI runs leaves, so declare any other key"): DIAGNOSIS,
+    ("load", "_ci_skip", "without `gate:`, and an aggregate's `ci:` holds"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
     # si#860: the variant keys beside `skip:`. A value of the wrong shape has no reading (a cadence that is
     # no word and no five-field cron, a platform cell the kernel does not carry, an unquoted version YAML has
@@ -763,6 +766,22 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     `ci:` on a command, so zero. What reopens either: a product asking for that combination.
     ("load", "_ci_variant", "`ci: platforms:` and `ci: python:` on one leaf"): EXPRESSION,
     ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): EXPRESSION,
+    # si#861: a gate sits on an aggregate only (Marco, 2026-11-23, #861): an EXPRESSION rule, since a gate on a
+    # single leaf could have been rendered, as a gated job of one member. What it costs: zero manifests, none
+    # writes `ci:` on a command (measured 2026-11-23, the eight reachable manifests); the way out is one line,
+    # `depends_on: [<leaf>]`. Reopens when a product asks to gate a single leaf without wrapping it.
+    ("load", "_ci_skip", "`ci: gate:` sits on an aggregate"): EXPRESSION,
+    # si#861: the gate's own values. A shape with no reading, a key nothing reads, a literal that is no variable
+    # name or carries an expression, and a gate no event could start: all diagnoses.
+    ("load", "_ci_gate", "but `ci: gate:` is a mapping of"): DIAGNOSIS,
+    ("load", "_ci_gate", "The keys this kernel reads under a gate"): DIAGNOSIS,
+    ("load", "_ci_gate", "`paths:` is a non-empty list of non-empty globs"): DIAGNOSIS,
+    ("load", "_ci_gate", "`label:` is the name of a pull request label"): DIAGNOSIS,
+    ("load", "_ci_gate", "`env:` is a mapping of variable names"): DIAGNOSIS,
+    ("load", "_ci_gate", "which is no environment variable name"): DIAGNOSIS,
+    ("load", "_ci_gate", "An env value is a scalar"): DIAGNOSIS,
+    ("load", "_ci_gate", "secrets reach a job through the secrets module (si#833)"): DIAGNOSIS,
+    ("load", "_ci_gate", "never runs on a pull request"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
@@ -1310,6 +1329,8 @@ REACH: dict[tuple[str, str, str], str] = {
     # si#860: MERGED by the same path - `_ci_variant` is handed every placed command's spec, the catalogue's too.
     ("load", "_ci_variant", "`ci: platforms:` and `ci: python:` on one leaf"): REACH_MERGED,
     ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): REACH_MERGED,
+    # si#861: MERGED by the same path - `_ci_skip` is handed every placed command's spec, the catalogue's too.
+    ("load", "_ci_skip", "`ci: gate:` sits on an aggregate"): REACH_MERGED,
     # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
