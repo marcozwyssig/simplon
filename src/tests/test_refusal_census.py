@@ -784,6 +784,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_gate", "which YAML read as a number"): DIAGNOSIS,
     ("load", "_ci_gate", "which YAML read as a {type(name).__name__}"): DIAGNOSIS,
     ("load", "_ci_gate", "secrets reach a job through the secrets module (si#833)"): DIAGNOSIS,
+    ("load", "_ci_gate", "GitHub would evaluate it in the decide job"): DIAGNOSIS,
     ("load", "_ci_gate", "never runs on a pull request"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
@@ -1329,6 +1330,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_refuse_member", "with nobody watching, and it declares `unattended: false`"): DIAGNOSIS,
     ("cipipeline", "_refuse_member", "membership already keeps it out of the main job"): DIAGNOSIS,
     ("cipipeline", "_refuse_member", "the gate's file decides when and where it runs"): DIAGNOSIS,
+    # si#861 Task 5 review: a gate whose members all run `after_all` has a gated job that verifies nothing, and a
+    # member's variant key where its gate's file is the product's own shapes nothing.
+    ("cipipeline", "gates", "would verify nothing and only report on it"): DIAGNOSIS,
+    ("cipipeline", "_refuse_variants_in_owned_gates", "and the key would shape nothing there"): DIAGNOSIS,
     ("cipipeline", "_refuse_members_consuming_from_outside", "so the gated run would fail on a missing file"):
         DIAGNOSIS,
     ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,

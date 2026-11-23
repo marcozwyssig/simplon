@@ -76,8 +76,6 @@ NOT_A_SURFACE = {
     "manifest.load": "asks whether a group is a collapsed flat group or a group-default namesake, to build "
                      "the argv a qualified `depends_on` word runs by (si#580, `Manifest.argv_for`) - it "
                      "renders nothing",
-    "tasks.cipipeline": "asks whether a gate member's group is env-first, so a Deploy member prepares the "
-                        "gated job (si#861 decision 6) - it renders no group to a human",
 }
 
 #: The platform's tree. Every group lives here because that is what the kernel's own catalogue does and

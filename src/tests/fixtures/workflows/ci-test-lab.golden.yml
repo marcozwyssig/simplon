@@ -31,7 +31,8 @@ jobs:
   # The decide step reads the event, the label and the pattern from its `env:` and nothing else is
   # written into its script; the token is in that step's `env:` alone. A `gh` that fails fails the
   # step: a failed probe is not a pull request that changed nothing. No checkout and no launcher:
-  # nothing here runs the product.
+  # nothing here runs the product. GitHub's files endpoint lists at most 3000 files, so a larger
+  # pull request is judged on its first 3000.
   decide:
     runs-on: ghr-1
     timeout-minutes: 10
@@ -138,7 +139,7 @@ jobs:
               echo "the gate has no paths:, so no changed file opens it"
               return 0
             fi
-            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" --jq '.[].filename')"
             echo "changed files of pull request #$PR:"
             printf '%s\n' "$files"
             rc=0
@@ -194,14 +195,16 @@ jobs:
   # member went red, so one red member hides none of the others.
   #
   # A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub
-  # keeps one pending run per ref, and a newer one replaces it.
+  # keeps one pending run per group, and a newer one replaces it. The group is the ref and the
+  # decide job's verdict, so a run the gate skipped only ever shares a group with skipped runs and
+  # never replaces a pending run that would have run.
   test-lab:
     runs-on: ghr-1
     needs: decide
     if: needs.decide.outputs.run == 'true'
     timeout-minutes: 95
     concurrency:
-      group: ci-test-lab-${{ github.ref }}
+      group: ci-test-lab-${{ github.ref }}-${{ needs.decide.outputs.run }}
       cancel-in-progress: false
     env:
       DELIVERY_DOCKER_BOOTSTRAP: '1'

@@ -1182,6 +1182,10 @@ def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
         raise ValueError(
             f"'{where}' declares `ci: gate: label: {json.dumps(label, default=str)}`. `label:` is the name of a "
             f"pull request label, a non-empty string")
+    if label is not None and "${{" in label:
+        raise ValueError(
+            f"'{where}' declares `ci: gate: label:` with a `${{{{` expression. GitHub would evaluate it in the decide "
+            f"job, and the gate would never open on the label written: name the label as it is spelt on GitHub")
     env = gate.get("env")
     if env is not None and not isinstance(env, Mapping):
         raise ValueError(

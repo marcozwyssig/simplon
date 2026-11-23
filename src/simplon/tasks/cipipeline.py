@@ -22,7 +22,7 @@ from simplon.kernel import log
 from simplon.manifest import artifactsection, runners
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
-from simplon.model.command import AggregateCommand, CiGate, TaskCommand
+from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
 from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
@@ -208,6 +208,12 @@ def gates(manifest: Manifest) -> tuple[GateRun, ...]:
                 member = Leaf(node.path.replace(".", " "), node.spec)
                 _refuse_member(member, words, path)
                 members.setdefault(member.words, member)
+            if all(member.spec.after_all for member in members.values()):
+                raise ValueError(
+                    f"derived CI: the gate of `{words}` has no member that runs in order - "
+                    f"{', '.join(f'`{m}`' for m in members)} all run after all the others (`after_all`), so its "
+                    f"gated job in {_key_of(path)}.yml would verify nothing and only report on it. Make a command "
+                    f"that runs in order a member of `{words}`, or take `ci: gate:` off it")
             out.append(GateRun(words, spec.gate, tuple(members.values()), path))
     return tuple(out)
 
@@ -671,7 +677,7 @@ changed() {
     echo "the gate has no paths:, so no changed file opens it"
     return 0
   fi
-  files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+  files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" --jq '.[].filename')"
   echo "changed files of pull request #$PR:"
   printf '%s\n' "$files"
   rc=0
@@ -730,7 +736,8 @@ DECIDE_NOTE = (
     "summary.",
     "The decide step reads the event, the label and the pattern from its `env:` and nothing else is written into "
     "its script; the token is in that step's `env:` alone. A `gh` that fails fails the step: a failed probe is "
-    "not a pull request that changed nothing. No checkout and no launcher: nothing here runs the product.")
+    "not a pull request that changed nothing. No checkout and no launcher: nothing here runs the product. "
+    "GitHub's files endpoint lists at most 3000 files, so a larger pull request is judged on its first 3000.")
 
 GATED_NOTE = (
     "si#861: the members of `{words}`, behind its gate: this job runs only when the decide job says so. It runs "
@@ -740,7 +747,8 @@ GATED_NOTE = (
     "members after it as skipped. Every other member after the first runs unless the run is cancelled or a "
     "preparation step or a Deploy member went red, so one red member hides none of the others.",
     "A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub keeps one pending "
-    "run per ref, and a newer one replaces it.")
+    "run per group, and a newer one replaces it. The group is the ref and the decide job's verdict, so a run the "
+    "gate skipped only ever shares a group with skipped runs and never replaces a pending run that would have run.")
 
 
 def _gate_cron(cadence: str) -> tuple[str, ...]:
@@ -1120,10 +1128,10 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             key: str, product: str, *, orphan: bool = False, run: GateRun | None = None) -> workflowgen.Job:
     """One model job as the renderer's job, its conditions written as `to_workflow` describes.
 
-    si#861 decision 6: a leaf of an env-first group (a `Deploy`: netctl's `down`, `up`, `seed`) runs like a
-    preparation step - an id, no `if:` of its own - and every later leaf waits for its success. A gated job
-    (`needs:` a decide job) also gets its gate's `env:`, the aggregate's `timeout-minutes` and a `concurrency:`
-    per ref that never cancels a run in progress (decision 3)."""
+    si#861 decision 6: in a gated job, a `Deploy` member (a command of an env-first group: netctl's `down`, `up`,
+    `seed`) runs like a preparation step - an id, no `if:` of its own - and every later leaf waits for its
+    success. A gated job (`needs:` a decide job) also gets its gate's `env:`, the aggregate's `timeout-minutes`
+    and a `concurrency:` per ref and verdict that never cancels a run in progress (decision 3)."""
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
     kernel, unplaced = _kernel_steps(manifest, data, runner)
@@ -1132,9 +1140,8 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     leaves = [leaf for leaf in selection.leaves if id(leaf.spec) in mine]
     ids = [_PREPARES[step.kernel_step] for step in job.step if step.kernel_step in _PREPARES]
     producers = _producers(leaves)
-    taxonomy = manifest.taxonomy()
-    deploys = {leaf.words for leaf in leaves if not leaf.spec.after_all
-               and taxonomy.group_requires_env(".".join(leaf.words.split()[:-1]))}
+    # si#861 decision 6, in a gated job only: the loader's `Deploy` is the command of an env-first group.
+    deploys = {leaf.words for leaf in leaves if job.needs and isinstance(leaf.spec, Deploy) and not leaf.spec.after_all}
     leaf_ids = _leaf_ids(list(dict.fromkeys([*(leaf.words for leaf in leaves if leaf.words in deploys),
                                              *(maker for makers in producers.values() for maker in makers)])))
 
@@ -1189,7 +1196,11 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
         gated = {"needs": needs[0] if len(needs) == 1 else needs, **gated}
         if job.timeout_minutes is not None:
             gated["timeout-minutes"] = job.timeout_minutes
-        gated["concurrency"] = {"group": f"{key}-${{{{ github.ref }}}}", "cancel-in-progress": False}
+        # Keyed on the verdict too: whether a job its `if:` skips still enters its group and replaces a pending
+        # run is unmeasured, and this way a skipped job only ever shares a group with skipped ones.
+        verdict = f"needs.{DECIDE_JOB}.outputs.run"
+        gated["concurrency"] = {"group": f"{key}-${{{{ github.ref }}}}-${{{{ {verdict} }}}}",
+                                "cancel-in-progress": False}
     if job.env:
         gated["env"] = {env.env_name: env.env_value for env in job.env}
     where = f"derived workflow '{key}', job '{job.key}'"
@@ -1265,9 +1276,10 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     runs = gates(manifest)
     derived_gates = [run for run in runs if _key_of(run.path) not in own]
     derivations: list[Derivation] = []
+    _refuse_variants_in_owned_gates([run for run in runs if run not in derived_gates])
     if KEY in own:
         _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
-                                        {member.words for run in derived_gates for member in run.members})
+                                        {member.words for run in runs for member in run.members})
     else:
         push = select(manifest, artifacts=artifactsection.declared(data))
         if declared and not _runs(push) and not _cells(push):
@@ -1286,6 +1298,23 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     return out
 
 
+def _refuse_variants_in_owned_gates(owned: Sequence[GateRun]) -> None:
+    """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives that
+    file, so `timeout_minutes:` or `emulates:` on a member would shape nothing - `_refuse_variants_nobody_derives`'s
+    DIAGNOSIS, in the words of the file the member runs in. An `after_all` member also ends the derived runs, which
+    read its keys."""
+    for run in owned:
+        stem = _key_of(run.path)
+        for member in run.members:
+            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), None)]
+            if written and not member.spec.after_all:
+                raise ValueError(
+                    f"'{member.words}' declares `ci: {written[0]}:` and is a member of the gate of `{run.words}`, so "
+                    f"it runs in the product's own {stem}.yml (`{workflowgen.SECTION}: {stem}:`): the kernel derives "
+                    f"no such file, and the key would shape nothing there. Take the key off, or drop "
+                    f"`{workflowgen.SECTION}: {stem}:` so the kernel derives {stem}.yml and reads it")
+
+
 #: si#860: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them; `cadence`
 #: is not one, since it says which derived workflow the leaf is in.
 _VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
@@ -1298,8 +1327,9 @@ def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gat
     `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
     no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
     `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
-    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A member
-    of a gate whose file is derived (`gated`, si#861) is read there, and is no push leaf either.
+    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A gate
+    member (`gated`, si#861) is no push leaf either: its gate's file reads it, or `_refuse_variants_in_owned_gates`
+    rules on it where that file is the product's own.
     """
     for group in _ci_groups(manifest):
         for name, spec in manifest.commands[group].items():

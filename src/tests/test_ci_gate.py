@@ -478,7 +478,9 @@ def test_gated_job_shape():
     assert job["if"] == "needs.decide.outputs.run == 'true'"
     assert job["timeout-minutes"] == 95
     assert job["env"]["NETCTL_MGMT_SUBNET"] == "10.128.0.0/24"
-    assert job["concurrency"] == {"group": "ci-test-lab-${{ github.ref }}", "cancel-in-progress": False}
+    # keyed on the verdict too, so a skipped job only ever shares a group with skipped ones
+    assert job["concurrency"] == {"group": "ci-test-lab-${{ github.ref }}-${{ needs.decide.outputs.run }}",
+                                  "cancel-in-progress": False}
     assert "concurrency" not in doc
 
 
@@ -576,7 +578,7 @@ def test_decide_script_table(tmp_path, event, action, added, labels, files, runs
     assert said["run"] == runs, said
     assert why in said["why"], said
     if calls:
-        assert calls.strip() == "api --paginate repos/o/netctl/pulls/7/files --jq .[].filename"
+        assert calls.strip() == "api --paginate repos/o/netctl/pulls/7/files?per_page=100 --jq .[].filename"
     if action in ("opened", "reopened", "synchronize") and runs == "true" and files == _MATCH:
         assert "src/sidecar/api/grpc/lab.proto" in done.stdout  # the changed files are in the log
 
@@ -659,3 +661,28 @@ def test_the_empty_push_line_names_the_gate_file(capsys):
     assert ".github/workflows/ci.yml" not in files and _LAB_PATH in files
     captured = capsys.readouterr()
     assert "ci-test-lab.yml" in captured.out + captured.err
+
+
+def test_a_gate_label_with_an_expression_is_refused():
+    with pytest.raises(ValueError, match=r"`ci: gate: label:` with a `\$\{\{` expression.*GitHub would evaluate it"):
+        _loaded('ci: { gate: { label: "${{ github.actor }}" } }')
+
+
+def test_a_gate_whose_members_all_run_after_all_is_refused():
+    from simplon.tasks import cipipeline
+    text = _lab_text().replace("depends_on: [down, up, seed, system, acceptance-dataplane, report]",
+                               "depends_on: [report]")
+    loaded = manifest.load(text, catalogue=catalogue.load())
+    with pytest.raises(ValueError, match=r"the gate of `test lab` has no member that runs in order.*`test report`.*"
+                                         r"ci-test-lab.yml would verify nothing"):
+        cipipeline.gates(loaded)
+
+
+@pytest.mark.parametrize("ci", ["workflows:\n  ci:\n    handwritten: our own\n", ""])
+def test_a_member_variant_key_in_a_product_owned_gate_file_is_refused_naming_that_file(ci):
+    tail = ci + ("" if ci else "workflows:\n") + "  ci-test-lab:\n    handwritten: the lab, by hand\n"
+    with pytest.raises(ValueError) as refused:
+        _lab_workflows(_lab_text(system=", ci: { timeout_minutes: 30 }", tail=tail))
+    said = str(refused.value)
+    assert "'test system' declares `ci: timeout_minutes:`" in said
+    assert "the product's own ci-test-lab.yml" in said and "runs in ci.yml" not in said
