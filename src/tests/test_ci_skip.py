@@ -135,6 +135,25 @@ def test_the_manifest_chapter_s_skip_example_loads_as_written():
 # --- si#860: the variant keys -------------------------------------------------------------------------
 
 
+def test_the_manifest_chapter_s_variant_example_loads_and_names_every_platform_cell():
+    """how/manifest.md shows one leaf per variant key; the snippet is read from the page and loaded, so each
+    example is one the kernel reads as written, and its `platforms:` list is held against the kernel's cells,
+    so the page cannot name a cell the kernel lost or miss one it gained."""
+    page = (ROOT / "src" / "site" / "content" / "how" / "manifest.md").read_text(encoding="utf-8")
+    (snippet,) = [block for block in re.findall(r"```yaml\n(.*?)```", page, re.S) if "ci: { platforms:" in block]
+
+    leaves = manifest.load(snippet, catalogue=catalogue.load()).commands["test"]
+
+    assert {name: leaf.ci for name, leaf in leaves.items()} == {
+        "compose": CiVariant(cadence="nightly"),
+        "weekly": CiVariant(cadence="17 3 * * 1"),
+        "cells": CiVariant(platforms=tuple(PLATFORMS)),
+        "newest": CiVariant(python=("3.14",)),
+        "lab": CiVariant(timeout_minutes=95),
+        "foreign": CiVariant(emulates=("linux/arm64",)),
+    }
+
+
 def _ci(written: str) -> CiVariant:
     return _loaded(f"ci: {written}").commands["test"]["lab"].ci
 

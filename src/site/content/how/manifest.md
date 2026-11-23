@@ -1397,8 +1397,9 @@ it is `github-ubuntu`:
 runner: { kind: self-hosted-debian, labels: ghr-8 }
 ```
 
-The derived workflow is one job, `ci`, on that machine, triggered on a pull request, a push to `main`
-and by dispatch, and it reads only (`permissions: { contents: read }`).
+The derived workflow's main job is `ci`, on that machine, triggered on a pull request, a push to `main`
+and by dispatch, and it reads only (`permissions: { contents: read }`). A leaf with `ci: python:` or
+`ci: platforms:` adds a job of its own beside it ([the variant keys](#variant-keys-how-a-leaf-runs)).
 
 **When nothing can run, there is no file.** A product that declares other workflows and has no leaf a
 machine may run gets no ci.yml and one log line saying why; with no workflow declared at all, the
@@ -1411,7 +1412,64 @@ refusal a kernel upgrade would replace a product's own CI silently, and `--check
 drift. This refusal is not counted in [the refusal census](../../with-what/rules/): it is decided by a
 file on disk, not by the manifest. A misspelt `workflows:` key cannot be told from a missing one, so a
 product whose ci.yml is already generated gets the derived file over it; that shows as a diff to review,
-and as drift under `--check`.
+and as drift under `--check`. The same refusal guards every cadence workflow below.
+
+#### Variant keys: how a leaf runs
+
+**`skip:` says whether a leaf runs; five more keys under the same `ci:` say how** (si#860). Each is
+read at load, and a value of the wrong shape is refused with the form it should take:
+
+```yaml
+ci:
+  test:
+    commands:
+      compose:  { task: "test:gate", ci: { cadence: nightly } }
+      weekly:   { task: "test:gate", ci: { cadence: "17 3 * * 1" } }
+      cells:    { task: "test:gate", ci: { platforms: [linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64] } }
+      newest:   { task: "test:gate", ci: { python: ["3.14"] } }
+      lab:      { task: "test:gate", ci: { timeout_minutes: 95 } }
+      foreign:  { task: "test:gate", ci: { emulates: [linux/arm64] } }
+```
+
+- **`cadence:`** takes the leaf out of ci.yml and into a workflow of its own, never run per push:
+  `nightly` goes to `.github/workflows/ci-nightly.yml`, run at the kernel's cron `17 2 * * *` (UTC, off
+  the full hour on purpose) and on dispatch; `manual` goes to `ci-manual.yml`, run only on dispatch; a
+  five-field cron string goes to `ci-scheduled.yml`, one job per distinct cron, each job run on its own
+  schedule and every job on a dispatch. A file exists only while a leaf carries its cadence. Each is built
+  like ci.yml (preparation, its leaves, the `after_all` leaves without a cadence of their own, so the
+  report and its upload, cleanup), and a run in progress is never cancelled by the next
+  (`concurrency: { group: <file stem>, cancel-in-progress: false }`). ci.yml names each such leaf under
+  "Left out", with the file it runs in. Two cadences fire apart, so a consumer whose producer has another
+  cadence is refused as a consumer of a leaf the run does not run.
+- **`platforms:`** runs the leaf once in each named cell and nowhere else, never also in the main job. The
+  cells are the kernel's, not GitHub's runner labels: each cell's label, shell, launcher and the
+  architecture `uname -m` must print there are defined in the kernel's
+  `src/firn/model/simplon/workflow/runners.firn`, and the example above names every one (a test reads it
+  back). An unknown name is refused with the list.
+  The job is `<command words>-platforms`, a matrix with `fail-fast` off; each cell checks its architecture
+  before anything else, a bash cell `exec`s the launcher, and the Windows cell runs `<product>.cmd` in `cmd`.
+  Where a Windows cell downloads a hand-off, its unpack there has not been measured on a Windows runner, and
+  the job's note says so. A run whose every leaf is a platform leaf has no main job, so its `after_all`
+  leaves (the report) do not run there; the first cell job says that too.
+- **`python:`** adds cells rather than replacing the run: the leaf still runs in the main job, and once
+  more per listed version in `<command words>-python`, on GitHub-hosted Ubuntu with `setup-python`
+  whatever the product's `runner:` is. Quote a version: `3.10` unquoted is the number 3.1, and refused.
+- **A cell job carries no report.** Its result is its colour, one per cell; it gets `support install`
+  where the product declares `toolchains:`, and no disk preflight or docker probe, since a hosted machine's
+  disk does not persist.
+- **`timeout_minutes:`** is a positive whole number. In the main job it is the leaf's step's
+  `timeout-minutes`, so the leaves beside it keep theirs; in a cell job it is the job's, the same for every
+  cell.
+- **`emulates:`** names platforms as buildx spells them. The job registers emulation for all of them once,
+  before its leaves, with the action and binfmt pin the derived release uses; every later leaf waits for
+  that step's success. On a runner kind that cannot emulate, nothing is registered and the job's note
+  names the gap.
+
+`skip:` beside any of them is refused, since the leaf does not run. Two pairs are refused on one leaf:
+`platforms:` with `python:` (a cross product of cells and versions nobody has asked for; put the versions
+on a leaf of their own) and `platforms:` with `emulates:` (a macOS or Windows cell has no binfmt; name the
+native cell instead). Both would have rendered, so both are expression rules on
+[the rules page](../../with-what/rules/), each reopening when a product asks for that combination.
 
 #### `--check`, and the file nobody owns
 

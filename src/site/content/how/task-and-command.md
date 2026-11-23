@@ -89,8 +89,11 @@ whatever they did (`if: always()`), so a failed leaf still leaves its report. `t
 A quoted value is refused.
 
 `ci` (si#858) is a command's own key, not a task's: `ci: { skip: "<reason>" }` keeps one command out of the
-derived CI and says why. It is a mapping with that one key. A bare `ci: false`, an empty reason, any other key
-under it and a skip on an aggregate are all refused, the last because a derived CI runs leaves.
+derived CI and says why. Since si#860 the same mapping also takes the variant keys `cadence`, `platforms`,
+`python`, `timeout_minutes` and `emulates`, which say how a leaf runs rather than whether
+([the variant keys](../manifest/#variant-keys-how-a-leaf-runs)). A bare `ci: false`, an empty reason, any
+other key, `skip` beside a variant key and any of them on an aggregate are all refused, the last because a
+derived CI runs leaves.
 
 A `token: app` task (si#534) writes to one repository the run's own token cannot reach. Its leaf binds that
 repository with `with: { repository: <owner>/<repo> }`, and every generated job, the derived release job

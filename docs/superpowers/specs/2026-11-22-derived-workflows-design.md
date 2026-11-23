@@ -217,8 +217,45 @@ All on the command, under the one `ci:` key so a reader finds them together:
   runner kind has `setupPython = false` (self-hosted kinds), the cell runs on `github-ubuntu`. The arm64
   emulation that job registers today belongs to the leaf that needs it (`emulates:` on the command),
   not to the cell.
+
+  (corrected 2026-11-23, #860) What was built, beyond the text above:
+
+  - **Cadence files.** `nightly` goes to `.github/workflows/ci-nightly.yml`, triggered by the kernel's
+    cron `17 2 * * *` (off the full hour, as agile-cockpit's hand-written nightly is) and by dispatch;
+    `manual` to `ci-manual.yml`, dispatch only; a cron string to `ci-scheduled.yml`, one job per distinct
+    cron, each gated on its own schedule and all of them run on a dispatch. A leaf with no `cadence:`
+    stays in `ci.yml`, per push. A cadence file is built like `ci.yml` (preparation, its leaves, the
+    `after_all` leaves without a cadence of their own and the report upload, cleanup), and carries
+    `concurrency: { group: <file stem>, cancel-in-progress: false }`. Each file exists only while a leaf
+    carries its cadence. This answers section 9's "file names beyond `ci.yml`" for the CI half.
+  - **Platform cells are kernel names**, not runner labels: `linux-x64`, `linux-arm64`, `macos-x64`,
+    `macos-arm64`, `windows-x64` (measured on cleon `ci.yml` and asbundle `build-matrix.yml`). The
+    kernel holds each cell's runner label, shell, launcher and the architecture `uname -m` prints there,
+    as `simplon.workflow.Platform` instances in `runners.firn`; an unknown name is refused with the list.
+    `platforms:` replaces the leaf's run in the main job (5.2's "no double run"); each cell checks its
+    architecture first, a bash cell `exec`s the launcher, the Windows cell runs `<product>.cmd` in `cmd`.
+  - **`python:` adds cells**: the leaf still runs in the main job, and once more per version in a matrix
+    job on `github-ubuntu` with `setup-python`, whatever the product's `runner:` is.
+  - **A cell job carries no report**: its result is its job's colour, one per cell, `fail-fast` off. It
+    reopens with #450's test results per cell. A run whose every leaf is a platform leaf has no main job,
+    so its `after_all` leaves do not run there, and the first cell job's note says so.
+  - **`timeout_minutes:` and `emulates:` sit under `ci:`** with the other variant keys:
+    `ci: { timeout_minutes: N }` is the leaf's step's `timeout-minutes` in a shared job and the job's in a
+    leaf's own (cell) job, the same for every cell; `ci: { emulates: [linux/arm64] }` registers emulation
+    once per job before its leaves, with the release's action and binfmt pin, and on a kind with
+    `canEmulate = false` registers nothing and names the gap in the job's note (5.4; routing is #722's).
+  - **Unmeasured: the hand-off unpack on Windows.** A Windows cell that downloads a hand-off unpacks it in
+    `cmd` with Windows' tar from a `D:` path; nobody has run that on a Windows runner, so it is recorded in
+    the generated file rather than refused. The first product migration that writes `platforms:` with a
+    Windows cell and a hand-off is that measurement.
+  - Two expression rules, in section 10: `platforms:` with `python:`, and `platforms:` with `emulates:`.
 - A parameter value `{input: <name>}` (next to the existing `{env: NAME}`, si#488): the workflow that
   holds the leaf gets a `workflow_dispatch` input of that name (biz-cockpit publish: input to tag).
+  (corrected 2026-11-23, #860) Not built in #860: it moves to step 8 (#862). Measured over the eight
+  reachable manifests and their workflow files on 2026-11-23, its only user is biz-cockpit
+  `publish.yml`, which dispatches the `release` aggregate, not a `ci build` or `ci test` leaf, with a
+  default ("the tag ref, else the sha") a plain input cannot say; a derived CI leaf has no `params:`
+  place for it to stand in.
 - `ci: { gate: { paths: [...], label: <name> } }`: the leaf runs only when a changed path matches or
   the PR carries the label. Derived as a decide job in front of the leaf's Job (netctl's 75 min lab,
   #691). The decide job also fixes netctl's double trigger (`opened` and `labeled`): it is one job with
@@ -307,6 +344,9 @@ Each step is a ticket in P2 M9 (unless noted) and lands with a verification.
 4. **Runner kind** `self-hosted-container` (D10, closes #722).
 5. **`test:unit`** (D7).
 6. **Variant keys** (D8): `cadence`, `platforms`, `python`, `{input:}`.
+   (corrected 2026-11-23, #860) Built in #860: `cadence`, `platforms`, `python`, and `timeout_minutes`
+   and `emulates` under the same `ci:` (5.5). `{input:}` moved to step 8 (#862), where its one user
+   stands.
 7. **Gate and sources** (D9), `merge: auto` (closes #691's generation half).
 8. **Release and pages without `workflows:`** (section 6.1, 6.2). Then #789 and #786.
 9. **Migration**, one ticket per product, in the D11 order. simplon first: delete `workflows:` except
@@ -336,8 +376,8 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
 | No `emulates:` on a container runner (firn, #722) | `canEmulate` on the kind (5.4) |
 | Builder job stamped by `git describe` (firn) | a CI leaf, promoted by #789 (6.1) |
 | `test all` twice (firn) | not expressible; one leaf one Job (5.2) |
-| Dispatch input to tag, `packages: write` (biz-cockpit publish) | `{input:}` (5.5); `publishes:` leaf permissions already derived (si#719) |
-| OS matrix with a plan job (cleon, asbundle, #686) | `ci: platforms:` (5.5) |
+| Dispatch input to tag, `packages: write` (biz-cockpit publish) | `{input:}` (5.5); `publishes:` leaf permissions already derived (si#719). (corrected 2026-11-23, #860) `{input:}` is step 8's (#862): the dispatch is of the `release` aggregate, not a CI leaf |
+| OS matrix with a plan job (cleon, asbundle, #686) | `ci: platforms:` (5.5). (corrected 2026-11-23, #860) Kernel cell names. Both products run the matrix on a tag or by dispatch: `cadence: manual` covers the dispatch, and no tag trigger is derived |
 | Product's own pytest (cleon, asbundle, cleon-firn) | `test:unit` (5.6) |
 | Pages deploy (cleon, simplon) | derived from `site:` (6.2) |
 | Nightly compose around a suite (agile-cockpit) | `ci: cadence:` (5.5) |
@@ -345,7 +385,7 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
 | Auto-merge (netctl, #691) | `merge: auto` (5.5) |
 | Private submodule PAT (netctl), cross-repo input (cleon-firn) | `sources:` (5.5) |
 | firn projects in dependency order (cleon-firn) | firn's `--all` (D6) |
-| Python version cell (simplon `suite-python-3-14`) | `ci: python:` (5.5) |
+| Python version cell (simplon `suite-python-3-14`) | `ci: python:` (5.5). (corrected 2026-11-23, #860) With `ci: emulates:` for the arm64 emulation that job registers; deleting the hand-written job is #863 |
 | netctl has no `support workflows` member | the verb is the kernel's; derivation needs no member (section 9) |
 
 ## 9. Left to the builder
@@ -353,7 +393,8 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
 - Whether `support workflows` must be named by a product at all, or is reachable from the kernel's
   catalogue for every product. The goal says a product that must name a command is doing something;
   the builder checks whether the catalogue already places it and closes the gap if not.
-- The exact file names of derived workflows beyond `ci.yml` and `release.yml`.
+- The exact file names of derived workflows beyond `ci.yml` and `release.yml`. (corrected 2026-11-23,
+  #860) Decided for the CI half: `ci-nightly.yml`, `ci-manual.yml`, `ci-scheduled.yml` (5.5).
 - How failures of non-first steps are collected into the job's verdict (5.2).
 - Where the selectors are evaluated (section 4).
 
@@ -370,3 +411,12 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
 - **The kernel reads `firn.toml` to fan out projects.** Rejected (D6). Reopens if a second product needs
   a kernel-side fan-out that is not firn's.
 - **Unreasoned `ci: false`.** Rejected: an opt-out with no reason is the absence nobody can read back.
+- **`platforms:` and `python:` on one leaf** (corrected 2026-11-23, #860). Rejected: a cross product of
+  cells and interpreter versions no product has asked for, and nobody measured what it costs a runner
+  bill; a cell runs on its platform's own interpreter. An expression rule: over the eight reachable
+  manifests on 2026-11-23 it refuses nothing (none writes `ci:` on a command). Reopens when a product
+  asks for that cross product on one leaf.
+- **`platforms:` and `emulates:` on one leaf** (corrected 2026-11-23, #860). Rejected: a macOS or
+  Windows cell has no binfmt to register an emulator with, and a native `linux-arm64` cell makes
+  emulating arm64 pointless. An expression rule with the same measured cost, zero. Reopens when a
+  product asks to emulate inside a platform cell.
