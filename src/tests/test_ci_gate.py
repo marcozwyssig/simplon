@@ -133,3 +133,19 @@ def test_the_kernels_own_catalogue_and_manifest_declare_no_gate():
     loaded = manifest.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue.load())
     assert all(getattr(command, "gate", None) is None
                for group in loaded.commands.values() for command in group.values())
+
+
+def test_an_unquoted_float_env_value_is_refused_and_says_quote_it():
+    with pytest.raises(ValueError, match=r"V: 3.1.*read as a number.*quote it"):
+        _loaded("ci: { gate: { label: y, env: { V: 3.10 } } }")
+
+
+def test_an_env_key_yaml_reads_as_a_bool_is_refused_and_says_quote_it():
+    with pytest.raises(ValueError, match=r"name true, which YAML read as a bool.*quote it"):
+        _loaded("ci: { gate: { label: y, env: { on: x } } }")
+
+
+@pytest.mark.parametrize(("written", "said"), [("{}", r"`ci: \{\}`"), ("false", "`ci: false`")])
+def test_an_empty_or_boolean_ci_on_an_aggregate_names_what_was_written(written, said):
+    with pytest.raises(ValueError, match=rf"aggregate 'test all' declares {said}"):
+        _loaded(f"ci: {written}")

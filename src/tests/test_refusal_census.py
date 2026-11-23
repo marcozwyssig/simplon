@@ -768,7 +768,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): EXPRESSION,
     # si#861: a gate sits on an aggregate only (Marco, 2026-11-23, #861): an EXPRESSION rule, since a gate on a
     # single leaf could have been rendered, as a gated job of one member. What it costs: zero manifests, none
-    # writes `ci:` on a command (measured 2026-11-23, the eight reachable manifests); the way out is one line,
+    # writes `ci:` on a command (measured 2026-11-23, the reachable manifests of `surface.CONSUMERS`); the way out is one line,
     # `depends_on: [<leaf>]`. Reopens when a product asks to gate a single leaf without wrapping it.
     ("load", "_ci_skip", "`ci: gate:` sits on an aggregate"): EXPRESSION,
     # si#861: the gate's own values. A shape with no reading, a key nothing reads, a literal that is no variable
@@ -780,6 +780,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_gate", "`env:` is a mapping of variable names"): DIAGNOSIS,
     ("load", "_ci_gate", "which is no environment variable name"): DIAGNOSIS,
     ("load", "_ci_gate", "An env value is a scalar"): DIAGNOSIS,
+    # YAML 1.1 coerces silently (3.10 -> 3.1, a key `on` -> True): quote it, as si#860's unquoted python.
+    ("load", "_ci_gate", "which YAML read as a number"): DIAGNOSIS,
+    ("load", "_ci_gate", "which YAML read as a {type(name).__name__}"): DIAGNOSIS,
     ("load", "_ci_gate", "secrets reach a job through the secrets module (si#833)"): DIAGNOSIS,
     ("load", "_ci_gate", "never runs on a pull request"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,

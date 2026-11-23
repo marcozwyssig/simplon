@@ -1036,8 +1036,8 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     rather than accepted as a shorthand: the opt-out is the one place a manifest says a leaf is NOT verified
     by CI, so it carries its reason where the next reader finds it. An unknown key is refused because a typo
     would be ignored and the leaf would run as if nothing were written, the "nothing to do" that is really a
-    failure. On an aggregate any key would do nothing, since a derived CI selects leaves only; and so it
-    would on any command that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or
+    failure. On an aggregate (si#861) `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it, and
+    any other key would do nothing, since a derived CI selects leaves only; and so would any key on any command that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or
     `ci release` command, a Deploy), which a derived CI never selects - both are diagnoses, refused with the
     reason (si#858 final review). So is `skip:` beside a variant key (si#860): the leaf does not run, so the
     variant would shape nothing.
@@ -1053,9 +1053,15 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
         # other key shapes a leaf, and a derived CI runs leaves.
         held = ("gate", "cadence", "timeout_minutes")
         offending = [str(key) for key in raw if key not in held] if isinstance(raw, Mapping) else [written]
-        if offending:
+        if isinstance(raw, Mapping) and not raw:
+            said = "`ci: {}`"
+        elif not isinstance(raw, Mapping):
+            said = f"`ci: {json.dumps(raw, default=str)}`"
+        else:
+            said = f"`ci: {offending[0] if offending else written}:`"
+        if offending and (raw or not isinstance(raw, Mapping)):
             raise ValueError(
-                f"aggregate '{where}' declares `ci: {offending[0]}:`, and an aggregate's `ci:` holds `gate:`, and "
+                f"aggregate '{where}' declares {said}, and an aggregate's `ci:` holds `gate:`, and "
                 f"`cadence:`/`timeout_minutes:` beside it - a derived CI runs leaves, so declare any other key on "
                 f"the member commands it is meant for")
     if not ci_leaf:
@@ -1065,7 +1071,7 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     if spec.depends_on:
         if not (isinstance(raw, Mapping) and "gate" in raw):
             raise ValueError(
-                f"aggregate '{where}' declares `ci: {written}:` without `gate:`, and an aggregate's `ci:` holds "
+                f"aggregate '{where}' declares {'`ci: {}`' if not raw else f'`ci: {written}:`'} without `gate:`, and an aggregate's `ci:` holds "
                 f"`gate:`, and `cadence:`/`timeout_minutes:` beside it: the key would shape nothing - add a "
                 f"`gate:`, or declare it on the member commands")
         return ""
@@ -1183,10 +1189,18 @@ def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
             f"variable names to literal values")
     literals: dict[str, str] = {}
     for name, value in (env or {}).items():
+        if not isinstance(name, str):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env:` name {json.dumps(name, default=str)}, which YAML read as a "
+                f"{type(name).__name__} and not as written: quote it, as `\"{str(name).lower()}\": ...`")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
             raise ValueError(
                 f"'{where}' declares `ci: gate: env:` name {json.dumps(str(name))}, which is no environment "
                 f"variable name: it starts with a letter or `_` and holds letters, digits and `_`")
+        if isinstance(value, float):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env: {name}: {json.dumps(value)}`, which YAML read as a number "
+                f"and not as written (3.10 reads as 3.1): quote it, as `{name}: \"...\"`")
         if value is None or not isinstance(value, (str, int, float, bool)):
             raise ValueError(
                 f"'{where}' declares `ci: gate: env: {name}: {json.dumps(value, default=str)}`. An env value is "

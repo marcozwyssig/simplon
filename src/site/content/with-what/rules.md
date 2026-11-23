@@ -71,17 +71,18 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 318 | nothing - the declaration had no working meaning |
+| diagnosis | 320 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **371** | |
+| **all load-time refusals** | **373** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
 some other non-mapping, a key under it other than the ones it reads (`skip` and si#860's `cadence`,
 `platforms`, `python`, `timeout_minutes`, `emulates`: a typo would be ignored and the leaf would run as if it
-were not written), and any of them on an aggregate or on a command no derived CI selects (outside `ci build`
-and `ci test`): there the key would do nothing, since a derived CI runs only those leaves.
+were not written), and any of them on a command no derived CI selects (outside `ci build`
+and `ci test`): there the key would do nothing, since a derived CI runs only those leaves. On an aggregate si#861
+reads `gate:`, `cadence:` and `timeout_minutes:`, and any other key does nothing.
 **Rejected: accepting `ci: false`.** It reopens if a product shows a skip whose reason is the same on every
 line.
 
@@ -100,11 +101,11 @@ when a product asks for that combination on one leaf.
 si#861 added `ci: { gate: { paths, label, env } }` on an aggregate. **Diagnoses:** a gate that is not a mapping,
 a key under it other than `paths`, `label` and `env`, a `paths:` that is not a non-empty list of non-empty
 globs, a `label:` that is not a non-empty string, an `env:` name that is no variable name or a value that is no
-scalar or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
+scalar (a float, which YAML would have rounded, or a non-string name is refused with "quote it") or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
 neither `paths:` nor `label:`, which no event could start, and on an aggregate any `ci:` key but `gate:`,
 `cadence:` and `timeout_minutes:`. **Expression rule:** `gate:` on a leaf, which could have been rendered as a
 gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too, and costs
-nothing measured 2026-11-23 over the eight reachable manifests, since none writes `ci:` on a command. It
+nothing measured 2026-11-23 over the reachable manifests (`surface.CONSUMERS`), since none writes `ci:` on a command. It
 reopens when a product asks to gate a single leaf without wrapping it.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
