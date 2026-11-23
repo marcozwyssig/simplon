@@ -302,6 +302,21 @@ class Step(NamedTuple):
     params: "Mapping[str, str | EnvValue]" = {}
 
 
+def emulation_step(platforms: Sequence[str], *, step_id: str | None = None) -> Step:
+    """The step that registers emulation for `platforms` on the job's machine: the QEMU action with the kernel's
+    binfmt pin, `labhost.BINFMT_IMAGE`, so `support ci-arm64` and every workflow register the same thing (si#570).
+
+    One shape for the release's `emulates:` and the derived CI's `ci: emulates:` (si#860 final review), so the
+    action, the pin and the key order cannot drift apart between them. `step_id` is the id a later step's
+    condition reads; the release has none. The note is the caller's."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+    named: dict[str, object] = {"name": f"Register emulation for {', '.join(platforms)}"}
+    if step_id is not None:
+        named["id"] = step_id
+    return Step(verbatim={**named, "uses": QEMU_ACTION,
+                          "with": {"image": BINFMT_IMAGE, "platforms": ",".join(platforms)}})
+
+
 @dataclass(frozen=True)
 class EnvValue:
     """A `params:` value that NAMES an environment variable, `{ env: RELEASE_VERSION }` (si#488).
@@ -1442,10 +1457,7 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
                                    "run": f"{launcher(product)} help"},
                          note=PROVISION_NOTE))
     if workflow.emulates:
-        from simplon.adapters.labhost import BINFMT_IMAGE
-        steps.insert(0, Step(
-            verbatim={"name": f"Register emulation for {', '.join(workflow.emulates)}", "uses": QEMU_ACTION,
-                      "with": {"image": BINFMT_IMAGE, "platforms": ",".join(workflow.emulates)}},
+        steps.insert(0, emulation_step(workflow.emulates)._replace(
             note=f"si#570: the workflow's `{EMULATES_KEY}:`, registered before anything in the job runs."))
     check = _pass_secrets_check(needed)
     if check is not None:

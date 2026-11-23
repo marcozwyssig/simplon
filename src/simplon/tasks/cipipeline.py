@@ -761,10 +761,8 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     for step in job.step:
         if step.kernel_step == EMULATION:
             # si#860: the release's emulation step (si#570), with the id the later leaves' gate reads.
-            from simplon.adapters.labhost import BINFMT_IMAGE
-            steps.append(workflowgen.Step(note=EMULATION_NOTE, verbatim={
-                "name": f"Register emulation for {', '.join(emulates)}", "id": PREPARE["emulation"],
-                "uses": workflowgen.QEMU_ACTION, "with": {"image": BINFMT_IMAGE, "platforms": ",".join(emulates)}}))
+            steps.append(workflowgen.emulation_step(emulates, step_id=PREPARE["emulation"])._replace(
+                note=EMULATION_NOTE))
         elif step.kernel_step in _PREPARES:
             prepared = kernel[step.kernel_step]
             steps.append(prepared._replace(modifiers={"id": _PREPARES[step.kernel_step], **prepared.modifiers}))
