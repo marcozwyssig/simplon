@@ -343,13 +343,25 @@ def test_every_leaf_gated_or_skipped_lists_the_skipped_ones():
     ("x(1)/?", "x(1)/z", True),
     ("x(1)/?", "x(1)/zz", False),
     ("x(1)/?", "x(1)//", False),
+    ("**", "a/b/c", True),
+    ("**", "a", True),
+    ("a/**/b", "a/b", True),
+    ("a/**/b", "a/x/y/b", True),
+    ("a/**/b", "a/xb", False),
+    ("a|b", "a|b", True),
+    ("a|b", "a", False),
+    ("a|b", "b", False),
+    ("a\\b", "a\\b", True),
+    ("a\\b", "ab", False),
+    ("a[1]", "a[1]", True),
+    ("a[1]", "a1", False),
 ])
 def test_glob_pattern(glob, path, matches):
     import re
     import subprocess
     from simplon.tasks import cipipeline
     pattern = cipipeline.glob_pattern([glob])
-    assert (any(re.fullmatch(alt, path) for alt in pattern.split("|")) is matches), pattern
+    assert (any(re.fullmatch(alt, path) for alt in re.split(r"(?<!\\)\|", pattern)) is matches), pattern
     grep = subprocess.run(["grep", "-qE", "--", pattern], input=path + "\n", text=True)
     assert (grep.returncode == 0) is matches, pattern
 

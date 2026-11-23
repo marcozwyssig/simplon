@@ -217,7 +217,7 @@ def glob_pattern(globs: Sequence[str]) -> str:
     Each glob is an anchored alternative `^<re>$`, joined by `|` (ERE has no `(?:`). `**/` matches zero or more
     directories (`**/Dockerfile` matches a root `Dockerfile`), a trailing `/**` anything below, any other `**`
     anything; `*` and `?` never cross `/`. Every other ERE metacharacter is escaped. Brackets are taken
-    literally, not as character classes: a deliberate simplification, no reachable manifest uses them.
+    literally, not as character classes.
     The loader refuses `paths: []`, so `globs` is never empty here.
     """
     return "|".join("^" + _glob_re(glob) + "$" for glob in globs)
