@@ -1512,10 +1512,12 @@ ci:
           timeout_minutes: 95
 ```
 
-- **`paths:`** are GitHub filter globs, the syntax of `on.pull_request.paths`: `**` crosses `/`, `*` and
-  `?` do not. The kernel translates them into one regular expression when it derives the file; the decide
-  step matches the changed files against it. **`label:`** is the label's name as spelt on GitHub, a
-  `${{` expression is refused. A gate names `paths:`, `label:` or both: with neither it never starts on a
+- **`paths:`** are the `*`/`**` subset of GitHub's filter syntax (`on.pull_request.paths`): `**` crosses
+  `/`, `*` does not, and every other character is itself. A glob that starts with `!` or holds `?`, `+`,
+  `[` or `]` is refused at load: GitHub's syntax gives those a meaning the decide step does not implement,
+  so the gate would never match what it says. The kernel translates them into one regular expression when
+  it derives the file; the decide step matches the changed files against it. **`label:`** is the label's
+  name as spelt on GitHub, a `${{` expression is refused. A gate names `paths:`, `label:` or both: with neither it never starts on a
   pull request, and the load refuses it.
 - **`env:`** is literals for the gated job. A `${{ ... }}` value is refused: a secret reaches a job through
   the secrets module (si#833), not through the manifest.

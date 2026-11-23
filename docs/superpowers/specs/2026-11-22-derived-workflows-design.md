@@ -275,7 +275,8 @@ All on the command, under the one `ci:` key so a reader finds them together:
     pull request carries the label; `labeled` when the label just added is the gate's and no path matches.
     Every verdict writes a `why`.
   - **Its own file**: `.github/workflows/ci-<aggregate words, dashed>.yml`, derived unless `workflows:`
-    declares that stem. `paths:` are GitHub filter globs translated into one ERE at derive time.
+    declares that stem. `paths:` are the `*`/`**` subset of GitHub's filter syntax, translated into one
+    ERE at derive time; a glob with `!`, `?`, `+` or `[...]`, which GitHub reads otherwise, is refused.
   - **Not built here:** `sources:` is #873 and `merge: auto` is #874.
 
 On the product:

@@ -96,8 +96,8 @@ class CiVariant:
 @dataclass(frozen=True)
 class CiGate:
     """si#861: how a derived CI gates the members of one aggregate, from its command's `ci: { gate: }`. The
-    members run in a workflow file of their own, behind a decide job that reads `paths` (GitHub filter
-    globs) and `label`; at least one of the two is written. `env` holds literals for the gated job, every
+    members run in a workflow file of their own, behind a decide job that reads `paths` (the `*`/`**`
+    subset of GitHub's filter syntax) and `label`; at least one of the two is written. `env` holds literals for the gated job, every
     value a string as GitHub would read it. `cadence` and `timeout_minutes` are the si#860 keys, read the
     same way ("" and None when unwritten)."""
     paths: tuple[str, ...] = ()

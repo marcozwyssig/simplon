@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 328 | nothing - the declaration had no working meaning |
+| diagnosis | 329 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **381** | |
+| **all load-time refusals** | **382** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -100,7 +100,8 @@ when a product asks for that combination on one leaf.
 
 si#861 added `ci: { gate: { paths, label, env } }` on an aggregate. **Diagnoses:** a gate that is not a mapping,
 a key under it other than `paths`, `label` and `env`, a `paths:` that is not a non-empty list of non-empty
-globs, a `label:` that is not a non-empty string, an `env:` name that is no variable name or a value that is no
+globs or a glob outside the `*`/`**` subset (`!`, `?`, `+`, `[...]` mean something in GitHub's filter syntax the
+decide step does not implement, so the gate would never match), a `label:` that is not a non-empty string, an `env:` name that is no variable name or a value that is no
 scalar (a float, which YAML would have rounded, or a non-string name is refused with "quote it") or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
 neither `paths:` nor `label:`, which no event could start, and on an aggregate any `ci:` key but `gate:`,
 `cadence:` and `timeout_minutes:`. **Expression rule:** `gate:` on a leaf, which could have been rendered as a

@@ -139,7 +139,7 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-// A gate on an aggregate (si#861): the changed paths (GitHub filter globs), the PR label and the one ERE the kernel
+// A gate on an aggregate (si#861): the changed paths (the `*`/`**` subset of GitHub's filter syntax), the PR label and the one ERE the kernel
 // derived from the globs that the decide job greps with. Set on the decide job only.
 Gate typeOf firn.core.Class extends firn.core.NamedResource {
   property paths typeOf firn.core.Attribute {

@@ -101,6 +101,23 @@ def test_paths_must_be_a_list_of_non_empty_strings(paths):
         _loaded(f"ci: {{ gate: {{ paths: {paths}, label: y }} }}")
 
 
+@pytest.mark.parametrize(("glob", "char"), [("!docs/**", "!"), ("src/?.py", "?"), ("a+b/**", "+"),
+                                           ("a[1]/**", "["), ("a]/**", "]")])
+def test_a_glob_outside_the_star_subset_is_refused_naming_the_subset(glob, char):
+    """GitHub's filter syntax gives `!`, `?`, `+` and `[...]` a meaning the decide step does not implement, so a
+    glob with one would never match what it says: refused at load, naming the subset that is read."""
+    with pytest.raises(ValueError) as refused:
+        _loaded(f'ci: {{ gate: {{ paths: ["src/**", "{glob}"], label: y }} }}')
+    said = str(refused.value)
+    assert f'"{glob}"' in said and f"`{char}`" in said
+    assert "the `*`/`**` subset of GitHub's filter syntax" in said
+
+
+def test_a_glob_with_other_punctuation_is_read_literally():
+    assert _gate('ci: { gate: { paths: ["x(1)/*", "a.b/**", "a{1}|b^$"] } }').paths == (
+        "x(1)/*", "a.b/**", "a{1}|b^$")
+
+
 @pytest.mark.parametrize("label", ['""', "[a]", "7", '"  "'])
 def test_label_must_be_a_non_empty_string(label):
     with pytest.raises(ValueError, match="`label:` is the name of a pull request label"):
@@ -338,11 +355,14 @@ def test_every_leaf_gated_or_skipped_lists_the_skipped_ones():
     ("**/Dockerfile", "Dockerfile", True),
     ("**/Dockerfile", "a/b/Dockerfile", True),
     ("**/Dockerfile", "a/Dockerfile.bak", False),
-    ("a+b/**", "a+b/c", True),
-    ("a+b/**", "aab/c", False),
-    ("x(1)/?", "x(1)/z", True),
-    ("x(1)/?", "x(1)/zz", False),
-    ("x(1)/?", "x(1)//", False),
+    ("a.b/**", "a.b/c", True),
+    ("a.b/**", "axb/c", False),
+    ("x(1)/*", "x(1)/z", True),
+    ("x(1)/*", "x1/z", False),
+    ("x(1)/*", "x(1)/z/y", False),
+    ("a{1}", "a{1}", True),
+    ("a{1}", "a", False),
+    ("a^b$", "a^b$", True),
     ("**", "a/b/c", True),
     ("**", "a", True),
     ("a/**/b", "a/b", True),
@@ -353,8 +373,6 @@ def test_every_leaf_gated_or_skipped_lists_the_skipped_ones():
     ("a|b", "b", False),
     ("a\\b", "a\\b", True),
     ("a\\b", "ab", False),
-    ("a[1]", "a[1]", True),
-    ("a[1]", "a1", False),
 ])
 def test_glob_pattern(glob, path, matches):
     import re

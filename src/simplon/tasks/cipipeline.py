@@ -219,13 +219,13 @@ def gates(manifest: Manifest) -> tuple[GateRun, ...]:
 
 
 def glob_pattern(globs: Sequence[str]) -> str:
-    """One POSIX ERE for `grep -E` from a gate's `paths:` globs, in GitHub's filter syntax (si#861).
+    """One POSIX ERE for `grep -E` from a gate's `paths:` globs, the `*`/`**` subset of GitHub's filter syntax
+    (si#861).
 
     Each glob is an anchored alternative `^<re>$`, joined by `|` (ERE has no `(?:`). `**/` matches zero or more
     directories (`**/Dockerfile` matches a root `Dockerfile`), a trailing `/**` anything below, any other `**`
-    anything; `*` and `?` never cross `/`. Every other ERE metacharacter is escaped. Brackets are taken
-    literally, not as character classes.
-    The loader refuses `paths: []`, so `globs` is never empty here.
+    anything; `*` never crosses `/`. Every other character is literal, an ERE metacharacter escaped. The loader
+    refuses `paths: []` and a glob with `!`, `?`, `+`, `[` or `]`, which GitHub's syntax reads otherwise.
     """
     return "|".join("^" + _glob_re(glob) + "$" for glob in globs)
 
@@ -245,9 +245,6 @@ def _glob_re(glob: str) -> str:
             i += 2
         elif glob[i] == "*":
             out.append("[^/]*")
-            i += 1
-        elif glob[i] == "?":
-            out.append("[^/]")
             i += 1
         else:
             out.append("\\" + glob[i] if glob[i] in ".+()|{}[]^$\\" else glob[i])

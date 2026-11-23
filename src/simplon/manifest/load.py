@@ -1150,8 +1150,10 @@ def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
     """si#861: how a derived CI gates this aggregate's members, from the `ci: { gate: }` `_ci_skip` has let
     stand on an aggregate. None when the aggregate writes no `gate:`.
 
-    Every refusal is a diagnosis: a value of no reading, or a gate that could never fire. `paths:` are GitHub
-    filter globs (the derivation translates them), `env:` literals only - a secret reaches a job through the
+    Every refusal is a diagnosis: a value of no reading, or a gate that could never fire. `paths:` are the
+    `*`/`**` subset of GitHub's filter syntax (the derivation translates them); a glob that starts with `!` or
+    holds `?`, `+`, `[` or `]` is refused, since GitHub gives those a meaning the decide step does not implement
+    and the gate would silently never match. `env:` literals only - a secret reaches a job through the
     secrets module (si#833). `cadence:` and `timeout_minutes:` beside `gate:` are the si#860 keys, read by the
     same readers.
 
@@ -1177,6 +1179,14 @@ def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
         raise ValueError(
             f"'{where}' declares `ci: gate: paths: {json.dumps(paths, default=str)}`. `paths:` is a non-empty "
             f"list of non-empty globs, e.g. `[\"src/**\", \"**/Dockerfile\"]`")
+    for path in paths or ():
+        special = "!" if path.strip().startswith("!") else next((c for c in path if c in "?+[]"), "")
+        if special:
+            raise ValueError(
+                f"'{where}' declares `ci: gate: paths:` glob {json.dumps(path)}, and GitHub's filter syntax gives "
+                f"`{special}` a meaning this kernel does not implement, so the gate would never match what it says. "
+                f"A gate's paths are the `*`/`**` subset of GitHub's filter syntax: `*` within one directory, `**` "
+                f"across directories, every other character as written")
     label = gate.get("label")
     if label is not None and not (isinstance(label, str) and label.strip()):
         raise ValueError(

@@ -786,6 +786,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_gate", "secrets reach a job through the secrets module (si#833)"): DIAGNOSIS,
     ("load", "_ci_gate", "GitHub would evaluate it in the decide job"): DIAGNOSIS,
     ("load", "_ci_gate", "never runs on a pull request"): DIAGNOSIS,
+    # si#861 final review: `!`, `?`, `+` and `[...]` mean something in GitHub's filter syntax the decide step
+    # does not implement, so a glob with one would silently never match what it says.
+    ("load", "_ci_gate", "subset of GitHub's filter syntax: `*` within one directory"): DIAGNOSIS,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
