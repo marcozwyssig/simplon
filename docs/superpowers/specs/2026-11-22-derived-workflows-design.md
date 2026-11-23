@@ -447,6 +447,8 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
   Deploy member prepares and the verifying members keep `!cancelled()`, which is netctl's `lab.yml`
   (`if: always() && steps.up.outcome == 'success'`); a local `test lab` keeps running after a red `up`,
   and the gated job stops there. Reopens if a product asks for local and CI to agree.
-- **A teardown Deploy placed last in a gate** (corrected 2026-11-23, #861). Not supported: a Deploy member
-  is a plain step in order, so it is skipped after a red verifying member. Reopens when a product places a
-  teardown Deploy last.
+- **A teardown Deploy in plain order** (corrected 2026-11-23, #861 final review). Rejected: a Deploy member
+  is a plain step in order, so one placed last is skipped after a red verifying member. A teardown is a Deploy
+  with `after_all: true`, which runs after the members with `if: always()` and prepares nothing; a command
+  named twice in one plan runs once, so a pre-clean `down` and a final teardown are two commands. Reopens
+  when a product needs a teardown that is not `after_all`.

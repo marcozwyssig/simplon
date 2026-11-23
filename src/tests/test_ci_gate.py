@@ -800,3 +800,22 @@ def test_a_member_also_in_a_derived_gate_keeps_its_variant_key():
     assert not files[_LAB_PATH].derived
     smoke = _lab_rendered(text, ".github/workflows/ci-test-smoke.yml")
     assert "exec ./netctl.sh test system" in smoke and "timeout-minutes: 30" in smoke
+
+
+def test_an_after_all_deploy_member_tears_down_last_and_always():
+    """A teardown is a Deploy member with `after_all: true`: it renders after the report with `if: always()`, so
+    it runs after a red member too, and it prepares nothing. A leaf named twice in one plan runs once, so a
+    pre-clean `down` and the final teardown are two commands."""
+    text = _lab_text().replace(
+        "      seed: { task: ship, unattended: true }\n",
+        "      seed: { task: ship, unattended: true }\n"
+        "      teardown: { task: ship, unattended: true, after_all: true }\n").replace(
+        "depends_on: [down, up, seed, system, acceptance-dataplane, report]",
+        "depends_on: [down, up, seed, system, acceptance-dataplane, report, teardown]")
+    doc = _lab_doc(text)
+    runs = [step["run"].removeprefix("exec ./netctl.sh ") for step in _gated_steps(doc) if "run" in step]
+    assert runs[-3:] == ["test report", "deploy teardown", "support ci-disk-cleanup"]
+    teardown = _lab_step(doc, "deploy teardown")
+    assert teardown["if"] == "always()" and "id" not in teardown
+    assert "teardown" not in _lab_step(doc, "test system")["if"]
+    assert "teardown" not in _lab_rendered(text, ".github/workflows/ci.yml")

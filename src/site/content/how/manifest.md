@@ -1560,11 +1560,15 @@ ci:
 - **A Deploy member prepares.** A member that is a `Deploy` (a command of an env-first group, netctl's
   `down`, `up` and `seed`) gets a step id like a preparation step, and every later member that is not a
   Deploy waits for its success. The verifying members among themselves keep the `!cancelled()` of a plain
-  run, so one red verifier hides none of the others. The consequence: a Deploy placed after a verifying
-  member is skipped when that member went red, as any plain step is, so a teardown that must run last
-  needs another way. That reopens when a product places a teardown Deploy last. The gated job does not read
-  `stop_on_failure`: a local `test lab` keeps going after a red `up`, and the job stops there. That reopens
-  if a product asks for local and CI to agree.
+  run, so one red verifier hides none of the others. A Deploy placed after a verifying member in plain
+  order is skipped when that member went red, as any plain step is. **A teardown** is a Deploy with
+  `after_all: true` (`teardown: { task: <the down task>, unattended: true, after_all: true }` in the
+  env-first group, named in the gate's `depends_on:`): in the gated job it prepares nothing and runs with
+  the other `after_all` members (the report), after every member, in plan order and with `if: always()`,
+  so it runs after a red member too. A command named twice in one plan runs once, so a pre-clean `down` at
+  the start and a teardown at the end are two commands. The gated job does not read `stop_on_failure`: a
+  local `test lab` keeps going after a red `up`, and the job stops there. That reopens if a product asks
+  for local and CI to agree.
 - **Concurrency never cancels.** The gated job's group is `ci-<stem>-<ref>-<verdict>`, with
   `cancel-in-progress: false`, so a run in progress is not killed by the next push, and a job the decide
   step skipped never shares a group with a real run. The decide job is never queued. Whether GitHub puts a

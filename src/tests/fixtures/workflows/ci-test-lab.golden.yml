@@ -207,11 +207,11 @@ jobs:
   #
   # si#861: the members of `test lab`, behind its gate: this job runs only when the decide job says
   # so. It runs the members in plan order, a consumer after its producer, and the ones that run
-  # after all the others (the report) last and always. A Deploy member (a command of an env-first
-  # group) runs like a preparation step: every later member waits for its success, so a deployment
-  # that did not come up shows as one red step and the members after it as skipped. Every other
-  # member after the first runs unless the run is cancelled or a preparation step or a Deploy
-  # member went red, so one red member hides none of the others.
+  # after all the others (the report, a teardown) last and always. A Deploy member in plan order (a
+  # command of an env-first group) runs like a preparation step: every later member waits for its
+  # success, so a deployment that did not come up shows as one red step and the members after it as
+  # skipped. Every other member after the first runs unless the run is cancelled or a preparation
+  # step or a Deploy member went red, so one red member hides none of the others.
   #
   # A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub
   # keeps one pending run per group, and a newer one replaces it. The group is the ref and the
