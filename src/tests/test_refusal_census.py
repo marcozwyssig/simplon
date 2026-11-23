@@ -767,9 +767,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_variant", "`ci: platforms:` and `ci: python:` on one leaf"): EXPRESSION,
     ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): EXPRESSION,
     # si#861: a gate sits on an aggregate only (Marco, 2026-11-23, #861): an EXPRESSION rule, since a gate on a
-    # single leaf could have been rendered, as a gated job of one member. What it costs: zero manifests, none
-    # writes `ci:` on a command (measured 2026-11-23, the reachable manifests of `surface.CONSUMERS`); the way out is one line,
-    # `depends_on: [<leaf>]`. Reopens when a product asks to gate a single leaf without wrapping it.
+    # single leaf could have been rendered, as a gated job of one member. What it costs: zero: #860's 2026-11-23
+    # measurement found no `ci:` on any command in the reachable manifests, and `gate:` is new in #861. The way
+    # out is one line, `depends_on: [<leaf>]`. Reopens when a product asks to gate a single leaf without wrapping it.
     ("load", "_ci_skip", "`ci: gate:` sits on an aggregate"): EXPRESSION,
     # si#861: the gate's own values. A shape with no reading, a key nothing reads, a literal that is no variable
     # name or carries an expression, and a gate no event could start: all diagnoses.

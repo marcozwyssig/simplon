@@ -105,9 +105,9 @@ decide step does not implement, so the gate would never match), a `label:` that 
 scalar (a float, which YAML would have rounded, or a non-string name is refused with "quote it") or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
 neither `paths:` nor `label:`, which no event could start, and on an aggregate any `ci:` key but `gate:`,
 `cadence:` and `timeout_minutes:`. **Expression rule:** `gate:` on a leaf, which could have been rendered as a
-gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too, and costs
-nothing measured 2026-11-23 over the reachable manifests (`surface.CONSUMERS`), since none writes `ci:` on a command. It
-reopens when a product asks to gate a single leaf without wrapping it.
+gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too. What it
+costs: zero: #860's 2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:`
+is new in #861. It reopens when a product asks to gate a single leaf without wrapping it.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
 refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI

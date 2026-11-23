@@ -62,7 +62,7 @@ Anti-goals (a result that works and is still a failure):
 | D6 | firn projects in dependency order | firn's own command (`--all`, ordered by `firn.toml [dependencies]`, parallel where independent). The kernel calls one command. |
 | D7 | Product's own pytest suite | A new catalogue task `test:unit`: pytest over product-named paths in a kernel-provisioned venv, placed under `ci test`. |
 | D8 | Schedule, dispatch input, OS matrix | Keys on the command: `cadence:`, `platforms:`, parameter values `{input: <name>}`. |
-| D9 | Heavy lab gate, foreign repositories | Data keys: `ci: { gate: {paths, label} }` on the command; `sources:` on the product. |
+| D9 | Heavy lab gate, foreign repositories | Data keys: `ci: { gate: {paths, label} }` on the command; `sources:` on the product. (corrected 2026-11-23, #861: the gate sits on an aggregate, `ci: { gate: {paths, label, env} }`, see 5.5.) |
 | D10 | Runner facts (empty `DOCKER_CONFIG`, no binfmt) | A new runner kind `self-hosted-container` carries them. |
 | D11 | Migration order | simplon first, then cleon-firn, firn, secure-windows-images, biz-cockpit, agile-cockpit, cleon, asbundle, netctl. |
 | D12 | simplon's release jobs beyond `release`, `docs`, `pages` (`publish`, `homebrew-tap`, `image`) | Counted `exception:` entries with the reason "waits on #789" until #789 lands; simplon's CI migrates at once. |
@@ -129,6 +129,9 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 - (corrected 2026-11-22, #858) `ci:` on an aggregate, or on a command that is not a leaf under `ci
   build` or `ci test` (a cd, support or `ci release` command, a Deploy), is refused. Census kind:
   diagnosis (no derived CI selects the command, so the key would do nothing).
+- (corrected 2026-11-23, #861) On an aggregate under `ci build` or `ci test`, `ci:` holds `gate:`, with
+  `cadence:` and `timeout_minutes:` beside it (section 5.5); any other key there, or `cadence:` or
+  `timeout_minutes:` without `gate:`, is refused as before, a diagnosis.
 - Every skipped leaf is named in the rendered file as a comment with its reason.
 - `test:gate` and other leaves that need a running lab are the expected users of `skip`, or of
   `gate:` (section 5.5).
@@ -440,9 +443,9 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
   product asks to emulate inside a platform cell.
 - **`gate:` on a leaf** (corrected 2026-11-23, #861). Rejected: a single-leaf gate is an aggregate of one,
   and the aggregate is where the gate's members, file and concurrency already live. An expression rule:
-  `depends_on: [<leaf>]` says the same thing, and the refusal names that form. The reachable manifests
-  were not re-measured for it: no product wrote `gate:` before #861. Reopens when a product asks to gate a leaf without
-  naming an aggregate for it.
+  `depends_on: [<leaf>]` says the same thing, and the refusal names that form. What it costs: zero: #860's
+  2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:` is new in
+  #861. Reopens when a product asks to gate a leaf without naming an aggregate for it.
 - **`stop_on_failure` read by a gated job** (corrected 2026-11-23, #861, Marco's decision 6). Rejected: a
   Deploy member prepares and the verifying members keep `!cancelled()`, which is netctl's `lab.yml`
   (`if: always() && steps.up.outcome == 'success'`); a local `test lab` keeps running after a red `up`,

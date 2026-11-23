@@ -1354,9 +1354,10 @@ with `unattended: false` is left out and named in the file with that reason, as 
 leaves left out for `unattended: false`. A skip wins even where `unattended:` is undeclared, which only
 matters to a leaf that would run. A bare `ci: false` and a skip with no reason are refused: they would
 have worked, and they say nowhere why a leaf is not verified ([the rules](../../with-what/rules/)).
-`ci:` on an aggregate, or on any command that is not a leaf under `ci build` or `ci test` (a `cd`,
-`support` or `ci release` command), is refused too: no derived CI selects it, so the key would do
-nothing.
+`ci:` on any command that is not a leaf under `ci build` or `ci test` (a `cd`, `support` or `ci release`
+command) is refused too: no derived CI selects it, so the key would do nothing. On an aggregate there it
+holds only [`gate:`](#gate-an-aggregate-that-runs-only-when-it-is-asked-for), with `cadence:` and
+`timeout_minutes:` beside it.
 
 ```yaml
 ci:
@@ -1492,9 +1493,9 @@ native cell instead). Both would have rendered, so both are expression rules on
 
 **`ci: { gate: ... }` on an aggregate runs its members in a workflow of their own, and only when a pull
 request touches the paths or carries the label** (si#861). It is for the long verdict a push should not
-pay for: netctl's lab, tens of minutes of compose, run when the lab's own files change or somebody asks.
-`gate:` sits on an aggregate only (a leaf is gated by wrapping it in one, `depends_on: [<leaf>]`), and the
-aggregate's `ci:` holds `gate:` with `cadence:` and `timeout_minutes:` beside it, nothing else.
+pay for: netctl's containerlab lab, tens of minutes long, run when the lab's own files change or somebody
+asks. `gate:` sits on an aggregate only (a leaf is gated by wrapping it in one, `depends_on: [<leaf>]`), and
+the aggregate's `ci:` holds `gate:` with `cadence:` and `timeout_minutes:` beside it, nothing else.
 
 ```yaml
 ci:
