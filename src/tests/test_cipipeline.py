@@ -724,3 +724,246 @@ def test_a_step_may_carry_a_time_limit() -> None:
     # assert: absent by default, an int when set
     assert workflowschema.Step().timeout_minutes is None
     assert workflowschema.Step(timeout_minutes=75).timeout_minutes == 75
+
+
+# --- one workflow per `cadence:` (si#860 task 3) ---------------------------------------------------------
+
+_NIGHTLY_PATH = ".github/workflows/ci-nightly.yml"
+_MANUAL_PATH = ".github/workflows/ci-manual.yml"
+_SCHEDULED_PATH = ".github/workflows/ci-scheduled.yml"
+
+
+def _generated(tmp_path, monkeypatch, body: str) -> dict[str, tuple[dict, str]]:
+    """Every workflow `support github workflows` writes for `_HEAD` + `body`, read back by path: the real
+    path, so the `on:` trap and the notes are the renderer's, not a model's."""
+    _product(tmp_path, monkeypatch, body)
+    assert workflows_task.generate() == 0
+    out = {}
+    for path in sorted((tmp_path / ".github/workflows").iterdir()):
+        text = path.read_text(encoding="utf-8")
+        out[f".github/workflows/{path.name}"] = (yaml.safe_load(text), text)
+    return out
+
+
+def _job_runs(doc: dict, job: str) -> list[str]:
+    return [step["run"].removeprefix("exec ./demo.sh ") for step in doc["jobs"][job]["steps"]
+            if step.get("name") != workflowgen.REAP_NAME and "run" in step]
+
+
+def _comments(text: str) -> str:
+    return " ".join(line.strip().removeprefix("#").strip() for line in text.splitlines()
+                    if line.strip().startswith("#"))
+
+
+_NIGHTLY = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """
+
+
+def test_nightly_leaf_leaves_the_push_workflow(tmp_path, monkeypatch):
+    # act
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    # assert: the push file lost the leaf, the nightly file has it, on the kernel's cron and on dispatch
+    assert set(files) == {_CI_PATH, _NIGHTLY_PATH}
+    push, _ = files[_CI_PATH]
+    nightly, _ = files[_NIGHTLY_PATH]
+    assert _job_runs(push, "ci") == ["test one"]
+    assert _job_runs(nightly, "ci") == ["test late"]
+    assert nightly["name"] == "ci-nightly"
+    assert nightly[True] == {"schedule": [{"cron": cipipeline.NIGHTLY_CRON}], "workflow_dispatch": None}
+    assert cipipeline.NIGHTLY_CRON == "17 2 * * *"
+    assert push[True] == workflowgen._CI_TRIGGER
+
+
+def test_manual_cadence_is_dispatch_only(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY.replace("cadence: nightly", "cadence: manual"))
+
+    assert set(files) == {_CI_PATH, _MANUAL_PATH}
+    manual, _ = files[_MANUAL_PATH]
+    assert manual["name"] == "ci-manual"
+    assert manual[True] == {"workflow_dispatch": None}
+    assert _job_runs(manual, "ci") == ["test late"]
+
+
+def test_cron_strings_share_one_file_one_job_each(tmp_path, monkeypatch):
+    """Review Focus 5: the same cron is one job, a different cron another, each gated on its own schedule and
+    both run on dispatch."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "*/30 4 * * 1" } }
+              c: { task: ship, unattended: true, ci: { cadence: "0  3 * * *" } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    assert set(files) == {_CI_PATH, _SCHEDULED_PATH}
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert scheduled["name"] == "ci-scheduled"
+    assert list(scheduled["jobs"]) == ["ci-1", "ci-2"]
+    assert _job_runs(scheduled, "ci-1") == ["test a", "test c"]
+    assert _job_runs(scheduled, "ci-2") == ["test b"]
+    assert scheduled["jobs"]["ci-1"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * *' }}")
+    assert scheduled["jobs"]["ci-2"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '*/30 4 * * 1' }}")
+    assert scheduled[True] == {"schedule": [{"cron": "0 3 * * *"}, {"cron": "*/30 4 * * 1"}],
+                               "workflow_dispatch": None}
+    push, _ = files[_CI_PATH]
+    assert _job_runs(push, "ci") == ["test one"]
+
+
+def test_cadence_workflow_carries_the_report_last(tmp_path, monkeypatch):
+    """A report with no cadence of its own is a verdict over whichever run it ends: it closes every workflow."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8)
+    files = _generated(tmp_path, monkeypatch, body)
+
+    for path, leaf in ((_CI_PATH, "test one"), (_NIGHTLY_PATH, "test late")):
+        doc, _ = files[path]
+        assert _job_runs(doc, "ci") == [leaf, "test report"]
+        steps = [step for step in doc["jobs"]["ci"]["steps"] if step.get("name") != workflowgen.REAP_NAME]
+        report = next(at for at, step in enumerate(steps) if step.get("run") == "exec ./demo.sh test report")
+        assert steps[report]["if"] == "always()"
+        assert steps[report + 1]["uses"] == workflowgen.UPLOAD_ACTION
+        assert steps[report + 1]["if"] == "always()"
+
+
+def test_cadence_workflow_does_not_cancel_in_progress(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    nightly, _ = files[_NIGHTLY_PATH]
+    assert nightly["concurrency"] == {"group": "ci-nightly", "cancel-in-progress": False}
+    assert nightly["permissions"] == {"contents": "read"}
+    push, _ = files[_CI_PATH]
+    assert "concurrency" not in push
+
+
+def test_consumer_of_a_nightly_producer_is_refused():
+    """Review Focus 4: the push run has no producer, so the consumer would fail on a missing file."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              b-produce:
+                { task: "toolchain:run", unattended: true, produces: { out: doc }, ci: { cadence: nightly } }
+              t-consume: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+        """)
+    with pytest.raises(ValueError, match=r"'build t-consume' consumes 'doc', which 'build b-produce' produces.*"
+                                         r"cadence: nightly"):
+        cipipeline.derive(loaded, {})
+
+
+def test_consumers_on_different_crons_are_refused():
+    """The same check per job: two crons fire apart, so a producer on one is absent from the other's run."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              b-produce:
+                { task: "toolchain:run", unattended: true, produces: { out: doc }, ci: { cadence: "0 3 * * *" } }
+              t-consume:
+                { task: "toolchain:run", unattended: true, consumes: { source: doc }, ci: { cadence: "0 4 * * *" } }
+        """)
+    with pytest.raises(ValueError, match=r"'build t-consume' consumes 'doc'.*'build b-produce'.*0 3 \* \* \*"):
+        cipipeline.derive_all(loaded, {})
+
+
+def test_all_leaves_scheduled_refuses_the_push_workflow():
+    """Review Focus 2: ci.yml would verify nothing on a push, and the refusal says where the leaves went."""
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """)
+    with pytest.raises(ValueError, match="no leaf a machine may run") as raised:
+        cipipeline.derive(loaded, {})
+    assert "`test late`" in str(raised.value) and "ci-nightly.yml" in str(raised.value)
+
+
+def test_skipped_and_cadence_notes(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    _, push = files[_CI_PATH]
+    _, nightly = files[_NIGHTLY_PATH]
+    assert "Left out:" in push
+    assert "`test late` - it has `cadence: nightly`, so it runs in ci-nightly.yml" in _comments(push)
+    said = _comments(nightly)
+    assert "`cadence: nightly`" in said and cipipeline.NIGHTLY_CRON in said
+    assert "`test one`" not in said  # a push leaf is not listed in every cadence file
+
+
+def test_derive_all_puts_the_push_workflow_first():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              d: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              m: { task: ship, unattended: true, ci: { cadence: manual } }
+              one: { task: ship, unattended: true }
+              n: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """)
+    derivations = cipipeline.derive_all(loaded, {})
+    assert [d.model.path for d in derivations] == [
+        cipipeline.CADENCE_PATHS[""], cipipeline.CADENCE_PATHS["nightly"], cipipeline.CADENCE_PATHS["manual"],
+        _SCHEDULED_PATH]
+    assert [d.model.title for d in derivations] == ["ci", "ci-nightly", "ci-manual", "ci-scheduled"]
+    assert cipipeline.derive(loaded, {}).model == derivations[0].model
+
+
+def test_declared_workflows_and_only_cadence_leaves_still_derive_them(tmp_path, monkeypatch):
+    """With other workflows declared and no push leaf, no ci.yml is derived (#858), and the nightly file still
+    is: it has something to run."""
+    _product(tmp_path, monkeypatch, """
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + _OTHER_WORKFLOW)
+    release = tmp_path / ".github/workflows/release.yml"
+    release.parent.mkdir(parents=True)
+    release.write_text("name: release\n", encoding="utf-8")
+
+    assert workflows_task.generate() == 0
+    assert not (tmp_path / _CI_PATH).exists()
+    assert (tmp_path / _NIGHTLY_PATH).exists()
+
+
+def test_each_scheduled_job_uploads_its_report_under_its_own_name(tmp_path, monkeypatch):
+    """A dispatch runs every job of ci-scheduled.yml in one run, and upload-artifact@v4 refuses a second
+    artifact of the same name in a run: each job's report is named after the job."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "0 4 * * *" } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8)
+    files = _generated(tmp_path, monkeypatch, body)
+
+    def uploaded(doc: dict, job: str) -> list[str]:
+        return [step["with"]["name"] for step in doc["jobs"][job]["steps"]
+                if step.get("uses") == workflowgen.UPLOAD_ACTION]
+
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert uploaded(scheduled, "ci-1") == ["allure-report-ci-1"]
+    assert uploaded(scheduled, "ci-2") == ["allure-report-ci-2"]
+    push, _ = files[_CI_PATH]
+    assert uploaded(push, "ci") == ["allure-report"]

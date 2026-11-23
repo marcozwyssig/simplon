@@ -1286,7 +1286,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "require_unattended", "does not say whether it can run with nobody watching"): DIAGNOSIS,
     ("cipipeline", "_refuse_consumers_of_absent_producers", "is not run by the CI"): DIAGNOSIS,
     ("cipipeline", "order", "_cycle(leaves, before, done)"): DIAGNOSIS,
-    ("cipipeline", "derive", "_nothing_to_run(manifest, selection)"): DIAGNOSIS,
+    ("cipipeline", "_job", "_nothing_to_run(manifest, selection, path)"): DIAGNOSIS,
     ("cipipeline", "_refuse_producers_moved_last", "runs after all the other leaves (`after_all`)"): DIAGNOSIS,
     ("cipipeline", "_reports", "archives `suites: reports:`, and it cannot be read"): DIAGNOSIS,
 }

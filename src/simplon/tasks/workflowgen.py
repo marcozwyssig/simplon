@@ -1496,11 +1496,12 @@ def _release_archive(manifest: Manifest, reports: "str | None" = None) -> "tuple
             report_upload(reports)), ""
 
 
-def report_upload(reports: str) -> Step:
+def report_upload(reports: str, name: str = RELEASE_ARCHIVE) -> Step:
     """The upload of the rendered test report under `reports` (si#509), shared by the release job and the
-    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green."""
+    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green. `name`
+    differs only where several jobs of one run upload a report (si#860, ci-scheduled.yml)."""
     return Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
-                          "with": {"name": RELEASE_ARCHIVE, "path": f"{reports.rstrip('/')}/*.html",
+                          "with": {"name": name, "path": f"{reports.rstrip('/')}/*.html",
                                    "if-no-files-found": "error", "retention-days": 90}})
 
 
