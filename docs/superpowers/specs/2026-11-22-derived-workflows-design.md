@@ -261,6 +261,23 @@ All on the command, under the one `ci:` key so a reader finds them together:
   #691). The decide job also fixes netctl's double trigger (`opened` and `labeled`): it is one job with
   one verdict per head SHA, and the heavy Job is cancelled-in-progress by concurrency.
 
+  (corrected 2026-11-23, #861) What was built, which differs from the bullet above:
+
+  - **The gate sits on an aggregate**, not on a leaf: `ci: { gate: { paths, label, env } }` with
+    `cadence:` and `timeout_minutes:` beside it. Its plan leaves run in the gate's own file and not also
+    in `ci.yml`; an `after_all` member stays in every run it ends. A leaf is gated by wrapping it in an
+    aggregate.
+  - **No cancel.** "Cancelled-in-progress" is wrong: the gated job's concurrency is
+    `cancel-in-progress: false` (netctl#513), and its group carries the verdict, so a skipped job never
+    shares a group with a real run.
+  - **The decide table**, one verdict per event and never from earlier runs: dispatch and schedule run;
+    `opened` runs when a changed path matches; `synchronize` and `reopened` when a path matches or the
+    pull request carries the label; `labeled` when the label just added is the gate's and no path matches.
+    Every verdict writes a `why`.
+  - **Its own file**: `.github/workflows/ci-<aggregate words, dashed>.yml`, derived unless `workflows:`
+    declares that stem. `paths:` are GitHub filter globs translated into one ERE at derive time.
+  - **Not built here:** `sources:` is #873 and `merge: auto` is #874.
+
 On the product:
 
 - `sources: [{repo, path, secret?}]`: further checkouts the derived checkout step performs after the
@@ -420,3 +437,15 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
   Windows cell has no binfmt to register an emulator with, and a native `linux-arm64` cell makes
   emulating arm64 pointless. An expression rule with the same measured cost, zero. Reopens when a
   product asks to emulate inside a platform cell.
+- **`gate:` on a leaf** (corrected 2026-11-23, #861). Rejected: a single-leaf gate is an aggregate of one,
+  and the aggregate is where the gate's members, file and concurrency already live. An expression rule:
+  `depends_on: [<leaf>]` says the same thing, and the refusal names that form. The reachable manifests
+  were not re-measured for it: no product wrote `gate:` before #861. Reopens when a product asks to gate a leaf without
+  naming an aggregate for it.
+- **`stop_on_failure` read by a gated job** (corrected 2026-11-23, #861, Marco's decision 6). Rejected: a
+  Deploy member prepares and the verifying members keep `!cancelled()`, which is netctl's `lab.yml`
+  (`if: always() && steps.up.outcome == 'success'`); a local `test lab` keeps running after a red `up`,
+  and the gated job stops there. Reopens if a product asks for local and CI to agree.
+- **A teardown Deploy placed last in a gate** (corrected 2026-11-23, #861). Not supported: a Deploy member
+  is a plain step in order, so it is skipped after a red verifying member. Reopens when a product places a
+  teardown Deploy last.

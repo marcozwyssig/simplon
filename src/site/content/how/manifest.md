@@ -1488,6 +1488,81 @@ on a leaf of their own) and `platforms:` with `emulates:` (a macOS or Windows ce
 native cell instead). Both would have rendered, so both are expression rules on
 [the rules page](../../with-what/rules/), each reopening when a product asks for that combination.
 
+#### `gate:`: an aggregate that runs only when it is asked for
+
+**`ci: { gate: ... }` on an aggregate runs its members in a workflow of their own, and only when a pull
+request touches the paths or carries the label** (si#861). It is for the long verdict a push should not
+pay for: netctl's lab, tens of minutes of compose, run when the lab's own files change or somebody asks.
+`gate:` sits on an aggregate only (a leaf is gated by wrapping it in one, `depends_on: [<leaf>]`), and the
+aggregate's `ci:` holds `gate:` with `cadence:` and `timeout_minutes:` beside it, nothing else.
+
+```yaml
+ci:
+  test:
+    commands:
+      lab:
+        depends_on: [down, up, seed, system, acceptance-dataplane, report]
+        help: "Bring the lab up and run the system and acceptance gates against it."
+        ci:
+          gate:
+            paths: ["src/sidecar/api/grpc/**", "deploy/env/*/lab.yml", "**/Dockerfile"]
+            label: needs-lab
+            env: { NETCTL_MGMT_SUBNET: 10.128.0.0/24 }
+          cadence: nightly
+          timeout_minutes: 95
+```
+
+- **`paths:`** are GitHub filter globs, the syntax of `on.pull_request.paths`: `**` crosses `/`, `*` and
+  `?` do not. The kernel translates them into one regular expression when it derives the file; the decide
+  step matches the changed files against it. **`label:`** is the label's name as spelt on GitHub, a
+  `${{` expression is refused. A gate names `paths:`, `label:` or both: with neither it never starts on a
+  pull request, and the load refuses it.
+- **`env:`** is literals for the gated job. A `${{ ... }}` value is refused: a secret reaches a job through
+  the secrets module (si#833), not through the manifest.
+- **`cadence:`** beside the gate adds a schedule to the gate's own file (`nightly` is `17 2 * * *`, a cron
+  string itself, `manual` nothing beyond dispatch). The gate never moves into `ci-nightly.yml`.
+  **`timeout_minutes:`** is the gated job's `timeout-minutes`.
+- **The file** is `.github/workflows/ci-<aggregate words, dashed>.yml`, so `test lab` is `ci-test-lab.yml`;
+  its workflow name is the same stem. The one switch of [`workflows:`](#a-product-with-no-workflows-ci)
+  holds: a declared `workflows:` key equal to the stem switches off that gate's file and no other, and the
+  members stay out of ci.yml, because the file you keep runs them. A pull request opens it on `opened`,
+  `reopened`, `synchronize` and `labeled`, and a dispatch runs it; a push to `main` never does.
+- **The decide job** runs first, on the product's `runner:`, with no checkout and no launcher, and gives
+  one verdict per event from the event and the pull request's changed files, never from earlier runs:
+
+  | Event | The gated job runs |
+  | --- | --- |
+  | `workflow_dispatch`, `schedule` | always |
+  | `opened` | when a changed path matches |
+  | `synchronize`, `reopened` | when a changed path matches, or the pull request carries the label |
+  | `labeled` | when the label just added is the gate's and no changed path matches (a match already ran on `opened` or `synchronize`) |
+
+  Every verdict writes a `why` to the log and the job summary. Removing the label and adding it again runs
+  the gate again, on purpose. A pull request opened with the label already set runs once, on its `labeled`
+  event, when no path matches, and once, on `opened`, when one does. The decide step lists the changed
+  files with `gh api` (the `gh` CLI must be on the runner, as it is on GitHub-hosted ones) and a `gh` that
+  fails fails the step: a failed probe is not a pull request that changed nothing. GitHub's files endpoint
+  lists at most 3000 files, so a larger pull request is judged on the first 3000.
+- **Members** are the aggregate's plan leaves, so a member aggregate contributes its leaves once. Each runs
+  as a step of the gated job and not also in ci.yml. The gated job is built like ci.yml's main job:
+  preparation, the members in plan order, the report upload, cleanup. An `after_all` member (the report)
+  stays in every run it ends, ci.yml included, as it is a verdict over each of them; a gate of only
+  `after_all` members is refused. A member that consumes an artifact a leaf in another file produces is
+  refused, naming both files: artifacts do not cross workflow files, unless the artifact has a `registry:`.
+  A leaf in two gates runs in both.
+- **A Deploy member prepares.** A member that is a `Deploy` (a command of an env-first group, netctl's
+  `down`, `up` and `seed`) gets a step id like a preparation step, and every later member that is not a
+  Deploy waits for its success. The verifying members among themselves keep the `!cancelled()` of a plain
+  run, so one red verifier hides none of the others. The consequence: a Deploy placed after a verifying
+  member is skipped when that member went red, as any plain step is, so a teardown that must run last
+  needs another way. That reopens when a product places a teardown Deploy last. The gated job does not read
+  `stop_on_failure`: a local `test lab` keeps going after a red `up`, and the job stops there. That reopens
+  if a product asks for local and CI to agree.
+- **Concurrency never cancels.** The gated job's group is `ci-<stem>-<ref>-<verdict>`, with
+  `cancel-in-progress: false`, so a run in progress is not killed by the next push, and a job the decide
+  step skipped never shares a group with a real run. The decide job is never queued. Whether GitHub puts a
+  skipped job into its group at all has not been measured.
+
 #### `--check`, and the file nobody owns
 
 `myctl support github workflows --check` reports drift and **returns 1**, so one command is both a pre-commit
