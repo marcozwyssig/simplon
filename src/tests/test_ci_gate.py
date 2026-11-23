@@ -530,7 +530,8 @@ _NO_MATCH = ["README.md", "docs/a.md"]
 
 
 def _decide(tmp_path, *, event: str, action: str = "", added: str = "", labels=(), files=(), gh_rc: int = 0,
-            pattern: str | None = None):
+            pattern: str | None = None, total: object = None, label: str | None = None):
+    """`total` is the pull request's `changed_files` as GitHub counts it, the number of `files` unless given."""
     import json
     import os
     import subprocess
@@ -541,9 +542,12 @@ def _decide(tmp_path, *, event: str, action: str = "", added: str = "", labels=(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (tmp_path / "files.txt").write_text("".join(f + "\n" for f in files), encoding="utf-8")
+    (tmp_path / "total.txt").write_text(f"{len(files) if total is None else total}\n", encoding="utf-8")
     gh = bin_dir / "gh"
-    gh.write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/gh.calls"\ncat "{tmp_path}/files.txt"\nexit {gh_rc}\n',
-                  encoding="utf-8")
+    # the files call lists the files, the pull request call answers its `changed_files`
+    gh.write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/gh.calls"\n'
+                  f'case "$*" in *"/files?"*) cat "{tmp_path}/files.txt" ;; *) cat "{tmp_path}/total.txt" ;; esac\n'
+                  f'exit {gh_rc}\n', encoding="utf-8")
     gh.chmod(0o755)
     output = tmp_path / "output.txt"
     output.write_text("", encoding="utf-8")
@@ -553,7 +557,8 @@ def _decide(tmp_path, *, event: str, action: str = "", added: str = "", labels=(
            "EVENT": event, "ACTION": action, "ADDED_LABEL": added,
            # GitHub's toJSON is indented; a missing pull request is `null`
            "LABELS": json.dumps(list(labels), indent=2) if pr else "null", "PR": "7" if pr else "",
-           "PATTERN": step["env"]["PATTERN"] if pattern is None else pattern, "LABEL": step["env"]["LABEL"]}
+           "PATTERN": step["env"]["PATTERN"] if pattern is None else pattern,
+           "LABEL": step["env"]["LABEL"] if label is None else label}
     done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)
     said = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
     calls = (tmp_path / "gh.calls").read_text(encoding="utf-8") if (tmp_path / "gh.calls").exists() else ""
@@ -578,9 +583,72 @@ def test_decide_script_table(tmp_path, event, action, added, labels, files, runs
     assert said["run"] == runs, said
     assert why in said["why"], said
     if calls:
-        assert calls.strip() == "api --paginate repos/o/netctl/pulls/7/files?per_page=100 --jq .[].filename"
+        files_call, *count_call = calls.strip().splitlines()
+        assert files_call == "api --paginate repos/o/netctl/pulls/7/files?per_page=100 --jq .[].filename"
+        # the count is asked for only where no listed file matched
+        assert count_call == ([] if files == _MATCH else ["api repos/o/netctl/pulls/7 --jq .changed_files"])
     if action in ("opened", "reopened", "synchronize") and runs == "true" and files == _MATCH:
         assert "src/sidecar/api/grpc/lab.proto" in done.stdout  # the changed files are in the log
+
+
+@pytest.mark.parametrize(("action", "labels", "runs", "why"), [
+    ("opened", (), "true", "opened, and the pull request changes 3001 files and GitHub lists only the first 2"),
+    ("synchronize", (), "true", "synchronize, and the pull request changes 3001 files"),
+    # a truncated list is taken as a match, which already ran the gate on `opened` or `synchronize`
+    ("labeled", ("needs-lab",), "false", "so opened or synchronize already ran it for this head"),
+])
+def test_decide_script_a_truncated_file_list_is_not_read_as_no_match(tmp_path, action, labels, runs, why):
+    """GitHub lists at most 3000 files: a pull request that changes more is not judged on the ones listed."""
+    done, said, calls = _decide(tmp_path, event="pull_request", action=action, labels=labels,
+                                added="needs-lab" if action == "labeled" else "", files=_NO_MATCH, total=3001)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert said["run"] == runs and why in said["why"], said
+    assert "rather than trust a truncated list" in said["why"], said
+    assert "api repos/o/netctl/pulls/7 --jq .changed_files" in calls
+
+
+@pytest.mark.parametrize("total", ["", "null", "3001x"])
+def test_decide_script_a_count_that_is_no_number_fails_the_step(tmp_path, total):
+    done, said, _ = _decide(tmp_path, event="pull_request", action="opened", files=_NO_MATCH, total=total)
+    assert done.returncode != 0 and "run" not in said
+    assert "::error::" in done.stdout
+
+
+def test_decide_script_lists_the_changed_files_with_workflow_commands_stopped(tmp_path):
+    """A file name is the pull request author's: one that reads `::add-mask::x` or `::error::x` at the start of a
+    line would be a workflow command, so the listing sits between `::stop-commands::<token>` and `::<token>::`."""
+    import re
+    evil = "::error::pwned"
+    done, said, _ = _decide(tmp_path, event="pull_request", action="opened", files=[evil, *_MATCH])
+    assert said["run"] == "true", said
+    lines = done.stdout.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("::stop-commands::"))
+    token = lines[start].removeprefix("::stop-commands::")
+    assert re.fullmatch(r"[A-Za-z0-9-]{8,}", token), token
+    end = lines.index(f"::{token}::")
+    assert start < lines.index(evil) < end
+    assert lines[start + 1:end] == [evil, *_MATCH]
+
+
+def test_decide_script_tokens_differ_between_runs(tmp_path):
+    tokens = []
+    for n in range(2):
+        (tmp_path / str(n)).mkdir()
+        done, _, _ = _decide(tmp_path / str(n), event="pull_request", action="opened", files=_MATCH)
+        tokens.append(next(line for line in done.stdout.splitlines() if line.startswith("::stop-commands::")))
+    assert tokens[0] != tokens[1]
+
+
+def test_decide_script_opened_on_a_label_only_gate_says_it_opens_on_its_label(tmp_path):
+    done, said, calls = _decide(tmp_path, event="pull_request", action="opened", files=_MATCH, pattern="")
+    assert (said["run"], calls) == ("false", ""), said
+    assert said["why"] == "opened, and the gate has no paths:; it opens on its label needs-lab", said
+
+
+def test_decide_script_opened_on_a_paths_only_gate_mentions_no_label(tmp_path):
+    done, said, _ = _decide(tmp_path, event="pull_request", action="opened", files=_NO_MATCH, label="")
+    assert said["run"] == "false", said
+    assert said["why"] == "opened, and no changed path matches the gate's paths", said
 
 
 def test_decide_script_a_failed_gh_fails_the_step(tmp_path):

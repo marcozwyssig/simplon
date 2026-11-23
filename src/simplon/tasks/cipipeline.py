@@ -659,6 +659,10 @@ GATE_OPEN = f"needs.{DECIDE_JOB}.outputs.run == 'true'"
 #: request that changed nothing. An empty `PATTERN` (a gate with no `paths:`) asks for no files, since the
 #: empty ERE matches every one. `has_label` reads GitHub's `toJSON` of the label names, where a name is a quoted
 #: JSON string, so the gate's label is quoted the same way and a longer label holding it does not count.
+#: GitHub's files endpoint lists at most 3000 files: where no listed file matches, the pull request's own
+#: `changed_files` count is asked for, and a list shorter than that count is taken as a match, since a truncated
+#: list cannot say "nothing matches". A file name is the author's, so the listing is logged between
+#: `::stop-commands::` and its token, where a name that reads as a workflow command is only text.
 GATE_DECIDE_SCRIPT = r"""set -euo pipefail
 decide() {
   why="$(printf '%s' "$2" | tr '\r\n' '  ')"
@@ -671,22 +675,36 @@ has_label() {
   quoted="\"$(printf '%s' "$LABEL" | sed 's/[\\"]/\\&/g')\""
   [ -n "$LABEL" ] && case "$LABELS" in *"$quoted"*) true ;; *) false ;; esac
 }
-hit=""
+matched=""
 changed() {
   if [ -z "$PATTERN" ]; then
     echo "the gate has no paths:, so no changed file opens it"
     return 0
   fi
   files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" --jq '.[].filename')"
+  token="gate-$$-$RANDOM$RANDOM$RANDOM"
   echo "changed files of pull request #$PR:"
+  echo "::stop-commands::$token"
   printf '%s\n' "$files"
+  echo "::$token::"
   rc=0
   hits="$(printf '%s\n' "$files" | grep -E -- "$PATTERN")" || rc=$?
   if [ "$rc" -gt 1 ]; then
     echo "::error::grep could not match the gate's pattern (exit $rc): $PATTERN"
     exit 1
   fi
-  hit="${hits%%$'\n'*}"
+  if [ -n "$hits" ]; then
+    matched="${hits%%$'\n'*} matches the gate's paths"
+    return 0
+  fi
+  listed="$(printf '%s' "$files" | grep -c '')" || true
+  total="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .changed_files)"
+  case "$total" in
+    ''|*[!0-9]*) echo "::error::GitHub gave no count of the changed files of pull request #$PR: '$total'"; exit 1 ;;
+  esac
+  if [ "$total" -gt "$listed" ]; then
+    matched="the pull request changes $total files and GitHub lists only the first $listed, which the gate takes as a match rather than trust a truncated list"
+  fi
 }
 case "$EVENT" in
   workflow_dispatch) decide true "the workflow was dispatched" ;;
@@ -696,20 +714,22 @@ case "$EVENT" in
 esac
 case "$ACTION" in
   opened)
+    if [ -z "$PATTERN" ]; then decide false "opened, and the gate has no paths:; it opens on its label $LABEL"; fi
     changed
-    if [ -n "$hit" ]; then decide true "opened, and $hit matches the gate's paths"; fi
+    if [ -n "$matched" ]; then decide true "opened, and $matched"; fi
+    if [ -z "$LABEL" ]; then decide false "opened, and no changed path matches the gate's paths"; fi
     decide false "opened, and no changed path matches the gate's paths; a gate label set at opening runs it on its own labeled event" ;;
   synchronize|reopened)
     if has_label; then decide true "$ACTION, and the pull request carries the label $LABEL"; fi
     changed
-    if [ -n "$hit" ]; then decide true "$ACTION, and $hit matches the gate's paths"; fi
+    if [ -n "$matched" ]; then decide true "$ACTION, and $matched"; fi
     decide false "$ACTION, no changed path matches the gate's paths, and the pull request does not carry the label ${LABEL:-(the gate has none)}" ;;
   labeled)
     if [ -z "$LABEL" ] || [ "$ADDED_LABEL" != "$LABEL" ]; then
       decide false "labeled $ADDED_LABEL, which is not the gate's label ${LABEL:-(the gate has none)}"
     fi
     changed
-    if [ -n "$hit" ]; then decide false "labeled $LABEL, and $hit matches the gate's paths, so opened or synchronize already ran it for this head"; fi
+    if [ -n "$matched" ]; then decide false "labeled $LABEL, and $matched, so opened or synchronize already ran it for this head"; fi
     decide true "labeled $LABEL, and no changed path matches the gate's paths" ;;
   *) echo "::error::the gate reads no pull_request action '$ACTION'"; exit 1 ;;
 esac
@@ -732,12 +752,14 @@ DECIDE_NOTE = (
     "`opened` runs it when a changed path matches the gate's `paths:`; `synchronize` and `reopened` when one "
     "matches or the pull request carries the gate's `label:`; `labeled` when the label just added is the gate's "
     "and no changed path matches, because a match already ran it on `opened` or `synchronize`. Removing the "
-    "label and adding it again runs it again, on purpose. Every verdict says why, in the log and in the job "
-    "summary.",
+    "label and adding it again runs it again, on purpose, when no changed path matches; on a pull request whose "
+    "paths match, re-run the workflow run instead. Every verdict says why, in the log and in the job summary.",
     "The decide step reads the event, the label and the pattern from its `env:` and nothing else is written into "
     "its script; the token is in that step's `env:` alone. A `gh` that fails fails the step: a failed probe is "
     "not a pull request that changed nothing. No checkout and no launcher: nothing here runs the product. "
-    "GitHub's files endpoint lists at most 3000 files, so a larger pull request is judged on its first 3000.")
+    "GitHub's files endpoint lists at most 3000 files: where the pull request changes more files than are "
+    "listed, the gate takes that as a match rather than trust a truncated list. The changed files are logged "
+    "with workflow commands stopped, since a file name is the pull request author's.")
 
 GATED_NOTE = (
     "si#861: the members of `{words}`, behind its gate: this job runs only when the decide job says so. It runs "

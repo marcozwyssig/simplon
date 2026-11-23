@@ -1538,11 +1538,16 @@ ci:
   | `labeled` | when the label just added is the gate's and no changed path matches (a match already ran on `opened` or `synchronize`) |
 
   Every verdict writes a `why` to the log and the job summary. Removing the label and adding it again runs
-  the gate again, on purpose. A pull request opened with the label already set runs once, on its `labeled`
-  event, when no path matches, and once, on `opened`, when one does. The decide step lists the changed
-  files with `gh api` (the `gh` CLI must be on the runner, as it is on GitHub-hosted ones) and a `gh` that
-  fails fails the step: a failed probe is not a pull request that changed nothing. GitHub's files endpoint
-  lists at most 3000 files, so a larger pull request is judged on the first 3000.
+  the gate again, on purpose, when no changed path matches; on a pull request whose paths match, re-run the
+  workflow run instead. A pull request opened with the label already set runs once, on its `labeled`
+  event, when no path matches, and once, on `opened`, when one does. A gate with no `paths:` opens on its
+  label alone, and its `opened` verdict says so. The decide step lists the changed files with `gh api`
+  (the `gh` CLI must be on the runner, as it is on GitHub-hosted ones) and a `gh` that fails fails the
+  step: a failed probe is not a pull request that changed nothing. The list is logged with workflow
+  commands stopped, so a file named like `::error::` is only text. GitHub's files endpoint lists at most
+  3000 files: where no listed file matches, the decide step asks for the pull request's count of changed
+  files, and a pull request that changes more than are listed counts as a match, because a truncated list
+  cannot say that nothing matched.
 - **Members** are the aggregate's plan leaves, so a member aggregate contributes its leaves once. Each runs
   as a step of the gated job and not also in ci.yml. The gated job is built like ci.yml's main job:
   preparation, the members in plan order, the report upload, cleanup. An `after_all` member (the report)
