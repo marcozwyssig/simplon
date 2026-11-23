@@ -246,3 +246,36 @@ def test_platforms_with_python_is_refused():
 def test_platforms_with_emulates_is_refused():
     with pytest.raises(ValueError, match="`ci: platforms:` and `ci: emulates:` on one leaf"):
         _ci("{ platforms: [linux-arm64], emulates: [linux/arm64] }")
+
+
+# --- the final review of si#860: cron fields, stripped versions, an empty `ci:` -------------------------------
+
+@pytest.mark.parametrize("cadence", ["every night at two am", "17 2 * * MON'", "0 3 * JAN-MAR FOO",
+                                     "0 3 MON * *", "0 3 * * JAN"])
+def test_a_cron_field_outside_the_cron_alphabet_is_refused_naming_it(cadence):
+    """Final review item 4: five words are not a cron. Each field holds only digits, `*`, `,`, `-` and `/`, and
+    the month and weekday fields also their names, so a quote can never reach `_SCHEDULE_GATE`."""
+    with pytest.raises(ValueError, match="field") as refused:
+        _ci(f"{{ cadence: \"{cadence}\" }}")
+    assert "`ci: cadence:`" in str(refused.value)
+
+
+@pytest.mark.parametrize("cadence", ["17 2 * * *", "*/15 0-6 1,15 JAN-MAR MON-FRI", "0 3 * jan sun"])
+def test_a_cron_with_valid_fields_is_read(cadence):
+    assert _ci(f'{{ cadence: "{cadence}" }}').cadence == cadence
+
+
+def test_python_versions_are_stripped_before_the_duplicate_check():
+    """Final review item 7: `" 3.14"` is the version 3.14, so beside "3.14" it is a duplicate."""
+    with pytest.raises(ValueError, match="`ci: python:` is a non-empty list of distinct versions"):
+        _ci('{ python: ["3.14", " 3.14"] }')
+    assert _ci('{ python: [" 3.14"] }').python == ("3.14",)
+
+
+def test_an_empty_ci_is_refused_as_saying_nothing():
+    """Final review item 8: `ci: {}` is neither a skip nor a variant; read as a skip without a reason it would
+    send the reader to write one."""
+    with pytest.raises(ValueError, match=r"`ci: \{\}` says nothing") as refused:
+        _loaded("ci: {}")
+    said = str(refused.value)
+    assert "skip" in said and "cadence" in said and "drop `ci:`" in said

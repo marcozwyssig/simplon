@@ -1071,7 +1071,13 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
             f"'{where}' declares `ci:` key {', '.join(unknown)}. The keys this kernel reads under a command's "
             f"`ci:` are {', '.join(known)} - a misspelt one would be ignored, and the leaf would run as if it "
             f"were not written")
-    if raw and "skip" not in raw:
+    if not raw:
+        # si#860 final review: neither a skip nor a variant; read as a skip, the reader would be told to write a
+        # reason for an opt-out nobody meant.
+        raise ValueError(
+            f"'{where}' declares `ci: {{}}`. `ci: {{}}` says nothing: write a key ({', '.join(known)}), or drop "
+            f"`ci:` so the leaf runs in the derived CI as it is")
+    if "skip" not in raw:
         return ""
     others = [str(key) for key in raw if key != "skip"]
     if others:
@@ -1117,16 +1123,37 @@ def _ci_variant(spec: "_CommandSpecModel", where: str) -> CiVariant:
                      timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates)
 
 
+#: si#860 final review: the five cron fields by name, and the names the fourth and fifth also take (GitHub's cron,
+#: POSIX with month and weekday names).
+_CRON_FIELDS = ("minute", "hour", "day of month", "month", "day of week")
+_CRON_NAMES = {3: ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"),
+               4: ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")}
+
+
 def _ci_cadence(value: object, where: str) -> str:
     """si#860: `nightly`, `manual` or a five-field cron string, "" when unwritten. A cron is normalised to
-    single spaces; GitHub rules on its fields, this only on their count, which a typo changes."""
+    single spaces. Its count is checked first, then each field's alphabet (final review): digits, `*`, `,`,
+    `-` and `/`, and month or weekday names in the fourth and fifth field. Five English words have the right
+    count and would reach GitHub, which rejects the file, not the leaf; and no quote can reach the job gate
+    the cron is written into (`cipipeline._SCHEDULE_GATE`). Ranges and steps are GitHub's to rule on."""
     if value is None:
         return ""
-    if isinstance(value, str) and (value.strip() in ("nightly", "manual") or len(value.split()) == 5):
-        return " ".join(value.split())
-    raise ValueError(
-        f"'{where}' declares `ci: cadence: {json.dumps(value, default=str)}`. `ci: cadence:` is `nightly`, "
-        f"`manual` or a cron string of five whitespace-separated fields, e.g. \"17 2 * * *\"")
+    if not (isinstance(value, str) and (value.strip() in ("nightly", "manual") or len(value.split()) == 5)):
+        raise ValueError(
+            f"'{where}' declares `ci: cadence: {json.dumps(value, default=str)}`. `ci: cadence:` is `nightly`, "
+            f"`manual` or a cron string of five whitespace-separated fields, e.g. \"17 2 * * *\"")
+    fields = value.split()
+    for at, field in enumerate(fields if len(fields) == 5 else ()):
+        bare = field.upper()
+        for name in _CRON_NAMES.get(at, ()):
+            bare = bare.replace(name, "0")
+        if not re.fullmatch(r"[0-9*,/-]+", bare):
+            names = f", or {'month' if at == 3 else 'weekday'} names" if at in _CRON_NAMES else ""
+            raise ValueError(
+                f"'{where}' declares `ci: cadence: {json.dumps(value)}`, and its {_CRON_FIELDS[at]} field "
+                f"`{field}` is not cron: a `ci: cadence:` field holds digits, `*`, `,`, `-` and `/`{names}, e.g. \"17 2 * * *\" "
+                f"or \"0 3 * JAN-MAR MON-FRI\"")
+    return " ".join(fields)
 
 
 def _ci_platforms(value: object, where: str) -> tuple[str, ...]:
@@ -1153,12 +1180,13 @@ def _ci_python(value: object, where: str) -> tuple[str, ...]:
         raise ValueError(
             f"'{where}' declares `ci: python: {json.dumps(value, default=str)}`, and a version is a string: "
             f"3.10 unquoted reads as 3.1: quote the version, as `python: [\"3.10\"]`")
-    if (not isinstance(value, list) or not value or not all(version.strip() for version in value)
-            or len(set(value)) != len(value)):
+    # Stripped before the duplicate check (final review): " 3.14" is the version 3.14.
+    versions = [version.strip() for version in value] if isinstance(value, list) else []
+    if not versions or not all(versions) or len(set(versions)) != len(versions):
         raise ValueError(
             f"'{where}' declares `ci: python: {json.dumps(value, default=str)}`. `ci: python:` is a non-empty "
             f"list of distinct versions, e.g. `[\"3.14\"]`")
-    return tuple(value)
+    return tuple(versions)
 
 
 def _ci_timeout(value: object, where: str) -> int | None:

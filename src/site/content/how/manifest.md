@@ -1443,7 +1443,8 @@ ci:
   `nightly` goes to `.github/workflows/ci-nightly.yml`, run at the kernel's cron `17 2 * * *` (UTC, off
   the full hour on purpose) and on dispatch; `manual` goes to `ci-manual.yml`, run only on dispatch; a
   five-field cron string goes to `ci-scheduled.yml`, one job per distinct cron, each job run on its own
-  schedule and every job on a dispatch. A file exists only while a leaf carries its cadence. Each is built
+  schedule and every job on a dispatch. Each cron field holds digits, `*`, `,`, `-` and `/`, the month
+  and weekday fields also their names (`JAN`, `MON-FRI`); anything else is refused, naming the field. A file exists only while a leaf carries its cadence. Each is built
   like ci.yml (preparation, its leaves, the `after_all` leaves without a cadence of their own, so the
   report and its upload, cleanup), and a run in progress is never cancelled by the next
   (`concurrency: { group: <file stem>, cancel-in-progress: false }`). GitHub keeps one pending run per

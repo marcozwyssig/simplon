@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 305 | nothing - the declaration had no working meaning |
+| diagnosis | 307 | nothing - the declaration had no working meaning |
 | expression rule | 52 | something it could otherwise have said |
-| **all load-time refusals** | **357** | |
+| **all load-time refusals** | **359** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -86,10 +86,11 @@ and `ci test`): there the key would do nothing, since a derived CI runs only tho
 line.
 
 si#860 added the variant keys beside `skip:`. **Diagnoses:** a value of the wrong shape (a cadence that is
-neither `nightly`, `manual` nor a five-field cron, a platform cell the kernel does not carry, an unquoted
+neither `nightly`, `manual` nor a five-field cron, a cron field outside cron's alphabet, a platform cell the
+kernel does not carry, an unquoted
 Python version YAML has already read as a number, a time limit that is not a positive whole number, an
-emulation not spelt as buildx spells it), and `skip:` beside a variant key, which would shape a leaf that does
-not run. **Expression rules:** `platforms:` with `python:` on one leaf, a cross product of cells and versions
+emulation not spelt as buildx spells it), `skip:` beside a variant key, which would shape a leaf that does
+not run, and an empty `ci: {}`, which says nothing. **Expression rules:** `platforms:` with `python:` on one leaf, a cross product of cells and versions
 nobody has measured a need for, and `platforms:` with `emulates:`, since a macOS or Windows cell has no binfmt
 to register an emulator with and a native `linux-arm64` cell makes emulating arm64 pointless. Both bind the
 kernel's catalogue too. What they cost, measured 2026-11-23 over the eight reachable manifests: nothing, since

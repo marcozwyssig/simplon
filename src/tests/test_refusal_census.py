@@ -742,6 +742,11 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # cannot spell), and `skip:` beside a variant key shapes a leaf that does not run: all diagnoses.
     ("load", "_ci_skip", "the leaf does not run in CI, so"): DIAGNOSIS,
     ("load", "_ci_cadence", "`ci: cadence:` is `nightly`, `manual` or a cron string"): DIAGNOSIS,
+    # si#860 final review: five words have a cron's count and no cron's meaning; GitHub would reject the file.
+    ("load", "_ci_cadence", "is not cron: a `ci: cadence:` field holds digits"): DIAGNOSIS,
+    # si#860 final review: `ci: {}` is neither a skip nor a variant, so it is inert, and said so rather than read
+    # as a skip whose reason is missing.
+    ("load", "_ci_skip", "says nothing: write a key"): DIAGNOSIS,
     ("load", "_ci_platforms", "`ci: platforms:` is a non-empty list of distinct cells"): DIAGNOSIS,
     ("load", "_ci_platforms", "which is no platform cell this kernel knows"): DIAGNOSIS,
     ("load", "_ci_python", "3.10 unquoted reads as 3.1: quote the version"): DIAGNOSIS,

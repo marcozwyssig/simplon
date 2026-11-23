@@ -200,7 +200,9 @@ CADENCE_PATHS: Mapping[str, str] = {"": PATH, "nightly": ".github/workflows/ci-n
                                     "manual": ".github/workflows/ci-manual.yml"}
 
 #: The job gate in `SCHEDULED_PATH`: every cron of the file starts every job, so each job runs only on its own
-#: schedule, and every job on a dispatch.
+#: schedule, and every job on a dispatch. The cron is written into a single-quoted expression string unescaped:
+#: that is safe because `load._ci_cadence` lets only digits, `*`, `,`, `-`, `/` and month or weekday names into
+#: a field (si#860 final review), so no `'` can reach it.
 _SCHEDULE_GATE = "${{{{ github.event_name == 'workflow_dispatch' || github.event.schedule == '{cron}' }}}}"
 
 
