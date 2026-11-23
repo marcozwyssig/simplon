@@ -891,9 +891,9 @@ def test_all_leaves_scheduled_refuses_the_push_workflow():
             commands:
               late: { task: ship, unattended: true, ci: { cadence: nightly } }
         """)
-    with pytest.raises(ValueError, match="no leaf a machine may run") as raised:
+    with pytest.raises(ValueError, match="the push path verifies nothing") as raised:
         cipipeline.derive(loaded, {})
-    assert "`test late`" in str(raised.value) and "ci-nightly.yml" in str(raised.value)
+    assert "ci-nightly.yml" in str(raised.value)
 
 
 def test_skipped_and_cadence_notes(tmp_path, monkeypatch):
@@ -1343,3 +1343,137 @@ def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
     assert _emulations(push, "ci") == []
     said = _comments(text)
     assert "#722" in said and "linux/arm64, linux/arm/v7" in said
+
+
+# --- the final review of si#860: one switch rule, inert keys, the empty push run ---------------------------
+
+_HANDWRITTEN_NIGHTLY = """
+        workflows:
+          ci-nightly: { handwritten: "ours" }
+        """
+
+
+def test_a_declared_cadence_key_switches_off_only_that_derived_file(tmp_path, monkeypatch):
+    """Final review item 1: `workflows: ci-nightly:` is the product's own nightly file, so the derived one is not
+    written and nothing is refused as two owners; ci.yml is still derived beside it."""
+    _product(tmp_path, monkeypatch, _NIGHTLY + _HANDWRITTEN_NIGHTLY)
+    own = tmp_path / _NIGHTLY_PATH
+    own.parent.mkdir(parents=True)
+    own.write_text("name: mine\n", encoding="utf-8")
+
+    assert workflows_task.generate() == 0
+
+    assert own.read_text(encoding="utf-8") == "name: mine\n"
+    assert (tmp_path / _CI_PATH).read_text(encoding="utf-8").startswith("# GENERATED from demo.yaml")
+    keys = [w.key for w in cipipeline.workflows(_load(_NIGHTLY + _HANDWRITTEN_NIGHTLY),
+                                                yaml.safe_load(_text(_NIGHTLY + _HANDWRITTEN_NIGHTLY)),
+                                                product="demo")]
+    assert keys == ["ci-nightly", "ci"]
+    assert workflows_task.generate(check=True) == 0
+
+
+def test_a_declared_ci_keeps_the_derived_cadence_files(tmp_path, monkeypatch):
+    """Final review item 1: `workflows: ci:` switches off ci.yml and only ci.yml, so a nightly leaf still gets
+    its ci-nightly.yml rather than being dropped without a word."""
+    body = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + _DECLARED_CI
+    ctx = _product(tmp_path, monkeypatch, body)
+    (declared,) = workflowgen.parse(ctx.manifest_data())
+
+    assert workflows_task.generate() == 0
+
+    assert not declared.derived
+    assert "cipipeline" not in (tmp_path / _CI_PATH).read_text(encoding="utf-8")
+    nightly = yaml.safe_load((tmp_path / _NIGHTLY_PATH).read_text(encoding="utf-8"))
+    assert _job_runs(nightly, "ci") == ["build late"]
+
+
+@pytest.mark.parametrize("key", ['python: ["3.14"]', "platforms: [linux-arm64]", "timeout_minutes: 30",
+                                 "emulates: [linux/arm64]"])
+def test_a_variant_key_on_a_push_leaf_under_a_declared_ci_is_refused(tmp_path, monkeypatch, key):
+    """Final review item 2: ci.yml is the product's own, so a variant key on a leaf that would run there shapes
+    nothing - a diagnosis, as `ci:` on a command no derived CI selects is (si#858)."""
+    name = key.split(":", 1)[0]
+    _product(tmp_path, monkeypatch, f"""
+        ci:
+          build:
+            commands:
+              one: {{ task: ship, unattended: true, ci: {{ {key} }} }}
+        """ + _DECLARED_CI)
+
+    with pytest.raises(ValueError) as refused:
+        workflows_task.generate()
+
+    said = str(refused.value)
+    assert "'build one'" in said and f"`ci: {name}:`" in said
+    assert "workflows: ci:" in said and "Take the key off" in said
+
+
+def test_a_cadence_leaf_keeps_its_variant_keys_under_a_declared_ci(tmp_path, monkeypatch):
+    """The refusal is for a key nothing reads: a nightly leaf's keys shape ci-nightly.yml, and an `after_all`
+    leaf without a cadence ends every cadence file, so its keys are read there."""
+    body = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly, timeout_minutes: 20 } }
+          test:
+            commands:
+              report: { task: "test:report", ci: { timeout_minutes: 5 } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8) + _DECLARED_CI
+    _product(tmp_path, monkeypatch, body)
+
+    assert workflows_task.generate() == 0
+
+    nightly = yaml.safe_load((tmp_path / _NIGHTLY_PATH).read_text(encoding="utf-8"))
+    assert _job_runs(nightly, "ci") == ["build late", "test report"]
+
+
+def test_a_push_run_emptied_by_cadences_says_where_the_leaves_went():
+    """Final review item 3: the leaves are not missing, they run on a cadence; the push path verifies nothing,
+    and the way out is a leaf without `cadence:` or a push CI of the product's own."""
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+              weekly: { task: ship, unattended: true, ci: { cadence: "0 3 * * 1" } }
+        """)
+
+    with pytest.raises(ValueError) as refused:
+        cipipeline.derive(loaded, {})
+
+    said = str(refused.value)
+    assert "run in ci-nightly.yml, ci-scheduled.yml" in said
+    assert "the push path verifies nothing" in said
+    assert "without `cadence:`" in said
+    assert "`workflows: ci:`" in said and "switches off only ci.yml" in said
+    assert "hold no leaf a machine may run" not in said
+
+
+def test_scheduled_concurrency_is_keyed_on_the_schedule(tmp_path, monkeypatch):
+    """Final review item 9: GitHub keeps one pending run per concurrency group, so with one group a pending run
+    of one cron would replace another cron's; each schedule, and dispatch, queues in a group of its own."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "0 4 * * *" } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    scheduled, text = files[_SCHEDULED_PATH]
+    assert scheduled["concurrency"] == {"group": "ci-scheduled-${{ github.event.schedule || 'dispatch' }}",
+                                        "cancel-in-progress": False}
+    assert "one pending run per schedule" in _comments(text)
+    (tmp_path / "n").mkdir()
+    nightly = _generated(tmp_path / "n", monkeypatch, _NIGHTLY)[_NIGHTLY_PATH][0]
+    assert nightly["concurrency"] == {"group": "ci-nightly", "cancel-in-progress": False}

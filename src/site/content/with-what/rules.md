@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 304 | nothing - the declaration had no working meaning |
+| diagnosis | 305 | nothing - the declaration had no working meaning |
 | expression rule | 52 | something it could otherwise have said |
-| **all load-time refusals** | **356** | |
+| **all load-time refusals** | **357** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -101,6 +101,10 @@ refusals are reached from the manifest and counted, all of them diagnoses: a con
 does not run, a cycle through the leaves' artifacts, no leaf a machine may run, an `after_all` leaf that
 produces for another, a report upload with no `suites: reports:`, and a leaf that has not ruled on
 `unattended:`. An absent `workflows:` section is no longer refused: it is what switches the derivation on.
+Since si#860 a declared `workflows:` key switches off only the derived workflow of that key, so with
+`workflows: ci:` declared the cadence files are still derived, and a variant key (`python`, `platforms`,
+`timeout_minutes`, `emulates`) on a leaf that would run in the product's own ci.yml is a further diagnosis:
+nothing would read it.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

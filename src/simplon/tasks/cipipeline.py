@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
@@ -303,6 +303,17 @@ def _ci_groups(manifest: Manifest) -> list[str]:
 
 
 def _nothing_to_run(manifest: Manifest, selection: Selection, path: str) -> str:
+    """Why a run with no leaf is refused, and the way out. Where the push run is empty because its leaves went to
+    cadence files (si#860 final review), it says that: the leaves are not missing, the push path is what
+    verifies nothing, and `workflows: ci:` now switches off ci.yml alone, so a push CI of the product's own
+    keeps the cadence files."""
+    elsewhere = [] if path != PATH else [_key_of(_path_of(group[0])) + ".yml" for group in _cadence_groups(manifest)]
+    if elsewhere:
+        return (f"derived CI: every unattended leaf of `ci build` and `ci test` carries a `cadence:`, so the "
+                f"cadence leaves run in {', '.join(elsewhere)} and the push path verifies nothing - the derived "
+                f"ci.yml would be a green tick over nothing on every push. Place a leaf without `cadence:` under "
+                f"`ci build` or `ci test`, or declare `{workflowgen.SECTION}: {KEY}:` with a push CI of your own, "
+                f"which switches off only ci.yml")
     groups = ", ".join(f"`{group.replace('.', ' ')}`" for group in _ci_groups(manifest))
     held = f"it holds {groups}" if groups else "it holds no `ci build` or `ci test` group"
     left = "; ".join(f"`{s.words}` - {s.reason}" for s in selection.skipped)
@@ -373,12 +384,20 @@ def _cadences(manifest: Manifest) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def _cadence_derivations(manifest: Manifest, data: Mapping[str, object]) -> tuple[Derivation, ...]:
-    """The nightly, manual and scheduled workflows, each only where a leaf carries its cadence (si#860)."""
+def _cadence_groups(manifest: Manifest, own: Set[str] = frozenset()) -> list[tuple[str, ...]]:
+    """The cadence values of each cadence workflow, one tuple per file, each only where a leaf carries its cadence
+    and the product declares no workflow of that file's key (`own`, the one switch rule of `workflows`)."""
     cadences = _cadences(manifest)
     crons = tuple(c for c in cadences if c not in CADENCE_PATHS)
-    named = [(c,) for c in ("nightly", "manual") if c in cadences]
-    return tuple(_derive(manifest, data, group) for group in (*named, *((crons,) if crons else ())))
+    groups = [*((c,) for c in ("nightly", "manual") if c in cadences), *((crons,) if crons else ())]
+    return [group for group in groups if _key_of(_path_of(group[0])) not in own]
+
+
+def _cadence_derivations(manifest: Manifest, data: Mapping[str, object],
+                         own: Set[str] = frozenset()) -> tuple[Derivation, ...]:
+    """The nightly, manual and scheduled workflows, each only where a leaf carries its cadence (si#860) and the
+    product has not declared the file's key as its own."""
+    return tuple(_derive(manifest, data, group) for group in _cadence_groups(manifest, own))
 
 
 def derive_all(manifest: Manifest, data: Mapping[str, object]) -> tuple[Derivation, ...]:
@@ -596,7 +615,11 @@ def _cadence_note(cadence: str) -> str:
     return (f"si#860: this job runs only the leaves with `cadence: {spelled}`, "
             f"{when.get(cadence, 'on that schedule and on every dispatch of this workflow')}, never per push. "
             "Every leaf without a `cadence:` runs in ci.yml; an `after_all` leaf without one (the report) runs "
-            "here too, so this run carries its own verdict. A run in progress is never cancelled by the next.")
+            "here too, so this run carries its own verdict. "
+            + ("A run in progress is never cancelled by the next; GitHub keeps one pending run per schedule "
+               "(and one per dispatch), and a newer one replaces it." if cadence not in when else
+               "A run in progress is never cancelled by the next; GitHub keeps one pending run, and a newer one "
+               "replaces it."))
 
 
 def _leaf_ids(words: Sequence[str]) -> dict[str, str]:
@@ -659,7 +682,11 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         if orphan:
             orphans.add(job.condition)
         jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan))
-    queued = {} if key == KEY else {"concurrency": {"group": key, "cancel-in-progress": False}}
+    # GitHub keeps one pending run per concurrency group and a newer pending run replaces it, so ci-scheduled.yml
+    # keys its group on the schedule that fired: one cron's waiting run never displaces another's, and a dispatch
+    # queues in a group of its own (si#860 final review).
+    group = f"{key}-${{{{ github.event.schedule || 'dispatch' }}}}" if derivation.model.path == SCHEDULED_PATH else key
+    queued = {} if key == KEY else {"concurrency": {"group": group, "cancel-in-progress": False}}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write.
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **queued,
@@ -671,10 +698,12 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
 def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
     """`on:` from the model's triggers; the `schedule` triggers are one list under one key, as GitHub reads it."""
     out: dict[str, object] = {}
+    crons: list[dict[str, str]] = []
     for trigger in triggers:
         if trigger.event == "schedule":
-            crons = out.setdefault("schedule", [])
-            assert isinstance(crons, list)
+            # the list is placed at the first schedule trigger, so `on:` keeps the model's order
+            if not crons:
+                out["schedule"] = crons
             crons.append({"cron": trigger.cron})
         else:
             event, body = _TRIGGERS[trigger.event]
@@ -785,10 +814,17 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     """Every workflow `support github workflows` writes or checks: the declared ones, the derived ci.yml, and
     since si#860 a derived ci-nightly.yml, ci-manual.yml and ci-scheduled.yml where a leaf carries that cadence.
 
-    THE DERIVATION IS SWITCHED OFF BY DECLARING `workflows: ci:`, and by nothing else: a product that declares
-    its CI keeps exactly what it renders today. Every other product gets the derived workflow beside whatever it
-    declares, and `_reject_duplicate_paths` runs over both together, so an entry under another key that writes
-    ci.yml is refused as two owners of one file (Review Focus 4) rather than overwritten by either.
+    ONE SWITCH RULE (si#860 final review): A DECLARED `workflows:` KEY SWITCHES OFF THE DERIVED WORKFLOW WITH THAT
+    KEY, AND ONLY THAT ONE. `workflows: ci:` is the product's own push CI, so ci.yml is not derived and nothing
+    else changes; `workflows: ci-nightly:` (and `ci-manual`, `ci-scheduled`) is the product's own cadence file,
+    which is the way out `workflowgen._refuse_foreign_files` names for a hand-written one. A switch that took
+    the cadence files with it would drop their leaves without a word. Every other product gets the derived
+    workflows beside whatever it declares, and `_reject_duplicate_paths` runs over both together, so an entry
+    under another key that writes a derived path is refused as two owners of one file (Review Focus 4) rather
+    than overwritten by either.
+
+    With ci.yml the product's own, a push leaf's variant key would shape nothing, and is refused
+    (`_refuse_variants_nobody_derives`).
 
     A PRODUCT WITH NO LEAF A MACHINE MAY RUN gets no ci.yml when it declares other workflows: there is something
     to generate, and a refusal would withhold it over a file nobody asked for, so the run says why in one line.
@@ -798,18 +834,47 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     the caller.
     """
     declared = workflowgen.parse(data)
-    if any(workflow.key == KEY for workflow in declared):
-        return declared
-    push = select(manifest, artifacts=artifactsection.declared(data))
-    if declared and not _runs(push) and not _cells(push):
-        log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
-                 f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
-        # si#860: the cadence workflows have leaves of their own and are derived all the same.
-        out = (*declared, *(to_workflow(derivation, manifest, data, product=product)
-                            for derivation in _cadence_derivations(manifest, data)))
-        workflowgen._reject_duplicate_paths(out)
-        return out
-    out = (*declared, *(to_workflow(derivation, manifest, data, product=product)
-                        for derivation in derive_all(manifest, data)))
+    own = {workflow.key for workflow in declared}
+    derivations: list[Derivation] = []
+    if KEY in own:
+        _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)))
+    else:
+        push = select(manifest, artifacts=artifactsection.declared(data))
+        if declared and not _runs(push) and not _cells(push):
+            log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
+                     f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
+        else:
+            derivations.append(derive(manifest, data))
+    derivations += _cadence_derivations(manifest, data, own)
+    out = (*declared, *(to_workflow(derivation, manifest, data, product=product) for derivation in derivations))
     workflowgen._reject_duplicate_paths(out)
     return out
+
+
+#: si#860: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them; `cadence`
+#: is not one, since it says which derived workflow the leaf is in.
+_VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
+
+
+def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool) -> None:
+    """Refuse a push leaf's variant key when ci.yml is the product's own (si#860 final review).
+
+    Such a leaf runs in the product's ci.yml, which the kernel does not write, so `python:`, `platforms:`,
+    `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
+    no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
+    `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
+    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file.
+    """
+    for group in _ci_groups(manifest):
+        for name, spec in manifest.commands[group].items():
+            if not isinstance(spec, TaskCommand) or spec.ci_skip or not spec.unattended or spec.ci.cadence:
+                continue
+            if spec.after_all and cadence_files:
+                continue
+            written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), None)]
+            if written:
+                raise ValueError(
+                    f"'{_words(group, name)}' declares `ci: {written[0]}:` and has no `cadence:`, so it runs in "
+                    f"ci.yml, and the manifest declares `{workflowgen.SECTION}: {KEY}:`: that file is the "
+                    f"product's own, the kernel derives none, and the key would do nothing. Take the key off, or "
+                    f"drop `{workflowgen.SECTION}: {KEY}:` so the kernel derives ci.yml and reads it")

@@ -1339,6 +1339,11 @@ miss as an answer.
 under `workflows:` is keyed `ci` (si#858). Declaring `workflows: ci:` is the switch, and the only one: a
 product that declares its CI keeps exactly the file it renders today, and every other product gets the
 derived one beside whatever else it declares. A product with no `workflows:` section at all gets it too.
+The same rule holds for [the cadence files](#variant-keys-how-a-leaf-runs) (si#860): a declared key
+switches off the derived workflow of that key and no other, so `workflows: ci:` keeps `ci-nightly.yml`,
+and `workflows: ci-nightly:` keeps ci.yml. With `workflows: ci:` declared, a variant key on a leaf that
+would run in ci.yml (`python:`, `platforms:`, `timeout_minutes:`, `emulates:`, without a `cadence:`) is
+refused: the file is yours, and nothing would read the key.
 
 **What runs** is the rule of `derive:`: every leaf of a `build` or `test` group of the `ci` area,
 nested groups included, that says `unattended: true`. Aggregates are passed over, because their members
@@ -1403,7 +1408,9 @@ and by dispatch, and it reads only (`permissions: { contents: read }`). A leaf w
 
 **When nothing can run, there is no file.** A product that declares other workflows and has no leaf a
 machine may run gets no ci.yml and one log line saying why; with no workflow declared at all, the
-derivation is refused, because generating nothing would look green.
+derivation is refused, because generating nothing would look green. Where every leaf carries a
+`cadence:`, the refusal names the cadence files they run in: the push path verifies nothing, so place a
+leaf without `cadence:`, or declare `workflows: ci:` with a push CI of your own.
 
 **A ci.yml the kernel did not write is refused, not overwritten.** If `.github/workflows/ci.yml` exists
 without the generated header and nothing declares `workflows: ci:`, the run stops and names the file:
@@ -1412,7 +1419,8 @@ refusal a kernel upgrade would replace a product's own CI silently, and `--check
 drift. This refusal is not counted in [the refusal census](../../with-what/rules/): it is decided by a
 file on disk, not by the manifest. A misspelt `workflows:` key cannot be told from a missing one, so a
 product whose ci.yml is already generated gets the derived file over it; that shows as a diff to review,
-and as drift under `--check`. The same refusal guards every cadence workflow below.
+and as drift under `--check`. The same refusal guards every cadence workflow below, and its way out is
+that file's own key: a hand-written nightly is kept by `workflows: ci-nightly: { handwritten: "<why>" }`.
 
 #### Variant keys: how a leaf runs
 
@@ -1438,7 +1446,10 @@ ci:
   schedule and every job on a dispatch. A file exists only while a leaf carries its cadence. Each is built
   like ci.yml (preparation, its leaves, the `after_all` leaves without a cadence of their own, so the
   report and its upload, cleanup), and a run in progress is never cancelled by the next
-  (`concurrency: { group: <file stem>, cancel-in-progress: false }`). ci.yml names each such leaf under
+  (`concurrency: { group: <file stem>, cancel-in-progress: false }`). GitHub keeps one pending run per
+  group and a newer one replaces it, so `ci-scheduled.yml` keys its group on the schedule that fired
+  (`ci-scheduled-${{ github.event.schedule || 'dispatch' }}`): one cron's waiting run never displaces
+  another's. ci.yml names each such leaf under
   "Left out", with the file it runs in. Two cadences fire apart, so a consumer whose producer has another
   cadence is refused as a consumer of a leaf the run does not run.
 - **`platforms:`** runs the leaf once in each named cell and nowhere else, never also in the main job. The

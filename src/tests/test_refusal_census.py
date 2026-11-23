@@ -1289,6 +1289,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_job", "_nothing_to_run(manifest, selection, path)"): DIAGNOSIS,
     ("cipipeline", "_refuse_producers_moved_last", "runs after all the other leaves (`after_all`)"): DIAGNOSIS,
     ("cipipeline", "_reports", "archives `suites: reports:`, and it cannot be read"): DIAGNOSIS,
+    # si#860 final review: with `workflows: ci:` declared, ci.yml is the product's own, so a variant key on a
+    # push leaf shapes nothing - the reasoning of a `ci:` key on a command no derived CI selects (si#858).
+    ("cipipeline", "_refuse_variants_nobody_derives", "the kernel derives none, and the key would do nothing"):
+        DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
