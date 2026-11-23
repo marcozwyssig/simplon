@@ -1424,7 +1424,8 @@ that file's own key: a hand-written nightly is kept by `workflows: ci-nightly: {
 
 #### Variant keys: how a leaf runs
 
-**`skip:` says whether a leaf runs; five more keys under the same `ci:` say how** (si#860). Each is
+**`skip:` says whether a leaf runs; `cadence:`, `platforms:`, `python:`, `timeout_minutes:` and
+`emulates:` under the same `ci:` say how** (si#860). Each is
 read at load, and a value of the wrong shape is refused with the form it should take:
 
 ```yaml
@@ -1468,7 +1469,8 @@ ci:
   whatever the product's `runner:` is. Quote a version: `3.10` unquoted is the number 3.1, and refused.
 - **A cell job carries no report.** Its result is its colour, one per cell; it gets `support install`
   where the product declares `toolchains:`, and no disk preflight or docker probe, since a hosted machine's
-  disk does not persist.
+  disk does not persist. A cell job runs beside the main job, never after it, so an `after_all` leaf with
+  `python:` or `platforms:` gets cells that run while the main job's leaves still run, not after them.
   A cell leaf that produces an artifact another leaf consumes is refused: its cells would produce it once
   each, and a run hands an artifact over once. Take the variant off the producer, or give the artifact a
   `registry:` its consumer fetches it from.
