@@ -35,9 +35,9 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.manifest import artifactsection, launcherenv, ports, yamlkeys
-from simplon.model import task
-from simplon.model.command import (AggregateCommand, Command, Deploy, ParamPresentation, ReleaseCommand,
+from simplon.manifest import artifactsection, launcherenv, ports, runners, yamlkeys
+from simplon.model import task, workflowschema
+from simplon.model.command import (AggregateCommand, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
                                     TaskCommand)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
@@ -1031,26 +1031,30 @@ def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
 def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     """The reason a command opts out of the derived CI (si#858), "" when it does not.
 
-    Only `ci: { skip: "<reason>" }` is read. A bare `ci: false` is refused rather than accepted as a
-    shorthand: the opt-out is the one place a manifest says a leaf is NOT verified by CI, so it carries its
-    reason where the next reader finds it. An unknown key is refused because a typo would leave the leaf
-    running, the "nothing to do" that is really a failure. On an aggregate the key would do nothing, since a
-    derived CI selects leaves only; and so it would on any command that is not a leaf under `ci build` or
-    `ci test` (`ci_leaf` false: a cd, support or `ci release` command, a Deploy), which a derived CI never
-    selects - both are diagnoses, refused with the reason (si#858 final review).
+    `ci: { skip: "<reason>" }` is the opt-out; the other keys are the variant keys `_ci_variant` reads
+    (si#860), and this decides only that they stand where they can be read. A bare `ci: false` is refused
+    rather than accepted as a shorthand: the opt-out is the one place a manifest says a leaf is NOT verified
+    by CI, so it carries its reason where the next reader finds it. An unknown key is refused because a typo
+    would be ignored and the leaf would run as if nothing were written, the "nothing to do" that is really a
+    failure. On an aggregate any key would do nothing, since a derived CI selects leaves only; and so it
+    would on any command that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or
+    `ci release` command, a Deploy), which a derived CI never selects - both are diagnoses, refused with the
+    reason (si#858 final review). So is `skip:` beside a variant key (si#860): the leaf does not run, so the
+    variant would shape nothing.
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on.
     """
     raw = spec.ci
     if raw is None:
         return ""
+    written = str(next(iter(raw), "skip")) if isinstance(raw, Mapping) else "skip"
     if spec.depends_on:
         raise ValueError(
-            f"aggregate '{where}' declares `ci: skip:`, and a derived CI runs leaves, never an aggregate, so "
-            f"the key would do nothing - declare it on the member commands that cannot run in CI")
+            f"aggregate '{where}' declares `ci: {written}:`, and a derived CI runs leaves, never an aggregate, "
+            f"so the key would do nothing - declare it on the member commands it is meant for")
     if not ci_leaf:
         raise ValueError(
-            f"'{where}' declares `ci: skip:`, and a derived CI runs only the leaves under `ci build` and "
+            f"'{where}' declares `ci: {written}:`, and a derived CI runs only the leaves under `ci build` and "
             f"`ci test`, so the key would do nothing here - take it off")
     if isinstance(raw, bool):
         raise ValueError(
@@ -1060,17 +1064,124 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
         raise ValueError(
             f"'{where}' declares `ci: {json.dumps(raw, default=str)}`, but `ci:` on a command is a mapping. "
             f"To keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
-    unknown = [str(key) for key in raw if key != "skip"]
+    known = ("skip", "cadence", "platforms", "python", "timeout_minutes", "emulates")
+    unknown = [str(key) for key in raw if key not in known]
     if unknown:
         raise ValueError(
-            f"'{where}' declares `ci:` key {', '.join(unknown)}. The only key this kernel reads under a "
-            f"command's `ci:` is `skip` - a misspelt one would leave the command running in CI")
+            f"'{where}' declares `ci:` key {', '.join(unknown)}. The keys this kernel reads under a command's "
+            f"`ci:` are {', '.join(known)} - a misspelt one would be ignored, and the leaf would run as if it "
+            f"were not written")
+    if raw and "skip" not in raw:
+        return ""
+    others = [str(key) for key in raw if key != "skip"]
+    if others:
+        raise ValueError(
+            f"'{where}' declares `ci: skip:` beside {', '.join(others)}, and the leaf does not run in CI, so "
+            f"the other keys would shape nothing - drop them, or drop `skip:`")
     reason = raw.get("skip")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
             f"'{where}' declares `ci: skip: {json.dumps(reason, default=str)}`. `ci: skip:` says why: write "
             f"the reason a hosted runner cannot run this command, as a non-empty string")
     return reason.strip()
+
+
+def _ci_variant(spec: "_CommandSpecModel", where: str) -> CiVariant:
+    """How a derived CI runs this leaf (si#860), from the `ci:` keys `_ci_skip` has already let stand.
+
+    Each value's shape is a diagnosis, in its own reader below. The two refusals here are EXPRESSION rules
+    (si#860, the executor's call, posted with Marco's decisions): `platforms:` with `python:` asks for a cross
+    product of cells and interpreters nobody measured a need for, and `platforms:` with `emulates:` asks a
+    macOS or Windows cell for binfmt it does not have. Over the eight reachable manifests neither costs
+    anything, since none writes `ci:` on a command; each reopens when a product asks for that combination.
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on.
+    """
+    raw = spec.ci
+    if not isinstance(raw, Mapping) or "skip" in raw:
+        return CiVariant()
+    platforms = _ci_platforms(raw.get("platforms"), where)
+    python = _ci_python(raw.get("python"), where)
+    emulates = _ci_emulates(raw.get("emulates"), where)
+    if platforms and python:
+        raise ValueError(
+            f"'{where}' declares `ci: platforms:` and `ci: python:` on one leaf. A cell runs on its platform's "
+            f"own interpreter, and a cross product of cells and versions is one no product has asked for - "
+            f"put the versions on a leaf of their own, or ask for the cross product (si#860)")
+    if platforms and emulates:
+        raise ValueError(
+            f"'{where}' declares `ci: platforms:` and `ci: emulates:` on one leaf. A cell runs on its "
+            f"platform's own machine, and the macOS and Windows cells have no binfmt to register an emulator "
+            f"with - emulate on a leaf without `platforms:`, or name the native cell (si#860)")
+    return CiVariant(cadence=_ci_cadence(raw.get("cadence"), where), platforms=platforms, python=python,
+                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates)
+
+
+def _ci_cadence(value: object, where: str) -> str:
+    """si#860: `nightly`, `manual` or a five-field cron string, "" when unwritten. A cron is normalised to
+    single spaces; GitHub rules on its fields, this only on their count, which a typo changes."""
+    if value is None:
+        return ""
+    if isinstance(value, str) and (value.strip() in ("nightly", "manual") or len(value.split()) == 5):
+        return " ".join(value.split())
+    raise ValueError(
+        f"'{where}' declares `ci: cadence: {json.dumps(value, default=str)}`. `ci: cadence:` is `nightly`, "
+        f"`manual` or a cron string of five whitespace-separated fields, e.g. \"17 2 * * *\"")
+
+
+def _ci_platforms(value: object, where: str) -> tuple[str, ...]:
+    """si#860: the kernel's platform cells a leaf runs in, in the order written, () when unwritten."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value or len({str(name) for name in value}) != len(value):
+        raise ValueError(
+            f"'{where}' declares `ci: platforms: {json.dumps(value, default=str)}`. `ci: platforms:` is a "
+            f"non-empty list of distinct cells, e.g. `[linux-x64, windows-x64]`")
+    unknown = [str(name) for name in value if str(name) not in workflowschema.PLATFORMS]
+    if unknown:
+        raise ValueError(
+            f"'{where}' declares `ci: platforms:` {', '.join(unknown)}, which is no platform cell this kernel "
+            f"knows. The cells are {', '.join(workflowschema.PLATFORMS)}")
+    return tuple(str(name) for name in value)
+
+
+def _ci_python(value: object, where: str) -> tuple[str, ...]:
+    """si#860: the interpreter versions a leaf runs once more on, in the order written, () when unwritten."""
+    if value is None:
+        return ()
+    if isinstance(value, list) and any(not isinstance(version, str) for version in value):
+        raise ValueError(
+            f"'{where}' declares `ci: python: {json.dumps(value, default=str)}`, and a version is a string: "
+            f"3.10 unquoted reads as 3.1: quote the version, as `python: [\"3.10\"]`")
+    if (not isinstance(value, list) or not value or not all(version.strip() for version in value)
+            or len(set(value)) != len(value)):
+        raise ValueError(
+            f"'{where}' declares `ci: python: {json.dumps(value, default=str)}`. `ci: python:` is a non-empty "
+            f"list of distinct versions, e.g. `[\"3.14\"]`")
+    return tuple(value)
+
+
+def _ci_timeout(value: object, where: str) -> int | None:
+    """si#860: the leaf's time limit in minutes, None when unwritten."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            f"'{where}' declares `ci: timeout_minutes: {json.dumps(value, default=str)}`. "
+            f"`ci: timeout_minutes:` is a positive whole number of minutes")
+    return value
+
+
+def _ci_emulates(value: object, where: str) -> tuple[str, ...]:
+    """si#860: the platforms a job registers an emulator for before this leaf, () when unwritten. The spelling
+    is `runners.spelt_for_buildx`, the one a workflow's `emulates:` takes (si#570)."""
+    if value is None:
+        return ()
+    if not runners.spelt_for_buildx(value):
+        raise ValueError(
+            f"'{where}' declares `ci: emulates: {json.dumps(value, default=str)}`. `ci: emulates:` is a "
+            f"non-empty list of platforms as buildx spells them, e.g. `[linux/arm64]`")
+    return tuple(value)
 
 
 def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,
@@ -1095,6 +1206,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
     top = group.split(".", 1)[0]
     ci_leaf = areas.get(top) == "ci" and top in ("build", "test") and not taxonomy.group_requires_env(group)
     ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}", ci_leaf)
+    ci = _ci_variant(spec, f"{group.replace('.', ' ')} {name}")
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1117,7 +1229,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
                 publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,
-                ci_skip=ci_skip, task=spec.task, produces=spec.produces, consumes=spec.consumes,
+                ci_skip=ci_skip, ci=ci, task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,
                                                  metavar=p.metavar, short_first=p.short_first)

@@ -79,6 +79,21 @@ class Command:
 
 
 @dataclass(frozen=True)
+class CiVariant:
+    """si#860: how a derived CI runs one leaf, from its command's `ci:` keys. The default runs it per push in
+    the main job, as every leaf ran before si#860.
+
+    `cadence` is "", `nightly`, `manual` or a five-field cron string; `platforms` names cells of
+    `workflowschema.PLATFORMS` and `python` interpreter versions, each in the order written; `emulates` is
+    buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit."""
+    cadence: str = ""
+    platforms: tuple[str, ...] = ()
+    python: tuple[str, ...] = ()
+    timeout_minutes: int | None = None
+    emulates: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TaskCommand(Command):
     """A command that runs one task: `simplon.pipeline.TaskCommand`.
 
@@ -105,6 +120,8 @@ class TaskCommand(Command):
     #: si#858: why this command stays out of the derived CI, from its `ci: { skip: "<reason>" }`. Empty means
     #: it runs there.
     ci_skip: str = ""
+    #: si#860: the leaf's variant keys (`ci: { cadence:, platforms:, python:, timeout_minutes:, emulates: }`).
+    ci: CiVariant = CiVariant()
     with_: Mapping[str, object] = field(default_factory=dict)
     params: Mapping[str, ParamPresentation] = field(default_factory=dict)
     produces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)

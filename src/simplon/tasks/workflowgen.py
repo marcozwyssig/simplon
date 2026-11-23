@@ -614,8 +614,7 @@ def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[
         raise ValueError(
             f"{where}: `{EMULATES_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
             f"a job you write registers emulation itself, with a `uses: {QEMU_ACTION}` step")
-    if (not isinstance(value, list) or not value
-            or not all(isinstance(p, str) and len(p.split("/")) in (2, 3) and all(p.split("/")) for p in value)):
+    if not runners.spelt_for_buildx(value):
         raise ValueError(
             f"{where}: `{EMULATES_KEY}:` is a non-empty list of platforms as buildx spells them "
             f"(e.g. `[linux/arm64]`), got '{value}'")

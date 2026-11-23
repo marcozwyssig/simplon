@@ -733,9 +733,31 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_skip", "`ci: skip:` says why"): EXPRESSION,
     ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): EXPRESSION,
     ("load", "_ci_skip", "but `ci:` on a command is a mapping"): DIAGNOSIS,
-    ("load", "_ci_skip", "The only key this kernel reads under a command's `ci:` is `skip`"): DIAGNOSIS,
+    ("load", "_ci_skip", "The keys this kernel reads under a command's `ci:` are"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs leaves, never an aggregate"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
+    # si#860: the variant keys beside `skip:`. A value of the wrong shape has no reading (a cadence that is
+    # no word and no five-field cron, a platform cell the kernel does not carry, an unquoted version YAML has
+    # already turned into a float, a time limit that is not a positive whole number, an emulation buildx
+    # cannot spell), and `skip:` beside a variant key shapes a leaf that does not run: all diagnoses.
+    ("load", "_ci_skip", "the leaf does not run in CI, so"): DIAGNOSIS,
+    ("load", "_ci_cadence", "`ci: cadence:` is `nightly`, `manual` or a cron string"): DIAGNOSIS,
+    ("load", "_ci_platforms", "`ci: platforms:` is a non-empty list of distinct cells"): DIAGNOSIS,
+    ("load", "_ci_platforms", "which is no platform cell this kernel knows"): DIAGNOSIS,
+    ("load", "_ci_python", "3.10 unquoted reads as 3.1: quote the version"): DIAGNOSIS,
+    ("load", "_ci_python", "`ci: python:` is a non-empty list of distinct versions"): DIAGNOSIS,
+    ("load", "_ci_timeout", "`ci: timeout_minutes:` is a positive whole number of minutes"): DIAGNOSIS,
+    ("load", "_ci_emulates", "`ci: emulates:` is a non-empty list of platforms as buildx spells them"): DIAGNOSIS,
+    # THE TWO EXPRESSION RULES, both the executor's call posted with Marco's si#860 decisions (he may
+    # overrule): each refuses a leaf that could have been rendered, so each costs flexibility.
+    #   - `platforms:` with `python:`: a cell per platform AND a cell per version would be a cross product.
+    #     A product could mean it; none has asked, and nobody measured what it would cost a runner bill.
+    #   - `platforms:` with `emulates:`: a Linux cell could register binfmt, a macOS or Windows cell cannot,
+    #     and a native linux-arm64 cell makes emulating arm64 there pointless; one form, not a broken one.
+    #   - what does a violation cost? Measured 2026-11-23 over the eight reachable manifests: none writes
+    #     `ci:` on a command, so zero. What reopens either: a product asking for that combination.
+    ("load", "_ci_variant", "`ci: platforms:` and `ci: python:` on one leaf"): EXPRESSION,
+    ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): EXPRESSION,
     ("load", "_issuer", "'token' is github, app or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
@@ -1274,6 +1296,9 @@ REACH: dict[tuple[str, str, str], str] = {
     # si#858: MERGED - the kernel's own catalogue places its commands through the same `_command`.
     ("load", "_ci_skip", "`ci: skip:` says why"): REACH_MERGED,
     ("load", "_ci_skip", "An opt-out without a reason is one nobody can read back"): REACH_MERGED,
+    # si#860: MERGED by the same path - `_ci_variant` is handed every placed command's spec, the catalogue's too.
+    ("load", "_ci_variant", "`ci: platforms:` and `ci: python:` on one leaf"): REACH_MERGED,
+    ("load", "_ci_variant", "`ci: platforms:` and `ci: emulates:` on one leaf"): REACH_MERGED,
     # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
