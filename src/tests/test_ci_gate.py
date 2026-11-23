@@ -168,6 +168,20 @@ def test_an_empty_or_boolean_ci_on_an_aggregate_names_what_was_written(written, 
         _loaded(f"ci: {written}")
 
 
+@pytest.mark.parametrize(("written", "said"), [("{}", r"`ci: \{\}`"), ("false", "`ci: false`"),
+                                              ("{ gate: { label: x } }", "`ci: gate:`")])
+@pytest.mark.parametrize("command", ["all", "lab"])
+def test_ci_outside_ci_build_or_test_names_what_was_written(written, said, command):
+    """Outside `ci build`/`ci test` the refusal names the `ci:` as written, not a `skip:` nobody wrote."""
+    ci = f", ci: {written}"
+    lab, all_ = (ci, "") if command == "lab" else ("", ci)
+    placement = (f"cd:\n  deploy:\n    commands:\n      lab: {{ task: ship{lab} }}\n"
+                 f"      all: {{ depends_on: [lab], help: \"All.\"{all_} }}\n# %s")
+    with pytest.raises(ValueError, match=rf"'deploy {command}' declares {said}, and ") as refused:
+        _loaded("", placement)
+    assert "`ci: skip:`" not in str(refused.value)
+
+
 # --- the members of a gate, and where they run (si#861 task 3) --------------------------------------------
 
 _MEMBERS = """

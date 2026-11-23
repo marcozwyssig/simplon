@@ -1037,9 +1037,10 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     by CI, so it carries its reason where the next reader finds it. An unknown key is refused because a typo
     would be ignored and the leaf would run as if nothing were written, the "nothing to do" that is really a
     failure. On an aggregate (si#861) `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it, and
-    any other key would do nothing, since a derived CI selects leaves only; and so would any key on any command that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or
-    `ci release` command, a Deploy), which a derived CI never selects - both are diagnoses, refused with the
-    reason (si#858 final review). So is `skip:` beside a variant key (si#860): the leaf does not run, so the
+    any other key would do nothing, since a derived CI selects leaves only; and so would any key on any command
+    that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or `ci release` command, a
+    Deploy), which a derived CI never selects - both are diagnoses, refused with the reason (si#858 final
+    review), naming the `ci:` as written. So is `skip:` beside a variant key (si#860): the leaf does not run, so the
     variant would shape nothing.
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on.
@@ -1065,13 +1066,15 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
                 f"`cadence:`/`timeout_minutes:` beside it - a derived CI runs leaves, so declare any other key on "
                 f"the member commands it is meant for")
     if not ci_leaf:
+        said = (f"`ci: {json.dumps(raw, default=str)}`" if not isinstance(raw, Mapping)
+                else "`ci: {}`" if not raw else f"`ci: {written}:`")
         raise ValueError(
-            f"'{where}' declares `ci: {written}:`, and a derived CI runs only the leaves under `ci build` and "
+            f"'{where}' declares {said}, and a derived CI runs only the leaves under `ci build` and "
             f"`ci test`, so the key would do nothing here - take it off")
     if spec.depends_on:
         if not (isinstance(raw, Mapping) and "gate" in raw):
             raise ValueError(
-                f"aggregate '{where}' declares {'`ci: {}`' if not raw else f'`ci: {written}:`'} without `gate:`, and an aggregate's `ci:` holds "
+                f"aggregate '{where}' declares {said} without `gate:`, and an aggregate's `ci:` holds "
                 f"`gate:`, and `cadence:`/`timeout_minutes:` beside it: the key would shape nothing - add a "
                 f"`gate:`, or declare it on the member commands")
         return ""
