@@ -478,7 +478,33 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     return workflowschema.Job(
         key=f"{leaf.words.replace(' ', '-')}-{'platforms' if platforms else 'python'}", step=tuple(steps),
         condition=condition, matrix=workflowschema.Matrix(platform=platforms, python=python),
+        # `github-ubuntu` for a platform job too: what the kind decides holds for every hosted cell - no disk
+        # that persists (so no preflight or probe) and no runner env - while the labels are the cells' own.
         runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[hosted.kind], labels=labels))
+
+
+#: si#860, recorded rather than refused (review ruling): a platform job with a Windows cell that downloads a hand-off
+#: unpacks it in that cell's job shell, `cmd`, with Windows' own tar and a `D:\...` runner temp path. Nobody has
+#: run that on a Windows runner; GNU tar would read `D:` as a remote host, bsdtar should not. Said in the file.
+WINDOWS_HANDOFF_UNMEASURED = (
+    "si#860: on the Windows cell the hand-off is unpacked in `cmd` with Windows' tar from a `D:` path, "
+    "and that has not been measured on a Windows runner; a red unpack step there is this gap, not the leaf.")
+
+
+def _crosses(leaf: Leaf, artifacts: "Mapping[str, Declared]") -> bool:
+    """Whether a cell job downloads a hand-off: its one leaf consumes an artifact nobody fetches from a registry,
+    and a cell job produces nothing for itself, so `handoff.plan` brings it from another job."""
+    return any(not (artifacts.get(a) is not None and artifacts[a].registry) for a in handoff._bound(leaf.spec.consumes))
+
+
+def _orphan_note(selection: Selection, cadence: str, last: Sequence[Leaf]) -> str:
+    """What a run with no main job would otherwise lose without a word (si#860): the derived note's cadence and
+    left-out leaves, and each `after_all` leaf that has no main job to end and so does not run."""
+    lines = ["si#858: derived from this product's command tree, which declares no `workflows: ci:`. si#860: this "
+             "run has no main job, because every leaf it runs is a platform cell."]
+    lines += [f"`{leaf.words}` runs after all the other leaves (`after_all`), in the main job, so it does not run "
+              "here; a cell carries no report." for leaf in last]
+    return "\n".join(textwrap.fill(line, width=95) for line in lines) + _left_out(selection, cadence)
 
 
 def _cell_note(words: str, matrix: workflowschema.Matrix) -> str:
@@ -502,7 +528,9 @@ def _matrix(matrix: workflowschema.Matrix, product: str) -> dict[str, object]:
     for cell in matrix.platform:
         platform = workflowschema.PLATFORMS[cell]
         rows.append({"cell": cell, "os": platform.label, "arch": platform.arch, "shell": platform.shell,
-                     "entry": f"{product}.cmd" if platform.windows else workflowgen.launcher(product)})
+                     # si#666's `exec` on every bash row, so the launcher is the step's process and a cancel
+                     # reaches the kernel; `cmd` has no exec builtin, so the Windows row is the bare launcher.
+                     "entry": f"{product}.cmd" if platform.windows else f"exec {workflowgen.launcher(product)}"})
     return {"fail-fast": False, "matrix": {"include": rows}}
 
 
@@ -517,13 +545,19 @@ def _derived_note(selection: Selection, cadence: str = "") -> str:
         "red gate hides none of the others; a consumer also waits for its producer's success, so a red "
         "producer shows as one red step and its consumer as skipped. A leaf that runs after all the others "
         "(the report) runs last and always.", width=95)
+    return head + _left_out(selection, cadence)
+
+
+def _left_out(selection: Selection, cadence: str) -> str:
+    """The cadence a file runs and every leaf it leaves out, each paragraph led by a blank line; "" for none."""
+    out = ""
     skipped = selection.skipped
     if cadence:
         skipped = tuple(s for s in skipped if s.reason != _PER_PUSH)
-        head += "\n\n" + textwrap.fill(_cadence_note(cadence), width=95)
+        out += "\n\n" + textwrap.fill(_cadence_note(cadence), width=95)
     if not skipped:
-        return head
-    return head + "\n\nLeft out:\n" + "\n".join(
+        return out
+    return out + "\n\nLeft out:\n" + "\n".join(
         textwrap.fill(f"`{s.words}` - {s.reason}", width=95, subsequent_indent="  ") for s in skipped)
 
 
@@ -588,14 +622,22 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     the launchers a platform cell's matrix rows carry.
     """
     key = derivation.model.title
-    jobs = tuple(_to_job(job, derivation.selection, manifest, data, key, product) for job in derivation.model.job)
+    mains = {job.condition for job in derivation.model.job if job.matrix is None}
+    orphans: set[str] = set()
+    jobs = []
+    for job in derivation.model.job:
+        # si#860: the first cell job of a run with no main job carries that run's note and its unrun reports.
+        orphan = job.matrix is not None and job.condition not in mains and job.condition not in orphans
+        if orphan:
+            orphans.add(job.condition)
+        jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan))
     queued = {} if key == KEY else {"concurrency": {"group": key, "cancel-in-progress": False}}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write.
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **queued,
               **workflowgen._workflow_extras({})}
     return workflowgen.Workflow(key=key, path=derivation.model.path, name=key, on=_on(derivation.model.trigger),
-                                jobs=jobs, extras=extras, derived=True)
+                                jobs=tuple(jobs), extras=extras, derived=True)
 
 
 def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
@@ -613,7 +655,7 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
 
 
 def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, data: Mapping[str, object],
-            key: str, product: str) -> workflowgen.Job:
+            key: str, product: str, *, orphan: bool = False) -> workflowgen.Job:
     """One model job as the renderer's job, its conditions written as `to_workflow` describes."""
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
@@ -668,7 +710,17 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
         cell: dict[str, object] = {**gated, "strategy": _matrix(job.matrix, product)}
         if platform:
             cell["defaults"] = {"run": {"shell": "${{ matrix.shell }}"}}
-        note = "\n\n".join(part for part in (*unplaced, _cell_note(leaves[0].words, job.matrix)) if part)
+        leaf = leaves[0]
+        parts = [*unplaced, _cell_note(leaf.words, job.matrix)]
+        windows = any(workflowschema.PLATFORMS[cell].windows for cell in job.matrix.platform)
+        if windows and _crosses(leaf, artifactsection.declared(data)):
+            parts.append(textwrap.fill(WINDOWS_HANDOFF_UNMEASURED, width=95))
+        if orphan:
+            cadence = leaf.spec.ci.cadence
+            last = [other for other in selection.leaves if other.spec.after_all and not other.spec.ci.platforms
+                    and other.spec.ci.cadence in ("", cadence)]
+            parts.append(_orphan_note(selection, cadence, last))
+        note = "\n\n".join(part for part in parts if part)
         return workflowgen.Job(name=job.key, runs_on="${{ matrix.os }}" if platform else labels[0],
                                steps=tuple(steps), note=note, runner=runner, prepared=True,
                                python="" if platform else "${{ matrix.python }}",

@@ -1051,7 +1051,7 @@ def test_platform_cells_replace_the_main_run(tmp_path, monkeypatch):
     for row in rows:
         platform = workflowschema.PLATFORMS[row["cell"]]
         assert (row["os"], row["arch"], row["shell"]) == (platform.label, platform.arch, platform.shell)
-    assert rows[0]["entry"] == context.launcher("demo")
+    assert rows[0]["entry"] == f"exec {context.launcher('demo')}"
     assert _cell_runs(push, "test-suite-platforms")[-1] == "${{ matrix.entry }} test suite"
     assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in cell["steps"])
     assert "carries no report" in _comments(text)
@@ -1077,7 +1077,9 @@ def test_windows_cell_runs_the_cmd_launcher(tmp_path, monkeypatch):
     rows = {row["cell"]: row for row in push["jobs"]["test-suite-platforms"]["strategy"]["matrix"]["include"]}
     assert rows["windows-x64"]["shell"] == "cmd"
     assert rows["windows-x64"]["entry"] == "demo.cmd"
-    assert rows["linux-x64"]["entry"] == "./demo.sh"
+    # si#666: every bash row execs the launcher; cmd has no exec builtin
+    assert rows["linux-x64"]["entry"] == "exec ./demo.sh"
+    assert rows["macos-arm64"]["entry"] == "exec ./demo.sh"
 
 
 def test_platform_job_asserts_the_architecture(tmp_path, monkeypatch):
@@ -1174,3 +1176,48 @@ def test_the_model_carries_the_cell_matrix():
     loaded = _load(_PYTHON)
     (_, cell) = cipipeline.derive(loaded, {}).model.job
     assert cell.matrix == workflowschema.Matrix(python=("3.12", "3.13"))
+
+
+def test_a_run_with_no_main_job_names_what_it_does_not_run(tmp_path, monkeypatch):
+    """Review fix: with every leaf in platform cells there is no main job, and the file still says what the
+    derived note says (the left-out leaves) and names the `after_all` report that has no main job to end."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              idle: { task: ship, unattended: false }
+              suite: { task: ship, unattended: true, ci: { platforms: [linux-x64] } }
+        """ + _top(_SUITES)
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["test-suite-platforms"]
+    said = _comments(text)
+    assert "`test report` runs after all the other leaves" in said and "does not run here" in said
+    assert "`test idle` - " + cipipeline.ATTENDED in said
+
+
+def test_a_windows_cell_that_downloads_a_handoff_says_the_unpack_is_unmeasured(tmp_path, monkeypatch):
+    """Review ruling: recorded, not refused. Only a job with a Windows cell AND a download says it."""
+    body = """
+        ci:
+          build:
+            commands:
+              b-produce: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+          test:
+            commands:
+              t-consume:
+                { task: "test:file", unattended: true, consumes: { file: doc }, ci: { platforms: [PLATS] } }
+        """
+    unmeasured = " ".join(cipipeline.WINDOWS_HANDOFF_UNMEASURED.split())
+    for sub in "wln":
+        (tmp_path / sub).mkdir()
+
+    with_windows = _generated(tmp_path / "w", monkeypatch, body.replace("PLATS", "linux-x64, windows-x64"))
+    assert unmeasured in _comments(with_windows[_CI_PATH][1])
+    linux_only = _generated(tmp_path / "l", monkeypatch, body.replace("PLATS", "linux-x64"))
+    assert unmeasured not in _comments(linux_only[_CI_PATH][1])
+    no_download = _generated(tmp_path / "n", monkeypatch, _PLATFORMS)
+    assert unmeasured not in _comments(no_download[_CI_PATH][1])
