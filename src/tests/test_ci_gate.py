@@ -298,6 +298,32 @@ def test_every_leaf_gated_names_the_gate_file():
     from simplon.tasks import cipipeline
     text = (_MEMBERS % {"system": "", "more": ""}).replace("      unit: { task: ship, unattended: true }\n", "")
     loaded = manifest.load(text, catalogue=catalogue.load())
-    with pytest.raises(ValueError, match=r"is a member of a gate, so they run in ci-test-lab.yml and the push "
-                                         r"path verifies nothing"):
+    with pytest.raises(ValueError, match=r"are all members of a gate, so they run in ci-test-lab.yml and the push "
+                                         r"path verifies nothing - "):
         cipipeline.derive(loaded, yaml.safe_load(text))
+
+
+def test_an_after_all_member_consuming_a_member_artifact_is_not_told_to_join():
+    from simplon.tasks import cipipeline
+    loaded = manifest.load((_MEMBERS % {"system": "", "more": ""})
+                           .replace("system: { task: ship, unattended: true }",
+                                    'system: { task: "toolchain:run", unattended: true, produces: { out: doc } }')
+                           .replace("report: { task: ship, unattended: true, after_all: true }",
+                                    'report: { task: "toolchain:run", unattended: true, after_all: true, '
+                                    "consumes: { source: doc } }"), catalogue=catalogue.load())
+    with pytest.raises(ValueError) as refused:
+        cipipeline.select(loaded, artifacts=_declared())
+    said = str(refused.value)
+    assert ("'test report' runs after all the others (`after_all`) and ends every run, ci.yml included, so "
+            "whatever it consumes must be produced in each run it ends") in said
+    assert "Make 'test report' a member" not in said
+
+
+def test_every_leaf_gated_or_skipped_lists_the_skipped_ones():
+    import yaml
+    from simplon.tasks import cipipeline
+    text = (_MEMBERS % {"system": "", "more": ""}).replace(
+        "unit: { task: ship, unattended: true }", 'unit: { task: ship, ci: { skip: "flaky on CI" } }')
+    with pytest.raises(ValueError, match=r"are all members of a gate, so they run in ci-test-lab.yml and the push "
+                                         r"path verifies nothing \(left out besides: `test unit` - flaky on CI\) - "):
+        cipipeline.derive(manifest.load(text, catalogue=catalogue.load()), yaml.safe_load(text))

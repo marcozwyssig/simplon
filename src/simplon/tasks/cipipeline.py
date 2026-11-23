@@ -146,12 +146,18 @@ def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[L
                 continue
             for producer, why in absent.get(artifact, ()):
                 if producer in gated:
+                    gate = gated[producer].words
+                    # An `after_all` consumer ends every run, ci.yml included, so membership would not help it.
+                    way = (f"'{leaf.words}' runs after all the others (`after_all`) and ends every run, ci.yml "
+                           f"included, so whatever it consumes must be produced in each run it ends; give "
+                           f"'{artifact}' a `registry:` it is fetched from, or consume it in a member of `{gate}`"
+                           if leaf.spec.after_all else
+                           f"Make '{leaf.words}' a member of `{gate}` too, or give '{artifact}' a `registry:` it "
+                           f"is fetched from")
                     raise ValueError(
                         f"derived CI: '{leaf.words}' runs in {_key_of(path)}.yml and consumes '{artifact}', which "
-                        f"'{producer}' produces, and '{producer}' is a member of `{gated[producer].words}` ({why}) - "
-                        f"artifacts do not cross workflow files, so the run would fail on a missing file. Make "
-                        f"'{leaf.words}' a member of `{gated[producer].words}` too, or give '{artifact}' a "
-                        f"`registry:` it is fetched from")
+                        f"'{producer}' produces, and '{producer}' is a member of `{gate}` ({why}) - "
+                        f"artifacts do not cross workflow files, so the run would fail on a missing file. {way}")
                 raise ValueError(
                     f"derived CI: '{leaf.words}' consumes '{artifact}', which '{producer}' produces, and "
                     f"'{producer}' is not run by the CI ({why}) - the run would fail on a missing file. "
@@ -453,10 +459,15 @@ def _nothing_to_run(manifest: Manifest, selection: Selection, path: str) -> str:
     behind = [] if path != PATH else [_key_of(run.path) + ".yml" for run in gates(manifest)
                                       if any(member.words in gone for member in run.members)]
     if behind:
-        # si#861: the same refusal where the leaves went behind a gate, naming the gate files too.
-        cadence = " or carries a `cadence:`" if elsewhere else ""
-        return (f"derived CI: every unattended leaf of `ci build` and `ci test` is a member of a gate{cadence}, so "
-                f"they run in {', '.join([*behind, *elsewhere])} and the push path verifies nothing - the derived "
+        # si#861: the same refusal where the leaves went behind a gate, naming the gate files too, and listing the
+        # leaves left out for another reason as the plain message does.
+        cadence = " or carry a `cadence:`" if elsewhere else ""
+        moved = set(_gated(gates(manifest))) | {s.words for s in selection.skipped
+                                                if s.reason in {_elsewhere(c) for c in _cadences(manifest)}}
+        other = "; ".join(f"`{s.words}` - {s.reason}" for s in selection.skipped if s.words not in moved)
+        return (f"derived CI: the leaves of `ci build` and `ci test` a machine may run are all members of a "
+                f"gate{cadence}, so they run in {', '.join([*behind, *elsewhere])} and the push path verifies "
+                f"nothing" + (f" (left out besides: {other})" if other else "") + " - the derived "
                 f"ci.yml would be a green tick over nothing on every push. Place a leaf outside every gate"
                 f"{' and without `cadence:`' if elsewhere else ''} under `ci build` or `ci test`, or declare "
                 f"`{workflowgen.SECTION}: {KEY}:` with a push CI of your own, which switches off only ci.yml")
