@@ -41,3 +41,37 @@ self_hosted_debian typeOf simplon.workflow.RunnerKind {
     env_value = "1"
   }
 }
+
+// The platform cells a leaf's `platforms:` names (si#860), measured on cleon `ci.yml` and asbundle
+// `build-matrix.yml` (2026-11-23): the runner label, what `uname -m` prints in bash there, and the shell. A firn name
+// has no `-`: `linux_x64` is the kernel's `linux-x64`. `arch` is what `uname -m` prints in bash on the cell.
+linux_x64 typeOf simplon.workflow.Platform {
+  label = "ubuntu-24.04"
+  arch = "x86_64"
+  shell = "bash"
+  windows = false
+}
+linux_arm64 typeOf simplon.workflow.Platform {
+  label = "ubuntu-24.04-arm"
+  arch = "aarch64"
+  shell = "bash"
+  windows = false
+}
+macos_x64 typeOf simplon.workflow.Platform {
+  label = "macos-15-intel"
+  arch = "x86_64"
+  shell = "bash"
+  windows = false
+}
+macos_arm64 typeOf simplon.workflow.Platform {
+  label = "macos-15"
+  arch = "arm64"
+  shell = "bash"
+  windows = false
+}
+windows_x64 typeOf simplon.workflow.Platform {
+  label = "windows-2025"
+  arch = "x86_64"
+  shell = "cmd"
+  windows = true
+}

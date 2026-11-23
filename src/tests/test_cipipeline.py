@@ -705,3 +705,22 @@ def test_check_before_any_generate_reports_the_absent_derived_file(tmp_path, mon
     assert not (tmp_path / _CI_PATH).exists()
     captured = capsys.readouterr()
     assert f"{_CI_PATH} disagrees with demo.yaml" in captured.out + captured.err
+
+
+def test_platform_cells_are_the_measured_five() -> None:
+    # act: the cells cleon ci.yml and asbundle build-matrix.yml carry (si#860, measured 2026-11-23)
+    cells = workflowschema.PLATFORMS
+
+    # assert
+    assert tuple(cells) == ("linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64")
+    assert [c.label for c in cells.values()] == [
+        "ubuntu-24.04", "ubuntu-24.04-arm", "macos-15-intel", "macos-15", "windows-2025"]
+    assert [c.arch for c in cells.values()] == ["x86_64", "aarch64", "x86_64", "arm64", "x86_64"]
+    assert [c.shell for c in cells.values()] == ["bash", "bash", "bash", "bash", "cmd"]
+    assert [name for name, c in cells.items() if c.windows] == ["windows-x64"]
+
+
+def test_a_step_may_carry_a_time_limit() -> None:
+    # assert: absent by default, an int when set
+    assert workflowschema.Step().timeout_minutes is None
+    assert workflowschema.Step(timeout_minutes=75).timeout_minutes == 75

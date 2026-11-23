@@ -43,6 +43,29 @@ RunnerKind typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
+// A platform cell a leaf can be spread over (si#860): the runner label, what `uname -m` prints in bash there, the
+// shell and whether it is Windows. Measured on cleon `ci.yml` and asbundle `build-matrix.yml` (2026-11-23). The
+// instances are in runners.firn.
+Platform typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property label typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property arch typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property shell typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property windows typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+}
+
 // One variable of a runner kind's environment.
 RunnerEnv typeOf firn.core.Class extends firn.core.NamedResource {
   property env_name typeOf firn.core.Attribute {
@@ -107,6 +130,11 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
   }
   property kernel_step typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  // GitHub's `timeout-minutes` on the step, from a leaf's `ci: { timeout_minutes: N }` (si#860).
+  property timeout_minutes typeOf firn.core.Attribute {
+    range = firn.core.IntegerLiteral
     subjectCardinality = 0..1
   }
 }

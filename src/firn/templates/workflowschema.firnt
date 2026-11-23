@@ -100,5 +100,18 @@ template WorkflowSchema {
       |    ),
     }
     |}
+    |
+    |
+    |#: Each platform cell a leaf's `platforms:` may name (si#860), keyed by the kernel's spelling, in model order.
+    |PLATFORMS: dict[str, Platform] = {
+    for k : `simplon.workflow.Platform` {
+      if k.windows {
+        |    "${k.name.replace("_", "-")}": Platform(label="${k.label}", arch="${k.arch}", shell="${k.shell}", windows=True),
+      }
+      if not k.windows {
+        |    "${k.name.replace("_", "-")}": Platform(label="${k.label}", arch="${k.arch}", shell="${k.shell}", windows=False),
+      }
+    }
+    |}
   }
 }
