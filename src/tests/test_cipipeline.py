@@ -1221,3 +1221,125 @@ def test_a_windows_cell_that_downloads_a_handoff_says_the_unpack_is_unmeasured(t
     assert unmeasured not in _comments(linux_only[_CI_PATH][1])
     no_download = _generated(tmp_path / "n", monkeypatch, _PLATFORMS)
     assert unmeasured not in _comments(no_download[_CI_PATH][1])
+
+
+# --- `ci: { timeout_minutes: }` and `ci: { emulates: }` (si#860 task 5) -----------------------------------
+
+_TIMEOUT = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              lab: { task: ship, unattended: true, ci: { timeout_minutes: 95 } }
+        """
+
+_EMULATES = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              arm: { task: ship, unattended: true, ci: { emulates: [linux/arm64] } }
+              more: { task: ship, unattended: true, ci: { emulates: [linux/arm64, linux/arm/v7] } }
+        """
+
+
+def _emulations(doc: dict, job: str) -> list[dict]:
+    return [step for step in doc["jobs"][job]["steps"] if step.get("uses") == workflowgen.QEMU_ACTION]
+
+
+def test_timeout_is_a_step_limit_in_a_shared_job(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _TIMEOUT)
+
+    # assert: decision 4, the leaf's own step carries the limit, the job and the other leaves none
+    push, _ = files[_CI_PATH]
+    steps = _cell_steps(push, "ci")
+    lab = next(step for step in steps if step.get("run", "").endswith("test lab"))
+    assert lab["timeout-minutes"] == 95
+    one = next(step for step in steps if step.get("run", "").endswith("test one"))
+    assert "timeout-minutes" not in one
+    assert "timeout-minutes" not in push["jobs"]["ci"]
+    lab_step = next(s for s in cipipeline.derive(_load(_TIMEOUT), {}).model.job[0].step
+                    if s.command is not None and s.command.ci.timeout_minutes)
+    assert lab_step.timeout_minutes == 95
+
+
+def test_timeout_is_the_job_limit_in_a_cell_job(tmp_path, monkeypatch):
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { timeout_minutes: 40, platforms: [linux-x64, macos-arm64] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    # assert: decision 4, the same limit for every cell, as the job's; the step carries none of its own
+    push, _ = files[_CI_PATH]
+    cell = push["jobs"]["test-suite-platforms"]
+    assert cell["timeout-minutes"] == 40
+    assert not any("timeout-minutes" in step for step in _cell_steps(push, "test-suite-platforms"))
+    (_, model_cell) = cipipeline.derive(_load(body), {}).model.job
+    assert model_cell.timeout_minutes == 40
+
+
+def test_emulation_registered_once_before_the_leaves(tmp_path, monkeypatch):
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    files = _generated(tmp_path, monkeypatch, _EMULATES + _top(_SELF_HOSTED, _TOOLCHAINS))
+
+    # assert: decision 7, one step for the job, every platform once in first-written order, the release's shape
+    push, _ = files[_CI_PATH]
+    (emulation,) = _emulations(push, "ci")
+    assert emulation["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64,linux/arm/v7"}
+    assert emulation["id"] == cipipeline.PREPARE["emulation"]
+    # after every preparation step, before the first leaf
+    steps = _cell_steps(push, "ci")
+    at = steps.index(emulation)
+    assert [s.get("id") for s in steps[:at] if s.get("id")] == [
+        cipipeline.PREPARE["docker"], cipipeline.PREPARE["disk"], cipipeline.PREPARE["install"]]
+    assert steps[at + 1]["run"].endswith("build one")
+    # and a red registration skips every later leaf, like any preparation step
+    arm = next(step for step in steps if step.get("run", "").endswith("test arm"))
+    assert f"steps.{cipipeline.PREPARE['emulation']}.outcome == 'success'" in arm["if"]
+
+
+def test_no_emulation_step_where_no_leaf_asks(tmp_path, monkeypatch):
+    push, _ = _generated(tmp_path, monkeypatch, _THREE)[_CI_PATH]
+    assert _emulations(push, "ci") == []
+
+
+def test_emulation_in_the_python_cell_job(tmp_path, monkeypatch):
+    """simplon's hand-written `suite-python-3-14`: a python cell whose leaf runs linux/arm64 files."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { python: ["3.14"], emulates: [linux/arm64] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, _ = files[_CI_PATH]
+    (emulation,) = _emulations(push, "test-suite-python")
+    assert emulation["with"]["platforms"] == "linux/arm64"
+    steps = _cell_steps(push, "test-suite-python")
+    assert steps.index(emulation) < next(i for i, s in enumerate(steps) if s.get("run", "").endswith("test suite"))
+    # the main job runs the leaf too (decision 5), so it registers there as well
+    assert len(_emulations(push, "ci")) == 1
+
+
+def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
+    """No kind on this branch has `can_emulate = false` (#722's container kind is not here), so the table is
+    patched: such a machine registers nothing, and the file names the gap rather than a step that cannot work."""
+    assert all(kind.can_emulate for kind in workflowschema.RUNNER_KINDS.values())  # why the patch
+    monkeypatch.setitem(workflowschema.RUNNER_KINDS, "github-ubuntu",
+                        dataclasses.replace(workflowschema.RUNNER_KINDS["github-ubuntu"], can_emulate=False))
+
+    files = _generated(tmp_path, monkeypatch, _EMULATES)
+
+    push, text = files[_CI_PATH]
+    assert _emulations(push, "ci") == []
+    said = _comments(text)
+    assert "#722" in said and "linux/arm64, linux/arm/v7" in said

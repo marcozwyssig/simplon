@@ -230,11 +230,15 @@ DISK_PREFLIGHT = "disk-preflight"
 INSTALL = "install"
 REPORT_UPLOAD = "report-upload"
 DISK_CLEANUP = "disk-cleanup"
+#: si#860: the registration of every platform the job's leaves name in `ci: emulates:`, the last preparation step.
+EMULATION = "emulation"
 
 #: The step ids of the preparation steps. An `_`, never a `-`: a leaf's condition reads them in an expression,
 #: where `steps.prepare-docker` would be a subtraction.
-PREPARE = {"docker": "prepare_docker", "disk": "prepare_disk", "install": "prepare_install"}
-_PREPARES = {DOCKER_PREFLIGHT: PREPARE["docker"], DISK_PREFLIGHT: PREPARE["disk"], INSTALL: PREPARE["install"]}
+PREPARE = {"docker": "prepare_docker", "disk": "prepare_disk", "install": "prepare_install",
+           "emulation": "prepare_emulation"}
+_PREPARES = {DOCKER_PREFLIGHT: PREPARE["docker"], DISK_PREFLIGHT: PREPARE["disk"], INSTALL: PREPARE["install"],
+             EMULATION: PREPARE["emulation"]}
 
 #: The model's trigger events, as the `on:` keys and bodies GitHub reads. `derive` names the events and
 #: `to_workflow` writes them from here, so the rendered `on:` is the model's and not a second copy; the default
@@ -433,16 +437,36 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
     if not runs:
         raise ValueError(_nothing_to_run(manifest, selection, path))
     _refuse_producers_moved_last(runs, last)
+    kind = workflowschema.RUNNER_KINDS[runner.kind]
     steps = [workflowschema.Step(kernel_step=name) for name in (DOCKER_PREFLIGHT, DISK_PREFLIGHT, INSTALL)
              if name in kernel]
-    steps += [workflowschema.Step(command=leaf.spec) for leaf in (*runs, *last)]
+    steps += [workflowschema.Step(kernel_step=EMULATION)] if _emulates((*runs, *last)) and kind.can_emulate else []
+    # si#860 decision 4: in a job other leaves share, the limit is the leaf's own step's.
+    steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes)
+              for leaf in (*runs, *last)]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
         _reports(data)  # refused here, at the decision, rather than when the step is written
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
     if DISK_CLEANUP in kernel:
         steps.append(workflowschema.Step(kernel_step=DISK_CLEANUP))
     return workflowschema.Job(key=key, step=tuple(steps), condition=condition,
-                              runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=labels))
+                              runner=workflowschema.Runner(kind=kind, labels=labels))
+
+
+def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
+    """Every platform the leaves name in `ci: emulates:`, once each, in first-written order (si#860): one
+    registration serves the whole job, as binfmt is the machine's and not a step's."""
+    return tuple(dict.fromkeys(platform for leaf in leaves for platform in leaf.spec.ci.emulates))
+
+
+#: si#860: what a job says when a leaf of it names `ci: emulates:` and the job's machine cannot register any
+#: (`can_emulate = false`, spec 5.4). Routing such a leaf to a machine that can is #722's, not this file's.
+EMULATION_GAP = ("si#860: {leaves} name `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
+                 "cannot register emulation, so no step does it here and a leaf running a foreign binary "
+                 "fails with `Exec format error`. Running such a leaf on a machine that can is #722.")
+
+EMULATION_NOTE = ("si#860: the leaves' `ci: emulates:`, registered once for the job before any leaf runs; every "
+                  "later leaf waits for its success. The image is the kernel's binfmt pin, as the release uses.")
 
 
 #: si#860: the step a platform cell runs before anything else, and its script. In bash on every cell, Windows
@@ -472,12 +496,16 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     platforms, python = leaf.spec.ci.platforms, leaf.spec.ci.python
     steps = [workflowschema.Step(kernel_step=ARCH_CHECK)] if platforms else []
     steps += [workflowschema.Step(kernel_step=INSTALL)] if INSTALL in kernel else []
+    # `emulates:` beside `platforms:` is refused at load, so this is a python cell on github-ubuntu, which can.
+    steps += [workflowschema.Step(kernel_step=EMULATION)] if leaf.spec.ci.emulates else []
     steps.append(workflowschema.Step(command=leaf.spec))
     if platforms:
         labels = tuple(workflowschema.PLATFORMS[cell].label for cell in platforms)
     return workflowschema.Job(
         key=f"{leaf.words.replace(' ', '-')}-{'platforms' if platforms else 'python'}", step=tuple(steps),
         condition=condition, matrix=workflowschema.Matrix(platform=platforms, python=python),
+        # si#860 decision 4: a leaf's own job carries its limit as the job's, the same for every cell.
+        timeout_minutes=leaf.spec.ci.timeout_minutes,
         # `github-ubuntu` for a platform job too: what the kind decides holds for every hosted cell - no disk
         # that persists (so no preflight or probe) and no runner env - while the labels are the cells' own.
         runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[hosted.kind], labels=labels))
@@ -671,10 +699,18 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
         waits = [*ids, *(leaf_ids[maker] for maker in producers.get(line, ()))]
         return "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in waits)]) + " }}"
 
+    by_spec = {id(leaf.spec): leaf for leaf in leaves}
+    emulates = _emulates([by_spec[id(step.command)] for step in job.step if step.command is not None])
     steps: list[workflowgen.Step] = []
     first = True
     for step in job.step:
-        if step.kernel_step in _PREPARES:
+        if step.kernel_step == EMULATION:
+            # si#860: the release's emulation step (si#570), with the id the later leaves' gate reads.
+            from simplon.adapters.labhost import BINFMT_IMAGE
+            steps.append(workflowgen.Step(note=EMULATION_NOTE, verbatim={
+                "name": f"Register emulation for {', '.join(emulates)}", "id": PREPARE["emulation"],
+                "uses": workflowgen.QEMU_ACTION, "with": {"image": BINFMT_IMAGE, "platforms": ",".join(emulates)}}))
+        elif step.kernel_step in _PREPARES:
             prepared = kernel[step.kernel_step]
             steps.append(prepared._replace(modifiers={"id": _PREPARES[step.kernel_step], **prepared.modifiers}))
         elif step.kernel_step == REPORT_UPLOAD:
@@ -698,6 +734,8 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                 modifiers["if"] = "always()"
             elif not first:
                 modifiers["if"] = gate(line)
+            if step.timeout_minutes is not None:
+                modifiers["timeout-minutes"] = step.timeout_minutes
             first = False
             steps.append(workflowgen.Step(command=line, modifiers=modifiers))
     labels = job.runner.labels
@@ -708,6 +746,8 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
         # github-ubuntu's, with the row's interpreter.
         platform = bool(job.matrix.platform)
         cell: dict[str, object] = {**gated, "strategy": _matrix(job.matrix, product)}
+        if job.timeout_minutes is not None:
+            cell["timeout-minutes"] = job.timeout_minutes
         if platform:
             cell["defaults"] = {"run": {"shell": "${{ matrix.shell }}"}}
         leaf = leaves[0]
@@ -727,7 +767,11 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                entry="${{ matrix.entry }}" if platform else "",
                                extras=workflowgen._with_runner_env(runner, cell, where))
     cadence = next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all)
-    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced,
+    gap = ""
+    if emulates and not job.runner.kind.can_emulate:
+        named = ", ".join(f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates)
+        gap = textwrap.fill(EMULATION_GAP.format(leaves=named, platforms=", ".join(emulates), kind=kind), width=95)
+    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap,
                                           _derived_note(selection, cadence)) if part)
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            note=note, runner=runner, prepared=True,
