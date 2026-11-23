@@ -211,6 +211,43 @@ def gates(manifest: Manifest) -> tuple[GateRun, ...]:
     return tuple(out)
 
 
+def glob_pattern(globs: Sequence[str]) -> str:
+    """One POSIX ERE for `grep -E` from a gate's `paths:` globs, in GitHub's filter syntax (si#861).
+
+    Each glob is an anchored alternative `^<re>$`, joined by `|` (ERE has no `(?:`). `**/` matches zero or more
+    directories (`**/Dockerfile` matches a root `Dockerfile`), a trailing `/**` anything below, any other `**`
+    anything; `*` and `?` never cross `/`. Every other ERE metacharacter is escaped. Brackets are taken
+    literally, not as character classes: a deliberate simplification, no reachable manifest uses them.
+    The loader refuses `paths: []`, so `globs` is never empty here.
+    """
+    return "|".join("^" + _glob_re(glob) + "$" for glob in globs)
+
+
+def _glob_re(glob: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(.*/)?")
+            i += 3
+        elif glob.startswith("/**", i) and i + 3 == len(glob):
+            out.append("/.*")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append("\\" + glob[i] if glob[i] in ".+()|{}[]^$\\" else glob[i])
+            i += 1
+    return "".join(out)
+
+
 def _refuse_member(member: Leaf, gate: str, path: str) -> None:
     where = f"derived CI, the gate of `{gate}`"
     workflowgen.require_unattended(member.spec, member.words, where)

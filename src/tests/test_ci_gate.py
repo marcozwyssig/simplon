@@ -327,3 +327,38 @@ def test_every_leaf_gated_or_skipped_lists_the_skipped_ones():
     with pytest.raises(ValueError, match=r"are all members of a gate, so they run in ci-test-lab.yml and the push "
                                          r"path verifies nothing \(left out besides: `test unit` - flaky on CI\) - "):
         cipipeline.derive(manifest.load(text, catalogue=catalogue.load()), yaml.safe_load(text))
+
+
+@pytest.mark.parametrize("glob, path, matches", [
+    ("src/sidecar/api/grpc/**", "src/sidecar/api/grpc/a/b.proto", True),
+    ("src/sidecar/api/grpc/**", "src/sidecar/api/grpcx/a", False),
+    ("deploy/env/*/lab.yml", "deploy/env/dev/lab.yml", True),
+    ("deploy/env/*/lab.yml", "deploy/env/a/b/lab.yml", False),
+    ("deploy/env/*/lab.yml", "deploy/env/dev/labxyml", False),
+    ("**/Dockerfile", "Dockerfile", True),
+    ("**/Dockerfile", "a/b/Dockerfile", True),
+    ("**/Dockerfile", "a/Dockerfile.bak", False),
+    ("a+b/**", "a+b/c", True),
+    ("a+b/**", "aab/c", False),
+    ("x(1)/?", "x(1)/z", True),
+    ("x(1)/?", "x(1)/zz", False),
+    ("x(1)/?", "x(1)//", False),
+])
+def test_glob_pattern(glob, path, matches):
+    import re
+    import subprocess
+    from simplon.tasks import cipipeline
+    pattern = cipipeline.glob_pattern([glob])
+    assert (any(re.fullmatch(alt, path) for alt in pattern.split("|")) is matches), pattern
+    grep = subprocess.run(["grep", "-qE", "--", pattern], input=path + "\n", text=True)
+    assert (grep.returncode == 0) is matches, pattern
+
+
+def test_glob_pattern_joins_alternatives():
+    import subprocess
+    from simplon.tasks import cipipeline
+    pattern = cipipeline.glob_pattern(["a/**", "b.txt"])
+    assert "(?:" not in pattern
+    for path, matches in (("a/x", True), ("b.txt", True), ("bxtxt", False), ("c/a/x", False)):
+        grep = subprocess.run(["grep", "-qE", "--", pattern], input=path + "\n", text=True)
+        assert (grep.returncode == 0) is matches, (path, pattern)
