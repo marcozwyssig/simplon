@@ -1295,7 +1295,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     runs = gates(manifest)
     derived_gates = [run for run in runs if _key_of(run.path) not in own]
     derivations: list[Derivation] = []
-    _refuse_variants_in_owned_gates([run for run in runs if run not in derived_gates])
+    _refuse_variants_in_owned_gates([run for run in runs if run not in derived_gates], derived_gates)
     if KEY in own:
         _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
                                         {member.words for run in runs for member in run.members})
@@ -1317,16 +1317,20 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     return out
 
 
-def _refuse_variants_in_owned_gates(owned: Sequence[GateRun]) -> None:
-    """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives that
-    file, so `timeout_minutes:` or `emulates:` on a member would shape nothing - `_refuse_variants_nobody_derives`'s
-    DIAGNOSIS, in the words of the file the member runs in. An `after_all` member also ends the derived runs, which
-    read its keys."""
+def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[GateRun] = ()) -> None:
+    """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives no
+    such file, so `timeout_minutes:` or `emulates:` on a member would shape nothing -
+    `_refuse_variants_nobody_derives`'s DIAGNOSIS, in the words of the file the member runs in. An `after_all`
+    member also ends the derived runs, which read its keys; and a member of a `derived` gate as well runs in
+    that gate's file, which reads them (final review).
+    Not built, noted: the mirror case, an `after_all` member's key accepted where every file it ends is the
+    product's own."""
+    read = {member.words for run in derived for member in run.members}
     for run in owned:
         stem = _key_of(run.path)
         for member in run.members:
             written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), None)]
-            if written and not member.spec.after_all:
+            if written and not member.spec.after_all and member.words not in read:
                 raise ValueError(
                     f"'{member.words}' declares `ci: {written[0]}:` and is a member of the gate of `{run.words}`, so "
                     f"it runs in the product's own {stem}.yml (`{workflowgen.SECTION}: {stem}:`): the kernel derives "

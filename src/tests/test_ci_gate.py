@@ -786,3 +786,17 @@ def test_a_member_variant_key_in_a_product_owned_gate_file_is_refused_naming_tha
     said = str(refused.value)
     assert "'test system' declares `ci: timeout_minutes:`" in said
     assert "the product's own ci-test-lab.yml" in said and "runs in ci.yml" not in said
+
+
+def test_a_member_also_in_a_derived_gate_keeps_its_variant_key():
+    """A member of a product-owned gate file that is also a member of a derived one: the derived file reads its
+    `timeout_minutes:`, so the key shapes something and is not refused."""
+    text = _lab_text(system=", ci: { timeout_minutes: 30 }",
+                     tail="workflows:\n  ci-test-lab:\n    handwritten: the lab, by hand\n").replace(
+        '      report: { task: "test:report" }\n',
+        '      report: { task: "test:report" }\n'
+        '      smoke: { depends_on: [system], help: "Smoke.", ci: { gate: { label: needs-smoke } } }\n')
+    _, files = _lab_workflows(text)
+    assert not files[_LAB_PATH].derived
+    smoke = _lab_rendered(text, ".github/workflows/ci-test-smoke.yml")
+    assert "exec ./netctl.sh test system" in smoke and "timeout-minutes: 30" in smoke
