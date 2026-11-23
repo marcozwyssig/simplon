@@ -354,6 +354,29 @@ def _refuse_producers_moved_last(runs: Sequence[Leaf], last: Sequence[Leaf]) -> 
                         f"'{artifact}' in a leaf that runs in order")
 
 
+def _refuse_cell_producers(cells: Sequence[Leaf], selection: Selection, artifacts: "Mapping[str, Declared]") -> None:
+    """A cell leaf that produces what another leaf of the run consumes is refused (si#860 final review).
+
+    Its job runs it once per cell, and a `python:` leaf once more in the main job, so the artifact would be
+    produced several times, and one run uploads an artifact once. `handoff.plan` refuses that too, later and in a
+    job's words (`strategy:`, a job key the product never wrote); this says it in the manifest's, before the
+    plan. A DIAGNOSIS: the run could not hand the artifact over. An artifact with a `registry:` is exempt, as in
+    `handoff.plan`: its consumer fetches it."""
+    for cell in cells:
+        key = "platforms" if cell.spec.ci.platforms else "python"
+        for artifact in handoff._bound(cell.spec.produces):
+            declared = artifacts.get(artifact)
+            if declared is not None and declared.registry:
+                continue
+            for leaf in selection.leaves:
+                if leaf.words != cell.words and artifact in handoff._bound(leaf.spec.consumes):
+                    raise ValueError(
+                        f"derived CI: '{cell.words}' declares `ci: {key}:`, so it runs once per cell and would "
+                        f"produce '{artifact}' once per cell, and '{leaf.words}' consumes it - one run hands an "
+                        f"artifact over once. Take `ci: {key}:` off '{cell.words}' and put it on a leaf that "
+                        f"produces nothing another consumes, or give '{artifact}' a `registry:` it is fetched from")
+
+
 def _reports(data: Mapping[str, object]) -> str:
     """The directory the report upload archives, with testrun's refusal saying who asked for it."""
     try:
@@ -425,6 +448,7 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
     for at, (cadence, selection) in enumerate(zip(cadences, selections), 1):
         condition = _SCHEDULE_GATE.format(cron=cadence) if scheduled else ""
         cells = _cells(selection)
+        _refuse_cell_producers(cells, selection, artifacts)
         # si#860: a run whose every leaf runs in platform cells (cleon's dispatched matrix) is the cell jobs
         # alone; with no cells either, `_job` refuses the empty run as before.
         if _runs(selection) or not cells:

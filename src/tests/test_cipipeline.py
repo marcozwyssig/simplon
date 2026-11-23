@@ -1477,3 +1477,44 @@ def test_scheduled_concurrency_is_keyed_on_the_schedule(tmp_path, monkeypatch):
     (tmp_path / "n").mkdir()
     nightly = _generated(tmp_path / "n", monkeypatch, _NIGHTLY)[_NIGHTLY_PATH][0]
     assert nightly["concurrency"] == {"group": "ci-nightly", "cancel-in-progress": False}
+
+
+_DATA = yaml.safe_load(_HEAD)
+
+_CELL_PRODUCER = """
+        ci:
+          build:
+            commands:
+              b-produce: {{ task: "toolchain:run", unattended: true, produces: {{ out: {artifact} }}, ci: {{ {variant} }} }}
+          test:
+            commands:
+              t-consume: {{ task: "test:file", unattended: true, consumes: {{ file: {artifact} }}{consumer} }}
+        """
+
+
+@pytest.mark.parametrize(("variant", "consumer", "key"), [
+    ("platforms: [linux-x64]", "", "platforms"),
+    ('python: ["3.14"]', ', ci: { python: ["3.14"] }', "python"),
+])
+def test_a_cell_leaf_that_produces_for_another_leaf_is_refused(variant, consumer, key):
+    """Final review item 5: a cell job runs its leaf once per cell, so its artifact would be produced once per cell
+    (and once more in the main job for `python:`), and the run uploads an artifact once. Refused before the
+    hand-off plan, in the manifest's words."""
+    loaded = _load(_CELL_PRODUCER.format(artifact="doc", variant=variant, consumer=consumer))
+
+    with pytest.raises(ValueError) as refused:
+        cipipeline.derive(loaded, _DATA)
+
+    said = str(refused.value)
+    assert said.startswith("derived CI: 'build b-produce' declares `ci: " + key + ":`")
+    assert "'doc'" in said and "'test t-consume'" in said
+    assert "Take `ci: " + key + ":` off 'build b-produce'" in said and "`registry:`" in said
+
+
+def test_a_cell_leaf_producing_a_fetched_artifact_is_not_refused():
+    """An artifact with a `registry:` is fetched by its consumer, not handed over from the cell job."""
+    loaded = _load(_CELL_PRODUCER.format(artifact="note", variant="platforms: [linux-x64]", consumer=""))
+
+    derivation = cipipeline.derive(loaded, _DATA)
+
+    assert [job.key for job in derivation.model.job] == ["ci", "build-b-produce-platforms"]

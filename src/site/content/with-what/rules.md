@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 307 | nothing - the declaration had no working meaning |
+| diagnosis | 308 | nothing - the declaration had no working meaning |
 | expression rule | 52 | something it could otherwise have said |
-| **all load-time refusals** | **359** | |
+| **all load-time refusals** | **360** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -106,6 +106,8 @@ Since si#860 a declared `workflows:` key switches off only the derived workflow 
 `workflows: ci:` declared the cadence files are still derived, and a variant key (`python`, `platforms`,
 `timeout_minutes`, `emulates`) on a leaf that would run in the product's own ci.yml is a further diagnosis:
 nothing would read it.
+So is a leaf with `python:` or `platforms:` that produces an artifact another leaf consumes: its cells would
+produce it once each, and one run hands an artifact over once.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

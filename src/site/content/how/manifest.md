@@ -1469,6 +1469,9 @@ ci:
 - **A cell job carries no report.** Its result is its colour, one per cell; it gets `support install`
   where the product declares `toolchains:`, and no disk preflight or docker probe, since a hosted machine's
   disk does not persist.
+  A cell leaf that produces an artifact another leaf consumes is refused: its cells would produce it once
+  each, and a run hands an artifact over once. Take the variant off the producer, or give the artifact a
+  `registry:` its consumer fetches it from.
 - **`timeout_minutes:`** is a positive whole number. In the main job it is the leaf's step's
   `timeout-minutes`, so the leaves beside it keep theirs; in a cell job it is the job's, the same for every
   cell.
