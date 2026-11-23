@@ -398,7 +398,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     del data["workflows"]["ci"]
     data["runner"] = {"kind": "self-hosted-debian", "labels": "ghr-8"}
 
-    (ci,) = [w for w in cipipeline.workflows(manifest, data) if w.key == cipipeline.KEY]
+    (ci,) = [w for w in cipipeline.workflows(manifest, data, product=PRODUCT) if w.key == cipipeline.KEY]
     rendered = workflowgen.render(ci, manifest=manifest, product=PRODUCT, source=MANIFEST.name,
                                   artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
     (job,) = yaml.safe_load(rendered)["jobs"].values()

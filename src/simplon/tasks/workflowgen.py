@@ -348,6 +348,10 @@ class Job:
     #: steps of its own, with the ids its leaves' conditions read. Rendering inserts them only for a job
     #: that does not, so a derived job gets them once and in the place its conditions expect.
     prepared: bool = False
+    #: si#860: what this job's command lines start with instead of `launcher(product)`. A platform cell job runs
+    #: `${{ matrix.entry }}`, because its Windows cell types `<product>.cmd` where every other cell types the
+    #: shell launcher; "" is the launcher, as for every job before si#860.
+    entry: str = ""
 
 
 @dataclass(frozen=True)
@@ -2003,7 +2007,7 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
             # the kernel and its pytest with no junit. Safe because this `run:` is one command with
             # nothing after it; an `if: always()` follow-up is a step of its own, in a shell of its own.
             line = (f"{'exec ' if _execs(_shell(step.modifiers, job.extras, workflow_extras)) else ''}"
-                    f"{launcher(product)} {group.replace('.', ' ')} {name}")
+                    f"{job.entry or launcher(product)} {group.replace('.', ' ')} {name}")
             body = {**step.modifiers,
                     "run": line + _parameters(manifest, group, name, step.params,
                                               where=f"{where}, step {index + 1}",

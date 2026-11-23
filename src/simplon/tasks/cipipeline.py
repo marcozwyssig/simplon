@@ -311,8 +311,15 @@ def _nothing_to_run(manifest: Manifest, selection: Selection, path: str) -> str:
 
 
 def _runs(selection: Selection) -> list[Leaf]:
-    """The leaves that run in order, every one but the `after_all` ones; none of them means no derived ci.yml."""
-    return [leaf for leaf in selection.leaves if not leaf.spec.after_all]
+    """The leaves the main job runs in order: every one but the `after_all` ones and, since si#860, the ones with
+    `ci: platforms:`, which run only in their cells (decision 6). None of them means no main job."""
+    return [leaf for leaf in selection.leaves if not leaf.spec.after_all and not leaf.spec.ci.platforms]
+
+
+def _cells(selection: Selection) -> list[Leaf]:
+    """The leaves that get a matrix job of their own (si#860): `ci: python:` adds cells beside the main job's run,
+    `ci: platforms:` replaces it."""
+    return [leaf for leaf in selection.leaves if leaf.spec.ci.python or leaf.spec.ci.platforms]
 
 
 def _refuse_producers_moved_last(runs: Sequence[Leaf], last: Sequence[Leaf]) -> None:
@@ -389,17 +396,23 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     scheduled = path == SCHEDULED_PATH
-    jobs = tuple(
-        _job(manifest, data, f"{JOB}-{at}" if scheduled else JOB, selection, runner, labels, kernel, path,
-             condition=_SCHEDULE_GATE.format(cron=cadence) if scheduled else "")
-        for at, (cadence, selection) in enumerate(zip(cadences, selections), 1))
+    jobs: list[workflowschema.Job] = []
+    for at, (cadence, selection) in enumerate(zip(cadences, selections), 1):
+        condition = _SCHEDULE_GATE.format(cron=cadence) if scheduled else ""
+        cells = _cells(selection)
+        # si#860: a run whose every leaf runs in platform cells (cleon's dispatched matrix) is the cell jobs
+        # alone; with no cells either, `_job` refuses the empty run as before.
+        if _runs(selection) or not cells:
+            jobs.append(_job(manifest, data, f"{JOB}-{at}" if scheduled else JOB, selection, runner, labels, kernel,
+                             path, condition=condition))
+        jobs += [_cell_job(manifest, data, leaf, condition=condition) for leaf in cells]
     if path == PATH:
         events = [workflowschema.Trigger(event=event) for event in ("pull_request", "push_main", "dispatch")]
     else:
         crons = [NIGHTLY_CRON] if cadences == ("nightly",) else [] if cadences == ("manual",) else list(cadences)
         events = [*(workflowschema.Trigger(event="schedule", cron=cron) for cron in crons),
                   workflowschema.Trigger(event="dispatch")]
-    model = workflowschema.Workflow(path=path, title=_key_of(path), job=jobs, trigger=tuple(events))
+    model = workflowschema.Workflow(path=path, title=_key_of(path), job=tuple(jobs), trigger=tuple(events))
     return Derivation(model, _merged(selections))
 
 
@@ -416,7 +429,7 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
     """One derived job over `selection`'s leaves: the preparation, the leaves in order, the `after_all` leaves and
     the report upload, the cleanup (see `derive`)."""
     runs = _runs(selection)
-    last = [leaf for leaf in selection.leaves if leaf.spec.after_all]
+    last = [leaf for leaf in selection.leaves if leaf.spec.after_all and not leaf.spec.ci.platforms]
     if not runs:
         raise ValueError(_nothing_to_run(manifest, selection, path))
     _refuse_producers_moved_last(runs, last)
@@ -430,6 +443,67 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
         steps.append(workflowschema.Step(kernel_step=DISK_CLEANUP))
     return workflowschema.Job(key=key, step=tuple(steps), condition=condition,
                               runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=labels))
+
+
+#: si#860: the step a platform cell runs before anything else, and its script. In bash on every cell, Windows
+#: included (Git Bash on windows-2025 prints `x86_64`), so one script and one expected value serve every cell.
+ARCH_CHECK = "arch-check"
+ARCH_CHECK_NAME = "Check the cell runs on the architecture it names"
+ARCH_CHECK_SCRIPT = """arch="$(uname -m)"
+if [ "$arch" != "$EXPECTED_ARCH" ]; then
+  echo "::error::cell $CELL runs on $arch and names $EXPECTED_ARCH"
+  exit 1
+fi
+echo "cell $CELL runs on $arch"
+"""
+ARCH_CHECK_NOTE = """si#860: a cell that silently runs on another architecture than it names (a runner label
+GitHub re-pointed, an emulated interpreter) is green and has verified the wrong machine, so the job
+checks what `uname -m` prints against the cell's expected value before anything else runs."""
+
+
+def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, condition: str) -> workflowschema.Job:
+    """One leaf's matrix job (si#860): a cell per `ci: python:` version on `github-ubuntu` whatever the product's
+    `runner:` is (decision 5), or a cell per `ci: platforms:` name on that cell's hosted machine. Every cell is a
+    hosted machine, so it gets no disk preflight and no docker probe (the kind's `disk_persists` decides it, as
+    for any job), and `support install` where the product declares `toolchains:`. A platform cell checks its
+    architecture first. No report: a cell's result is its job's colour."""
+    hosted, labels = runner_of({})
+    kernel, _ = _kernel_steps(manifest, data, hosted)
+    platforms, python = leaf.spec.ci.platforms, leaf.spec.ci.python
+    steps = [workflowschema.Step(kernel_step=ARCH_CHECK)] if platforms else []
+    steps += [workflowschema.Step(kernel_step=INSTALL)] if INSTALL in kernel else []
+    steps.append(workflowschema.Step(command=leaf.spec))
+    if platforms:
+        labels = tuple(workflowschema.PLATFORMS[cell].label for cell in platforms)
+    return workflowschema.Job(
+        key=f"{leaf.words.replace(' ', '-')}-{'platforms' if platforms else 'python'}", step=tuple(steps),
+        condition=condition, matrix=workflowschema.Matrix(platform=platforms, python=python),
+        runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[hosted.kind], labels=labels))
+
+
+def _cell_note(words: str, matrix: workflowschema.Matrix) -> str:
+    if matrix.platform:
+        what = ("once on each platform cell its `ci: platforms:` names, and nowhere else: its own machine, "
+                "shell and launcher per cell")
+    else:
+        what = ("once per Python version its `ci: python:` names, on GitHub-hosted Ubuntu, and once more in the "
+                "main job")
+    return textwrap.fill(
+        f"si#860: `{words}` runs here {what}. A cell carries no report: its result is this job's colour, one per "
+        "cell, and `fail-fast` is off, so one red cell cancels none of the others.", width=95)
+
+
+def _matrix(matrix: workflowschema.Matrix, product: str) -> dict[str, object]:
+    """The `strategy:` of a cell job. A platform row carries what its cell differs in; `entry` is the launcher the
+    product's checkout carries for that shell, `<product>.cmd` on Windows (scaffolded from launch.cmd.j2)."""
+    if matrix.python:
+        return {"fail-fast": False, "matrix": {"python": list(matrix.python)}}
+    rows = []
+    for cell in matrix.platform:
+        platform = workflowschema.PLATFORMS[cell]
+        rows.append({"cell": cell, "os": platform.label, "arch": platform.arch, "shell": platform.shell,
+                     "entry": f"{product}.cmd" if platform.windows else workflowgen.launcher(product)})
+    return {"fail-fast": False, "matrix": {"include": rows}}
 
 
 def _derived_note(selection: Selection, cadence: str = "") -> str:
@@ -496,7 +570,8 @@ def _producers(leaves: Sequence[Leaf]) -> dict[str, list[str]]:
     return out
 
 
-def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, object]) -> workflowgen.Workflow:
+def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, object], *,
+                product: str) -> workflowgen.Workflow:
     """The model as the `workflowgen.Workflow` the renderer writes (si#858).
 
     THE CONDITIONS ARE WRITTEN HERE AND NOWHERE ELSE. A preparation step carries its id and no `if:`. The first
@@ -509,10 +584,11 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     `always()` and `continue-on-error`. `on:` is the model's triggers, written through `_TRIGGERS`.
 
     si#860: every job of the model is written the same way (`_to_job`); a cadence workflow also gets a
-    `concurrency:` that queues the next run behind one in progress rather than cancelling it.
+    `concurrency:` that queues the next run behind one in progress rather than cancelling it. `product` names
+    the launchers a platform cell's matrix rows carry.
     """
     key = derivation.model.title
-    jobs = tuple(_to_job(job, derivation.selection, manifest, data, key) for job in derivation.model.job)
+    jobs = tuple(_to_job(job, derivation.selection, manifest, data, key, product) for job in derivation.model.job)
     queued = {} if key == KEY else {"concurrency": {"group": key, "cancel-in-progress": False}}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write.
@@ -537,7 +613,7 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
 
 
 def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, data: Mapping[str, object],
-            key: str) -> workflowgen.Job:
+            key: str, product: str) -> workflowgen.Job:
     """One model job as the renderer's job, its conditions written as `to_workflow` describes."""
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
@@ -564,6 +640,11 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             # artifact of one name in a run, so a job other than `ci` names its report after itself (si#860).
             named = workflowgen.RELEASE_ARCHIVE if job.key == JOB else f"{workflowgen.RELEASE_ARCHIVE}-{job.key}"
             steps.append(workflowgen.report_upload(_reports(data), named))
+        elif step.kernel_step == ARCH_CHECK:
+            steps.append(workflowgen.Step(note=ARCH_CHECK_NOTE, verbatim={
+                "name": ARCH_CHECK_NAME, "shell": "bash",
+                "env": {"EXPECTED_ARCH": "${{ matrix.arch }}", "CELL": "${{ matrix.cell }}"},
+                "run": ARCH_CHECK_SCRIPT}))
         elif step.kernel_step:
             steps.append(kernel[step.kernel_step])  # DISK_CLEANUP: only `derive` builds the model
         else:
@@ -577,20 +658,34 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                 modifiers["if"] = gate(line)
             first = False
             steps.append(workflowgen.Step(command=line, modifiers=modifiers))
-    cadence = next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all)
     labels = job.runner.labels
+    gated: dict[str, object] = {"if": job.condition} if job.condition else {}
+    where = f"derived workflow '{key}', job '{job.key}'"
+    if job.matrix is not None:
+        # si#860: a cell job. A platform job's machine, shell and launcher are the row's; a python job's is
+        # github-ubuntu's, with the row's interpreter.
+        platform = bool(job.matrix.platform)
+        cell: dict[str, object] = {**gated, "strategy": _matrix(job.matrix, product)}
+        if platform:
+            cell["defaults"] = {"run": {"shell": "${{ matrix.shell }}"}}
+        note = "\n\n".join(part for part in (*unplaced, _cell_note(leaves[0].words, job.matrix)) if part)
+        return workflowgen.Job(name=job.key, runs_on="${{ matrix.os }}" if platform else labels[0],
+                               steps=tuple(steps), note=note, runner=runner, prepared=True,
+                               python="" if platform else "${{ matrix.python }}",
+                               entry="${{ matrix.entry }}" if platform else "",
+                               extras=workflowgen._with_runner_env(runner, cell, where))
+    cadence = next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all)
     note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced,
                                           _derived_note(selection, cadence)) if part)
-    gated: dict[str, object] = {"if": job.condition} if job.condition else {}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            note=note, runner=runner, prepared=True,
-                           extras=workflowgen._with_runner_env(runner, gated, f"derived workflow '{key}', job '{job.key}'"))
+                           extras=workflowgen._with_runner_env(runner, gated, where))
 
 
 # --- the switch (si#858 task 7) ----------------------------------------------------------------------------
 
 
-def workflows(manifest: Manifest, data: Mapping[str, object]) -> tuple[workflowgen.Workflow, ...]:
+def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -> tuple[workflowgen.Workflow, ...]:
     """Every workflow `support github workflows` writes or checks: the declared ones, the derived ci.yml, and
     since si#860 a derived ci-nightly.yml, ci-manual.yml and ci-scheduled.yml where a leaf carries that cadence.
 
@@ -609,14 +704,16 @@ def workflows(manifest: Manifest, data: Mapping[str, object]) -> tuple[workflowg
     declared = workflowgen.parse(data)
     if any(workflow.key == KEY for workflow in declared):
         return declared
-    if declared and not _runs(select(manifest, artifacts=artifactsection.declared(data))):
+    push = select(manifest, artifacts=artifactsection.declared(data))
+    if declared and not _runs(push) and not _cells(push):
         log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
                  f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
         # si#860: the cadence workflows have leaves of their own and are derived all the same.
-        out = (*declared, *(to_workflow(derivation, manifest, data)
+        out = (*declared, *(to_workflow(derivation, manifest, data, product=product)
                             for derivation in _cadence_derivations(manifest, data)))
         workflowgen._reject_duplicate_paths(out)
         return out
-    out = (*declared, *(to_workflow(derivation, manifest, data) for derivation in derive_all(manifest, data)))
+    out = (*declared, *(to_workflow(derivation, manifest, data, product=product)
+                        for derivation in derive_all(manifest, data)))
     workflowgen._reject_duplicate_paths(out)
     return out

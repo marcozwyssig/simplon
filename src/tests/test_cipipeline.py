@@ -290,7 +290,7 @@ def _rendered(body: str, *extra: str) -> tuple[dict, str]:
     text = _text(body) + "".join(textwrap.dedent(part) for part in extra)
     loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
     data = yaml.safe_load(text)
-    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
     out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
                              artifacts={}, reports="tests/reports")
     return yaml.safe_load(out), out
@@ -395,10 +395,10 @@ def test_the_trigger_is_rendered_from_the_model():
     loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
     data = yaml.safe_load(text)
     derivation = cipipeline.derive(loaded, data)
-    assert cipipeline.to_workflow(derivation, loaded, data).on == workflowgen._CI_TRIGGER
+    assert cipipeline.to_workflow(derivation, loaded, data, product="demo").on == workflowgen._CI_TRIGGER
     only_pr = derivation._replace(model=dataclasses.replace(
         derivation.model, trigger=(workflowschema.Trigger(event="pull_request"),)))
-    assert cipipeline.to_workflow(only_pr, loaded, data).on == {"pull_request": None}
+    assert cipipeline.to_workflow(only_pr, loaded, data, product="demo").on == {"pull_request": None}
 
 
 def test_the_report_runs_last_and_always():
@@ -967,3 +967,210 @@ def test_each_scheduled_job_uploads_its_report_under_its_own_name(tmp_path, monk
     assert uploaded(scheduled, "ci-2") == ["allure-report-ci-2"]
     push, _ = files[_CI_PATH]
     assert uploaded(push, "ci") == ["allure-report"]
+
+
+# --- matrix cells: `ci: { python: }` and `ci: { platforms: }` (si#860 task 4) ----------------------------
+
+_PYTHON = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { python: ["3.12", "3.13"] } }
+        """
+
+_PLATFORMS = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { platforms: [linux-x64, macos-arm64, windows-x64] } }
+        """
+
+
+def _top(*parts: str) -> str:
+    """Top-level manifest sections, indented to sit beside an 8-space-indented body before `_text` dedents."""
+    return "".join(textwrap.indent(textwrap.dedent(part), " " * 8) for part in parts)
+
+
+def _cell_steps(doc: dict, job: str) -> list[dict]:
+    return [step for step in doc["jobs"][job]["steps"] if step.get("name") != workflowgen.REAP_NAME]
+
+
+def _cell_runs(doc: dict, job: str) -> list[str]:
+    return [step["run"] for step in _cell_steps(doc, job) if "run" in step]
+
+
+def test_python_cells_add_a_job_and_keep_the_main_run(tmp_path, monkeypatch):
+    # act
+    files = _generated(tmp_path, monkeypatch, _PYTHON)
+
+    # assert: decision 5, the leaf runs in the main job AND once per version in a job of its own
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci", "test-suite-python"]
+    assert _job_runs(push, "ci") == ["test one", "test suite"]
+    cell = push["jobs"]["test-suite-python"]
+    assert cell["runs-on"] == "ubuntu-latest"
+    assert cell["strategy"] == {"fail-fast": False, "matrix": {"python": ["3.12", "3.13"]}}
+    setup = [step for step in cell["steps"] if step.get("uses") == workflowgen.SETUP_PYTHON_ACTION]
+    assert setup == [{"uses": workflowgen.SETUP_PYTHON_ACTION, "with": {"python-version": "${{ matrix.python }}"}}]
+    assert any(step.get("uses") == workflowgen.CHECKOUT_ACTION for step in cell["steps"])
+    assert _job_runs(push, "test-suite-python") == ["test suite"]
+    # a cell carries no report: its result is its job's colour, and the file says so
+    assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in cell["steps"])
+    assert "carries no report" in _comments(text)
+
+
+def test_python_cell_runs_on_github_ubuntu_under_a_self_hosted_runner(tmp_path, monkeypatch):
+    """A cell is a hosted machine whatever the product's `runner:` is: no disk preflight, no docker probe, no
+    bootstrap env; `support install` it does get, like the main job, where the product declares toolchains."""
+    files = _generated(tmp_path, monkeypatch, _PYTHON + _top(_SELF_HOSTED, _TOOLCHAINS))
+
+    push, _ = files[_CI_PATH]
+    assert push["jobs"]["ci"]["runs-on"] == "ghr-8"
+    assert "support ci-disk-preflight" in _job_runs(push, "ci")
+    cell = push["jobs"]["test-suite-python"]
+    assert cell["runs-on"] == "ubuntu-latest"
+    assert "env" not in cell
+    assert _job_runs(push, "test-suite-python") == ["support install", "test suite"]
+
+
+def test_platform_cells_replace_the_main_run(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    # assert: decision 6, the leaf runs only in its cells
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci", "test-suite-platforms"]
+    assert _job_runs(push, "ci") == ["test one"]
+    cell = push["jobs"]["test-suite-platforms"]
+    assert cell["runs-on"] == "${{ matrix.os }}"
+    assert cell["defaults"] == {"run": {"shell": "${{ matrix.shell }}"}}
+    rows = cell["strategy"]["matrix"]["include"]
+    assert cell["strategy"]["fail-fast"] is False
+    assert [row["cell"] for row in rows] == ["linux-x64", "macos-arm64", "windows-x64"]
+    for row in rows:
+        platform = workflowschema.PLATFORMS[row["cell"]]
+        assert (row["os"], row["arch"], row["shell"]) == (platform.label, platform.arch, platform.shell)
+    assert rows[0]["entry"] == context.launcher("demo")
+    assert _cell_runs(push, "test-suite-platforms")[-1] == "${{ matrix.entry }} test suite"
+    assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in cell["steps"])
+    assert "carries no report" in _comments(text)
+
+
+def test_a_workflow_of_only_platform_cells_runs_no_main_job(tmp_path, monkeypatch):
+    """cleon's and asbundle's measured shape: the cells run by dispatch alone. The manual workflow has no leaf
+    for a main job, and the cells are something to run, so it is the cell job alone rather than a refusal."""
+    body = _PLATFORMS.replace("platforms: [", "cadence: manual, platforms: [")
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    manual, _ = files[_MANUAL_PATH]
+    assert list(manual["jobs"]) == ["test-suite-platforms"]
+    push, _ = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci"]
+
+
+def test_windows_cell_runs_the_cmd_launcher(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    push, _ = files[_CI_PATH]
+    rows = {row["cell"]: row for row in push["jobs"]["test-suite-platforms"]["strategy"]["matrix"]["include"]}
+    assert rows["windows-x64"]["shell"] == "cmd"
+    assert rows["windows-x64"]["entry"] == "demo.cmd"
+    assert rows["linux-x64"]["entry"] == "./demo.sh"
+
+
+def test_platform_job_asserts_the_architecture(tmp_path, monkeypatch):
+    """A cell that silently runs the wrong architecture looks complete: the job checks `uname -m` against the
+    cell's expected value before the leaf, in bash on every cell (Git Bash on windows-2025 prints x86_64)."""
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    push, _ = files[_CI_PATH]
+    steps = _cell_steps(push, "test-suite-platforms")
+    (check,) = [step for step in steps if "uname -m" in step.get("run", "")]
+    assert check["shell"] == "bash"
+    assert "${{ matrix.arch }}" in str(check.get("env", {})) + check["run"]
+    assert "::error::" in check["run"] and "exit 1" in check["run"]
+    assert steps.index(check) < steps.index(next(s for s in steps if s.get("run", "").endswith("test suite")))
+
+
+def test_platform_arch_check_fails_on_a_mismatch_and_passes_on_a_match(tmp_path, monkeypatch):
+    """The assertion's script, run in bash with the cell's value and a wrong one: see it red."""
+    import subprocess
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+    push, _ = files[_CI_PATH]
+    (check,) = [s for s in _cell_steps(push, "test-suite-platforms") if "uname -m" in s.get("run", "")]
+    here = subprocess.run(["uname", "-m"], capture_output=True, text=True, check=True).stdout.strip()
+
+    def run(arch: str) -> subprocess.CompletedProcess[str]:
+        env = {name: str(value).replace("${{ matrix.arch }}", arch).replace("${{ matrix.cell }}", "x")
+               for name, value in check.get("env", {}).items()}
+        script = check["run"].replace("${{ matrix.arch }}", arch).replace("${{ matrix.cell }}", "x")
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin", **env})
+
+    assert run(here).returncode == 0
+    wrong = run("not-" + here)
+    assert wrong.returncode == 1
+    assert "::error::" in wrong.stdout
+
+
+@pytest.mark.parametrize("variant, job", [('python: ["3.12"]', "test-t-consume-python"),
+                                          ("platforms: [linux-x64]", "test-t-consume-platforms")])
+def test_cell_consumer_of_a_main_job_artifact(tmp_path, monkeypatch, variant, job):
+    """Review Focus 1: a cell leaf that consumes what a main-job leaf produces.
+
+    MEASURED FIRST (2026-11-23, `handoff.plan` read and run): a matrix CONSUMER is not refused - only a matrix
+    PRODUCER is ("runs once per matrix entry"). The plan gives the consumer's job `needs:` on the producer's
+    job and a download before the consuming step, and the producer's job an upload after its producing step;
+    every cell downloads the same archive, which download-artifact allows. So the cell job gets `needs: ci`
+    and the download, rather than a refusal, and never fails on a missing file."""
+    body = f"""
+        ci:
+          build:
+            commands:
+              b-produce: {{ task: "toolchain:run", unattended: true, produces: {{ out: doc }} }}
+          test:
+            commands:
+              t-consume: {{ task: "test:file", unattended: true, consumes: {{ file: doc }}, ci: {{ {variant} }} }}
+        """
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, _ = files[_CI_PATH]
+    cell = push["jobs"][job]
+    assert cell["needs"] == "ci"
+    steps = _cell_steps(push, job)
+    download = next(at for at, s in enumerate(steps)
+                    if s.get("uses") == workflowgen.DOWNLOAD_ACTION and s["with"]["name"] == "doc")
+    leaf = next(at for at, s in enumerate(steps) if s.get("run", "").endswith("test t-consume"))
+    assert download < leaf
+    uploads = [s["with"]["name"] for s in push["jobs"]["ci"]["steps"] if s.get("uses") == workflowgen.UPLOAD_ACTION]
+    assert uploads == ["doc"]
+
+
+def test_a_cell_job_on_a_cron_carries_its_schedule_gate(tmp_path, monkeypatch):
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              suite: { task: ship, unattended: true, ci: { cadence: "0 3 * * *", python: ["3.13"] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert list(scheduled["jobs"]) == ["ci-1", "test-suite-python"]
+    assert scheduled["jobs"]["test-suite-python"]["if"] == scheduled["jobs"]["ci-1"]["if"]
+
+
+def test_the_model_carries_the_cell_matrix():
+    loaded = _load(_PLATFORMS)
+    (main, cell) = cipipeline.derive(loaded, {}).model.job
+    assert main.matrix is None
+    assert cell.key == "test-suite-platforms"
+    assert cell.matrix == workflowschema.Matrix(platform=("linux-x64", "macos-arm64", "windows-x64"))
+    loaded = _load(_PYTHON)
+    (_, cell) = cipipeline.derive(loaded, {}).model.job
+    assert cell.matrix == workflowschema.Matrix(python=("3.12", "3.13"))
