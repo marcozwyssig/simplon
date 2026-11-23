@@ -41,17 +41,26 @@ def generate(check: bool = False) -> int:
 
     si#858: A PRODUCT THAT DECLARES NO `workflows: ci:` GETS ONE DERIVED, `.github/workflows/ci.yml`, built by
     `cipipeline.workflows` from its unattended `ci build` and `ci test` leaves and written and checked like
-    any declared workflow. Declaring `workflows: ci:` switches the derivation off. A product whose leaves give
+    any declared workflow. Declaring `workflows: ci:` switches ci.yml's derivation off. A product whose leaves give
     a machine nothing to run gets no ci.yml when it declares other workflows (the run says why) and a refusal
-    when it declares none. A file already at the derived path that this kernel did not generate (it lacks the
+    when it declares none. A file already at a derived path that this kernel did not generate (it lacks the
     `# GENERATED from ` header) is refused on both a write and a `--check`, untouched: it is somebody's own,
-    and the way out is to declare it `handwritten:` under `workflows: ci:` or to delete it.
+    and the way out is to declare it `handwritten:` under the file's key (`workflows: ci:` for ci.yml) or
+    to delete it.
+
+    si#860: BESIDE ci.yml, A LEAF'S `ci: cadence:` DERIVES A CADENCE WORKFLOW, written and checked the same
+    way: `ci-nightly.yml` for `nightly`, `ci-manual.yml` for `manual`, `ci-scheduled.yml` for every cron
+    string, each only when a leaf carries that cadence. Their leaves are their own, so they are derived too
+    where a product that declares other workflows gets no ci.yml. ONE SWITCH RULE covers all four: a declared
+    `workflows:` key switches off the derived workflow of that key and no other, so `workflows: ci:` keeps the
+    cadence files, and a hand-written `ci-nightly.yml` is kept by declaring `workflows: ci-nightly:` as
+    `handwritten: "<why>"` (the way out the foreign-file refusal names, with the file's own key).
     """
     ctx = context.current()
     source = ctx.manifest_path.name
     manifest = ctx.manifest()
     # si#858: the declared workflows, and ci.yml derived from the CI leaves where no entry declares it.
-    workflows = cipipeline.workflows(manifest, ctx.manifest_data())
+    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name)
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,

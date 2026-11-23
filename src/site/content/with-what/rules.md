@@ -71,24 +71,44 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 296 | nothing - the declaration had no working meaning |
-| expression rule | 50 | something it could otherwise have said |
-| **all load-time refusals** | **346** | |
+| diagnosis | 308 | nothing - the declaration had no working meaning |
+| expression rule | 52 | something it could otherwise have said |
+| **all load-time refusals** | **360** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
-some other non-mapping, a key under it other than `skip` (a typo would leave the leaf running), and a skip on
-an aggregate or on a command no derived CI selects (outside `ci build` and `ci test`): there the key would do
-nothing, since a derived CI runs only those leaves. **Rejected: accepting `ci: false`.**
-It reopens if a product shows a skip whose reason is the same on every line.
+some other non-mapping, a key under it other than the ones it reads (`skip` and si#860's `cadence`,
+`platforms`, `python`, `timeout_minutes`, `emulates`: a typo would be ignored and the leaf would run as if it
+were not written), and any of them on an aggregate or on a command no derived CI selects (outside `ci build`
+and `ci test`): there the key would do nothing, since a derived CI runs only those leaves.
+**Rejected: accepting `ci: false`.** It reopens if a product shows a skip whose reason is the same on every
+line.
+
+si#860 added the variant keys beside `skip:`. **Diagnoses:** a value of the wrong shape (a cadence that is
+neither `nightly`, `manual` nor a five-field cron, a cron field outside cron's alphabet, a platform cell the
+kernel does not carry, an unquoted
+Python version YAML has already read as a number, a time limit that is not a positive whole number, an
+emulation not spelt as buildx spells it), `skip:` beside a variant key, which would shape a leaf that does
+not run, and an empty `ci: {}`, which says nothing. **Expression rules:** `platforms:` with `python:` on one leaf, a cross product of cells and versions
+nobody has measured a need for, and `platforms:` with `emulates:`, since a macOS or Windows cell has no binfmt
+to register an emulator with and a native `linux-arm64` cell makes emulating arm64 pointless. Both bind the
+kernel's catalogue too. What they cost, measured 2026-11-23 over the eight reachable manifests: nothing, since
+none writes `ci:` on a command. **Rejected: a cross product, and emulation in a platform cell.** Each reopens
+when a product asks for that combination on one leaf.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
 refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI
 does not run, a cycle through the leaves' artifacts, no leaf a machine may run, an `after_all` leaf that
 produces for another, a report upload with no `suites: reports:`, and a leaf that has not ruled on
 `unattended:`. An absent `workflows:` section is no longer refused: it is what switches the derivation on.
-The refusal to overwrite a file at the derived path that the kernel did not generate is not counted here:
+Since si#860 a declared `workflows:` key switches off only the derived workflow of that key, so with
+`workflows: ci:` declared the cadence files are still derived, and a variant key (`python`, `platforms`,
+`timeout_minutes`, `emulates`) on a leaf that would run in the product's own ci.yml is a further diagnosis:
+nothing would read it.
+So is a leaf with `python:` or `platforms:` that produces an artifact another leaf consumes: its cells would
+produce it once each, and one run hands an artifact over once.
+The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
@@ -260,7 +280,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 43 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 45 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

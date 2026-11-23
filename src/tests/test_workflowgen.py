@@ -3031,3 +3031,20 @@ support:
 
     # assert: the leaf is build's, spelt as the step that runs it would spell it
     assert leaves == (("build toolchain", mf.spec_for("build", "toolchain")),)
+
+
+def test_the_emulation_step_has_one_shape_for_the_release_and_the_derived_ci():
+    """si#860 final review item 11: the release (si#570) and the derived CI register emulation through one
+    function, so the action, the binfmt pin and the key order cannot drift apart; only the id differs."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    bare = workflowgen.emulation_step(["linux/arm64", "linux/arm/v7"])
+    named = workflowgen.emulation_step(["linux/arm64"], step_id="prepare_emulation")
+
+    assert bare.verbatim is not None and named.verbatim is not None
+    assert list(bare.verbatim) == ["name", "uses", "with"]
+    assert bare.verbatim == {"name": "Register emulation for linux/arm64, linux/arm/v7",
+                             "uses": workflowgen.QEMU_ACTION,
+                             "with": {"image": BINFMT_IMAGE, "platforms": "linux/arm64,linux/arm/v7"}}
+    assert list(named.verbatim) == ["name", "id", "uses", "with"]
+    assert named.verbatim["id"] == "prepare_emulation"

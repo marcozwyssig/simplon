@@ -32,7 +32,7 @@ shows up in review is derived.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 from simplon.model import workflowschema
 from simplon.model.task import class_ref
@@ -163,3 +163,13 @@ def _labels(declared: object, where: str) -> tuple[str, ...]:
         return tuple(declared)
     raise ValueError(f"{where}: `{KEY}.labels:` is a label or a list of labels, not "
                      f"{type(declared).__name__}")
+
+
+def spelt_for_buildx(value: object) -> TypeGuard[list[str]]:
+    """True iff `value` is a non-empty list of platforms in buildx's `<os>/<arch>[/<variant>]` spelling.
+
+    One source for the spelling two keys take: a workflow's `emulates:` beside `release:` (si#570) and a
+    command's `ci: { emulates: }` (si#860). It sits here because both readers can import this module, and
+    `manifest.load` cannot import `workflowgen`, which imports it."""
+    return (isinstance(value, list) and bool(value)
+            and all(isinstance(p, str) and len(p.split("/")) in (2, 3) and all(p.split("/")) for p in value))

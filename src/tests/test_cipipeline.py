@@ -290,7 +290,7 @@ def _rendered(body: str, *extra: str) -> tuple[dict, str]:
     text = _text(body) + "".join(textwrap.dedent(part) for part in extra)
     loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
     data = yaml.safe_load(text)
-    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
     out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
                              artifacts={}, reports="tests/reports")
     return yaml.safe_load(out), out
@@ -395,10 +395,10 @@ def test_the_trigger_is_rendered_from_the_model():
     loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
     data = yaml.safe_load(text)
     derivation = cipipeline.derive(loaded, data)
-    assert cipipeline.to_workflow(derivation, loaded, data).on == workflowgen._CI_TRIGGER
+    assert cipipeline.to_workflow(derivation, loaded, data, product="demo").on == workflowgen._CI_TRIGGER
     only_pr = derivation._replace(model=dataclasses.replace(
         derivation.model, trigger=(workflowschema.Trigger(event="pull_request"),)))
-    assert cipipeline.to_workflow(only_pr, loaded, data).on == {"pull_request": None}
+    assert cipipeline.to_workflow(only_pr, loaded, data, product="demo").on == {"pull_request": None}
 
 
 def test_the_report_runs_last_and_always():
@@ -705,3 +705,816 @@ def test_check_before_any_generate_reports_the_absent_derived_file(tmp_path, mon
     assert not (tmp_path / _CI_PATH).exists()
     captured = capsys.readouterr()
     assert f"{_CI_PATH} disagrees with demo.yaml" in captured.out + captured.err
+
+
+def test_platform_cells_are_the_measured_five() -> None:
+    # act: the cells cleon ci.yml and asbundle build-matrix.yml carry (si#860, measured 2026-11-23)
+    cells = workflowschema.PLATFORMS
+
+    # assert
+    assert tuple(cells) == ("linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64")
+    assert [c.label for c in cells.values()] == [
+        "ubuntu-24.04", "ubuntu-24.04-arm", "macos-15-intel", "macos-15", "windows-2025"]
+    assert [c.arch for c in cells.values()] == ["x86_64", "aarch64", "x86_64", "arm64", "x86_64"]
+    assert [c.shell for c in cells.values()] == ["bash", "bash", "bash", "bash", "cmd"]
+    assert [name for name, c in cells.items() if c.windows] == ["windows-x64"]
+
+
+def test_a_step_may_carry_a_time_limit() -> None:
+    # assert: absent by default, an int when set
+    assert workflowschema.Step().timeout_minutes is None
+    assert workflowschema.Step(timeout_minutes=75).timeout_minutes == 75
+
+
+# --- one workflow per `cadence:` (si#860 task 3) ---------------------------------------------------------
+
+_NIGHTLY_PATH = ".github/workflows/ci-nightly.yml"
+_MANUAL_PATH = ".github/workflows/ci-manual.yml"
+_SCHEDULED_PATH = ".github/workflows/ci-scheduled.yml"
+
+
+def _generated(tmp_path, monkeypatch, body: str) -> dict[str, tuple[dict, str]]:
+    """Every workflow `support github workflows` writes for `_HEAD` + `body`, read back by path: the real
+    path, so the `on:` trap and the notes are the renderer's, not a model's."""
+    _product(tmp_path, monkeypatch, body)
+    assert workflows_task.generate() == 0
+    out = {}
+    for path in sorted((tmp_path / ".github/workflows").iterdir()):
+        text = path.read_text(encoding="utf-8")
+        out[f".github/workflows/{path.name}"] = (yaml.safe_load(text), text)
+    return out
+
+
+def _job_runs(doc: dict, job: str) -> list[str]:
+    return [step["run"].removeprefix("exec ./demo.sh ") for step in doc["jobs"][job]["steps"]
+            if step.get("name") != workflowgen.REAP_NAME and "run" in step]
+
+
+def _comments(text: str) -> str:
+    return " ".join(line.strip().removeprefix("#").strip() for line in text.splitlines()
+                    if line.strip().startswith("#"))
+
+
+_NIGHTLY = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """
+
+
+def test_nightly_leaf_leaves_the_push_workflow(tmp_path, monkeypatch):
+    # act
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    # assert: the push file lost the leaf, the nightly file has it, on the kernel's cron and on dispatch
+    assert set(files) == {_CI_PATH, _NIGHTLY_PATH}
+    push, _ = files[_CI_PATH]
+    nightly, _ = files[_NIGHTLY_PATH]
+    assert _job_runs(push, "ci") == ["test one"]
+    assert _job_runs(nightly, "ci") == ["test late"]
+    assert nightly["name"] == "ci-nightly"
+    assert nightly[True] == {"schedule": [{"cron": cipipeline.NIGHTLY_CRON}], "workflow_dispatch": None}
+    assert cipipeline.NIGHTLY_CRON == "17 2 * * *"
+    assert push[True] == workflowgen._CI_TRIGGER
+
+
+def test_manual_cadence_is_dispatch_only(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY.replace("cadence: nightly", "cadence: manual"))
+
+    assert set(files) == {_CI_PATH, _MANUAL_PATH}
+    manual, _ = files[_MANUAL_PATH]
+    assert manual["name"] == "ci-manual"
+    assert manual[True] == {"workflow_dispatch": None}
+    assert _job_runs(manual, "ci") == ["test late"]
+
+
+def test_cron_strings_share_one_file_one_job_each(tmp_path, monkeypatch):
+    """Review Focus 5: the same cron is one job, a different cron another, each gated on its own schedule and
+    both run on dispatch."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "*/30 4 * * 1" } }
+              c: { task: ship, unattended: true, ci: { cadence: "0  3 * * *" } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    assert set(files) == {_CI_PATH, _SCHEDULED_PATH}
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert scheduled["name"] == "ci-scheduled"
+    assert list(scheduled["jobs"]) == ["ci-1", "ci-2"]
+    assert _job_runs(scheduled, "ci-1") == ["test a", "test c"]
+    assert _job_runs(scheduled, "ci-2") == ["test b"]
+    assert scheduled["jobs"]["ci-1"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * *' }}")
+    assert scheduled["jobs"]["ci-2"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '*/30 4 * * 1' }}")
+    assert scheduled[True] == {"schedule": [{"cron": "0 3 * * *"}, {"cron": "*/30 4 * * 1"}],
+                               "workflow_dispatch": None}
+    push, _ = files[_CI_PATH]
+    assert _job_runs(push, "ci") == ["test one"]
+
+
+def test_cadence_workflow_carries_the_report_last(tmp_path, monkeypatch):
+    """A report with no cadence of its own is a verdict over whichever run it ends: it closes every workflow."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8)
+    files = _generated(tmp_path, monkeypatch, body)
+
+    for path, leaf in ((_CI_PATH, "test one"), (_NIGHTLY_PATH, "test late")):
+        doc, _ = files[path]
+        assert _job_runs(doc, "ci") == [leaf, "test report"]
+        steps = [step for step in doc["jobs"]["ci"]["steps"] if step.get("name") != workflowgen.REAP_NAME]
+        report = next(at for at, step in enumerate(steps) if step.get("run") == "exec ./demo.sh test report")
+        assert steps[report]["if"] == "always()"
+        assert steps[report + 1]["uses"] == workflowgen.UPLOAD_ACTION
+        assert steps[report + 1]["if"] == "always()"
+
+
+def test_cadence_workflow_does_not_cancel_in_progress(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    nightly, _ = files[_NIGHTLY_PATH]
+    assert nightly["concurrency"] == {"group": "ci-nightly", "cancel-in-progress": False}
+    assert nightly["permissions"] == {"contents": "read"}
+    push, _ = files[_CI_PATH]
+    assert "concurrency" not in push
+
+
+def test_consumer_of_a_nightly_producer_is_refused():
+    """Review Focus 4: the push run has no producer, so the consumer would fail on a missing file."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              b-produce:
+                { task: "toolchain:run", unattended: true, produces: { out: doc }, ci: { cadence: nightly } }
+              t-consume: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+        """)
+    with pytest.raises(ValueError, match=r"'build t-consume' consumes 'doc', which 'build b-produce' produces.*"
+                                         r"cadence: nightly"):
+        cipipeline.derive(loaded, {})
+
+
+def test_consumers_on_different_crons_are_refused():
+    """The same check per job: two crons fire apart, so a producer on one is absent from the other's run."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              b-produce:
+                { task: "toolchain:run", unattended: true, produces: { out: doc }, ci: { cadence: "0 3 * * *" } }
+              t-consume:
+                { task: "toolchain:run", unattended: true, consumes: { source: doc }, ci: { cadence: "0 4 * * *" } }
+        """)
+    with pytest.raises(ValueError, match=r"'build t-consume' consumes 'doc'.*'build b-produce'.*0 3 \* \* \*"):
+        cipipeline.derive_all(loaded, {})
+
+
+def test_all_leaves_scheduled_refuses_the_push_workflow():
+    """Review Focus 2: ci.yml would verify nothing on a push, and the refusal says where the leaves went."""
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """)
+    with pytest.raises(ValueError, match="the push path verifies nothing") as raised:
+        cipipeline.derive(loaded, {})
+    assert "ci-nightly.yml" in str(raised.value)
+
+
+def test_skipped_and_cadence_notes(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _NIGHTLY)
+
+    _, push = files[_CI_PATH]
+    _, nightly = files[_NIGHTLY_PATH]
+    assert "Left out:" in push
+    assert "`test late` - it has `cadence: nightly`, so it runs in ci-nightly.yml" in _comments(push)
+    said = _comments(nightly)
+    assert "`cadence: nightly`" in said and cipipeline.NIGHTLY_CRON in said
+    assert "`test one`" not in said  # a push leaf is not listed in every cadence file
+
+
+def test_derive_all_puts_the_push_workflow_first():
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              d: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              m: { task: ship, unattended: true, ci: { cadence: manual } }
+              one: { task: ship, unattended: true }
+              n: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """)
+    derivations = cipipeline.derive_all(loaded, {})
+    assert [d.model.path for d in derivations] == [
+        cipipeline.CADENCE_PATHS[""], cipipeline.CADENCE_PATHS["nightly"], cipipeline.CADENCE_PATHS["manual"],
+        _SCHEDULED_PATH]
+    assert [d.model.title for d in derivations] == ["ci", "ci-nightly", "ci-manual", "ci-scheduled"]
+    assert cipipeline.derive(loaded, {}).model == derivations[0].model
+
+
+def test_declared_workflows_and_only_cadence_leaves_still_derive_them(tmp_path, monkeypatch):
+    """With other workflows declared and no push leaf, no ci.yml is derived (#858), and the nightly file still
+    is: it has something to run."""
+    _product(tmp_path, monkeypatch, """
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + _OTHER_WORKFLOW)
+    release = tmp_path / ".github/workflows/release.yml"
+    release.parent.mkdir(parents=True)
+    release.write_text("name: release\n", encoding="utf-8")
+
+    assert workflows_task.generate() == 0
+    assert not (tmp_path / _CI_PATH).exists()
+    assert (tmp_path / _NIGHTLY_PATH).exists()
+
+
+def test_each_scheduled_job_uploads_its_report_under_its_own_name(tmp_path, monkeypatch):
+    """A dispatch runs every job of ci-scheduled.yml in one run, and upload-artifact@v4 refuses a second
+    artifact of the same name in a run: each job's report is named after the job."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "0 4 * * *" } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8)
+    files = _generated(tmp_path, monkeypatch, body)
+
+    def uploaded(doc: dict, job: str) -> list[str]:
+        return [step["with"]["name"] for step in doc["jobs"][job]["steps"]
+                if step.get("uses") == workflowgen.UPLOAD_ACTION]
+
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert uploaded(scheduled, "ci-1") == ["allure-report-ci-1"]
+    assert uploaded(scheduled, "ci-2") == ["allure-report-ci-2"]
+    push, _ = files[_CI_PATH]
+    assert uploaded(push, "ci") == ["allure-report"]
+
+
+# --- matrix cells: `ci: { python: }` and `ci: { platforms: }` (si#860 task 4) ----------------------------
+
+_PYTHON = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { python: ["3.12", "3.13"] } }
+        """
+
+_PLATFORMS = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { platforms: [linux-x64, macos-arm64, windows-x64] } }
+        """
+
+
+def _top(*parts: str) -> str:
+    """Top-level manifest sections, indented to sit beside an 8-space-indented body before `_text` dedents."""
+    return "".join(textwrap.indent(textwrap.dedent(part), " " * 8) for part in parts)
+
+
+def _cell_steps(doc: dict, job: str) -> list[dict]:
+    return [step for step in doc["jobs"][job]["steps"] if step.get("name") != workflowgen.REAP_NAME]
+
+
+def _cell_runs(doc: dict, job: str) -> list[str]:
+    return [step["run"] for step in _cell_steps(doc, job) if "run" in step]
+
+
+def test_python_cells_add_a_job_and_keep_the_main_run(tmp_path, monkeypatch):
+    # act
+    files = _generated(tmp_path, monkeypatch, _PYTHON)
+
+    # assert: decision 5, the leaf runs in the main job AND once per version in a job of its own
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci", "test-suite-python"]
+    assert _job_runs(push, "ci") == ["test one", "test suite"]
+    cell = push["jobs"]["test-suite-python"]
+    assert cell["runs-on"] == "ubuntu-latest"
+    assert cell["strategy"] == {"fail-fast": False, "matrix": {"python": ["3.12", "3.13"]}}
+    setup = [step for step in cell["steps"] if step.get("uses") == workflowgen.SETUP_PYTHON_ACTION]
+    assert setup == [{"uses": workflowgen.SETUP_PYTHON_ACTION, "with": {"python-version": "${{ matrix.python }}"}}]
+    assert any(step.get("uses") == workflowgen.CHECKOUT_ACTION for step in cell["steps"])
+    assert _job_runs(push, "test-suite-python") == ["test suite"]
+    # a cell carries no report: its result is its job's colour, and the file says so
+    assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in cell["steps"])
+    assert "carries no report" in _comments(text)
+
+
+def test_python_cell_runs_on_github_ubuntu_under_a_self_hosted_runner(tmp_path, monkeypatch):
+    """A cell is a hosted machine whatever the product's `runner:` is: no disk preflight, no docker probe, no
+    bootstrap env; `support install` it does get, like the main job, where the product declares toolchains."""
+    files = _generated(tmp_path, monkeypatch, _PYTHON + _top(_SELF_HOSTED, _TOOLCHAINS))
+
+    push, _ = files[_CI_PATH]
+    assert push["jobs"]["ci"]["runs-on"] == "ghr-8"
+    assert "support ci-disk-preflight" in _job_runs(push, "ci")
+    cell = push["jobs"]["test-suite-python"]
+    assert cell["runs-on"] == "ubuntu-latest"
+    assert "env" not in cell
+    assert _job_runs(push, "test-suite-python") == ["support install", "test suite"]
+
+
+def test_platform_cells_replace_the_main_run(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    # assert: decision 6, the leaf runs only in its cells
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci", "test-suite-platforms"]
+    assert _job_runs(push, "ci") == ["test one"]
+    cell = push["jobs"]["test-suite-platforms"]
+    assert cell["runs-on"] == "${{ matrix.os }}"
+    assert cell["defaults"] == {"run": {"shell": "${{ matrix.shell }}"}}
+    rows = cell["strategy"]["matrix"]["include"]
+    assert cell["strategy"]["fail-fast"] is False
+    assert [row["cell"] for row in rows] == ["linux-x64", "macos-arm64", "windows-x64"]
+    for row in rows:
+        platform = workflowschema.PLATFORMS[row["cell"]]
+        assert (row["os"], row["arch"], row["shell"]) == (platform.label, platform.arch, platform.shell)
+    assert rows[0]["entry"] == f"exec {context.launcher('demo')}"
+    assert _cell_runs(push, "test-suite-platforms")[-1] == "${{ matrix.entry }} test suite"
+    assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in cell["steps"])
+    assert "carries no report" in _comments(text)
+
+
+def test_a_workflow_of_only_platform_cells_runs_no_main_job(tmp_path, monkeypatch):
+    """cleon's and asbundle's measured shape: the cells run by dispatch alone. The manual workflow has no leaf
+    for a main job, and the cells are something to run, so it is the cell job alone rather than a refusal."""
+    body = _PLATFORMS.replace("platforms: [", "cadence: manual, platforms: [")
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    manual, _ = files[_MANUAL_PATH]
+    assert list(manual["jobs"]) == ["test-suite-platforms"]
+    push, _ = files[_CI_PATH]
+    assert list(push["jobs"]) == ["ci"]
+
+
+def test_windows_cell_runs_the_cmd_launcher(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    push, _ = files[_CI_PATH]
+    rows = {row["cell"]: row for row in push["jobs"]["test-suite-platforms"]["strategy"]["matrix"]["include"]}
+    assert rows["windows-x64"]["shell"] == "cmd"
+    assert rows["windows-x64"]["entry"] == "demo.cmd"
+    # si#666: every bash row execs the launcher; cmd has no exec builtin
+    assert rows["linux-x64"]["entry"] == "exec ./demo.sh"
+    assert rows["macos-arm64"]["entry"] == "exec ./demo.sh"
+
+
+def test_platform_job_asserts_the_architecture(tmp_path, monkeypatch):
+    """A cell that silently runs the wrong architecture looks complete: the job checks `uname -m` against the
+    cell's expected value before the leaf, in bash on every cell (Git Bash on windows-2025 prints x86_64)."""
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+
+    push, _ = files[_CI_PATH]
+    steps = _cell_steps(push, "test-suite-platforms")
+    (check,) = [step for step in steps if "uname -m" in step.get("run", "")]
+    assert check["shell"] == "bash"
+    assert "${{ matrix.arch }}" in str(check.get("env", {})) + check["run"]
+    assert "::error::" in check["run"] and "exit 1" in check["run"]
+    assert steps.index(check) < steps.index(next(s for s in steps if s.get("run", "").endswith("test suite")))
+
+
+def test_platform_arch_check_fails_on_a_mismatch_and_passes_on_a_match(tmp_path, monkeypatch):
+    """The assertion's script, run in bash with the cell's value and a wrong one: see it red."""
+    import subprocess
+    files = _generated(tmp_path, monkeypatch, _PLATFORMS)
+    push, _ = files[_CI_PATH]
+    (check,) = [s for s in _cell_steps(push, "test-suite-platforms") if "uname -m" in s.get("run", "")]
+    here = subprocess.run(["uname", "-m"], capture_output=True, text=True, check=True).stdout.strip()
+
+    def run(arch: str) -> subprocess.CompletedProcess[str]:
+        env = {name: str(value).replace("${{ matrix.arch }}", arch).replace("${{ matrix.cell }}", "x")
+               for name, value in check.get("env", {}).items()}
+        script = check["run"].replace("${{ matrix.arch }}", arch).replace("${{ matrix.cell }}", "x")
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin", **env})
+
+    assert run(here).returncode == 0
+    wrong = run("not-" + here)
+    assert wrong.returncode == 1
+    assert "::error::" in wrong.stdout
+
+
+@pytest.mark.parametrize("variant, job", [('python: ["3.12"]', "test-t-consume-python"),
+                                          ("platforms: [linux-x64]", "test-t-consume-platforms")])
+def test_cell_consumer_of_a_main_job_artifact(tmp_path, monkeypatch, variant, job):
+    """Review Focus 1: a cell leaf that consumes what a main-job leaf produces.
+
+    MEASURED FIRST (2026-11-23, `handoff.plan` read and run): a matrix CONSUMER is not refused - only a matrix
+    PRODUCER is ("runs once per matrix entry"). The plan gives the consumer's job `needs:` on the producer's
+    job and a download before the consuming step, and the producer's job an upload after its producing step;
+    every cell downloads the same archive, which download-artifact allows. So the cell job gets `needs: ci`
+    and the download, rather than a refusal, and never fails on a missing file."""
+    body = f"""
+        ci:
+          build:
+            commands:
+              b-produce: {{ task: "toolchain:run", unattended: true, produces: {{ out: doc }} }}
+          test:
+            commands:
+              t-consume: {{ task: "test:file", unattended: true, consumes: {{ file: doc }}, ci: {{ {variant} }} }}
+        """
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, _ = files[_CI_PATH]
+    cell = push["jobs"][job]
+    assert cell["needs"] == "ci"
+    steps = _cell_steps(push, job)
+    download = next(at for at, s in enumerate(steps)
+                    if s.get("uses") == workflowgen.DOWNLOAD_ACTION and s["with"]["name"] == "doc")
+    leaf = next(at for at, s in enumerate(steps) if s.get("run", "").endswith("test t-consume"))
+    assert download < leaf
+    uploads = [s["with"]["name"] for s in push["jobs"]["ci"]["steps"] if s.get("uses") == workflowgen.UPLOAD_ACTION]
+    assert uploads == ["doc"]
+
+
+def test_a_cell_job_on_a_cron_carries_its_schedule_gate(tmp_path, monkeypatch):
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              suite: { task: ship, unattended: true, ci: { cadence: "0 3 * * *", python: ["3.13"] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    scheduled, _ = files[_SCHEDULED_PATH]
+    assert list(scheduled["jobs"]) == ["ci-1", "test-suite-python"]
+    assert scheduled["jobs"]["test-suite-python"]["if"] == scheduled["jobs"]["ci-1"]["if"]
+
+
+def test_the_model_carries_the_cell_matrix():
+    loaded = _load(_PLATFORMS)
+    (main, cell) = cipipeline.derive(loaded, {}).model.job
+    assert main.matrix is None
+    assert cell.key == "test-suite-platforms"
+    assert cell.matrix == workflowschema.Matrix(platform=("linux-x64", "macos-arm64", "windows-x64"))
+    loaded = _load(_PYTHON)
+    (_, cell) = cipipeline.derive(loaded, {}).model.job
+    assert cell.matrix == workflowschema.Matrix(python=("3.12", "3.13"))
+
+
+def test_a_run_with_no_main_job_names_what_it_does_not_run(tmp_path, monkeypatch):
+    """Review fix: with every leaf in platform cells there is no main job, and the file still says what the
+    derived note says (the left-out leaves) and names the `after_all` report that has no main job to end."""
+    body = """
+        ci:
+          test:
+            commands:
+              report: { task: "test:report" }
+              idle: { task: ship, unattended: false }
+              suite: { task: ship, unattended: true, ci: { platforms: [linux-x64] } }
+        """ + _top(_SUITES)
+
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, text = files[_CI_PATH]
+    assert list(push["jobs"]) == ["test-suite-platforms"]
+    said = _comments(text)
+    assert "`test report` runs after all the other leaves" in said and "does not run here" in said
+    assert "`test idle` - " + cipipeline.ATTENDED in said
+
+
+def test_a_windows_cell_that_downloads_a_handoff_says_the_unpack_is_unmeasured(tmp_path, monkeypatch):
+    """Review ruling: recorded, not refused. Only a job with a Windows cell AND a download says it."""
+    body = """
+        ci:
+          build:
+            commands:
+              b-produce: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+          test:
+            commands:
+              t-consume:
+                { task: "test:file", unattended: true, consumes: { file: doc }, ci: { platforms: [PLATS] } }
+        """
+    unmeasured = " ".join(cipipeline.WINDOWS_HANDOFF_UNMEASURED.split())
+    for sub in "wln":
+        (tmp_path / sub).mkdir()
+
+    with_windows = _generated(tmp_path / "w", monkeypatch, body.replace("PLATS", "linux-x64, windows-x64"))
+    assert unmeasured in _comments(with_windows[_CI_PATH][1])
+    linux_only = _generated(tmp_path / "l", monkeypatch, body.replace("PLATS", "linux-x64"))
+    assert unmeasured not in _comments(linux_only[_CI_PATH][1])
+    no_download = _generated(tmp_path / "n", monkeypatch, _PLATFORMS)
+    assert unmeasured not in _comments(no_download[_CI_PATH][1])
+
+
+# --- `ci: { timeout_minutes: }` and `ci: { emulates: }` (si#860 task 5) -----------------------------------
+
+_TIMEOUT = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              lab: { task: ship, unattended: true, ci: { timeout_minutes: 95 } }
+        """
+
+_EMULATES = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              arm: { task: ship, unattended: true, ci: { emulates: [linux/arm64] } }
+              more: { task: ship, unattended: true, ci: { emulates: [linux/arm64, linux/arm/v7] } }
+        """
+
+
+def _emulations(doc: dict, job: str) -> list[dict]:
+    return [step for step in doc["jobs"][job]["steps"] if step.get("uses") == workflowgen.QEMU_ACTION]
+
+
+def test_timeout_is_a_step_limit_in_a_shared_job(tmp_path, monkeypatch):
+    files = _generated(tmp_path, monkeypatch, _TIMEOUT)
+
+    # assert: decision 4, the leaf's own step carries the limit, the job and the other leaves none
+    push, _ = files[_CI_PATH]
+    steps = _cell_steps(push, "ci")
+    lab = next(step for step in steps if step.get("run", "").endswith("test lab"))
+    assert lab["timeout-minutes"] == 95
+    one = next(step for step in steps if step.get("run", "").endswith("test one"))
+    assert "timeout-minutes" not in one
+    assert "timeout-minutes" not in push["jobs"]["ci"]
+    lab_step = next(s for s in cipipeline.derive(_load(_TIMEOUT), {}).model.job[0].step
+                    if s.command is not None and s.command.ci.timeout_minutes)
+    assert lab_step.timeout_minutes == 95
+
+
+def test_timeout_is_the_job_limit_in_a_cell_job(tmp_path, monkeypatch):
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { timeout_minutes: 40, platforms: [linux-x64, macos-arm64] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    # assert: decision 4, the same limit for every cell, as the job's; the step carries none of its own
+    push, _ = files[_CI_PATH]
+    cell = push["jobs"]["test-suite-platforms"]
+    assert cell["timeout-minutes"] == 40
+    assert not any("timeout-minutes" in step for step in _cell_steps(push, "test-suite-platforms"))
+    (_, model_cell) = cipipeline.derive(_load(body), {}).model.job
+    assert model_cell.timeout_minutes == 40
+
+
+def test_emulation_registered_once_before_the_leaves(tmp_path, monkeypatch):
+    from simplon.adapters.labhost import BINFMT_IMAGE
+
+    files = _generated(tmp_path, monkeypatch, _EMULATES + _top(_SELF_HOSTED, _TOOLCHAINS))
+
+    # assert: decision 7, one step for the job, every platform once in first-written order, the release's shape
+    push, _ = files[_CI_PATH]
+    (emulation,) = _emulations(push, "ci")
+    assert emulation["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64,linux/arm/v7"}
+    assert emulation["id"] == cipipeline.PREPARE["emulation"]
+    # after every preparation step, before the first leaf
+    steps = _cell_steps(push, "ci")
+    at = steps.index(emulation)
+    assert [s.get("id") for s in steps[:at] if s.get("id")] == [
+        cipipeline.PREPARE["docker"], cipipeline.PREPARE["disk"], cipipeline.PREPARE["install"]]
+    assert steps[at + 1]["run"].endswith("build one")
+    # and a red registration skips every later leaf, like any preparation step
+    arm = next(step for step in steps if step.get("run", "").endswith("test arm"))
+    assert f"steps.{cipipeline.PREPARE['emulation']}.outcome == 'success'" in arm["if"]
+
+
+def test_no_emulation_step_where_no_leaf_asks(tmp_path, monkeypatch):
+    push, _ = _generated(tmp_path, monkeypatch, _THREE)[_CI_PATH]
+    assert _emulations(push, "ci") == []
+
+
+def test_emulation_in_the_python_cell_job(tmp_path, monkeypatch):
+    """simplon's hand-written `suite-python-3-14`: a python cell whose leaf runs linux/arm64 files."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              suite: { task: ship, unattended: true, ci: { python: ["3.14"], emulates: [linux/arm64] } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    push, _ = files[_CI_PATH]
+    (emulation,) = _emulations(push, "test-suite-python")
+    assert emulation["with"]["platforms"] == "linux/arm64"
+    steps = _cell_steps(push, "test-suite-python")
+    assert steps.index(emulation) < next(i for i, s in enumerate(steps) if s.get("run", "").endswith("test suite"))
+    # the main job runs the leaf too (decision 5), so it registers there as well
+    assert len(_emulations(push, "ci")) == 1
+
+
+def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
+    """No kind on this branch has `can_emulate = false` (#722's container kind is not here), so the table is
+    patched: such a machine registers nothing, and the file names the gap rather than a step that cannot work."""
+    assert all(kind.can_emulate for kind in workflowschema.RUNNER_KINDS.values())  # why the patch
+    monkeypatch.setitem(workflowschema.RUNNER_KINDS, "github-ubuntu",
+                        dataclasses.replace(workflowschema.RUNNER_KINDS["github-ubuntu"], can_emulate=False))
+
+    files = _generated(tmp_path, monkeypatch, _EMULATES)
+
+    push, text = files[_CI_PATH]
+    assert _emulations(push, "ci") == []
+    said = _comments(text)
+    assert "#722" in said and "linux/arm64, linux/arm/v7" in said
+
+
+# --- the final review of si#860: one switch rule, inert keys, the empty push run ---------------------------
+
+_HANDWRITTEN_NIGHTLY = """
+        workflows:
+          ci-nightly: { handwritten: "ours" }
+        """
+
+
+def test_a_declared_cadence_key_switches_off_only_that_derived_file(tmp_path, monkeypatch):
+    """Final review item 1: `workflows: ci-nightly:` is the product's own nightly file, so the derived one is not
+    written and nothing is refused as two owners; ci.yml is still derived beside it."""
+    _product(tmp_path, monkeypatch, _NIGHTLY + _HANDWRITTEN_NIGHTLY)
+    own = tmp_path / _NIGHTLY_PATH
+    own.parent.mkdir(parents=True)
+    own.write_text("name: mine\n", encoding="utf-8")
+
+    assert workflows_task.generate() == 0
+
+    assert own.read_text(encoding="utf-8") == "name: mine\n"
+    assert (tmp_path / _CI_PATH).read_text(encoding="utf-8").startswith("# GENERATED from demo.yaml")
+    keys = [w.key for w in cipipeline.workflows(_load(_NIGHTLY + _HANDWRITTEN_NIGHTLY),
+                                                yaml.safe_load(_text(_NIGHTLY + _HANDWRITTEN_NIGHTLY)),
+                                                product="demo")]
+    assert keys == ["ci-nightly", "ci"]
+    assert workflows_task.generate(check=True) == 0
+
+
+def test_a_declared_ci_keeps_the_derived_cadence_files(tmp_path, monkeypatch):
+    """Final review item 1: `workflows: ci:` switches off ci.yml and only ci.yml, so a nightly leaf still gets
+    its ci-nightly.yml rather than being dropped without a word."""
+    body = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+        """ + _DECLARED_CI
+    ctx = _product(tmp_path, monkeypatch, body)
+    (declared,) = workflowgen.parse(ctx.manifest_data())
+
+    assert workflows_task.generate() == 0
+
+    assert not declared.derived
+    assert "cipipeline" not in (tmp_path / _CI_PATH).read_text(encoding="utf-8")
+    nightly = yaml.safe_load((tmp_path / _NIGHTLY_PATH).read_text(encoding="utf-8"))
+    assert _job_runs(nightly, "ci") == ["build late"]
+
+
+@pytest.mark.parametrize("key", ['python: ["3.14"]', "platforms: [linux-arm64]", "timeout_minutes: 30",
+                                 "emulates: [linux/arm64]"])
+def test_a_variant_key_on_a_push_leaf_under_a_declared_ci_is_refused(tmp_path, monkeypatch, key):
+    """Final review item 2: ci.yml is the product's own, so a variant key on a leaf that would run there shapes
+    nothing - a diagnosis, as `ci:` on a command no derived CI selects is (si#858)."""
+    name = key.split(":", 1)[0]
+    _product(tmp_path, monkeypatch, f"""
+        ci:
+          build:
+            commands:
+              one: {{ task: ship, unattended: true, ci: {{ {key} }} }}
+        """ + _DECLARED_CI)
+
+    with pytest.raises(ValueError) as refused:
+        workflows_task.generate()
+
+    said = str(refused.value)
+    assert "'build one'" in said and f"`ci: {name}:`" in said
+    assert "workflows: ci:" in said and "Take the key off" in said
+
+
+def test_a_cadence_leaf_keeps_its_variant_keys_under_a_declared_ci(tmp_path, monkeypatch):
+    """The refusal is for a key nothing reads: a nightly leaf's keys shape ci-nightly.yml, and an `after_all`
+    leaf without a cadence ends every cadence file, so its keys are read there."""
+    body = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              late: { task: ship, unattended: true, ci: { cadence: nightly, timeout_minutes: 20 } }
+          test:
+            commands:
+              report: { task: "test:report", ci: { timeout_minutes: 5 } }
+        """ + textwrap.indent(textwrap.dedent(_SUITES), " " * 8) + _DECLARED_CI
+    _product(tmp_path, monkeypatch, body)
+
+    assert workflows_task.generate() == 0
+
+    nightly = yaml.safe_load((tmp_path / _NIGHTLY_PATH).read_text(encoding="utf-8"))
+    assert _job_runs(nightly, "ci") == ["build late", "test report"]
+
+
+def test_a_push_run_emptied_by_cadences_says_where_the_leaves_went():
+    """Final review item 3: the leaves are not missing, they run on a cadence; the push path verifies nothing,
+    and the way out is a leaf without `cadence:` or a push CI of the product's own."""
+    loaded = _load("""
+        ci:
+          test:
+            commands:
+              late: { task: ship, unattended: true, ci: { cadence: nightly } }
+              weekly: { task: ship, unattended: true, ci: { cadence: "0 3 * * 1" } }
+        """)
+
+    with pytest.raises(ValueError) as refused:
+        cipipeline.derive(loaded, {})
+
+    said = str(refused.value)
+    assert "run in ci-nightly.yml, ci-scheduled.yml" in said
+    assert "the push path verifies nothing" in said
+    assert "without `cadence:`" in said
+    assert "`workflows: ci:`" in said and "switches off only ci.yml" in said
+    assert "hold no leaf a machine may run" not in said
+
+
+def test_scheduled_concurrency_is_keyed_on_the_schedule(tmp_path, monkeypatch):
+    """Final review item 9: GitHub keeps one pending run per concurrency group, so with one group a pending run
+    of one cron would replace another cron's; each schedule, and dispatch, queues in a group of its own."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              a: { task: ship, unattended: true, ci: { cadence: "0 3 * * *" } }
+              b: { task: ship, unattended: true, ci: { cadence: "0 4 * * *" } }
+        """
+    files = _generated(tmp_path, monkeypatch, body)
+
+    scheduled, text = files[_SCHEDULED_PATH]
+    assert scheduled["concurrency"] == {"group": "ci-scheduled-${{ github.event.schedule || 'dispatch' }}",
+                                        "cancel-in-progress": False}
+    assert "one pending run per schedule" in _comments(text)
+    (tmp_path / "n").mkdir()
+    nightly = _generated(tmp_path / "n", monkeypatch, _NIGHTLY)[_NIGHTLY_PATH][0]
+    assert nightly["concurrency"] == {"group": "ci-nightly", "cancel-in-progress": False}
+
+
+_DATA = yaml.safe_load(_HEAD)
+
+_CELL_PRODUCER = """
+        ci:
+          build:
+            commands:
+              b-produce: {{ task: "toolchain:run", unattended: true, produces: {{ out: {artifact} }}, ci: {{ {variant} }} }}
+          test:
+            commands:
+              t-consume: {{ task: "test:file", unattended: true, consumes: {{ file: {artifact} }}{consumer} }}
+        """
+
+
+@pytest.mark.parametrize(("variant", "consumer", "key"), [
+    ("platforms: [linux-x64]", "", "platforms"),
+    ('python: ["3.14"]', ', ci: { python: ["3.14"] }', "python"),
+])
+def test_a_cell_leaf_that_produces_for_another_leaf_is_refused(variant, consumer, key):
+    """Final review item 5: a cell job runs its leaf once per cell, so its artifact would be produced once per cell
+    (and once more in the main job for `python:`), and the run uploads an artifact once. Refused before the
+    hand-off plan, in the manifest's words."""
+    loaded = _load(_CELL_PRODUCER.format(artifact="doc", variant=variant, consumer=consumer))
+
+    with pytest.raises(ValueError) as refused:
+        cipipeline.derive(loaded, _DATA)
+
+    said = str(refused.value)
+    assert said.startswith("derived CI: 'build b-produce' declares `ci: " + key + ":`")
+    assert "'doc'" in said and "'test t-consume'" in said
+    assert "Take `ci: " + key + ":` off 'build b-produce'" in said and "`registry:`" in said
+
+
+def test_a_cell_leaf_producing_a_fetched_artifact_is_not_refused():
+    """An artifact with a `registry:` is fetched by its consumer, not handed over from the cell job."""
+    loaded = _load(_CELL_PRODUCER.format(artifact="note", variant="platforms: [linux-x64]", consumer=""))
+
+    derivation = cipipeline.derive(loaded, _DATA)
+
+    assert [job.key for job in derivation.model.job] == ["ci", "build-b-produce-platforms"]

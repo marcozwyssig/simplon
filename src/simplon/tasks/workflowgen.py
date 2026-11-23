@@ -302,6 +302,21 @@ class Step(NamedTuple):
     params: "Mapping[str, str | EnvValue]" = {}
 
 
+def emulation_step(platforms: Sequence[str], *, step_id: str | None = None) -> Step:
+    """The step that registers emulation for `platforms` on the job's machine: the QEMU action with the kernel's
+    binfmt pin, `labhost.BINFMT_IMAGE`, so `support ci-arm64` and every workflow register the same thing (si#570).
+
+    One shape for the release's `emulates:` and the derived CI's `ci: emulates:` (si#860 final review), so the
+    action, the pin and the key order cannot drift apart between them. `step_id` is the id a later step's
+    condition reads; the release has none. The note is the caller's."""
+    from simplon.adapters.labhost import BINFMT_IMAGE
+    named: dict[str, object] = {"name": f"Register emulation for {', '.join(platforms)}"}
+    if step_id is not None:
+        named["id"] = step_id
+    return Step(verbatim={**named, "uses": QEMU_ACTION,
+                          "with": {"image": BINFMT_IMAGE, "platforms": ",".join(platforms)}})
+
+
 @dataclass(frozen=True)
 class EnvValue:
     """A `params:` value that NAMES an environment variable, `{ env: RELEASE_VERSION }` (si#488).
@@ -348,6 +363,10 @@ class Job:
     #: steps of its own, with the ids its leaves' conditions read. Rendering inserts them only for a job
     #: that does not, so a derived job gets them once and in the place its conditions expect.
     prepared: bool = False
+    #: si#860: what this job's command lines start with instead of `launcher(product)`. A platform cell job runs
+    #: `${{ matrix.entry }}`, because its Windows cell types `<product>.cmd` where every other cell types the
+    #: shell launcher; "" is the launcher, as for every job before si#860.
+    entry: str = ""
 
 
 @dataclass(frozen=True)
@@ -614,8 +633,7 @@ def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[
         raise ValueError(
             f"{where}: `{EMULATES_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
             f"a job you write registers emulation itself, with a `uses: {QEMU_ACTION}` step")
-    if (not isinstance(value, list) or not value
-            or not all(isinstance(p, str) and len(p.split("/")) in (2, 3) and all(p.split("/")) for p in value)):
+    if not runners.spelt_for_buildx(value):
         raise ValueError(
             f"{where}: `{EMULATES_KEY}:` is a non-empty list of platforms as buildx spells them "
             f"(e.g. `[linux/arm64]`), got '{value}'")
@@ -1439,10 +1457,7 @@ def _release(workflow: "Workflow", manifest: Manifest, artifacts: "Mapping[str, 
                                    "run": f"{launcher(product)} help"},
                          note=PROVISION_NOTE))
     if workflow.emulates:
-        from simplon.adapters.labhost import BINFMT_IMAGE
-        steps.insert(0, Step(
-            verbatim={"name": f"Register emulation for {', '.join(workflow.emulates)}", "uses": QEMU_ACTION,
-                      "with": {"image": BINFMT_IMAGE, "platforms": ",".join(workflow.emulates)}},
+        steps.insert(0, emulation_step(workflow.emulates)._replace(
             note=f"si#570: the workflow's `{EMULATES_KEY}:`, registered before anything in the job runs."))
     check = _pass_secrets_check(needed)
     if check is not None:
@@ -1497,11 +1512,12 @@ def _release_archive(manifest: Manifest, reports: "str | None" = None) -> "tuple
             report_upload(reports)), ""
 
 
-def report_upload(reports: str) -> Step:
+def report_upload(reports: str, name: str = RELEASE_ARCHIVE) -> Step:
     """The upload of the rendered test report under `reports` (si#509), shared by the release job and the
-    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green."""
+    derived CI (si#858): `if: always()` and `if-no-files-found: error`, so "no archive" is never green. `name`
+    differs only where several jobs of one run upload a report (si#860, ci-scheduled.yml)."""
     return Step(verbatim={"uses": UPLOAD_ACTION, "if": "always()",
-                          "with": {"name": RELEASE_ARCHIVE, "path": f"{reports.rstrip('/')}/*.html",
+                          "with": {"name": name, "path": f"{reports.rstrip('/')}/*.html",
                                    "if-no-files-found": "error", "retention-days": 90}})
 
 
@@ -2003,7 +2019,7 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
             # the kernel and its pytest with no junit. Safe because this `run:` is one command with
             # nothing after it; an `if: always()` follow-up is a step of its own, in a shell of its own.
             line = (f"{'exec ' if _execs(_shell(step.modifiers, job.extras, workflow_extras)) else ''}"
-                    f"{launcher(product)} {group.replace('.', ' ')} {name}")
+                    f"{job.entry or launcher(product)} {group.replace('.', ' ')} {name}")
             body = {**step.modifiers,
                     "run": line + _parameters(manifest, group, name, step.params,
                                               where=f"{where}, step {index + 1}",

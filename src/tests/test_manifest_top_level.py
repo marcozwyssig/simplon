@@ -263,7 +263,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     # `parse`: it is the product with no `workflows: ci:`, whose ci.yml is derived, and a product with no CI
     # leaf to derive it from is told to declare `workflows: ci:` itself.
     "workflows": ({"workflows": {"ci": {}}},
-                  lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data())),
+                  lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data(),
+                                               product=context.current().name)),
     # si#314: a SCALAR key rather than a section, and the only one here - the driver reads it the way
     # every producing coordinate does, through the product context.
     "output": ({"output": "build-out"}, lambda: outputs.root()),
@@ -301,7 +302,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "runner": ({"tasks": {"suite": {"impl": "simplon.test_impls:nullary", "help": "Run every test."}},
                 "ci": {"test": {"commands": {"all": {"task": "suite", "unattended": True}}}},
                 "runner": "github-ubuntu"},
-               lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data())),
+               lambda: cipipeline.workflows(context.current().manifest(), context.current().manifest_data(),
+                                               product=context.current().name)),
     "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
 }
 
