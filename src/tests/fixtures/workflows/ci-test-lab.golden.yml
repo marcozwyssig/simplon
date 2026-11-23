@@ -1,0 +1,336 @@
+# GENERATED from netctl.yaml by `netctl support github workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against netctl.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+name: ci-test-lab
+on:
+  pull_request:
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - labeled
+  schedule:
+  - cron: 17 2 * * *
+  workflow_dispatch: null
+permissions:
+  contents: read
+
+jobs:
+
+  # si#861: whether the gate of `test lab` opens, decided once per event from what the event says
+  # and the pull request's changed files, never from earlier runs. A dispatch or the schedule runs
+  # it. A pull request `opened` runs it when a changed path matches the gate's `paths:`;
+  # `synchronize` and `reopened` when one matches or the pull request carries the gate's `label:`;
+  # `labeled` when the label just added is the gate's and no changed path matches, because a match
+  # already ran it on `opened` or `synchronize`. Removing the label and adding it again runs it
+  # again, on purpose. Every verdict says why, in the log and in the job summary.
+  #
+  # The decide step reads the event, the label and the pattern from its `env:` and nothing else is
+  # written into its script; the token is in that step's `env:` alone. A `gh` that fails fails the
+  # step: a failed probe is not a pull request that changed nothing. No checkout and no launcher:
+  # nothing here runs the product.
+  decide:
+    runs-on: ghr-1
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      why: ${{ steps.decide.outputs.why }}
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=netctl`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=netctl 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      - name: Decide whether the gate opens
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          ADDED_LABEL: ${{ github.event.label.name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR: ${{ github.event.pull_request.number }}
+          PATTERN: ^src/sidecar/api/grpc/.*$|^src/sidecar/src/python/.*$|^src/netctl/src/java/infrastructure/src/main/java/(.*/)?rendering/.*$|^deploy/env/[^/]*/lab\.yml$|^deploy/provision/labgen/.*$|^(.*/)?Dockerfile$|^test/system/python/.*$|^test/acceptance/python/.*$
+          LABEL: needs-lab
+        run: |
+          set -euo pipefail
+          decide() {
+            why="$(printf '%s' "$2" | tr '\r\n' '  ')"
+            echo "run=$1" >> "$GITHUB_OUTPUT"
+            echo "why=$why" >> "$GITHUB_OUTPUT"
+            echo "run=$1 - $why"
+            exit 0
+          }
+          has_label() {
+            quoted="\"$(printf '%s' "$LABEL" | sed 's/[\\"]/\\&/g')\""
+            [ -n "$LABEL" ] && case "$LABELS" in *"$quoted"*) true ;; *) false ;; esac
+          }
+          hit=""
+          changed() {
+            if [ -z "$PATTERN" ]; then
+              echo "the gate has no paths:, so no changed file opens it"
+              return 0
+            fi
+            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+            echo "changed files of pull request #$PR:"
+            printf '%s\n' "$files"
+            rc=0
+            hits="$(printf '%s\n' "$files" | grep -E -- "$PATTERN")" || rc=$?
+            if [ "$rc" -gt 1 ]; then
+              echo "::error::grep could not match the gate's pattern (exit $rc): $PATTERN"
+              exit 1
+            fi
+            hit="${hits%%$'\n'*}"
+          }
+          case "$EVENT" in
+            workflow_dispatch) decide true "the workflow was dispatched" ;;
+            schedule) decide true "the schedule fired" ;;
+            pull_request) ;;
+            *) echo "::error::the gate reads no '$EVENT' event"; exit 1 ;;
+          esac
+          case "$ACTION" in
+            opened)
+              changed
+              if [ -n "$hit" ]; then decide true "opened, and $hit matches the gate's paths"; fi
+              decide false "opened, and no changed path matches the gate's paths; a gate label set at opening runs it on its own labeled event" ;;
+            synchronize|reopened)
+              if has_label; then decide true "$ACTION, and the pull request carries the label $LABEL"; fi
+              changed
+              if [ -n "$hit" ]; then decide true "$ACTION, and $hit matches the gate's paths"; fi
+              decide false "$ACTION, no changed path matches the gate's paths, and the pull request does not carry the label ${LABEL:-(the gate has none)}" ;;
+            labeled)
+              if [ -z "$LABEL" ] || [ "$ADDED_LABEL" != "$LABEL" ]; then
+                decide false "labeled $ADDED_LABEL, which is not the gate's label ${LABEL:-(the gate has none)}"
+              fi
+              changed
+              if [ -n "$hit" ]; then decide false "labeled $LABEL, and $hit matches the gate's paths, so opened or synchronize already ran it for this head"; fi
+              decide true "labeled $LABEL, and no changed path matches the gate's paths" ;;
+            *) echo "::error::the gate reads no pull_request action '$ACTION'"; exit 1 ;;
+          esac
+      - name: Say the gate's verdict
+        shell: bash
+        env:
+          RUN: ${{ steps.decide.outputs.run }}
+          WHY: ${{ steps.decide.outputs.why }}
+        run: echo "run=$RUN - $WHY" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none
+  # for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is
+  # reached through the bootstrap, because a container job would need docker in order to start.
+  #
+  # si#861: the members of `test lab`, behind its gate: this job runs only when the decide job says
+  # so. It runs the members in plan order, a consumer after its producer, and the ones that run
+  # after all the others (the report) last and always. A Deploy member (a command of an env-first
+  # group) runs like a preparation step: every later member waits for its success, so a deployment
+  # that did not come up shows as one red step and the members after it as skipped. Every other
+  # member after the first runs unless the run is cancelled or a preparation step or a Deploy
+  # member went red, so one red member hides none of the others.
+  #
+  # A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub
+  # keeps one pending run per ref, and a newer one replaces it.
+  test-lab:
+    runs-on: ghr-1
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    timeout-minutes: 95
+    concurrency:
+      group: ci-test-lab-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
+      NETCTL_MGMT_SUBNET: 10.128.0.0/24
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=netctl`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=netctl 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - id: prepare_docker
+        run: exec ./netctl.sh support ci-docker-preflight
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-debian runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - id: prepare_disk
+        run: exec ./netctl.sh support ci-disk-preflight
+      # si#858: the product declares `toolchains:`, so the job provisions them before any leaf runs.
+      # Every later leaf waits for this step's success: a missing toolchain would otherwise turn every leaf red.
+      - id: prepare_install
+        run: exec ./netctl.sh support install
+      - id: leaf_deploy_down
+        run: exec ./netctl.sh deploy down
+      - id: leaf_deploy_up
+        run: exec ./netctl.sh deploy up
+      - id: leaf_deploy_seed
+        run: exec ./netctl.sh deploy seed
+      - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
+          && steps.prepare_install.outcome == 'success' && steps.leaf_deploy_down.outcome == 'success' && steps.leaf_deploy_up.outcome
+          == 'success' && steps.leaf_deploy_seed.outcome == 'success' }}
+        run: exec ./netctl.sh test system
+      - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
+          && steps.prepare_install.outcome == 'success' && steps.leaf_deploy_down.outcome == 'success' && steps.leaf_deploy_up.outcome
+          == 'success' && steps.leaf_deploy_seed.outcome == 'success' }}
+        run: exec ./netctl.sh test acceptance-dataplane
+      - if: always()
+        run: exec ./netctl.sh test report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report-test-lab
+          path: tests/reports/*.html
+          if-no-files-found: error
+          retention-days: 90
+      - if: always()
+        continue-on-error: true
+        run: exec ./netctl.sh support ci-disk-cleanup

@@ -12,6 +12,7 @@ the generated model (`simplon.model.workflowschema`, #857), and `to_workflow` tu
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 import textwrap
 from collections.abc import Mapping, Sequence, Set
@@ -431,6 +432,8 @@ _TRIGGERS: Mapping[str, tuple[str, object]] = {
     "pull_request": ("pull_request", None),
     "push_main": ("push", {"branches": [workflowgen.DEFAULT_BRANCH]}),
     "dispatch": ("workflow_dispatch", None),
+    # si#861 decision 2: a gate's file, on the pull request events its decide table reads, never on a push.
+    "pull_request_gate": ("pull_request", {"types": ["opened", "reopened", "synchronize", "labeled"]}),
 }
 
 #: The coordinate `support install` instantiates; found in the product's tree by impl, as `runners.PREFLIGHT` is.
@@ -450,10 +453,12 @@ class Derivation(NamedTuple):
     """The derived workflow as the generated model, and the selection it was built from.
 
     The selection travels with the model because the model carries no names (#857): a leaf's command words
-    and the leaves left out are read off the selection by `to_workflow`."""
+    and the leaves left out are read off the selection by `to_workflow`. A gate's file (si#861) carries its
+    `GateRun` the same way, for the aggregate's words its notes name."""
 
     model: workflowschema.Workflow
     selection: Selection
+    gate: "GateRun | None" = None
 
 
 def _install(manifest: Manifest, data: Mapping[str, object]) -> "tuple[workflowgen.Step | None, str]":
@@ -628,6 +633,176 @@ def derive_all(manifest: Manifest, data: Mapping[str, object]) -> tuple[Derivati
     `ci-scheduled.yml`, each only when a leaf carries its cadence. `derive`'s refusal of a push run with nothing
     to run stands here too (Review Focus 2)."""
     return (derive(manifest, data), *_cadence_derivations(manifest, data))
+
+
+# --- a gate's own file (si#861 task 5) ---------------------------------------------------------------------
+
+#: The job in front of the gated one, and the kernel step it is: the decide table of decision 7.
+DECIDE_JOB = "decide"
+GATE_DECIDE = "gate-decide"
+#: The decide step's id, which the job's `outputs:` read.
+DECIDE_STEP = "decide"
+#: A run that hangs is neither green nor red: the decide job asks GitHub for a file list and nothing else.
+DECIDE_TIMEOUT_MINUTES = 10
+#: The gated job's condition: the decide job's verdict.
+GATE_OPEN = f"needs.{DECIDE_JOB}.outputs.run == 'true'"
+
+#: The decide table (decision 7), in bash. It reads ONLY its step's `env:` - the event fields, the gate's label
+#: and its pattern - so nothing a pull request author controls is interpolated into the script, and a test runs
+#: the rendered text as it stands. A `gh` that fails fails the step under `set -e`: a failed probe is not a pull
+#: request that changed nothing. An empty `PATTERN` (a gate with no `paths:`) asks for no files, since the
+#: empty ERE matches every one. `has_label` reads GitHub's `toJSON` of the label names, where a name is a quoted
+#: JSON string, so the gate's label is quoted the same way and a longer label holding it does not count.
+GATE_DECIDE_SCRIPT = r"""set -euo pipefail
+decide() {
+  why="$(printf '%s' "$2" | tr '\r\n' '  ')"
+  echo "run=$1" >> "$GITHUB_OUTPUT"
+  echo "why=$why" >> "$GITHUB_OUTPUT"
+  echo "run=$1 - $why"
+  exit 0
+}
+has_label() {
+  quoted="\"$(printf '%s' "$LABEL" | sed 's/[\\"]/\\&/g')\""
+  [ -n "$LABEL" ] && case "$LABELS" in *"$quoted"*) true ;; *) false ;; esac
+}
+hit=""
+changed() {
+  if [ -z "$PATTERN" ]; then
+    echo "the gate has no paths:, so no changed file opens it"
+    return 0
+  fi
+  files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+  echo "changed files of pull request #$PR:"
+  printf '%s\n' "$files"
+  rc=0
+  hits="$(printf '%s\n' "$files" | grep -E -- "$PATTERN")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "::error::grep could not match the gate's pattern (exit $rc): $PATTERN"
+    exit 1
+  fi
+  hit="${hits%%$'\n'*}"
+}
+case "$EVENT" in
+  workflow_dispatch) decide true "the workflow was dispatched" ;;
+  schedule) decide true "the schedule fired" ;;
+  pull_request) ;;
+  *) echo "::error::the gate reads no '$EVENT' event"; exit 1 ;;
+esac
+case "$ACTION" in
+  opened)
+    changed
+    if [ -n "$hit" ]; then decide true "opened, and $hit matches the gate's paths"; fi
+    decide false "opened, and no changed path matches the gate's paths; a gate label set at opening runs it on its own labeled event" ;;
+  synchronize|reopened)
+    if has_label; then decide true "$ACTION, and the pull request carries the label $LABEL"; fi
+    changed
+    if [ -n "$hit" ]; then decide true "$ACTION, and $hit matches the gate's paths"; fi
+    decide false "$ACTION, no changed path matches the gate's paths, and the pull request does not carry the label ${LABEL:-(the gate has none)}" ;;
+  labeled)
+    if [ -z "$LABEL" ] || [ "$ADDED_LABEL" != "$LABEL" ]; then
+      decide false "labeled $ADDED_LABEL, which is not the gate's label ${LABEL:-(the gate has none)}"
+    fi
+    changed
+    if [ -n "$hit" ]; then decide false "labeled $LABEL, and $hit matches the gate's paths, so opened or synchronize already ran it for this head"; fi
+    decide true "labeled $LABEL, and no changed path matches the gate's paths" ;;
+  *) echo "::error::the gate reads no pull_request action '$ACTION'"; exit 1 ;;
+esac
+"""
+DECIDE_NAME = "Decide whether the gate opens"
+#: The event fields the decide step reads, as GitHub hands them over; a missing one is the empty string, and a
+#: missing pull request's labels are `null`.
+DECIDE_EVENT_ENV: Mapping[str, str] = {
+    "EVENT": "${{ github.event_name }}", "ACTION": "${{ github.event.action }}",
+    "ADDED_LABEL": "${{ github.event.label.name }}",
+    "LABELS": "${{ toJSON(github.event.pull_request.labels.*.name) }}",
+    "PR": "${{ github.event.pull_request.number }}"}
+VERDICT_NAME = "Say the gate's verdict"
+#: The verdict once more, where a reader of the run's page finds it without opening the log.
+VERDICT_SCRIPT = 'echo "run=$RUN - $WHY" | tee -a "$GITHUB_STEP_SUMMARY"'
+
+DECIDE_NOTE = (
+    "si#861: whether the gate of `{words}` opens, decided once per event from what the event says and the pull "
+    "request's changed files, never from earlier runs. A dispatch or the schedule runs it. A pull request "
+    "`opened` runs it when a changed path matches the gate's `paths:`; `synchronize` and `reopened` when one "
+    "matches or the pull request carries the gate's `label:`; `labeled` when the label just added is the gate's "
+    "and no changed path matches, because a match already ran it on `opened` or `synchronize`. Removing the "
+    "label and adding it again runs it again, on purpose. Every verdict says why, in the log and in the job "
+    "summary.",
+    "The decide step reads the event, the label and the pattern from its `env:` and nothing else is written into "
+    "its script; the token is in that step's `env:` alone. A `gh` that fails fails the step: a failed probe is "
+    "not a pull request that changed nothing. No checkout and no launcher: nothing here runs the product.")
+
+GATED_NOTE = (
+    "si#861: the members of `{words}`, behind its gate: this job runs only when the decide job says so. It runs "
+    "the members in plan order, a consumer after its producer, and the ones that run after all the others (the "
+    "report) last and always. A Deploy member (a command of an env-first group) runs like a preparation step: "
+    "every later member waits for its success, so a deployment that did not come up shows as one red step and the "
+    "members after it as skipped. Every other member after the first runs unless the run is cancelled or a "
+    "preparation step or a Deploy member went red, so one red member hides none of the others.",
+    "A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub keeps one pending "
+    "run per ref, and a newer one replaces it.")
+
+
+def _gate_cron(cadence: str) -> tuple[str, ...]:
+    """The `schedule` a gate's `cadence:` adds to its own file: none for `manual` or no cadence."""
+    return (NIGHTLY_CRON,) if cadence == "nightly" else () if cadence in ("", "manual") else (cadence,)
+
+
+def derive_gate(manifest: Manifest, data: Mapping[str, object], run: GateRun) -> Derivation:
+    """A gate's own workflow file (si#861): a decide job, and the gated job behind it.
+
+    The decide job runs on the product's machine with no checkout and no preparation, and carries the gate as
+    data (`Gate`: the globs, the label, the ERE `glob_pattern` makes of them). The gated job is built as `_job`
+    builds the main one, over the gate's members in order (preparation, the members, the `after_all` ones, the
+    report upload, cleanup), and it waits for the decide job's verdict, carries the gate's `env:` and the
+    aggregate's `timeout_minutes:`. The triggers are the four pull request events the decide table reads, the
+    `cadence:`'s schedule where there is one, and dispatch; never a push (decision 2).
+    """
+    artifacts = artifactsection.declared(data)
+    _refuse_members_consuming_from_outside(manifest, run, _gated(gates(manifest)), artifacts)
+    selection = Selection(order(run.members), ())
+    runner, labels = runner_of(data)
+    kernel, _ = _kernel_steps(manifest, data, runner)
+    gate = run.gate
+    decide = workflowschema.Job(
+        key=DECIDE_JOB, step=(workflowschema.Step(kernel_step=GATE_DECIDE),), timeout_minutes=DECIDE_TIMEOUT_MINUTES,
+        runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=labels),
+        gate=workflowschema.Gate(paths=gate.paths, label=gate.label,
+                                 pattern=glob_pattern(gate.paths) if gate.paths else ""))
+    gated = dataclasses.replace(
+        _job(manifest, data, run.words.replace(" ", "-"), selection, runner, labels, kernel, run.path),
+        needs=(decide,), condition=GATE_OPEN, timeout_minutes=gate.timeout_minutes,
+        env=tuple(workflowschema.RunnerEnv(env_name=name, env_value=value) for name, value in gate.env.items()))
+    events = (workflowschema.Trigger(event="pull_request_gate"),
+              *(workflowschema.Trigger(event="schedule", cron=cron) for cron in _gate_cron(gate.cadence)),
+              workflowschema.Trigger(event="dispatch"))
+    model = workflowschema.Workflow(path=run.path, title=_key_of(run.path), job=(decide, gated), trigger=events)
+    return Derivation(model, selection, run)
+
+
+def _decide_job(job: workflowschema.Job, run: GateRun) -> workflowgen.Job:
+    """The decide job as the renderer's: two verbatim steps, no checkout, `prepared` so no preparation is added.
+    The reap step `render` puts in front of every job stays: it starts no launcher."""
+    assert job.gate is not None
+    kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
+    labels = job.runner.labels
+    decide = workflowgen.Step(verbatim={
+        "name": DECIDE_NAME, "id": DECIDE_STEP, "shell": "bash",
+        "env": {"GH_TOKEN": "${{ github.token }}", **DECIDE_EVENT_ENV, "PATTERN": job.gate.pattern,
+                "LABEL": job.gate.label},
+        "run": GATE_DECIDE_SCRIPT})
+    verdict = workflowgen.Step(verbatim={
+        "name": VERDICT_NAME, "shell": "bash",
+        "env": {"RUN": f"${{{{ steps.{DECIDE_STEP}.outputs.run }}}}",
+                "WHY": f"${{{{ steps.{DECIDE_STEP}.outputs.why }}}}"},
+        "run": VERDICT_SCRIPT})
+    extras: dict[str, object] = {
+        "timeout-minutes": job.timeout_minutes, "permissions": {"contents": "read", "pull-requests": "read"},
+        "outputs": {"run": f"${{{{ steps.{DECIDE_STEP}.outputs.run }}}}",
+                    "why": f"${{{{ steps.{DECIDE_STEP}.outputs.why }}}}"}}
+    note = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in DECIDE_NOTE)
+    return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=(decide, verdict),
+                           checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras)
 
 
 def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str, ...]) -> Derivation:
@@ -905,12 +1080,18 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         orphan = job.matrix is not None and job.condition not in mains and job.condition not in orphans
         if orphan:
             orphans.add(job.condition)
-        jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan))
+        if job.gate is not None and derivation.gate is not None:
+            jobs.append(_decide_job(job, derivation.gate))
+            continue
+        jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan,
+                            run=derivation.gate))
     # GitHub keeps one pending run per concurrency group and a newer pending run replaces it, so ci-scheduled.yml
     # keys its group on the schedule that fired: one cron's waiting run never displaces another's, and a dispatch
     # queues in a group of its own (si#860 final review).
     group = f"{key}-${{{{ github.event.schedule || 'dispatch' }}}}" if derivation.model.path == SCHEDULED_PATH else key
-    queued = {} if key == KEY else {"concurrency": {"group": group, "cancel-in-progress": False}}
+    # si#861: a gate's file queues its gated job alone, per ref (`_to_job`): the decide job is never queued.
+    queued = ({} if key == KEY or derivation.gate is not None else
+              {"concurrency": {"group": group, "cancel-in-progress": False}})
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write.
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **queued,
@@ -936,8 +1117,13 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
 
 
 def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, data: Mapping[str, object],
-            key: str, product: str, *, orphan: bool = False) -> workflowgen.Job:
-    """One model job as the renderer's job, its conditions written as `to_workflow` describes."""
+            key: str, product: str, *, orphan: bool = False, run: GateRun | None = None) -> workflowgen.Job:
+    """One model job as the renderer's job, its conditions written as `to_workflow` describes.
+
+    si#861 decision 6: a leaf of an env-first group (a `Deploy`: netctl's `down`, `up`, `seed`) runs like a
+    preparation step - an id, no `if:` of its own - and every later leaf waits for its success. A gated job
+    (`needs:` a decide job) also gets its gate's `env:`, the aggregate's `timeout-minutes` and a `concurrency:`
+    per ref that never cancels a run in progress (decision 3)."""
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
     kernel, unplaced = _kernel_steps(manifest, data, runner)
@@ -946,7 +1132,11 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     leaves = [leaf for leaf in selection.leaves if id(leaf.spec) in mine]
     ids = [_PREPARES[step.kernel_step] for step in job.step if step.kernel_step in _PREPARES]
     producers = _producers(leaves)
-    leaf_ids = _leaf_ids(list(dict.fromkeys(maker for makers in producers.values() for maker in makers)))
+    taxonomy = manifest.taxonomy()
+    deploys = {leaf.words for leaf in leaves if not leaf.spec.after_all
+               and taxonomy.group_requires_env(".".join(leaf.words.split()[:-1]))}
+    leaf_ids = _leaf_ids(list(dict.fromkeys([*(leaf.words for leaf in leaves if leaf.words in deploys),
+                                             *(maker for makers in producers.values() for maker in makers)])))
 
     def gate(line: str) -> str:
         waits = [*ids, *(leaf_ids[maker] for maker in producers.get(line, ()))]
@@ -981,7 +1171,9 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             assert isinstance(spec, TaskCommand)
             line = words[id(spec)]
             modifiers: dict[str, object] = {"id": leaf_ids[line]} if line in leaf_ids else {}
-            if spec.after_all:
+            if line in deploys:
+                ids.append(leaf_ids[line])  # a Deploy prepares: every later leaf's gate waits for it
+            elif spec.after_all:
                 modifiers["if"] = "always()"
             elif not first:
                 modifiers["if"] = gate(line)
@@ -991,6 +1183,15 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             steps.append(workflowgen.Step(command=line, modifiers=modifiers))
     labels = job.runner.labels
     gated: dict[str, object] = {"if": job.condition} if job.condition else {}
+    if job.needs:
+        # si#861: the gated job of a gate's file, behind its decide job.
+        needs = [need.key for need in job.needs]
+        gated = {"needs": needs[0] if len(needs) == 1 else needs, **gated}
+        if job.timeout_minutes is not None:
+            gated["timeout-minutes"] = job.timeout_minutes
+        gated["concurrency"] = {"group": f"{key}-${{{{ github.ref }}}}", "cancel-in-progress": False}
+    if job.env:
+        gated["env"] = {env.env_name: env.env_value for env in job.env}
     where = f"derived workflow '{key}', job '{job.key}'"
     if job.matrix is not None:
         # si#860: a cell job. A platform job's machine, shell and launcher are the row's; a python job's is
@@ -1017,13 +1218,15 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                python="" if platform else "${{ matrix.python }}",
                                entry="${{ matrix.entry }}" if platform else "",
                                extras=workflowgen._with_runner_env(runner, cell, where))
-    cadence = next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all)
     gap = ""
     if emulates and not job.runner.kind.can_emulate:
         named = ", ".join(f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates)
         gap = textwrap.fill(EMULATION_GAP.format(leaves=named, platforms=", ".join(emulates), kind=kind), width=95)
-    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap,
-                                          _derived_note(selection, cadence)) if part)
+    if run is not None:
+        said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)
+    else:
+        said = _derived_note(selection, next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all))
+    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap, said) if part)
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            note=note, runner=runner, prepared=True,
                            extras=workflowgen._with_runner_env(runner, gated, where))
@@ -1057,17 +1260,27 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     """
     declared = workflowgen.parse(data)
     own = {workflow.key for workflow in declared}
+    # si#861: every gate's members are ruled on whoever writes ci.yml, and a gate's file is derived unless the
+    # product declares its key (the one switch rule).
+    runs = gates(manifest)
+    derived_gates = [run for run in runs if _key_of(run.path) not in own]
     derivations: list[Derivation] = []
     if KEY in own:
-        _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)))
+        _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
+                                        {member.words for run in derived_gates for member in run.members})
     else:
         push = select(manifest, artifacts=artifactsection.declared(data))
         if declared and not _runs(push) and not _cells(push):
-            log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
-                     f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
+            gone = {s.words for s in push.skipped}
+            behind = [_key_of(run.path) + ".yml" for run in runs if any(m.words in gone for m in run.members)]
+            where = f" outside a gate (the gated ones run in {', '.join(behind)})" if behind else ""
+            log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may "
+                     f"run{where} - place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` "
+                     f"yourself")
         else:
             derivations.append(derive(manifest, data))
     derivations += _cadence_derivations(manifest, data, own)
+    derivations += [derive_gate(manifest, data, run) for run in derived_gates]
     out = (*declared, *(to_workflow(derivation, manifest, data, product=product) for derivation in derivations))
     workflowgen._reject_duplicate_paths(out)
     return out
@@ -1078,20 +1291,21 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
 _VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
 
 
-def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool) -> None:
+def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gated: Set[str] = frozenset()) -> None:
     """Refuse a push leaf's variant key when ci.yml is the product's own (si#860 final review).
 
     Such a leaf runs in the product's ci.yml, which the kernel does not write, so `python:`, `platforms:`,
     `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
     no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
     `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
-    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file.
+    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A member
+    of a gate whose file is derived (`gated`, si#861) is read there, and is no push leaf either.
     """
     for group in _ci_groups(manifest):
         for name, spec in manifest.commands[group].items():
             if not isinstance(spec, TaskCommand) or spec.ci_skip or not spec.unattended or spec.ci.cadence:
                 continue
-            if spec.after_all and cadence_files:
+            if (spec.after_all and cadence_files) or _words(group, name) in gated:
                 continue
             written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), None)]
             if written:
