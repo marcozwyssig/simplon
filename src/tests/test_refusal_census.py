@@ -1322,6 +1322,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
         DIAGNOSIS,
     # si#860 final review: a cell leaf would produce its artifact once per cell, and a run hands it over once.
     ("cipipeline", "_refuse_cell_producers", "so it runs once per cell and would"): DIAGNOSIS,
+    # si#861: a gate member runs in its gate's file with nobody watching, so one that may not, one that opts out
+    # of a main job it is not in, or one whose cadence or cells its gate's file already decides would not run as
+    # written; and artifacts do not cross workflow files, so a hand-off between a gate and another run would
+    # fail on a missing file.
+    ("cipipeline", "_refuse_member", "with nobody watching, and it declares `unattended: false`"): DIAGNOSIS,
+    ("cipipeline", "_refuse_member", "membership already keeps it out of the main job"): DIAGNOSIS,
+    ("cipipeline", "_refuse_member", "the gate's file decides when and where it runs"): DIAGNOSIS,
+    ("cipipeline", "_refuse_members_consuming_from_outside", "so the gated run would fail on a missing file"):
+        DIAGNOSIS,
+    ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

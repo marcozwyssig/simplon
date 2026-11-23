@@ -149,3 +149,155 @@ def test_an_env_key_yaml_reads_as_a_bool_is_refused_and_says_quote_it():
 def test_an_empty_or_boolean_ci_on_an_aggregate_names_what_was_written(written, said):
     with pytest.raises(ValueError, match=rf"aggregate 'test all' declares {said}"):
         _loaded(f"ci: {written}")
+
+
+# --- the members of a gate, and where they run (si#861 task 3) --------------------------------------------
+
+_MEMBERS = """
+tasks:
+  ship: { impl: "simplon.test_impls:nullary", help: "Ship." }
+artifacts:
+  doc: { kind: file, path: build/doc.txt }
+  note: { kind: file, path: build/note.txt, registry: ghcr.io/o/note }
+cd:
+  deploy:
+    commands:
+      down: { task: ship, unattended: true }
+      up: { task: ship, unattended: true }
+      seed: { task: ship, unattended: true }
+ci:
+  build:
+    commands:
+      compile: { task: ship, unattended: true }
+      image: { task: ship, unattended: true }
+      all: { depends_on: [compile, image], help: "All." }
+  test:
+    commands:
+      unit: { task: ship, unattended: true }
+      system: { task: ship, unattended: true%(system)s }
+      report: { task: ship, unattended: true, after_all: true }
+      lab: { depends_on: [down, up, seed, all, compile, system, report], help: "Lab.",
+             ci: { gate: { label: needs-lab } } }
+%(more)s"""
+
+
+def _members(system: str = "", more: str = ""):
+    return manifest.load(_MEMBERS % {"system": system, "more": more}, catalogue=catalogue.load())
+
+
+_IN_LAB = "it runs in ci-test-lab.yml, behind the gate of `test lab`"
+
+
+def test_gate_members_are_its_plan_leaves():
+    from simplon.tasks import cipipeline
+    (run,) = cipipeline.gates(_members())
+    assert run.words == "test lab" and run.gate == CiGate(label="needs-lab")
+    # the member aggregate `build all` contributes its leaves; `compile`, named twice, is there once
+    assert [leaf.words for leaf in run.members] == [
+        "deploy down", "deploy up", "deploy seed", "build compile", "build image", "test system", "test report"]
+    assert run.path == ".github/workflows/ci-test-lab.yml"
+
+
+def test_member_leaves_the_push_run():
+    from simplon.tasks import cipipeline
+    selection = cipipeline.select(_members(), artifacts={})
+    assert cipipeline.Skipped("test system", _IN_LAB) in selection.skipped
+    assert cipipeline.Skipped("build compile", _IN_LAB) in selection.skipped
+    assert [leaf.words for leaf in selection.leaves] == ["test unit", "test report"]
+
+
+def test_member_leaves_the_nightly_run():
+    from simplon.tasks import cipipeline
+    loaded = _members(more="      late: { task: ship, unattended: true, ci: { cadence: nightly } }\n")
+    selection = cipipeline.select(loaded, artifacts={}, cadence="nightly")
+    # named with the gate's file, not with ci.yml's "it has no `cadence:`"
+    assert cipipeline.Skipped("test system", _IN_LAB) in selection.skipped
+    assert [leaf.words for leaf in selection.leaves] == ["test report", "test late"]  # manifest order
+
+
+def _system_as(written: str):
+    return manifest.load((_MEMBERS % {"system": "", "more": ""}).replace(
+        "system: { task: ship, unattended: true }", "system: { task: ship" + written + " }"), catalogue=catalogue.load())
+
+
+def test_attended_member_refused():
+    from simplon.tasks import cipipeline
+    with pytest.raises(ValueError, match=r"'test system' is a member of the gate of `test lab`.*unattended: false"):
+        cipipeline.gates(_system_as(", unattended: false"))
+
+
+def test_undecided_member_refused_naming_the_gate():
+    from simplon.tasks import cipipeline
+    loaded = _system_as("")
+    with pytest.raises(ValueError, match=r"the gate of `test lab`: command 'test system' does not say"):
+        cipipeline.gates(loaded)
+
+
+def test_skipped_member_refused():
+    from simplon.tasks import cipipeline
+    with pytest.raises(ValueError, match=r"'test system'.*membership already keeps it out of the main job"):
+        cipipeline.gates(_members(', ci: { skip: "flaky" }'))
+
+
+@pytest.mark.parametrize(("written", "key"), [("cadence: nightly", "cadence"), ("platforms: [linux-x64]", "platforms"),
+                                              ('python: ["3.14"]', "python")])
+def test_member_with_cadence_or_cells_refused(written, key):
+    from simplon.tasks import cipipeline
+    with pytest.raises(ValueError, match=rf"'test system' is a member of the gate of `test lab`.*`ci: {key}:`"
+                                         r".*the gate's file decides when and where it runs"):
+        cipipeline.gates(_members(f", ci: {{ {written} }}"))
+
+
+@pytest.mark.parametrize("written", ["timeout_minutes: 30", "emulates: [linux/arm64]"])
+def test_member_timeout_and_emulation_are_allowed(written):
+    from simplon.tasks import cipipeline
+    (run,) = cipipeline.gates(_members(f", ci: {{ {written} }}"))
+    assert "test system" in [leaf.words for leaf in run.members]
+
+
+def _crossing(system: str, unit: str):
+    return manifest.load((_MEMBERS % {"system": system, "more": ""}).replace(
+        "unit: { task: ship, unattended: true }", "unit: { task: \"toolchain:run\", unattended: true" + unit + " }")
+        .replace("system: { task: ship,", "system: { task: \"toolchain:run\","), catalogue=catalogue.load())
+
+
+def _declared():
+    import yaml
+    from simplon.manifest import artifactsection
+    return artifactsection.declared(yaml.safe_load(_MEMBERS % {"system": "", "more": ""}))
+
+
+def test_member_consumes_main_job_artifact_refused():
+    from simplon.tasks import cipipeline
+    loaded = _crossing(", consumes: { source: doc }", ", produces: { out: doc }")
+    with pytest.raises(ValueError, match=r"'test system' runs in ci-test-lab.yml, behind the gate of `test lab`, "
+                                         r"and consumes 'doc', which 'test unit' produces, and 'test unit' runs in "
+                                         r"ci.yml - artifacts do not cross workflow files"):
+        cipipeline.select(loaded, artifacts=_declared())
+
+
+def test_main_job_consumes_member_artifact_refused():
+    from simplon.tasks import cipipeline
+    loaded = _crossing(", produces: { out: doc }", ", consumes: { source: doc }")
+    with pytest.raises(ValueError, match=r"'test unit' runs in ci.yml and consumes 'doc', which 'test system' "
+                                         r"produces, and 'test system' is a member of `test lab` \(" + _IN_LAB
+                                         + r"\) - artifacts do not cross workflow files"):
+        cipipeline.select(loaded, artifacts=_declared())
+
+
+@pytest.mark.parametrize(("system", "unit"), [(", consumes: { source: note }", ", produces: { out: note }"),
+                                              (", produces: { out: note }", ", consumes: { source: note }")])
+def test_a_registry_artifact_crosses_the_gate(system, unit):
+    from simplon.tasks import cipipeline
+    selection = cipipeline.select(_crossing(system, unit), artifacts=_declared())
+    assert "test unit" in [leaf.words for leaf in selection.leaves]
+
+
+def test_every_leaf_gated_names_the_gate_file():
+    import yaml
+    from simplon.tasks import cipipeline
+    text = (_MEMBERS % {"system": "", "more": ""}).replace("      unit: { task: ship, unattended: true }\n", "")
+    loaded = manifest.load(text, catalogue=catalogue.load())
+    with pytest.raises(ValueError, match=r"is a member of a gate, so they run in ci-test-lab.yml and the push "
+                                         r"path verifies nothing"):
+        cipipeline.derive(loaded, yaml.safe_load(text))

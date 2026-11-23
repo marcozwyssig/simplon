@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 320 | nothing - the declaration had no working meaning |
+| diagnosis | 325 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **373** | |
+| **all load-time refusals** | **378** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -119,6 +119,11 @@ Since si#860 a declared `workflows:` key switches off only the derived workflow 
 nothing would read it.
 So is a leaf with `python:` or `platforms:` that produces an artifact another leaf consumes: its cells would
 produce it once each, and one run hands an artifact over once.
+Since si#861 a gate's members leave the main and cadence runs for the gate's own file, and these
+are diagnoses too: a member that may not run with nobody watching, a member with `ci: skip:` (its membership
+already keeps it out of the main job), a member with `cadence:`, `platforms:` or `python:` (the gate's file
+decides when and where it runs), and an artifact handed between a gate member and a leaf of another file in
+either direction, unless it has a `registry:`: artifacts do not cross workflow files.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

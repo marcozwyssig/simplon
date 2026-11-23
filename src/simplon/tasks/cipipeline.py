@@ -21,7 +21,7 @@ from simplon.kernel import log
 from simplon.manifest import artifactsection, runners
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
-from simplon.model.command import TaskCommand
+from simplon.model.command import AggregateCommand, CiGate, TaskCommand
 from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
@@ -91,6 +91,10 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
     file's note both see why it is missing here. An `after_all` leaf with no cadence of its own (the report) is
     a verdict over whichever run it ends, so it is chosen for every cadence.
     """
+    runs = gates(manifest)
+    gated = _gated(runs)
+    for run in runs:
+        _refuse_members_consuming_from_outside(manifest, run, gated, artifacts)
     chosen: list[Leaf] = []
     skipped: list[Skipped] = []
     for group, members in manifest.commands.items():
@@ -100,6 +104,10 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
             if not isinstance(spec, TaskCommand):
                 continue
             words = _words(group, name)
+            if words in gated:
+                # si#861: a gate member runs in its gate's file, and `gates` has ruled on its keys.
+                skipped.append(Skipped(words, _behind(gated[words])))
+                continue
             if spec.ci_skip:
                 # Opted out by the product: skipped even where `unattended:` is undeclared, which only
                 # matters to a leaf that would run.
@@ -112,12 +120,13 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
                 chosen.append(Leaf(words, spec))
             else:
                 skipped.append(Skipped(words, _elsewhere(spec.ci.cadence)))
-    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts)
+    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts, gated, _path_of(cadence))
     return Selection(order(chosen), tuple(skipped))
 
 
 def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[Leaf],
-                                          skipped: Mapping[str, str], artifacts: "Mapping[str, Declared]") -> None:
+                                          skipped: Mapping[str, str], artifacts: "Mapping[str, Declared]",
+                                          gated: "Mapping[str, GateRun]", path: str) -> None:
     running = {leaf.words for leaf in chosen}
     absent: dict[str, list[tuple[str, str]]] = {}
     for group, members in manifest.commands.items():
@@ -136,10 +145,140 @@ def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[L
             if any(artifact in handoff._bound(other.spec.produces) for other in chosen):
                 continue
             for producer, why in absent.get(artifact, ()):
+                if producer in gated:
+                    raise ValueError(
+                        f"derived CI: '{leaf.words}' runs in {_key_of(path)}.yml and consumes '{artifact}', which "
+                        f"'{producer}' produces, and '{producer}' is a member of `{gated[producer].words}` ({why}) - "
+                        f"artifacts do not cross workflow files, so the run would fail on a missing file. Make "
+                        f"'{leaf.words}' a member of `{gated[producer].words}` too, or give '{artifact}' a "
+                        f"`registry:` it is fetched from")
                 raise ValueError(
                     f"derived CI: '{leaf.words}' consumes '{artifact}', which '{producer}' produces, and "
                     f"'{producer}' is not run by the CI ({why}) - the run would fail on a missing file. "
                     f"Run the producer in CI, or give '{artifact}' a `registry:` it is fetched from")
+
+
+# --- the gates (si#861) -----------------------------------------------------------------------------------
+
+#: The file each gate's members run in: `stem` is the gated aggregate's command words, dashed (`test lab` ->
+#: `ci-test-lab.yml`). The workflow's key and title is the file's stem, as for a cadence file.
+GATE_PATH = ".github/workflows/ci-{stem}.yml"
+
+#: The `ci:` keys a gate member may not carry: its gate's file decides when it runs and on which machine.
+_GATE_DECIDES = ("cadence", "platforms", "python")
+
+
+class GateRun(NamedTuple):
+    """One `ci: gate:` (si#861): the gated aggregate's command words, its gate, its members (the aggregate's plan
+    leaves in plan order, a member aggregate's leaves among them, each once) and the file they run in."""
+
+    words: str
+    gate: CiGate
+    members: tuple[Leaf, ...]
+    path: str
+
+
+def gates(manifest: Manifest) -> tuple[GateRun, ...]:
+    """Every gate of the product, in manifest order, its members ruled on (si#861).
+
+    The members are `Manifest.plan_tree_for`'s leaves, so they are what `./<product>.sh <words>` runs locally: a
+    `Deploy` of an env-first group (netctl's `down`, `up`, `seed`) included, though no derived CI selects it.
+    Each member is a DIAGNOSIS away from a run that would not do what the manifest says: it must have ruled on
+    `unattended:` and be `true`, since the gated job runs it with nobody watching; `ci: skip:` would opt it out of
+    the main job its membership already keeps it out of; `cadence:`, `platforms:` and `python:` would place a
+    run the gate's file already places. `timeout_minutes:` and `emulates:` shape its step there and are read.
+    """
+    out: list[GateRun] = []
+    for group in _ci_groups(manifest):
+        for name, spec in manifest.commands[group].items():
+            if not isinstance(spec, AggregateCommand) or spec.gate is None:
+                continue
+            words = _words(group, name)
+            path = GATE_PATH.format(stem=words.replace(" ", "-"))
+            members: dict[str, Leaf] = {}
+            for node in manifest.plan_tree_for(name, group=group).leaves():
+                assert isinstance(node.spec, TaskCommand)  # a plan leaf carries a task (`PlanNode.is_leaf`)
+                member = Leaf(node.path.replace(".", " "), node.spec)
+                _refuse_member(member, words, path)
+                members.setdefault(member.words, member)
+            out.append(GateRun(words, spec.gate, tuple(members.values()), path))
+    return tuple(out)
+
+
+def _refuse_member(member: Leaf, gate: str, path: str) -> None:
+    where = f"derived CI, the gate of `{gate}`"
+    workflowgen.require_unattended(member.spec, member.words, where)
+    said = f"derived CI: '{member.words}' is a member of the gate of `{gate}`, so it runs in {_key_of(path)}.yml"
+    if not member.spec.unattended:
+        raise ValueError(
+            f"{said} with nobody watching, and it declares `unattended: false`. Take it out of `{gate}`, or "
+            f"declare `unattended: true` if it can run unwatched")
+    if member.spec.ci_skip:
+        raise ValueError(
+            f"{said}, and declares `ci: skip:` - membership already keeps it out of the main job, and the skip "
+            f"would not keep it out of the gated one. Take `ci: skip:` off, or take it out of `{gate}`")
+    for key in _GATE_DECIDES:
+        if getattr(member.spec.ci, key):
+            raise ValueError(
+                f"{said}, and declares `ci: {key}:` - the gate's file decides when and where it runs. Take "
+                f"`ci: {key}:` off '{member.words}', or take it out of `{gate}`")
+
+
+def _gated(runs: Sequence[GateRun]) -> dict[str, GateRun]:
+    """The gate each member leaves the main and cadence runs for, by command words; the first gate where a leaf is
+    in two. An `after_all` member (the report) is in none of them: it is a verdict over every run it ends, the
+    main and cadence runs included, as si#860 treats it."""
+    out: dict[str, GateRun] = {}
+    for run in runs:
+        for member in run.members:
+            if not member.spec.after_all:
+                out.setdefault(member.words, run)
+    return out
+
+
+def _behind(run: GateRun) -> str:
+    """Why a gate member is not in a main or cadence run, naming the file it runs in (si#861)."""
+    return f"it runs in {_key_of(run.path)}.yml, behind the gate of `{run.words}`"
+
+
+def _refuse_members_consuming_from_outside(manifest: Manifest, run: GateRun, gated: Mapping[str, GateRun],
+                                           artifacts: "Mapping[str, Declared]") -> None:
+    """A gate member that consumes what no member of its gate produces, and some other command does, is refused
+    (si#861 Review Focus 1): artifacts do not cross workflow files, so the gated run would fail on a missing file.
+    A DIAGNOSIS. An artifact with a `registry:` is exempt, as in `select`: it is fetched, not handed over. The
+    reverse, a main or cadence leaf consuming a member's artifact, is `_refuse_consumers_of_absent_producers`'s."""
+    inside = {member.words for member in run.members}
+    made = {artifact for member in run.members for artifact in handoff._bound(member.spec.produces)}
+    for member in run.members:
+        for artifact in handoff._bound(member.spec.consumes):
+            declared = artifacts.get(artifact)
+            if artifact in made or (declared is not None and declared.registry):
+                continue
+            for group, specs in manifest.commands.items():
+                for name, spec in specs.items():
+                    producer = _words(group, name)
+                    if (producer in inside or not isinstance(spec, TaskCommand)
+                            or artifact not in handoff._bound(spec.produces)):
+                        continue
+                    raise ValueError(
+                        f"derived CI: '{member.words}' runs in {_key_of(run.path)}.yml, behind the gate of "
+                        f"`{run.words}`, and consumes '{artifact}', which '{producer}' produces, and '{producer}' "
+                        f"{_runs_where(manifest, group, spec, producer, gated)} - artifacts do not cross workflow "
+                        f"files, so the gated run would fail on a missing file. Make '{producer}' a member of "
+                        f"`{run.words}` too, or give '{artifact}' a `registry:` it is fetched from")
+
+
+def _runs_where(manifest: Manifest, group: str, spec: TaskCommand, words: str, gated: Mapping[str, GateRun]) -> str:
+    """Where a producer outside a gate runs, in the words of `_refuse_members_consuming_from_outside`."""
+    if words in gated:
+        return _behind(gated[words]).removeprefix("it ")
+    if group not in _ci_groups(manifest):
+        return f"is not run by any derived CI (it is in the '{group}' group)"
+    if spec.ci_skip:
+        return f"is not run by any derived CI ({spec.ci_skip})"
+    if not spec.unattended:
+        return f"is not run by any derived CI ({ATTENDED})"
+    return f"runs in {_key_of(_path_of(spec.ci.cadence))}.yml"
 
 
 def order(leaves: Sequence[Leaf]) -> tuple[Leaf, ...]:
@@ -310,6 +449,17 @@ def _nothing_to_run(manifest: Manifest, selection: Selection, path: str) -> str:
     verifies nothing, and `workflows: ci:` now switches off ci.yml alone, so a push CI of the product's own
     keeps the cadence files."""
     elsewhere = [] if path != PATH else [_key_of(_path_of(group[0])) + ".yml" for group in _cadence_groups(manifest)]
+    gone = {s.words for s in selection.skipped}
+    behind = [] if path != PATH else [_key_of(run.path) + ".yml" for run in gates(manifest)
+                                      if any(member.words in gone for member in run.members)]
+    if behind:
+        # si#861: the same refusal where the leaves went behind a gate, naming the gate files too.
+        cadence = " or carries a `cadence:`" if elsewhere else ""
+        return (f"derived CI: every unattended leaf of `ci build` and `ci test` is a member of a gate{cadence}, so "
+                f"they run in {', '.join([*behind, *elsewhere])} and the push path verifies nothing - the derived "
+                f"ci.yml would be a green tick over nothing on every push. Place a leaf outside every gate"
+                f"{' and without `cadence:`' if elsewhere else ''} under `ci build` or `ci test`, or declare "
+                f"`{workflowgen.SECTION}: {KEY}:` with a push CI of your own, which switches off only ci.yml")
     if elsewhere:
         return (f"derived CI: every unattended leaf of `ci build` and `ci test` carries a `cadence:`, so the "
                 f"cadence leaves run in {', '.join(elsewhere)} and the push path verifies nothing - the derived "
