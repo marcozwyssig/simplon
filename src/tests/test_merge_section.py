@@ -30,18 +30,3 @@ def test_a_manifest_with_a_bad_merge_does_not_load():
     with pytest.raises(ValueError, match="auto"):
         manifest.load(_OK + "\nmerge: manual\n")
 
-
-def test_the_docs_table_quotes_every_rule_of_the_model():
-    """The `merge:` section of how/manifest.md quotes each rule's key, reason and source, a second source for
-    strings the model owns: a reason reworded in the model turns this red until the page says the same."""
-    # arrange
-    from pathlib import Path
-
-    from simplon.model import automerge as policy
-    page = (Path(__file__).resolve().parents[1] / "site" / "content" / "how" / "manifest.md").read_text("utf-8")
-
-    # act / assert
-    for key, reason, source in policy.RULES:
-        assert f"| `{key}` | {reason} | {source} |" in page
-    for scope, access, reason in policy.PERMISSIONS:
-        assert f"| `{scope}: {access}` | {reason} |" in page

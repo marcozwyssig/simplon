@@ -68,4 +68,69 @@ template Docs {
     |`release:image` also compares what the record tested with what it would push (si#439): each run names the
     |reference and the daemon id it tested, so an image never tested under that tag, or rebuilt since, is refused.
   }
+
+  // The auto-merge policy page (si#874): the merge policy's rules, token scopes and script inputs, read off its one
+  // instance, so the `merge:` section of how/manifest.md links here instead of carrying a typed copy.
+  file "auto-merge.md" language markdown {
+    for p : `simplon.automerge.MergePolicy` {
+      |---
+      |title: "The auto-merge policy"
+      |weight: 8
+      |---
+      |
+      |GENERATED from `src/firn/model/simplon/automerge/automerge.firn` by `./simplon.sh build model`.
+      |
+      |What `merge: auto` switches on (how/manifest.md, section `merge:`): the derived
+      |`.github/workflows/auto-merge.yml` merges an open pull request labelled `${p.label}` with `gh pr merge --${p.method}`
+      |once these rules pass. The generated workflow carries the same reason beside each rule, and its script is
+      |generated from the same instance.
+      |
+      |## The rules
+      |
+      |They run in this order. A rule that holds the merge says why in the log; a failed read is red, never a green
+      |"nothing to do".
+      |
+      || Rule | Why | Source |
+      ||---|---|---|
+      for r : p.rules {
+        || `${r.key}` | ${r.reason} | ${r.source} |
+      }
+      |
+      |## The token
+      |
+      |The workflow's `permissions:` block is a strict allowlist, so each scope is written with its reason, in the
+      |generated file as here.
+      |
+      || Scope | Why |
+      ||---|---|
+      for q : p.permissions {
+        || `${q.scope}: ${q.access}` | ${q.reason} |
+      }
+      |
+      |## The script's inputs
+      |
+      |The merge step's `env:`, in the order the step writes it, and the script's whole interface: it reads nothing
+      |else, so nothing a pull request author controls is written into it. Each value is a GitHub expression, or a
+      |field of the derived workflow model the kernel fills in. A required input that is empty is red before any call.
+      |
+      for i : p.inputs {
+        if i.expression {
+          if i.required {
+            |- `${i.variable}` (required): ${i.meaning}. From `${i.expression}`.
+          }
+          if not i.required {
+            |- `${i.variable}`: ${i.meaning}. From `${i.expression}`.
+          }
+        }
+        if not i.expression {
+          if i.required {
+            |- `${i.variable}` (required): ${i.meaning}. From the derivation (`${i.source}`).
+          }
+          if not i.required {
+            |- `${i.variable}`: ${i.meaning}. From the derivation (`${i.source}`).
+          }
+        }
+      }
+    }
+  }
 }

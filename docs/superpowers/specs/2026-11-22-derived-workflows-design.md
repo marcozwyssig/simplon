@@ -314,7 +314,9 @@ On the product:
   - **Listens to** the CI workflow and every gate's workflow (derived or declared; a hand-written one is
     read from its file for `name:` and `on:`), plus the label event (`pull_request_target: labeled`, decision 9).
     Rule 4 covers CI too: every non-schedule run of every trigger workflow for the commit must be green, and a
-    CI run must exist. No CI workflow, or one without `workflow_dispatch`, is refused at derive time.
+    CI run must exist, and so must a run of every gate workflow the kernel derives (a stacked parent waits for a
+    push or a dispatch after its child merges); a hand-written gate keeps only the label rule. No CI workflow, or
+    one without `workflow_dispatch`, is refused at derive time.
   - **Inline script, no repository code** (decision 8): privileged context, write token, no checkout, no
     launcher, as si#861's decide job; so no si#756 reap step either.
   - **Rules beyond netctl's**, from reviews: a pull request from a fork is never merged; the merge is bound
@@ -323,9 +325,12 @@ On the product:
     timeline).
   - **Switched off** by `workflows: auto-merge:` (the one switch rule); an undeclared hand-written
     `auto-merge.yml` is refused.
+  - **Which file runs:** `workflow_run` fires only from the workflow file on the default branch and
+    `pull_request_target` from the base branch's, so the pull request introducing `merge: auto` cannot merge
+    itself and a stacked child needs `auto-merge.yml` on its base.
   - **Unmeasured:** whether `GITHUB_TOKEN` may read `collaborators/<login>/permission` (red if not); netctl's
-    note that the repository's default workflow permissions must be write; whether `jq` is on the runner that
-    runs the script's tests. Details: `how/manifest.md`, `merge:`.
+    note that the repository's default workflow permissions must be write. Details: `how/manifest.md`, `merge:`,
+    and the generated `with-what/auto-merge.md`.
 
 ### 5.6 The product's own pytest suite (D7)
 

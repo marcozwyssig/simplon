@@ -1702,40 +1702,30 @@ run says nothing about a pull request's commit. A hand-written CI or gate workfl
 under `--check`.
 
 **The job is one inline script, and no repository code runs in it.** It runs in the privileged `workflow_run`
-context with a write token, so it has no checkout and no launcher. Its concurrency group is the head branch with
-`cancel-in-progress: false`: a CI and a gate completing together for one commit queue, and the second finds the
-pull request merged and does nothing.
+and `pull_request_target` context with a write token, so it has no checkout and no launcher. Its concurrency
+group is the job's own, one per head commit, with `cancel-in-progress: false`: only a run whose job passes its
+`if:` takes it, so a labeled event for another label or a red completion never displaces a run that would merge.
+A CI run and a gate run completing together for one commit queue, and the second finds the pull request merged
+and does nothing; runs for different commits are kept apart by `--match-head-commit`.
 
-**The rules.** They run in this order. The reasons and sources are the model's
-(`src/firn/model/simplon/automerge/automerge.firn`), the same text the generated file carries beside each rule.
+**The rules, the token and the script's inputs** are on [the auto-merge policy](../../with-what/auto-merge/),
+generated from the model (`src/firn/model/simplon/automerge/automerge.firn`) that the script and the workflow's
+comments are generated from too. A rule that holds the merge says why in the log: a run that is still running
+and a run that completed red are told apart, and the first is reconsidered when that run completes. A fork's
+pull request is never merged. The merge is bound to the verified commit with `--match-head-commit`.
 
-| rule | why | source |
-|---|---|---|
-| `token-scope` | A token that cannot read pull requests lists none, and an empty list reads as nothing to merge: netctl#965 merged under such a token and reported success while merging nothing, so the pulls endpoint is probed first and a failed probe is red. | netctl#964 |
-| `labelled-pr` | Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. | si#874 |
-| `head-is-sha` | Merge what was verified: only the pull request whose head is the run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a fork's pull request with the same branch name from being picked. | netctl#1788 |
-| `cross-repository` | A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand. | si#874 security review |
-| `labeller-can-merge` | The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. On the label event that is the event's sender, since the issue timeline can lag behind it; on a run it is the last labeled event of the timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red. | si#874 security review |
-| `label-triggers` | Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for. | si#874 |
-| `trigger-runs-green` | Every run of every trigger workflow for the commit, schedule runs aside, must have completed successfully; a running or red one holds the merge, and its completion reconsiders it. A failed read is red: a missing verdict is not a green one. | netctl#1788 |
-| `ci-run-exists` | The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it. | si#874 |
-| `gate-label-needs-run` | A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named. | netctl#1788 |
-| `squash-merge` | Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open. | si#874 |
-| `dispatch-ci-on-base` | A merge pushed under the workflow token starts no run, so the CI workflow is dispatched on the base branch afterwards; a failed dispatch is red, because the base then carries an unverified commit. | netctl#964 |
+**A gate the kernel derives must have run for the commit; a hand-written one only when its label is on.** A
+derived gate's decide job runs on every pull request event, so a pull request always has a run of it. A stacked
+pull request is where that matters: when a child merges into its labelled parent, the merge dispatches CI on the
+parent's branch, and that head moved without a pull request event, so no gate ran on it. The parent then waits
+for a push to its branch or for the gate's workflow to be dispatched there (the log names the
+`gh workflow run` command). A hand-written gate, such as one that runs on its label or a schedule only, is not
+asked for a run unless the pull request carries its label.
 
-A rule that holds the merge says why in the log: a run that is still running and a run that completed red are
-told apart, and the first is reconsidered when that run completes. A fork's pull request is never merged. The
-merge is bound to the verified commit with `--match-head-commit`.
-
-**The token.** The workflow's `permissions:` block is a strict allowlist, so each scope is written with its
-reason, in the file as here:
-
-| scope | why |
-|---|---|
-| `contents: write` | the squash merge writes the base branch and deletes the head branch |
-| `pull-requests: write` | the merge itself, and reading the pull requests (rule token-scope) |
-| `actions: write` | a permissions block is a strict allowlist: without it the dispatch fails with HTTP 403 while the merge succeeds (netctl run 30950192001) |
-| `issues: write` | without it the merge succeeds and the linked issues silently stay open (netctl#1429) |
+**Which file GitHub runs.** `workflow_run` fires only from the workflow file on the default branch, and
+`pull_request_target` from the file on the pull request's base branch. So the pull request that introduces
+`merge: auto` cannot merge itself, and a stacked child merges only when its base branch already carries
+`auto-merge.yml`.
 
 **Keeping your own file.** The derived file is switched off by declaring the key:
 
@@ -1761,9 +1751,11 @@ GitHub's fallback to the path is not measured to match).
 - Whether `GITHUB_TOKEN` may read `collaborators/<login>/permission`, which rule `labeller-can-merge` needs. If
   it may not, every merge is red, not green: a failed read is no verdict. The first product to run it measures
   this.
+- A label added by a GitHub App (`renovate[bot]`, say): its login is no collaborator, so the permission read is
+  expected to fail and the run to be red, not a green "may not merge" (read off the script, not run against
+  GitHub). Someone who may merge removes the label and adds it again.
 - netctl's note that the repository's default workflow permissions must be set to write for the `permissions:`
   block to take effect. It is netctl's prerequisite, recorded here as stated and not measured by this kernel.
-- Whether `jq` is on the self-hosted runner that runs the script's test suite.
 
 ### `output:` - the one directory a build writes into
 
