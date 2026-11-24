@@ -70,6 +70,9 @@ model typeOf simplon.architecture.Component {
   module m_model_workflowschema typeOf simplon.architecture.Module {
     path = "model.workflowschema"
   }
+  module m_model_automerge typeOf simplon.architecture.Module {
+    path = "model.automerge"
+  }
   module m_model_carrierspec typeOf simplon.architecture.Module {
     path = "model.carrierspec"
   }

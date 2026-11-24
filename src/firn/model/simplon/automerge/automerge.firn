@@ -1,0 +1,97 @@
+// simplon.automerge (si#874): the merge policy a product switches on with `merge: auto`, as a model and its one
+// instance. src/firn/templates/automerge.firnt generates src/simplon/model/automerge.py from it: the label, the
+// method and the rules as data, and the merge script, whose comment for each rule is the rule's reason and source.
+//
+// A fixed policy (Marco, #874 body, 2026-11-23): the label and the method become parameters only when a second
+// product needs another value. The rules are netctl's, read from its hand-written auto-merge.yml (Marco's comment
+// on #861, 2026-11-22), and the ones si#874 decided on top, each with the ticket that measured or decided it. The
+// script runs them in the order written here.
+//
+// Its own package rather than simplon.workflow: workflowschema.firnt writes a dataclass for every class under
+// simplon.workflow, and a merge policy is no part of a workflow's vocabulary.
+package simplon.automerge
+
+// The policy: which label opts a pull request in, how it is merged, and the rules that decide whether it is.
+MergePolicy typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property label typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  // The `gh pr merge` flag without its dashes.
+  property method typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property rules typeOf firn.core.Composition {
+    range = simplon.automerge.MergeRule
+    subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+}
+
+// One rule: its key (the script's branch for it), why it holds, and the ticket that measured or decided it.
+MergeRule typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property source typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+auto typeOf simplon.automerge.MergePolicy {
+  label = "auto-merge"
+  method = "squash"
+  rules token_scope typeOf simplon.automerge.MergeRule {
+    key = "token-scope"
+    reason = "A token that cannot read pull requests lists none, and an empty list reads as nothing to merge: netctl#965 merged under such a token and reported success while merging nothing, so the pulls endpoint is probed first and a failed probe is red."
+    source = "netctl#964"
+  }
+  rules labelled_pr typeOf simplon.automerge.MergeRule {
+    key = "labelled-pr"
+    reason = "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open."
+    source = "si#874"
+  }
+  rules head_is_sha typeOf simplon.automerge.MergeRule {
+    key = "head-is-sha"
+    reason = "Merge what was verified: only the pull request whose head is the run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a fork's pull request with the same branch name from being picked."
+    source = "netctl#1788"
+  }
+  rules label_triggers typeOf simplon.automerge.MergeRule {
+    key = "label-triggers"
+    reason = "Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for."
+    source = "si#874"
+  }
+  rules trigger_runs_green typeOf simplon.automerge.MergeRule {
+    key = "trigger-runs-green"
+    reason = "Every run of every trigger workflow for the commit, schedule runs aside, must have completed successfully; a running or red one holds the merge, and its completion reconsiders it. A failed read is red: a missing verdict is not a green one."
+    source = "netctl#1788"
+  }
+  rules ci_run_exists typeOf simplon.automerge.MergeRule {
+    key = "ci-run-exists"
+    reason = "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it."
+    source = "si#874"
+  }
+  rules gate_label_needs_run typeOf simplon.automerge.MergeRule {
+    key = "gate-label-needs-run"
+    reason = "A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named."
+    source = "netctl#1788"
+  }
+  rules squash_merge typeOf simplon.automerge.MergeRule {
+    key = "squash-merge"
+    reason = "Merge with the policy's method and delete the branch. The base is read before the merge, while the pull request is still open."
+    source = "si#874"
+  }
+  rules dispatch_ci_on_base typeOf simplon.automerge.MergeRule {
+    key = "dispatch-ci-on-base"
+    reason = "A merge pushed under the workflow token starts no run, so the CI workflow is dispatched on the base branch afterwards; a failed dispatch is red, because the base then carries an unverified commit."
+    source = "netctl#964"
+  }
+}

@@ -620,6 +620,12 @@ generated:
   artifact-schema:
     path: src/simplon/model/artifactschema.py
     by: build model
+  # The merge policy `merge: auto` switches on (si#874): its label, method and rules as data, and the merge
+  # script, generated WHOLE by firn from src/firn/model/simplon/automerge/automerge.firn. It has no protected
+  # region, so a hand edit is red here first.
+  automerge:
+    path: src/simplon/model/automerge.py
+    by: build model
   # One class per catalogue task (si#400 4b), firn's whole output in this directory beside the hand-written
   # task modules: a directory entry, so a class for a new task is stale until committed.
   task-classes:

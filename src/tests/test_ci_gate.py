@@ -14,6 +14,7 @@ from simplon.manifest import load as manifest
 from simplon.model.command import AggregateCommand, CiGate
 
 from conftest import ROOT
+from ghstub import calls_made, gh_on_path
 
 
 def _loaded(ci: str, placement: str = "ci:\n  test:\n    commands:\n      lab: { task: ship }\n"
@@ -571,16 +572,12 @@ def _decide(tmp_path, *, event: str, action: str = "", added: str = "", labels=(
     step = next(step for step in doc["jobs"]["decide"]["steps"] if step.get("id") == "decide")
     script = tmp_path / "decide.sh"
     script.write_text(step["run"], encoding="utf-8")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
     (tmp_path / "files.txt").write_text("".join(f + "\n" for f in files), encoding="utf-8")
     (tmp_path / "total.txt").write_text(f"{len(files) if total is None else total}\n", encoding="utf-8")
-    gh = bin_dir / "gh"
     # the files call lists the files, the pull request call answers its `changed_files`
-    gh.write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/gh.calls"\n'
-                  f'case "$*" in *"/files?"*) cat "{tmp_path}/files.txt" ;; *) cat "{tmp_path}/total.txt" ;; esac\n'
-                  f'exit {gh_rc}\n', encoding="utf-8")
-    gh.chmod(0o755)
+    bin_dir, gh_calls = gh_on_path(
+        tmp_path, f'case "$*" in *"/files?"*) cat "{tmp_path}/files.txt" ;; *) cat "{tmp_path}/total.txt" ;; esac\n'
+                  f'exit {gh_rc}\n')
     output = tmp_path / "output.txt"
     output.write_text("", encoding="utf-8")
     pr = event == "pull_request"
@@ -593,8 +590,7 @@ def _decide(tmp_path, *, event: str, action: str = "", added: str = "", labels=(
            "LABEL": step["env"]["LABEL"] if label is None else label}
     done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)
     said = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
-    calls = (tmp_path / "gh.calls").read_text(encoding="utf-8") if (tmp_path / "gh.calls").exists() else ""
-    return done, said, calls
+    return done, said, calls_made(gh_calls)
 
 
 @pytest.mark.parametrize(("event", "action", "added", "labels", "files", "runs", "why"), [
