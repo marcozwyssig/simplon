@@ -244,3 +244,41 @@ def test_no_sources_says_so(monkeypatch, world, capsys):
 
     assert rc == 0
     assert "declares no `sources:`" in capsys.readouterr().out
+
+
+def _token_in_the_url(monkeypatch, world):
+    """Aim the rewrite at the local remote through a path that CARRIES the token, so the URL git really fetches
+    from holds it, as the production `x-access-token:<token>@` URL does."""
+    remote = world["root"].parent / "remote"
+    aliased = world["root"].parent / f"via-{{token}}"
+    Path(str(aliased).format(token=TOKEN)).symlink_to(remote)
+    monkeypatch.setattr(sources, "REWRITE", f"file://{aliased}/")
+
+
+def _files_holding(tree, needle):
+    return [str(path) for path in Path(tree).rglob("*") if path.is_file() and needle in path.read_bytes()]
+
+
+def test_a_token_run_leaves_the_token_in_no_file_and_no_remote_url(monkeypatch, world):
+    """The rewrite lives in the call's environment, so neither `.git` (the superproject's config, the
+    submodule's `modules/` gitdir, FETCH_HEAD, logs) nor the submodule's `remote.origin.url` keeps it."""
+    _manifest(monkeypatch, world, SOURCES)
+    _token_in_the_url(monkeypatch, world)
+
+    assert sources.sources_cmd() == 0
+
+    assert _git(world["root"] / "lib" / "platform", "rev-parse", "HEAD") == world["pinned"]
+    assert _files_holding(world["root"] / ".git", TOKEN.encode()) == []
+    assert TOKEN not in _git(world["root"] / "lib" / "platform", "config", "remote.origin.url")
+
+
+def test_a_second_run_succeeds_and_puts_the_submodule_back_at_the_pin(monkeypatch, world):
+    """Over an initialised submodule a second run is rc 0, and a submodule moved off its pin since goes back."""
+    _manifest(monkeypatch, world, SOURCES)
+    _token_in_the_url(monkeypatch, world)
+    assert sources.sources_cmd() == 0
+    _git(world["root"] / "lib" / "platform", "checkout", "-q", world["tip"])
+
+    assert sources.sources_cmd() == 0
+
+    assert _git(world["root"] / "lib" / "platform", "rev-parse", "HEAD") == world["pinned"]

@@ -976,7 +976,7 @@ helper or an ssh rewrite work.
 
 | where | the variable is unset or empty | the variable is set |
 |---|---|---|
-| under GitHub Actions | refused before git runs, naming the secret (a fork or Dependabot pull request gets no secrets, and an unauthenticated clone would fail with "repository not found") | used |
+| under GitHub Actions | refused before git runs, naming the secret (a fork or Dependabot pull request gets no secrets, and an unauthenticated clone would fail, measured with no credentials as `fatal: could not read Username for 'https://github.com': terminal prompts disabled`) | used |
 | anywhere else | the submodule is updated with your own git configuration and credentials, and the run says so in one line | used |
 
 **Every job checks them out, right after its own checkout.** `support github workflows` places the step after
@@ -987,8 +987,9 @@ success, so a failed checkout stops the job instead of letting a leaf read an em
 workflow's jobs get it too. A job with `checkout: false` has no checkout to follow and gets no step and no
 `secrets.` reference. A product with no `sources:` section gets no step, and every file stays as it was.
 
-If the product declares `sources:` and has removed `support sources` from its tree, the job gets a comment saying
-so and the line that places it again, never a guessed command.
+If the product declares `sources:` and overrides `support sources` with another body (`override: true`), no
+command checks the sources out: the job gets a comment saying so and the line that places `support:sources`
+under a name of its own, never a guessed command.
 
 **What is refused, and where.** At load time: `sources:` that is not a list, an entry that is not a mapping, an
 unknown key, a `submodule:` that is empty, absolute or contains `..`, a `secret:` that is not a variable name,
@@ -998,8 +999,10 @@ apply and the token would go unused without a word), and git exiting non-zero.
 
 **Limits, so the next reader finds them here.**
 
-- `GIT_CONFIG_GLOBAL=/dev/null` on a token call also hides a global `safe.directory`. Unmeasured: a container
-  job whose user differs from the repository's owner.
+- `GIT_CONFIG_GLOBAL=/dev/null` on a token call hides every global key, not only a stale rewrite. Unmeasured:
+  a global `safe.directory` (a container job whose user differs from the repository's owner), `http.proxy` and
+  `http.sslCAInfo` (a runner behind a proxy or a private CA set in `~/.gitconfig` fails the token call), and a
+  credential helper (a nested private submodule outside GitHub loses your helper).
 - The URL check reads `.gitmodules`. A submodule that is already initialised uses the URL in `.git/config`,
   which a local `set-url` or `sync` can make differ.
 - A relative `.gitmodules` URL with a `secret:` is refused by the prefix check. The one consumer with a private

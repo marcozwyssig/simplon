@@ -13,12 +13,15 @@ A call with no token keeps the user's configuration, which is what makes a crede
 rewrite work.
 
 AN EMPTY TOKEN. Under GitHub Actions it is refused before git runs: a fork or Dependabot pull request gets
-no secrets, and an unauthenticated clone would fail three lines later with "repository not found". Outside
-Actions it is not an error, the submodule is updated with the user's own git and the run says so.
+no secrets, and an unauthenticated clone would fail three lines later (measured with no credentials and
+`GIT_TERMINAL_PROMPT=0`: `fatal: could not read Username for 'https://github.com': terminal prompts disabled`).
+Outside Actions it is not an error, the submodule is updated with the user's own git and the run says so.
 
 KNOWN LIMITS, unmeasured or accepted:
-- `GIT_CONFIG_GLOBAL=/dev/null` on a token call also hides a global `safe.directory` (unmeasured: a container job
-  whose uid differs from the repo owner).
+- `GIT_CONFIG_GLOBAL=/dev/null` on a token call hides EVERY global key, not only the stale rewrite: a global
+  `safe.directory` (a container job whose uid differs from the repo owner), `http.proxy` and `http.sslCAInfo` (a
+  runner behind a proxy or a private CA configured in ~/.gitconfig fails the token call), and a credential
+  helper (a nested non-GitHub private submodule loses the user's helper). All unmeasured.
 - The URL check reads `.gitmodules`; an already initialised submodule uses `submodule.<name>.url` from .git/config,
   which a local set-url or sync can make differ.
 - A relative `.gitmodules` URL (`../x.git`) with a secret is refused by the prefix check. netctl, the one consumer

@@ -1841,10 +1841,11 @@ SOURCES_NOTE = """si#873: the product declares `sources:`, so the job checks tho
 right after the checkout, before anything else runs. A token reaches git through this step's env only."""
 
 SOURCES_UNPLACED = """si#873: this product declares `sources:`, and places no command that instantiates
-`support:sources`, so this job checks none of those submodules out and a step reading one finds it empty.
-To get it, place the coordinate and regenerate:
+`support:sources` (the kernel places it as `support sources`, so another body overrides that name here), so
+this job checks none of those submodules out and a step reading one finds it empty. To get it, place the
+coordinate under a name of its own beside the override and regenerate:
 
-    sources: { task: "support:sources" }"""
+    checkout-sources: { task: "support:sources" }"""
 
 
 def _sources_step(manifest: Manifest, declared: "Sequence[sources.Source]") -> "tuple[Step | None, str]":

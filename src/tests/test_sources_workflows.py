@@ -201,7 +201,7 @@ def test_sources_without_placement_is_said(tmp_path, monkeypatch):
         doc = yaml.safe_load(text)
         assert not any(_is_sources(step) for job in doc["jobs"].values() for step in job["steps"])
         assert "secrets.PLATFORM_REPO_TOKEN" not in text
-        assert 'sources: { task: "support:sources" }' in text
+        assert 'checkout-sources: { task: "support:sources" }' in text
 
 
 def test_the_release_job_gets_the_sources_step_after_its_checkout():
@@ -219,3 +219,30 @@ def test_the_release_job_gets_the_sources_step_after_its_checkout():
     steps = _steps(yaml.safe_load(text), workflowgen.RELEASE_JOB)
     assert steps[0]["uses"] == workflowgen.CHECKOUT_ACTION
     assert steps[1] == {"env": _ENV, "run": "exec ./app.sh support sources"}
+
+
+def test_the_unplaced_advice_places_the_step_beside_the_override(tmp_path, monkeypatch):
+    """The line `SOURCES_UNPLACED` hands the product, added beside its override, loads and gets every job the
+    step: advice that collided with the override's own name would be refused by the merge instead."""
+    advice = workflowgen.SOURCES_UNPLACED.strip().splitlines()[-1].strip()
+    unplaced = f"""
+    support:
+      commands:
+        ci-docker-preflight: {{ task: "support:ci-docker-preflight" }}
+        ci-disk-preflight: {{ task: "support:ci-disk-preflight" }}
+        ci-disk-cleanup: {{ task: "support:ci-disk-cleanup" }}
+        sources: {{ task: ship, override: true }}
+        {advice}
+    """
+    assert advice.endswith('{ task: "support:sources" }')
+    head = _HEAD.split("support:")[0]
+    manifest_path = tmp_path / "demo.yaml"
+    manifest_path.write_text(head + "".join(textwrap.dedent(p) for p in (unplaced, _THREE, _SOURCES, _DECLARED)),
+                             encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext(name="demo", root=tmp_path,
+                                                                     manifest_path=manifest_path))
+    assert workflows_task.generate() == 0
+    doc = yaml.safe_load((tmp_path / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    name = advice.split(":")[0]
+    assert any(str(step.get("run", "")).endswith(f" support {name}")
+               for job in doc["jobs"].values() for step in job["steps"])
