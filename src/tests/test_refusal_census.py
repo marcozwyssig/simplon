@@ -1221,6 +1221,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("sources", "declared", "`secret:` must be a variable name"): DIAGNOSIS,
     ("sources", "declared", "names the submodule"): DIAGNOSIS,
 
+    # --- manifest/merge.py: the `merge:` section, the switch for the derived auto-merge workflow (si#874) -----
+    # A diagnosis: the section has one value, and the message names it. Nothing was said that could have worked.
+    ("merge", "declared", "`merge:` must be"): DIAGNOSIS,
+
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):
         DIAGNOSIS,
