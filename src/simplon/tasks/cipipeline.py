@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
-from simplon.manifest import artifactsection, runners
+from simplon.manifest import artifactsection, runners, sources
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
@@ -413,6 +413,8 @@ def _elsewhere(cadence: str) -> str:
     return f'it has `cadence: "{cadence}"`, so it runs in {_key_of(SCHEDULED_PATH)}.yml on that schedule'
 
 #: The steps the kernel owns in the derived job, by the name the model carries (`Step.kernel_step`).
+#: si#873: the manifest's `sources:` checked out, the first preparation step.
+SOURCES = "sources"
 DOCKER_PREFLIGHT = "docker-preflight"
 DISK_PREFLIGHT = "disk-preflight"
 INSTALL = "install"
@@ -423,10 +425,10 @@ EMULATION = "emulation"
 
 #: The step ids of the preparation steps. An `_`, never a `-`: a leaf's condition reads them in an expression,
 #: where `steps.prepare-docker` would be a subtraction.
-PREPARE = {"docker": "prepare_docker", "disk": "prepare_disk", "install": "prepare_install",
-           "emulation": "prepare_emulation"}
-_PREPARES = {DOCKER_PREFLIGHT: PREPARE["docker"], DISK_PREFLIGHT: PREPARE["disk"], INSTALL: PREPARE["install"],
-             EMULATION: PREPARE["emulation"]}
+PREPARE = {"sources": "prepare_sources", "docker": "prepare_docker", "disk": "prepare_disk",
+           "install": "prepare_install", "emulation": "prepare_emulation"}
+_PREPARES = {SOURCES: PREPARE["sources"], DOCKER_PREFLIGHT: PREPARE["docker"], DISK_PREFLIGHT: PREPARE["disk"],
+             INSTALL: PREPARE["install"], EMULATION: PREPARE["emulation"]}
 
 #: The model's trigger events, as the `on:` keys and bodies GitHub reads. `derive` names the events and
 #: `to_workflow` writes them from here, so the rendered `on:` is the model's and not a second copy; the default
@@ -484,9 +486,11 @@ def _kernel_steps(manifest: Manifest, data: Mapping[str, object],
     probe, probe_unplaced = workflowgen._docker_step(machine, manifest)
     pre, post, disk_unplaced = workflowgen._disk_steps(machine, manifest)
     install, install_unplaced = _install(manifest, data)
-    steps = {name: step for name, step in ((DOCKER_PREFLIGHT, probe), (DISK_PREFLIGHT, pre), (INSTALL, install),
-                                           (DISK_CLEANUP, post)) if step is not None}
-    return steps, tuple(note for note in (probe_unplaced, disk_unplaced, install_unplaced) if note)
+    # si#873: on every machine, hosted or not, so a cell job gets it too.
+    fetch, fetch_unplaced = workflowgen._sources_step(manifest, sources.declared(data))
+    steps = {name: step for name, step in ((SOURCES, fetch), (DOCKER_PREFLIGHT, probe), (DISK_PREFLIGHT, pre),
+                                           (INSTALL, install), (DISK_CLEANUP, post)) if step is not None}
+    return steps, tuple(note for note in (fetch_unplaced, probe_unplaced, disk_unplaced, install_unplaced) if note)
 
 
 def _ci_groups(manifest: Manifest) -> list[str]:
@@ -883,7 +887,7 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
         raise ValueError(_nothing_to_run(manifest, selection, path))
     _refuse_producers_moved_last(runs, last)
     kind = workflowschema.RUNNER_KINDS[runner.kind]
-    steps = [workflowschema.Step(kernel_step=name) for name in (DOCKER_PREFLIGHT, DISK_PREFLIGHT, INSTALL)
+    steps = [workflowschema.Step(kernel_step=name) for name in (SOURCES, DOCKER_PREFLIGHT, DISK_PREFLIGHT, INSTALL)
              if name in kernel]
     steps += [workflowschema.Step(kernel_step=EMULATION)] if _emulates((*runs, *last)) and kind.can_emulate else []
     # si#860 decision 4: in a job other leaves share, the limit is the leaf's own step's.
@@ -934,13 +938,14 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     """One leaf's matrix job (si#860): a cell per `ci: python:` version on `github-ubuntu` whatever the product's
     `runner:` is (decision 5), or a cell per `ci: platforms:` name on that cell's hosted machine. Every cell is a
     hosted machine, so it gets no disk preflight and no docker probe (the kind's `disk_persists` decides it, as
-    for any job), and `support install` where the product declares `toolchains:`. A platform cell checks its
-    architecture first. No report: a cell's result is its job's colour."""
+    for any job), `support sources` where the product declares `sources:` (si#873) and `support install` where
+    it declares `toolchains:`. A platform cell checks its architecture first. No report: a cell's result is its
+    job's colour."""
     hosted, labels = runner_of({})
     kernel, _ = _kernel_steps(manifest, data, hosted)
     platforms, python = leaf.spec.ci.platforms, leaf.spec.ci.python
     steps = [workflowschema.Step(kernel_step=ARCH_CHECK)] if platforms else []
-    steps += [workflowschema.Step(kernel_step=INSTALL)] if INSTALL in kernel else []
+    steps += [workflowschema.Step(kernel_step=name) for name in (SOURCES, INSTALL) if name in kernel]
     # `emulates:` beside `platforms:` is refused at load, so this is a python cell on github-ubuntu, which can.
     steps += [workflowschema.Step(kernel_step=EMULATION)] if leaf.spec.ci.emulates else []
     steps.append(workflowschema.Step(command=leaf.spec))

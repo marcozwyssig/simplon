@@ -67,7 +67,7 @@ from typing import NamedTuple, cast
 
 import yaml
 
-from simplon.manifest import artifactsection, context, runners, signatures
+from simplon.manifest import artifactsection, context, runners, signatures, sources
 from simplon.model import task
 from simplon.adapters import disk, docker, tools
 from simplon.model.command import ReleaseCommand, TaskCommand
@@ -404,6 +404,9 @@ class Workflow:
     timeout_minutes: int = RELEASE_TIMEOUT_MINUTES
     #: si#858: derived by `cipipeline` from the CI leaves rather than declared under `workflows:`.
     derived: bool = False
+    #: si#873: the manifest's `sources:`, which every job that checks out gets a step for (`_sources_step`).
+    #: Set by `parse` on a declared workflow; a derived job carries the step as a preparation step instead.
+    sources: "tuple[sources.Source, ...]" = ()
 
     @property
     def generated(self) -> bool:
@@ -469,9 +472,10 @@ def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     if not isinstance(section, Mapping) or not section:
         raise ValueError(f"'{SECTION}' must be a non-empty mapping of workflow name -> its declaration")
 
+    declared = sources.declared(data)
     out = []
     for key, body in section.items():
-        out.append(_workflow(str(key), body))
+        out.append(replace(_workflow(str(key), body), sources=declared))
     _reject_duplicate_paths(out)
     return tuple(out)
 
@@ -1767,7 +1771,8 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     for job in jobs:
         lines += _render_job(job, expanded=expanded[job.name], crossing=handoffs[job.name],
                              artifacts=artifacts or {}, manifest=manifest, product=product, workflow=workflow.key,
-                             workflow_env=_names(workflow.extras.get("env")), workflow_extras=workflow.extras)
+                             workflow_env=_names(workflow.extras.get("env")), workflow_extras=workflow.extras,
+                             declared_sources=workflow.sources)
     text = "\n".join(lines).rstrip("\n") + "\n"
 
     validate(text, where=f"workflow '{workflow.key}'")
@@ -1827,6 +1832,32 @@ def _docker_step(job: Job, manifest: Manifest) -> "tuple[Step | None, str]":
     if not placed:
         return None, DOCKER_UNPLACED.format(kind=runner.kind, coordinate=runners.DOCKER_PREFLIGHT[0])
     return Step(command=placed, note=DOCKER_NOTE), ""
+
+
+#: si#873: the coordinate `support sources` instantiates; found by impl, as `_placed` says.
+SOURCES_TASK = "support:sources"
+
+SOURCES_NOTE = """si#873: the product declares `sources:`, so the job checks those submodules out at their pins
+right after the checkout, before anything else runs. A token reaches git through this step's env only."""
+
+SOURCES_UNPLACED = """si#873: this product declares `sources:`, and places no command that instantiates
+`support:sources`, so this job checks none of those submodules out and a step reading one finds it empty.
+To get it, place the coordinate and regenerate:
+
+    sources: { task: "support:sources" }"""
+
+
+def _sources_step(manifest: Manifest, declared: "Sequence[sources.Source]") -> "tuple[Step | None, str]":
+    """`(the sources step, the note for the file)`: a step only where the product declares `sources:` AND places
+    `support:sources`; declared and unplaced is a sentence, never a guessed command line. The step's `env:`
+    names each source's secret, so the token is in this step's environment and in no other step's."""
+    if not declared:
+        return None, ""
+    placed = _placed(manifest, task.class_ref(SOURCES_TASK))
+    if not placed:
+        return None, SOURCES_UNPLACED
+    env = {source.secret: f"${{{{ secrets.{source.secret} }}}}" for source in declared if source.secret}
+    return Step(command=placed, modifiers={"env": env} if env else {}, note=SOURCES_NOTE), ""
 
 
 def _placed(manifest: Manifest, impl: str) -> str:
@@ -1936,7 +1967,8 @@ def _receive(artifact: str) -> tuple[Step, Step]:
 def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handoff",
                 artifacts: "Mapping[str, artifactsection.Declared]", manifest: Manifest, product: str,
                 workflow: str, workflow_env: "frozenset[str]" = frozenset(),
-                workflow_extras: "Mapping[str, object]") -> list[str]:
+                workflow_extras: "Mapping[str, object]",
+                declared_sources: "Sequence[sources.Source]" = ()) -> list[str]:
     where = f"workflow '{workflow}', job '{job.name}'"
     steps: list[Step] = []
     for at, step in enumerate(expanded):
@@ -1982,6 +2014,12 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
     # preflight buys is everything after it, which is where the expensive steps and the real failures are.
     # A `prepared` job (si#858) carries both pairs already, with the ids its leaves read, and its note says
     # what is unplaced; inserting them again here would run each twice.
+    # si#873: the sources step goes first of all, because every step after it may read the submodule; only
+    # where this job checks out, and a `prepared` job carries it as a preparation step of its own.
+    fetch, fetch_unplaced = (_sources_step(manifest, declared_sources) if job.checkout and not job.prepared
+                             else (None, ""))
+    if fetch_unplaced:
+        lines += _comment(fetch_unplaced, "      ")
     preflight, cleanup, unplaced = _disk_steps(job, manifest) if not job.prepared else (None, None, "")
     if unplaced:
         lines += _comment(unplaced, "      ")
@@ -1996,6 +2034,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
         lines += _comment(probe_unplaced, "      ")
     if probe is not None:
         steps.insert(0, probe)
+    # si#873: before even the probe (inserted last, so first), right after the checkout and setup-python.
+    if fetch is not None:
+        steps.insert(0, fetch)
 
     for index, step in enumerate(steps):
         lines += _comment(step.note, "      ")
