@@ -765,7 +765,7 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:clean", "vcs:submodules",
                       "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
                       "support:model", "support:claude-plugins", "support:claude-md", "support:toolchain",
-                      "support:workflows", "tasks:catalogue", "tasks:generate"}
+                      "support:workflows", "support:sources", "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is
     # unchanged - but the kernel places none of its own there (#39): a command that publishes has to be

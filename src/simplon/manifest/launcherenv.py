@@ -58,7 +58,9 @@ in the stale check; the dispatch wrappers add them to that command's keep-list f
 other command's. A derived name takes a carrier's prefix, so `url_from: my-haus` derives `my-haus_PASSWORD`,
 which bash cannot export and the launcher still carries (si#824, `_CARRIED`). One no launcher can carry is
 left off the list and named - by `simplon init --launchers-only`, and by the kernel when the command that
-reads it runs - rather than arriving unset behind a "not set" that blames the host.
+reads it runs - rather than arriving unset behind a "not set" that blames the host. `support sources` is
+placed by the catalogue, so no command of the document carries its names: they are read off the `sources:`
+section itself (`sources.variable_roles`, si#873) and appended after every command's.
 
 THE NAMES THE LAUNCHER SETS ITSELF ARE REFUSED, and they are read off the launcher templates rather than
 typed a second time here: every `-e NAME=...` the container line writes, plus the `LAUNCH_` namespace the
@@ -79,7 +81,7 @@ from contextvars import ContextVar
 from importlib.resources import files
 
 from simplon.kernel import secrets
-from simplon.manifest import treeform
+from simplon.manifest import sources, treeform
 
 #: The retired top-level section (si#467's form), refused by name since si#492. Not a `SECTION`: the kernel
 #: reads it only to refuse it.
@@ -194,6 +196,13 @@ def forwardable(name: str) -> bool:
     return bool(_CARRIED.match(name)) and not _kernel_owned(name)
 
 
+def forwarded_anyway(name: str, product: str) -> bool:
+    """Whether every launcher forwards `name` without a list: `FORWARDED`, the `DELIVERY_*` namespace and the
+    product's own `<PRODUCT>_*` (the launcher's `ENV_PREFIX`: upper case, `-` as `_`)."""
+    prefix = product.upper().replace("-", "_")
+    return name in FORWARDED or name.startswith("DELIVERY_") or bool(prefix) and name.startswith(f"{prefix}_")
+
+
 def cannot_carry(name: str) -> str:
     """Why the launcher does not forward the derived name `name`, and the way out (si#824) - the sentence the
     renderer and the kernel both say, so a variable the host set is never reported only as "not set"."""
@@ -220,17 +229,18 @@ def _commands(data: Mapping[str, object], source: str,
 
 
 def left_out(data: Mapping[str, object], source: str = "manifest", *,
-             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+             derive: Callable[[str], tuple[str, ...]], product: str = "") -> tuple[str, ...]:
     """The derived names `declared` leaves off the launcher's list because no launcher can forward them, in
     the order written, each once (si#824) - for the renderer to name, each with `cannot_carry`."""
     out: list[str] = []
     for _, derived in _commands(data, source, derive):
         out += [name for name in derived if not forwardable(name) and name not in out]
+    out += [name for name in sources.variable_roles(data) if not forwardable(name) and name not in out]
     return tuple(out)
 
 
 def declared(data: Mapping[str, object], source: str = "manifest", *,
-             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+             derive: Callable[[str], tuple[str, ...]], product: str = "") -> tuple[str, ...]:
     """The UNION of every task command's `env: pass:` in this document, and of the names the kernel derives
     for its task (si#810), in the order written, or () when there are none - the names the launcher
     forwards into the kernel's container.
@@ -258,6 +268,12 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
         for passed in (*passed_by_command, *filter(forwardable, derived)):
             if passed not in out:
                 out.append(passed)
+    # si#873: `support sources` is placed by the catalogue, so no command of this document carries its names;
+    # they are derived from the `sources:` section itself, after every command's, and () without one.
+    # One the launcher forwards anyway (`GH_TOKEN`, `DELIVERY_*`, `<PRODUCT>_*`, `product` being the name the
+    # launcher runs as) stays off: on the list, `confine` would unset it for every other command.
+    out += [name for name in filter(forwardable, sources.variable_roles(data))
+            if name not in out and not forwarded_anyway(name, product)]
     return tuple(out)
 
 

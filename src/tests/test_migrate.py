@@ -902,7 +902,8 @@ NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"],
 #: help and impl, and only its position in the group moved - that is what is taken back out here.
 #: si#714 places `clean` in `support git` the same way. si#867 moved the two claude commands into
 #: `support claude` (above); a product that placed `claude-plugins` itself still has it where it put it.
-NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "toolchain"), ("support.git", "clean"))
+#: si#873 places `sources` in `support` the same way.
+NEW_MEMBERS_IN_EVERY_PRODUCT = (("support", "toolchain"), ("support", "sources"), ("support.git", "clean"))
 
 
 @pytest.mark.parametrize("product", PRODUCTS)

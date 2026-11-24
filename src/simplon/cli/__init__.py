@@ -338,9 +338,10 @@ def _derived(*tasks: str) -> tuple[str, ...]:
     """The names the kernel derives for `tasks` from the running product's manifest (si#810): what a command
     bound to `deploy:up` keeps of the launcher's list although it declares no `env: pass:`. Imported when a
     command runs rather than at the top, so assembling the CLI does not load the deploy module's adapters."""
-    from simplon.tasks import deploy
+    from simplon.tasks import deploy, sources
 
-    return deploy.variables_kept(*tasks)
+    # si#873: and what the `sources:` section derives for `support:sources`, which the catalogue places.
+    return (*deploy.variables_kept(*tasks), *sources.variables_kept(*tasks))
 
 
 def _plan_keep(mf: manifest.Manifest, name: str, group: str) -> tuple[str, ...]:
@@ -826,7 +827,7 @@ def main(*, app: typer.Typer, context: ProductContext,
         data = context.manifest_data()
         stale = launcherenv.stale_launcher(
             launcherenv.declared(data, str(context.manifest_path),
-                                 derive=lambda task: deploy.variables_read(data, task)),
+                                 derive=lambda task: deploy.variables_read(data, task), product=context.name),
             os.environ, launcher(context.name))
         if stale:
             log.die(stale)

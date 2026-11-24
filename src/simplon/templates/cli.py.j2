@@ -22,6 +22,9 @@ from simplon.manifest import results as _results
 {% if uses_derived %}
 from simplon.tasks import deploy as _deploy
 {% endif %}
+{% if uses_sources %}
+from simplon.tasks import sources as _sources
+{% endif %}
 
 
 def _rc(value: int | None) -> int:

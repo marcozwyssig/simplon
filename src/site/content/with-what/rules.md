@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 329 | nothing - the declaration had no working meaning |
+| diagnosis | 337 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **382** | |
+| **all load-time refusals** | **390** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -321,9 +321,9 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **73** coordinates and its own tree places
-**16** of them; those 16 are the platform's half - in the merged tree because the catalogue put them there,
-not because this product asked - and all 16 reach every rule the table calls *held to it too*. Exactly two
+rule is asked what it was actually handed. The catalogue holds **74** coordinates and its own tree places
+**17** of them; those 17 are the platform's half - in the merged tree because the catalogue put them there,
+not because this product asked - and all 17 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown
 the catalogue until si#85, for the rewrite it no longer prints) and the one that enforces which groups
 exist, and every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's

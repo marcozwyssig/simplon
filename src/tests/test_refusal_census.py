@@ -1209,6 +1209,18 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("artifactschema", "_typed", "must be a mapping of name to value"): DIAGNOSIS,
     ("artifactschema", "_typed", "must be a scalar, not"): DIAGNOSIS,
 
+    # --- manifest/sources.py: the `sources:` section, the submodules a job checks out (si#873) --------
+    # Every one is a diagnosis: a scalar, an unknown key, a path outside the checkout or a path twice is a
+    # section no reader could act on as its author meant, and each message says where and the way out.
+    ("sources", "declared", "`sources:` must be a list of"): DIAGNOSIS,
+    ("sources", "declared", "is not a mapping - a source declares"): DIAGNOSIS,
+    ("sources", "declared", "declares unknown key"): DIAGNOSIS,
+    ("sources", "declared", "declares no `submodule:`"): DIAGNOSIS,
+    ("sources", "declared", "must be a non-empty relative path"): DIAGNOSIS,
+    ("sources", "declared", "must not contain '..'"): DIAGNOSIS,
+    ("sources", "declared", "`secret:` must be a variable name"): DIAGNOSIS,
+    ("sources", "declared", "names the submodule"): DIAGNOSIS,
+
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):
         DIAGNOSIS,

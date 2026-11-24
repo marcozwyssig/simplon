@@ -168,6 +168,10 @@ simplon typeOf simplon.manifest.Product {
       key = "install"
       task = simplon.catalogue.support_install
     }
+    command sources typeOf simplon.pipeline.TaskCommand {
+      key = "sources"
+      task = simplon.catalogue.support_sources
+    }
     command toolchain typeOf simplon.pipeline.TaskCommand {
       key = "toolchain"
       task = simplon.catalogue.support_toolchain

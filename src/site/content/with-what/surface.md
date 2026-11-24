@@ -205,7 +205,7 @@ Short enough to state, and the half you most need, because everything else is yo
 
 `adapters.brew` · `adapters.diskguard` · `adapters.gh` · `adapters.github` · `adapters.hostinstall` · `adapters.oras` · `adapters.pypi` · `adapters.repofile` · `adapters.tools` · `cli.bootstrap` ·
 `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
-`manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.taskkeys` · `manifest.yamlkeys` · `manifest.yamllines` · `model.workflowschema` · `kernel.limits` · `kernel.moved` · `kernel.provenance` ·
+`manifest.ports` · `manifest.runners` · `manifest.sources` · `manifest.signatures` · `manifest.taskkeys` · `manifest.yamlkeys` · `manifest.yamllines` · `model.workflowschema` · `kernel.limits` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.secrets` · `kernel.steplog` · `test_impls` · `ui.clipboard`
 
 `model.task` and `model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn

@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 14 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 17 |
+| `support` | not a phase | 18 |
 | `vcs` | family | 6 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Seventy-three coordinates: sixty carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
+Seventy-four coordinates: sixty-one carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -408,7 +408,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 17 tasks.**
+**In the catalogue today: 18 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -427,18 +427,23 @@ environment.
 - `support:ci-docker-preflight`
 - `support:docker-preflight`
 - `support:toolchain`
+- `support:sources`
 
-**What a product brings itself.** Nothing, for `support:install` and `support:completion` - they are the
-two tasks here the catalogue **places**, so every product gets `support install` and `support completion`
-without asking. One touches the machine and reads no manifest at all; the other writes the product's
-shell completion out of the command tree every manifest already has, and a completion that has to be
-asked for is a completion nobody has. Four of the rest each read a section (`nexus:`, `claude:`,
-`environments:`, `workflows:`) and are therefore offered.
+**What a product brings itself.** Nothing, for the tasks here the catalogue **places**: `support:install`,
+`support:sources`, `support:toolchain`, `support:completion`, `support:claude-plugins`, `support:claude-md`,
+`support:workflows`, `support:migrate` and `support:model`. Every product gets them without asking, under the
+names the catalogue gives them (`support install`, `support claude md`, `support github workflows`, `support
+manifest model`, ...). The placement itself is the catalogue's command tree (`groups.firn`), which wins where
+this list disagrees. Each is useful in every product: `support install` touches the machine and reads no
+manifest at all; `support completion` writes the product's shell completion out of the command tree every
+manifest already has, and a completion that has to be asked for is a completion nobody has; `support sources`
+tells a product with no `sources:` so in one line and succeeds. The rest read a section a product may not have
+(`nexus:`, `environments:`) or prepare a CI runner, and are therefore offered.
 
-`support:toolchain` is offered for a third reason again (si#95): it reads no section, and it could be
-placed - but it WRITES the product's own manifest, and a command that edits the file a product is defined
-by should be one the product asked for. What it writes is a language's ready-made build, so that a
-product declares its parameters and receives the rest.
+`support:toolchain` was offered for a reason of its own until si#550 (si#95): it WRITES the product's own
+manifest, and a command that edits the file a product is defined by should be one the product asked for.
+si#525 made `toolchains:` a list every product has, so it is placed now. What it writes is a language's
+ready-made build, so that a product declares its parameters and receives the rest.
 
 `support:model` (`support manifest model <path>`, si#346) writes the validated manifest as a firn model,
 `package product.<product>`, and it writes only after the manifest has loaded: a manifest the kernel

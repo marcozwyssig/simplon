@@ -1218,7 +1218,7 @@ def _launcher_names(name: str, target: Path, reader: Callable[..., tuple[str, ..
         return ()
     from simplon.tasks import deploy     # si#810/si#812: what the deploy tasks read, derived from the manifest
 
-    return reader(data, str(path), derive=lambda task: deploy.variables_read(data, task))
+    return reader(data, str(path), derive=lambda task: deploy.variables_read(data, task), product=name)
 
 
 def write_launchers(name: str, target: Path, orch_dir: str) -> dict[str, str]:
