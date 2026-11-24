@@ -41,20 +41,21 @@ def _text(merge: str = "merge: auto", tail: str = "") -> str:
     return _NETCTL % {"merge": merge, "tail": tail}
 
 
-def _workflows(text: str):
+def _workflows(text: str, root=None):
     from simplon.tasks import cipipeline
     loaded = manifest.load(text, catalogue=catalogue.load(), manifest_path="netctl.yaml")
-    return loaded, {wf.path: wf for wf in cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl")}
+    return loaded, {wf.path: wf for wf in cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl",
+                                                               root=root)}
 
 
-def _rendered(text: str | None = None, path: str = _PATH) -> str:
+def _rendered(text: str | None = None, path: str = _PATH, root=None) -> str:
     from simplon.tasks import workflowgen
-    loaded, files = _workflows(text or _text())
+    loaded, files = _workflows(text or _text(), root)
     return workflowgen.render(files[path], manifest=loaded, product="netctl", source="netctl.yaml", artifacts={})
 
 
-def _doc(text: str | None = None) -> dict:
-    return yaml.safe_load(_rendered(text))
+def _doc(text: str | None = None, root=None) -> dict:
+    return yaml.safe_load(_rendered(text, root=root))
 
 
 def _merge_step(doc: dict) -> dict:
@@ -145,9 +146,91 @@ def test_ci_without_dispatch_is_refused():
         _workflows(_text(tail=_OWN_CI % "push: null"))
 
 
-def test_handwritten_ci_is_refused():
-    with pytest.raises(ValueError, match=r"merge: auto.*`ci`.*hand-written.*cannot read its `name:`"):
-        _workflows(_text(tail="workflows:\n  ci: { handwritten: \"ours\" }\n"))
+_HANDWRITTEN_CI = "workflows:\n  ci: { handwritten: \"ours\" }\n"
+_HANDWRITTEN_LAB = "workflows:\n  ci-test-lab: { handwritten: \"ours\" }\n"
+
+
+def _own_file(root, name: str, text: str) -> None:
+    path = root / ".github/workflows" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_handwritten_ci_is_read_from_its_file(tmp_path):
+    # `on:` bare, as a hand-written file has it: YAML 1.1 reads the key as True
+    _own_file(tmp_path, "ci.yml", "name: CI\non:\n  pull_request:\n  workflow_dispatch:\njobs: {}\n")
+    doc = _doc(_text(tail=_HANDWRITTEN_CI), root=tmp_path)
+    assert doc[True]["workflow_run"]["workflows"] == ["CI", "ci-test-lab"]
+    assert _merge_step(doc)["env"]["CI_WORKFLOW"] == "ci.yml"
+
+
+def test_handwritten_ci_without_dispatch_is_refused(tmp_path):
+    _own_file(tmp_path, "ci.yml", "name: CI\non: [pull_request, push]\njobs: {}\n")
+    with pytest.raises(ValueError, match=r"no `workflow_dispatch` trigger"):
+        _workflows(_text(tail=_HANDWRITTEN_CI), tmp_path)
+
+
+def test_handwritten_gate_is_read_from_its_file(tmp_path):
+    _own_file(tmp_path, "ci-test-lab.yml", "name: Lab\non: workflow_dispatch\njobs: {}\n")
+    doc = _doc(_text(tail=_HANDWRITTEN_LAB), root=tmp_path)
+    assert doc[True]["workflow_run"]["workflows"] == ["ci", "Lab"]
+    env = _merge_step(doc)["env"]
+    assert (env["TRIGGERS"], env["GATES"]) == ("ci.yml ci-test-lab.yml", "ci-test-lab.yml needs-lab")
+
+
+def test_handwritten_file_absent_is_refused(tmp_path):
+    with pytest.raises(ValueError, match=r"merge: auto.*`ci-test-lab`.*hand-written.*no file at "
+                                         r"\.github/workflows/ci-test-lab\.yml"):
+        _workflows(_text(tail=_HANDWRITTEN_LAB), tmp_path)
+
+
+def test_handwritten_file_without_name_is_refused(tmp_path):
+    _own_file(tmp_path, "ci.yml", "on: [pull_request, workflow_dispatch]\njobs: {}\n")
+    with pytest.raises(ValueError, match=r"merge: auto.*`ci`.*no `name:`.*Add a `name:`"):
+        _workflows(_text(tail=_HANDWRITTEN_CI), tmp_path)
+
+
+def test_handwritten_file_that_is_no_mapping_is_refused(tmp_path):
+    _own_file(tmp_path, "ci.yml", "- just\n- a list\n")
+    with pytest.raises(ValueError, match=r"merge: auto.*`ci`.*is not a workflow"):
+        _workflows(_text(tail=_HANDWRITTEN_CI), tmp_path)
+
+
+def test_check_goes_red_when_the_handwritten_name_changes(tmp_path):
+    from simplon.tasks import cipipeline, workflowgen
+    text = _text(tail=_HANDWRITTEN_CI)
+    _own_file(tmp_path, "ci.yml", "name: CI\non: [pull_request, workflow_dispatch]\njobs: {}\n")
+    loaded = manifest.load(text, catalogue=catalogue.load(), manifest_path="netctl.yaml")
+
+    def check():
+        files = cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl", root=tmp_path)
+        return files, workflowgen.check(files, tmp_path, manifest=loaded, product="netctl", source="netctl.yaml",
+                                        artifacts={})
+
+    files, _ = check()
+    workflowgen.write(files, tmp_path, manifest=loaded, product="netctl", source="netctl.yaml", artifacts={})
+    assert _PATH in check()[1].agreed
+    _own_file(tmp_path, "ci.yml", "name: Continuous\non: [pull_request, workflow_dispatch]\njobs: {}\n")
+    assert [drift.path for drift in check()[1].drifted] == [_PATH]
+
+
+def test_the_merge_job_has_no_reap_step():
+    from simplon.tasks import workflowgen
+    doc = _doc()
+    assert not any(step.get("name") == workflowgen.REAP_NAME for step in doc["jobs"]["auto-merge"]["steps"])
+    assert [step["name"] for step in doc["jobs"]["auto-merge"]["steps"]] == [
+        "Merge the labelled pull request once every trigger run for its head is green"]
+    # every other derived job keeps it
+    for path in (".github/workflows/ci.yml", ".github/workflows/ci-test-lab.yml"):
+        other = yaml.safe_load(_rendered(path=path))
+        assert all(job["steps"][0]["name"] == workflowgen.REAP_NAME for job in other["jobs"].values()), path
+
+
+def test_condition_and_permissions_are_the_policys():
+    from simplon.model import automerge as policy
+    doc = _doc()
+    assert doc["jobs"]["auto-merge"]["if"] == policy.CONDITION
+    assert doc["permissions"] == {scope: access for scope, access, _ in policy.PERMISSIONS}
 
 
 def test_no_ci_workflow_is_refused():

@@ -28,6 +28,33 @@ MergePolicy typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 1..N
     objectCardinality = 0..1
   }
+  // The auto-merge job's `if:`: which of its two events may merge. A GitHub expression, written whole.
+  property condition typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  // The workflow token's scopes, each with why the merge needs it.
+  property permissions typeOf firn.core.Composition {
+    range = simplon.automerge.MergePermission
+    subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+}
+
+// One scope of the auto-merge workflow's token: its name, its access, why, and the ticket or run that measured it.
+MergePermission typeOf firn.core.Class extends firn.core.NamedResource {
+  property scope typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property access typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
 }
 
 // One rule: its key (the script's branch for it), why it holds, and the ticket that measured or decided it.
@@ -49,6 +76,30 @@ MergeRule typeOf firn.core.Class extends firn.core.NamedResource {
 auto typeOf simplon.automerge.MergePolicy {
   label = "auto-merge"
   method = "squash"
+  // A completed trigger run that succeeded and that no schedule started, or this policy's label just added
+  // (decision 9 of #874). The label is spelled here as `label` above spells it; test_automerge_workflow.py holds
+  // the two together.
+  condition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == 'auto-merge')"
+  permissions contents typeOf simplon.automerge.MergePermission {
+    scope = "contents"
+    access = "write"
+    reason = "the squash merge writes the base branch and deletes the head branch"
+  }
+  permissions pull_requests typeOf simplon.automerge.MergePermission {
+    scope = "pull-requests"
+    access = "write"
+    reason = "the merge itself, and reading the pull requests (rule token-scope)"
+  }
+  permissions actions typeOf simplon.automerge.MergePermission {
+    scope = "actions"
+    access = "write"
+    reason = "a permissions block is a strict allowlist: without it the dispatch fails with HTTP 403 while the merge succeeds (netctl run 30950192001)"
+  }
+  permissions issues typeOf simplon.automerge.MergePermission {
+    scope = "issues"
+    access = "write"
+    reason = "without it the merge succeeds and the linked issues silently stay open (netctl#1429)"
+  }
   rules token_scope typeOf simplon.automerge.MergeRule {
     key = "token-scope"
     reason = "A token that cannot read pull requests lists none, and an empty list reads as nothing to merge: netctl#965 merged under such a token and reported success while merging nothing, so the pulls endpoint is probed first and a failed probe is red."
@@ -67,6 +118,11 @@ auto typeOf simplon.automerge.MergePolicy {
   rules cross_repository typeOf simplon.automerge.MergeRule {
     key = "cross-repository"
     reason = "A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand."
+    source = "si#874 security review"
+  }
+  rules labeller_can_merge typeOf simplon.automerge.MergeRule {
+    key = "labeller-can-merge"
+    reason = "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission, read on both events. Anyone else is a green no-op that names them; a failed read is red."
     source = "si#874 security review"
   }
   rules label_triggers typeOf simplon.automerge.MergeRule {

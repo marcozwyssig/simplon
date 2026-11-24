@@ -60,7 +60,7 @@ def generate(check: bool = False) -> int:
     source = ctx.manifest_path.name
     manifest = ctx.manifest()
     # si#858: the declared workflows, and ci.yml derived from the CI leaves where no entry declares it.
-    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name)
+    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name, root=ctx.root)
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,

@@ -29,6 +29,16 @@ template AutoMerge {
       }
       |)
       |
+      |#: The auto-merge job's `if:`.
+      |CONDITION = "${p.condition}"
+      |
+      |#: (scope, access, reason) per scope of the auto-merge workflow's token.
+      |PERMISSIONS: tuple[tuple[str, str, str], ...] = (
+      for q : p.permissions {
+        |    ("${q.scope}", "${q.access}", "${q.reason}"),
+      }
+      |)
+      |
       |#: The auto-merge step's `run:`. Its environment is its interface: GH_TOKEN, GH_REPO, BRANCH, SHA, CI_WORKFLOW,
       |#: TRIGGERS, GATES and EVENT, as the script's header says.
       |MERGE_SCRIPT = r"""set -euo pipefail
@@ -108,6 +118,30 @@ template AutoMerge {
           |    ;;
           |esac
         }
+        if r.key == "labeller-can-merge" {
+          |labeller=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+          |  --jq '.[] | select(.event == "labeled" and .label.name == "${p.label}") | .actor.login') || {
+          |  echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |  exit 1
+          |}
+          |labeller=$(printf '%s\n' "$labeller" | awk 'NF { last = $0 } END { print last }')
+          |if [ -z "$labeller" ]; then
+          |  echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
+          |  exit 1
+          |fi
+          |if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
+          |  echo "::error::could not read the permission of $labeller, who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |  exit 1
+          |fi
+          |case "$access" in
+          |  admin | maintain | write) ;;
+          |  *)
+          |    echo "$labeller added the label ${p.label} to PR #$pr last, and has '$access' permission, not write, maintain or admin."
+          |    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it and add it again."
+          |    exit 0
+          |    ;;
+          |esac
+        }
         if r.key == "label-triggers" {
           |if [ "$EVENT" = "pull_request_target" ]; then
           |  echo "The label ${p.label} was added to PR #$pr: no run triggered this, so the runs for $SHA are read."
@@ -166,7 +200,7 @@ template AutoMerge {
           |  exit 1
           |fi
         }
-        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "label-triggers" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
+        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "labeller-can-merge" and r.key != "label-triggers" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
           |echo "::error::the rule ${r.key} has no block in automerge.firnt: the policy cannot be applied." >&2
           |exit 1
         }

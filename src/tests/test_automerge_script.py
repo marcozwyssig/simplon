@@ -75,10 +75,22 @@ class Merge:
     dispatch_rc: int = 0
     merge_rc: int = 0
     unreadable: str = ""
+    labeller: str = "alice"
+    permission: str = "write"
+    events_rc: int = 0
+    permission_rc: int = 0
 
     def run(self, tmp_path: Path):
         table = [["pulls?state=open&per_page=1", {"rc": self.probe_rc, "json": []}],
-                 ["pr list", {"json": self.prs}]]
+                 ["pr list", {"json": self.prs}],
+                 ["/events", {"rc": self.events_rc, "json": [
+                     *([{"event": "labeled", "label": {"name": "auto-merge"}, "actor": {"login": "earlier"}}]
+                       if self.labeller else []),
+                     {"event": "labeled", "label": {"name": "needs-lab"}, "actor": {"login": "other"}},
+                     *([{"event": "labeled", "label": {"name": "auto-merge"}, "actor": {"login": self.labeller}}]
+                       if self.labeller else []),
+                     {"event": "commented", "actor": {"login": "someone"}}]}],
+                 ["/permission", {"rc": self.permission_rc, "json": {"permission": self.permission}}]]
         for wf, runs in self.runs.items():
             answer = {"rc": 1, "err": "HTTP 502"} if wf == self.unreadable else {"json": {"workflow_runs": runs}}
             table.append([f"actions/workflows/{wf}/runs?", answer])
@@ -129,7 +141,8 @@ def test_rules_are_data_with_a_reason_and_a_source():
     keys = [key for key, _, _ in automerge.RULES]
 
     # assert: netctl's rules, then the two si#874 decided on top, each with its reason and the ticket behind it
-    assert keys == ["token-scope", "labelled-pr", "head-is-sha", "cross-repository", "label-triggers",
+    assert keys == ["token-scope", "labelled-pr", "head-is-sha", "cross-repository", "labeller-can-merge",
+                    "label-triggers",
                     "trigger-runs-green",
                     "ci-run-exists", "gate-label-needs-run", "squash-merge", "dispatch-ci-on-base"]
     assert all(reason and re.match(r"(netctl|si)#\d+\b", source)
@@ -241,6 +254,54 @@ def test_a_pr_whose_origin_is_unknown_is_red(tmp_path):
     # assert
     assert done.returncode == 1
     assert "could not tell whether PR #7 comes from a fork" in done.stderr
+    assert not _merged(calls)
+
+
+# --- labeller-can-merge ---------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("event", ["workflow_run", "pull_request_target"])
+def test_a_label_added_by_someone_who_may_not_merge_does_not_merge(tmp_path, event):
+    """si#874 security review: a triage-role user can add the label and may not merge."""
+    # act
+    done, calls, outputs = Merge(event=event, labeller="trudy", permission="read").run(tmp_path)
+
+    # assert
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "trudy added the label auto-merge to PR #7 last" in done.stdout and "read" in done.stdout
+    assert (_merged(calls), _dispatched(calls), outputs) == (False, False, {})
+    assert f"api repos/{REPO}/collaborators/trudy/permission" in calls
+
+
+@pytest.mark.parametrize("permission", ["write", "maintain", "admin"])
+def test_a_label_added_by_someone_who_may_merge_merges(tmp_path, permission):
+    # act
+    done, calls, _ = Merge(labeller="alice", permission=permission).run(tmp_path)
+
+    # assert
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _merged(calls)
+    assert f"api repos/{REPO}/collaborators/alice/permission" in calls
+    assert "collaborators/earlier" not in calls
+
+
+@pytest.mark.parametrize("failing", ["events_rc", "permission_rc"])
+def test_a_failed_read_of_who_labelled_is_red(tmp_path, failing):
+    # act
+    done, calls, _ = Merge(**{failing: 1}).run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "no verdict" in done.stderr
+    assert not _merged(calls)
+
+
+def test_a_label_with_no_labeled_event_is_red(tmp_path):
+    # act
+    done, calls, _ = Merge(labeller="").run(tmp_path)
+
+    # assert: no labeled event for the label is found; a label nobody added is no verdict
+    assert done.returncode == 1
+    assert "no verdict" in done.stderr
     assert not _merged(calls)
 
 

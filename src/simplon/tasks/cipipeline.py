@@ -16,6 +16,7 @@ import dataclasses
 import re
 import textwrap
 from collections.abc import Mapping, Sequence, Set
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
@@ -882,7 +883,8 @@ def _merge_job(job: workflowschema.Job) -> workflowgen.Job:
     note = "\n\n".join([textwrap.fill(head, width=95), "\n".join(rules), textwrap.fill(tail, width=95)])
     extras: dict[str, object] = {"if": job.condition, "timeout-minutes": job.timeout_minutes}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=(step,),
-                           checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras)
+                           checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras,
+                           reap=not job.starts_no_container)
 
 
 def _permissions_note(permissions: Sequence[workflowschema.Permission]) -> str:
@@ -1188,7 +1190,9 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
               {"concurrency": {"group": group, "cancel-in-progress": False}})
     if any(job.merge is not None for job in derivation.model.job):
         # si#874: a CI run and a gate run completing together for one commit queue per branch; the second finds
-        # the pull request merged and is a no-op.
+        # the pull request merged and is a no-op. With more than two near-simultaneous events GitHub keeps one
+        # pending run per group and cancels the one it replaces; harmless, because the run that survives re-reads
+        # every run for its commit.
         queued = {"concurrency": {"group": f"{key}-{MERGE_BRANCH}", "cancel-in-progress": False}}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write. A model that names its scopes (si#874) gets
@@ -1341,7 +1345,8 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
 # --- the switch (si#858 task 7) ----------------------------------------------------------------------------
 
 
-def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -> tuple[workflowgen.Workflow, ...]:
+def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
+              root: Path | None = None) -> tuple[workflowgen.Workflow, ...]:
     """Every workflow `support github workflows` writes or checks: the declared ones, the derived ci.yml, and
     since si#860 a derived ci-nightly.yml, ci-manual.yml and ci-scheduled.yml where a leaf carries that cadence.
 
@@ -1365,7 +1370,8 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     the caller.
 
     si#874: `merge: auto` adds the auto-merge workflow (`automerge.derive`), listening to the CI workflow and every
-    gate's workflow as written here, derived or declared; `workflows: auto-merge:` switches it off.
+    gate's workflow as written here, derived or declared, a hand-written one read from its file under `root`, the
+    product's root; `workflows: auto-merge:` switches it off.
     """
     from simplon.tasks import automerge  # it builds on this module's Derivation and gates
     declared = workflowgen.parse(data)
@@ -1397,7 +1403,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
         # si#874: the auto-merge workflow listens to the CI workflow and each gate's, whoever writes them.
         keyed = {workflow.key: workflow for workflow in out}
         merging = automerge.derive(manifest, data, keyed.get(KEY),
-                                   {_key_of(run.path): keyed[_key_of(run.path)] for run in runs})
+                                   {_key_of(run.path): keyed[_key_of(run.path)] for run in runs}, root)
         out = (*out, to_workflow(merging, manifest, data, product=product))
     workflowgen._reject_duplicate_paths(out)
     return out

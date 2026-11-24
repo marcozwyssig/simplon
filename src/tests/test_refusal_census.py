@@ -1358,10 +1358,15 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,
     # si#874: `merge: auto` derives auto-merge.yml from the CI workflow and each gate's. With no CI workflow nothing
     # gates the merge; one without `workflow_dispatch` cannot be dispatched on the base after it (the policy's last
-    # rule); a hand-written one has a `name:` the kernel cannot read, and a guessed name is a filter that never fires.
+    # rule). A hand-written one is read from its file (Marco, 2026-11-24): no file, a file that is no workflow, or
+    # one with no `name:` (GitHub's fallback to the path is unmeasured for `workflow_run`, and a guessed name is a
+    # filter that never fires) leaves nothing to listen to.
     ("automerge", "derive", "so nothing gates the merge"): DIAGNOSIS,
     ("automerge", "derive", "has no `workflow_dispatch` trigger"): DIAGNOSIS,
-    ("automerge", "_readable", "is declared hand-written, so the kernel cannot read its `name:`"): DIAGNOSIS,
+    ("automerge", "_trigger", "and there is no file at {workflow.path}"): DIAGNOSIS,
+    ("automerge", "_trigger", "is not a workflow: it is not valid YAML"): DIAGNOSIS,
+    ("automerge", "_trigger", "is not a workflow: it is not a mapping"): DIAGNOSIS,
+    ("automerge", "_trigger", "has no `name:`, which `workflow_run` listens for"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

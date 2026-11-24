@@ -7,10 +7,10 @@
 # si#874: the token's scopes below, and why each one:
 # contents: write - the squash merge writes the base branch and deletes the head branch
 # pull-requests: write - the merge itself, and reading the pull requests (rule token-scope)
-# actions: write - dispatching the CI workflow on the base after the merge (rule
-#   dispatch-ci-on-base); without it the dispatch is refused, netctl run 30950192001
-# issues: write - GitHub closes the issues the pull request names as the merging actor, which
-#   needs it (netctl#1429)
+# actions: write - a permissions block is a strict allowlist: without it the dispatch fails with
+#   HTTP 403 while the merge succeeds (netctl run 30950192001)
+# issues: write - without it the merge succeeds and the linked issues silently stay open
+#   (netctl#1429)
 name: auto-merge
 on:
   workflow_run:
@@ -52,6 +52,10 @@ jobs:
   # cross-repository (si#874 security review): A pull request from a fork is not merged: a fork's
   #   runs use the workflow files of the fork's own head, so a fork could turn its own runs green
   #   while the label stays on. It is merged by hand.
+  # labeller-can-merge (si#874 security review): The label is only an opt-in from someone who may
+  #   merge: a triage-role user can add a label and may not merge, so whoever added the label most
+  #   recently must have write, maintain or admin permission, read on both events. Anyone else is a
+  #   green no-op that names them; a failed read is red.
   # label-triggers (si#874): Adding the label triggers too, a deviation from netctl: a pull request
   #   labelled after its runs are green merges without a new run. That event carries no run of its
   #   own, so the runs for the head commit are asked for.
@@ -81,71 +85,6 @@ jobs:
     if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == 'auto-merge')
     timeout-minutes: 10
     steps:
-      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
-      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
-      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
-      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
-      #
-      # It removes a container only when BOTH hold: it carries `simplon.run=netctl`, the label the kernel puts on
-      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
-      # runner runs one job at a time and this step runs before this job has started anything, so such a
-      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
-      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
-      #
-      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
-      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
-      # own first docker step meets the same daemon and says why. An orphan that is still there after
-      # `rm --force` fails the step: it would be writing into this job's checkout.
-      - name: Remove the containers a cancelled job left running
-        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          ws="${GITHUB_WORKSPACE:?}"
-          if command -v docker >/dev/null 2>&1; then
-            d=docker
-          elif [ -x "$ws/build/tools/bin/docker" ]; then
-            d="$ws/build/tools/bin/docker"
-          else
-            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
-            exit 0
-          fi
-          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
-          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=netctl 2>"$err")"; then
-            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
-            rm -f "$err"
-            exit 0
-          fi
-          rm -f "$err"
-          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
-          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
-          removed=0
-          left=0
-          for id in $ids; do
-            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
-              gone "$id" && continue
-              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
-              left=$((left + 1))
-              continue
-            fi
-            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
-            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
-            "$d" rm --force "$id" >/dev/null 2>&1 || true
-            waited=0
-            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
-            if gone "$id"; then
-              echo "  removed"
-              removed=$((removed + 1))
-            else
-              echo "::error::orphan $id is still there 10 s after docker rm --force"
-              left=$((left + 1))
-            fi
-          done
-          echo "$removed orphaned container(s) removed"
-          if [ "$left" -ne 0 ]; then
-            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
-            exit 1
-          fi
       - name: Merge the labelled pull request once every trigger run for its head is green
         shell: bash
         env:
@@ -230,6 +169,30 @@ jobs:
             *)
               echo "::error::could not tell whether PR #$pr comes from a fork (isCrossRepository is '$cross'): no verdict." >&2
               exit 1
+              ;;
+          esac
+
+          # labeller-can-merge (si#874 security review): The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission, read on both events. Anyone else is a green no-op that names them; a failed read is red.
+          labeller=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+            --jq '.[] | select(.event == "labeled" and .label.name == "auto-merge") | .actor.login') || {
+            echo "::error::could not read who labelled PR #$pr auto-merge: no verdict, so no merge." >&2
+            exit 1
+          }
+          labeller=$(printf '%s\n' "$labeller" | awk 'NF { last = $0 } END { print last }')
+          if [ -z "$labeller" ]; then
+            echo "::error::PR #$pr carries auto-merge and no labeled event names who added it: no verdict, so no merge." >&2
+            exit 1
+          fi
+          if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
+            echo "::error::could not read the permission of $labeller, who labelled PR #$pr auto-merge: no verdict, so no merge." >&2
+            exit 1
+          fi
+          case "$access" in
+            admin | maintain | write) ;;
+            *)
+              echo "$labeller added the label auto-merge to PR #$pr last, and has '$access' permission, not write, maintain or admin."
+              echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it and add it again."
+              exit 0
               ;;
           esac
 

@@ -270,6 +270,13 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..1
     objectCardinality = 0..1
   }
+  // The job starts no container, so it gets no si#756 reap step (si#874 security review). That step falls back to a
+  // docker binary in the job's workspace, which on a shared self-hosted machine is a previous job's leftover, run
+  // here with this job's token. Set on the auto-merge job, whose token writes.
+  property starts_no_container typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
 }
 
 // One workflow file. `title` is GitHub's `name:` (every firn resource already has a `name`). `permission` is the
