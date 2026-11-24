@@ -49,6 +49,17 @@ GITHUB = "https://github.com/"
 REWRITE = "https://x-access-token:{token}@github.com/"
 
 
+def variables_kept(*tasks: str) -> tuple[str, ...]:
+    """The names a command bound to one of `tasks` keeps of the launcher's list (si#873): what the `sources:`
+    section derives (`variable_roles`) for `support:sources`, () for any other task, so `confine` unsets the
+    token for every other command. The secret values are registered here, before the body runs."""
+    if declared_sources.TASK not in tasks:
+        return ()
+    roles = declared_sources.variable_roles(context.current().manifest_data())
+    secrets.register_present(roles)
+    return tuple(roles)
+
+
 def git_env(token: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
     """The environment that gives one git call `token` for GitHub and hides the global configuration.
 
@@ -112,7 +123,9 @@ def _checkout(root: Path, source: declared_sources.Source, known: dict[str, str]
         if os.environ.get(secrets.ACTIONS_ENV) == "true":
             log.error(f"sources: '{path}' needs the secret {source.secret} and it is empty. A fork or "
                       f"Dependabot pull request gets no secrets, and so does a repository that never "
-                      f"set {source.secret}; the clone would fail unauthenticated")
+                      f"set {source.secret}; the clone would fail unauthenticated. For a Dependabot pull "
+                      f"request, set {source.secret} as a Dependabot secret too; a fork pull request gets "
+                      f"none, so if the submodule is public, drop `secret:` from its `sources:` entry")
             return False
         log.info(f"sources: {source.secret} is not set; updating '{path}' with your own git configuration "
                  f"(no token used)")

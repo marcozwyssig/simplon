@@ -179,7 +179,11 @@ def test_empty_secret_under_actions_is_refused(monkeypatch, world, capsys):
     out = capsys.readouterr()
     assert rc == 1
     assert "PLATFORM_TOKEN" in out.out + out.err
-    assert "fork" in out.out + out.err
+    said = out.out + out.err
+    assert "fork" in said
+    # the way out (Marco 2026-11-24): a Dependabot secret, or no `secret:` for a public submodule
+    assert "set PLATFORM_TOKEN as a Dependabot secret too" in said
+    assert "drop `secret:`" in said
     assert not any("submodule" in argv for argv, _ in calls)
 
 

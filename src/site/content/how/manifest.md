@@ -966,6 +966,12 @@ declares no `secret:` and gets a plain update.
 the same secrets module as every other token (so it is masked in the log), and git's own error output is
 redacted before it is printed.
 
+**The secret reaches the kernel on both routes.** The venv route inherits your whole environment. On the
+container route the launcher forwards each `secret:`, and `GITHUB_ACTIONS` when any source declares one,
+because the kernel derives them from this section ([as it does a deploy's names](#a-commands-env-pass---the-variables-that-cross-to-its-toolchain)):
+re-render the launchers with `simplon init --dir . --launchers-only` after changing it. Only `support sources`
+keeps them; every other command has them unset before it runs.
+
 **A token call hides your global git configuration.** The call carries `GIT_CONFIG_GLOBAL=/dev/null`, because
 a stale global `url.*.insteadOf` for the same prefix beats the environment's rewrite and the clone then fails
 (measured with git 2.47.3; git prefers the first match of equal length). Your own file is hidden for that one
@@ -976,7 +982,7 @@ helper or an ssh rewrite work.
 
 | where | the variable is unset or empty | the variable is set |
 |---|---|---|
-| under GitHub Actions | refused before git runs, naming the secret (a fork or Dependabot pull request gets no secrets, and an unauthenticated clone would fail, measured with no credentials as `fatal: could not read Username for 'https://github.com': terminal prompts disabled`) | used |
+| under GitHub Actions | refused before git runs, naming the secret (a fork or Dependabot pull request gets no secrets, and an unauthenticated clone would fail, measured with no credentials as `fatal: could not read Username for 'https://github.com': terminal prompts disabled`). The way out: for a Dependabot pull request, set the secret as a Dependabot secret too; a fork pull request gets none, so if the submodule is public, drop `secret:` | used |
 | anywhere else | the submodule is updated with your own git configuration and credentials, and the run says so in one line | used |
 
 **Every job checks them out, right after its own checkout.** `support github workflows` places the step after
@@ -1859,6 +1865,12 @@ derived, and neither is a name no manifest writes (`PORTAINER_STACK`, `PORTAINER
 `portainer:`, the registration token `<token_from>_RUNNER_TOKEN` when it declares `runner:`, and the
 kernel's own `SIMPLON_STATE_PASSPHRASE` and, when there is something to install, `SIMPLON_CARRIER_SSH_PRIVATE_KEY`.
 They reach the carrier command and no other.
+
+**`support sources` needs none either** (si#873). The kernel places it, so no command of yours could carry
+its names; they are derived from the [`sources:` section](#sources---submodules-every-job-checks-out-at-their-pins) itself:
+every `secret:`, and `GITHUB_ACTIONS` when at least one source declares a secret (the command reads it only to
+refuse an empty secret under Actions). They join the launcher's list and a command bound to
+`support:sources` keeps them; no other command does. The token is secret and masked, `GITHUB_ACTIONS` is not.
 
 ### `carriers:` - what an environment is realised on
 

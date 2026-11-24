@@ -58,7 +58,9 @@ in the stale check; the dispatch wrappers add them to that command's keep-list f
 other command's. A derived name takes a carrier's prefix, so `url_from: my-haus` derives `my-haus_PASSWORD`,
 which bash cannot export and the launcher still carries (si#824, `_CARRIED`). One no launcher can carry is
 left off the list and named - by `simplon init --launchers-only`, and by the kernel when the command that
-reads it runs - rather than arriving unset behind a "not set" that blames the host.
+reads it runs - rather than arriving unset behind a "not set" that blames the host. `support sources` is
+placed by the catalogue, so no command of the document carries its names: they are read off the `sources:`
+section itself (`sources.variable_roles`, si#873) and appended after every command's.
 
 THE NAMES THE LAUNCHER SETS ITSELF ARE REFUSED, and they are read off the launcher templates rather than
 typed a second time here: every `-e NAME=...` the container line writes, plus the `LAUNCH_` namespace the
@@ -79,7 +81,7 @@ from contextvars import ContextVar
 from importlib.resources import files
 
 from simplon.kernel import secrets
-from simplon.manifest import treeform
+from simplon.manifest import sources, treeform
 
 #: The retired top-level section (si#467's form), refused by name since si#492. Not a `SECTION`: the kernel
 #: reads it only to refuse it.
@@ -226,6 +228,7 @@ def left_out(data: Mapping[str, object], source: str = "manifest", *,
     out: list[str] = []
     for _, derived in _commands(data, source, derive):
         out += [name for name in derived if not forwardable(name) and name not in out]
+    out += [name for name in sources.variable_roles(data) if not forwardable(name) and name not in out]
     return tuple(out)
 
 
@@ -258,6 +261,9 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
         for passed in (*passed_by_command, *filter(forwardable, derived)):
             if passed not in out:
                 out.append(passed)
+    # si#873: `support sources` is placed by the catalogue, so no command of this document carries its names;
+    # they are derived from the `sources:` section itself, after every command's, and () without one.
+    out += [name for name in filter(forwardable, sources.variable_roles(data)) if name not in out]
     return tuple(out)
 
 
