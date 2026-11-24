@@ -62,7 +62,7 @@ Anti-goals (a result that works and is still a failure):
 | D6 | firn projects in dependency order | firn's own command (`--all`, ordered by `firn.toml [dependencies]`, parallel where independent). The kernel calls one command. |
 | D7 | Product's own pytest suite | A new catalogue task `test:unit`: pytest over product-named paths in a kernel-provisioned venv, placed under `ci test`. |
 | D8 | Schedule, dispatch input, OS matrix | Keys on the command: `cadence:`, `platforms:`, parameter values `{input: <name>}`. |
-| D9 | Heavy lab gate, foreign repositories | Data keys: `ci: { gate: {paths, label} }` on the command; `sources:` on the product. |
+| D9 | Heavy lab gate, foreign repositories | Data keys: `ci: { gate: {paths, label} }` on the command; `sources:` on the product. (corrected 2026-11-23, #861: the gate sits on an aggregate, `ci: { gate: {paths, label, env} }`, see 5.5.) |
 | D10 | Runner facts (empty `DOCKER_CONFIG`, no binfmt) | A new runner kind `self-hosted-container` carries them. |
 | D11 | Migration order | simplon first, then cleon-firn, firn, secure-windows-images, biz-cockpit, agile-cockpit, cleon, asbundle, netctl. |
 | D12 | simplon's release jobs beyond `release`, `docs`, `pages` (`publish`, `homebrew-tap`, `image`) | Counted `exception:` entries with the reason "waits on #789" until #789 lands; simplon's CI migrates at once. |
@@ -129,6 +129,9 @@ The set is every TaskCommand leaf placed in a group whose area is `ci` and whose
 - (corrected 2026-11-22, #858) `ci:` on an aggregate, or on a command that is not a leaf under `ci
   build` or `ci test` (a cd, support or `ci release` command, a Deploy), is refused. Census kind:
   diagnosis (no derived CI selects the command, so the key would do nothing).
+- (corrected 2026-11-23, #861) On an aggregate under `ci build` or `ci test`, `ci:` holds `gate:`, with
+  `cadence:` and `timeout_minutes:` beside it (section 5.5); any other key there, or `cadence:` or
+  `timeout_minutes:` without `gate:`, is refused as before, a diagnosis.
 - Every skipped leaf is named in the rendered file as a comment with its reason.
 - `test:gate` and other leaves that need a running lab are the expected users of `skip`, or of
   `gate:` (section 5.5).
@@ -260,6 +263,24 @@ All on the command, under the one `ci:` key so a reader finds them together:
   the PR carries the label. Derived as a decide job in front of the leaf's Job (netctl's 75 min lab,
   #691). The decide job also fixes netctl's double trigger (`opened` and `labeled`): it is one job with
   one verdict per head SHA, and the heavy Job is cancelled-in-progress by concurrency.
+
+  (corrected 2026-11-23, #861) What was built, which differs from the bullet above:
+
+  - **The gate sits on an aggregate**, not on a leaf: `ci: { gate: { paths, label, env } }` with
+    `cadence:` and `timeout_minutes:` beside it. Its plan leaves run in the gate's own file and not also
+    in `ci.yml`; an `after_all` member stays in every run it ends. A leaf is gated by wrapping it in an
+    aggregate.
+  - **No cancel.** "Cancelled-in-progress" is wrong: the gated job's concurrency is
+    `cancel-in-progress: false` (netctl#513), and its group carries the verdict, so a skipped job never
+    shares a group with a real run.
+  - **The decide table**, one verdict per event and never from earlier runs: dispatch and schedule run;
+    `opened` runs when a changed path matches; `synchronize` and `reopened` when a path matches or the
+    pull request carries the label; `labeled` when the label just added is the gate's and no path matches.
+    Every verdict writes a `why`.
+  - **Its own file**: `.github/workflows/ci-<aggregate words, dashed>.yml`, derived unless `workflows:`
+    declares that stem. `paths:` are the `*`/`**` subset of GitHub's filter syntax, translated into one
+    ERE at derive time; a glob with `!`, `?`, `+` or `[...]`, which GitHub reads otherwise, is refused.
+  - **Not built here:** `sources:` is #873 and `merge: auto` is #874.
 
 On the product:
 
@@ -420,3 +441,17 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
   Windows cell has no binfmt to register an emulator with, and a native `linux-arm64` cell makes
   emulating arm64 pointless. An expression rule with the same measured cost, zero. Reopens when a
   product asks to emulate inside a platform cell.
+- **`gate:` on a leaf** (corrected 2026-11-23, #861). Rejected: a single-leaf gate is an aggregate of one,
+  and the aggregate is where the gate's members, file and concurrency already live. An expression rule:
+  `depends_on: [<leaf>]` says the same thing, and the refusal names that form. What it costs: zero: #860's
+  2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:` is new in
+  #861. Reopens when a product asks to gate a leaf without naming an aggregate for it.
+- **`stop_on_failure` read by a gated job** (corrected 2026-11-23, #861, Marco's decision 6). Rejected: a
+  Deploy member prepares and the verifying members keep `!cancelled()`, which is netctl's `lab.yml`
+  (`if: always() && steps.up.outcome == 'success'`); a local `test lab` keeps running after a red `up`,
+  and the gated job stops there. Reopens if a product asks for local and CI to agree.
+- **A teardown Deploy in plain order** (corrected 2026-11-23, #861 final review). Rejected: a Deploy member
+  is a plain step in order, so one placed last is skipped after a red verifying member. A teardown is a Deploy
+  with `after_all: true`, which runs after the members with `if: always()` and prepares nothing; a command
+  named twice in one plan runs once, so a pre-clean `down` and a final teardown are two commands. Reopens
+  when a product needs a teardown that is not `after_all`.

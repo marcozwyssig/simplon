@@ -64,8 +64,24 @@ def test_job_fields_follow_the_model_and_the_class_is_frozen():
     fields = [f.name for f in dataclasses.fields(workflowschema.Job)]
 
     # assert
-    assert fields == ["key", "runner", "step", "needs", "matrix", "condition", "timeout_minutes"]
+    assert fields == ["key", "runner", "step", "needs", "matrix", "condition", "timeout_minutes", "gate", "env"]
     assert workflowschema.Job.__dataclass_params__.frozen
+
+
+def test_job_carries_a_gate_and_env():
+    """si#861: the decide job carries the gate, the gated job its literal env; any other job carries neither."""
+    # arrange
+    runner = workflowschema.Runner(kind=GITHUB_UBUNTU)
+    gate = workflowschema.Gate(paths=("src/**",), label="needs-lab", pattern="^src/.*")
+    env = (RunnerEnv(env_name="NETCTL_MGMT_SUBNET", env_value="10.128.0.0/24"),)
+
+    # act
+    gated = workflowschema.Job(key="decide", runner=runner, gate=gate, env=env)
+    plain = workflowschema.Job(key="main", runner=runner)
+
+    # assert
+    assert gated.gate == gate and gated.env == env
+    assert plain.gate is None and plain.env == ()
 
 
 def test_a_job_carries_the_key_github_names_it_by():

@@ -71,17 +71,18 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 308 | nothing - the declaration had no working meaning |
-| expression rule | 52 | something it could otherwise have said |
-| **all load-time refusals** | **360** | |
+| diagnosis | 329 | nothing - the declaration had no working meaning |
+| expression rule | 53 | something it could otherwise have said |
+| **all load-time refusals** | **382** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
 some other non-mapping, a key under it other than the ones it reads (`skip` and si#860's `cadence`,
 `platforms`, `python`, `timeout_minutes`, `emulates`: a typo would be ignored and the leaf would run as if it
-were not written), and any of them on an aggregate or on a command no derived CI selects (outside `ci build`
-and `ci test`): there the key would do nothing, since a derived CI runs only those leaves.
+were not written), and any of them on a command no derived CI selects (outside `ci build`
+and `ci test`): there the key would do nothing, since a derived CI runs only those leaves. On an aggregate si#861
+reads `gate:`, `cadence:` and `timeout_minutes:`, and any other key does nothing.
 **Rejected: accepting `ci: false`.** It reopens if a product shows a skip whose reason is the same on every
 line.
 
@@ -97,6 +98,17 @@ kernel's catalogue too. What they cost, measured 2026-11-23 over the eight reach
 none writes `ci:` on a command. **Rejected: a cross product, and emulation in a platform cell.** Each reopens
 when a product asks for that combination on one leaf.
 
+si#861 added `ci: { gate: { paths, label, env } }` on an aggregate. **Diagnoses:** a gate that is not a mapping,
+a key under it other than `paths`, `label` and `env`, a `paths:` that is not a non-empty list of non-empty
+globs or a glob outside the `*`/`**` subset (`!`, `?`, `+`, `[...]` mean something in GitHub's filter syntax the
+decide step does not implement, so the gate would never match), a `label:` that is not a non-empty string, an `env:` name that is no variable name or a value that is no
+scalar (a float, which YAML would have rounded, or a non-string name is refused with "quote it") or carries a `${{` expression (secrets reach a job through the secrets module, si#833), a gate with
+neither `paths:` nor `label:`, which no event could start, and on an aggregate any `ci:` key but `gate:`,
+`cadence:` and `timeout_minutes:`. **Expression rule:** `gate:` on a leaf, which could have been rendered as a
+gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too. What it
+costs: zero: #860's 2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:`
+is new in #861. It reopens when a product asks to gate a single leaf without wrapping it.
+
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
 refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI
 does not run, a cycle through the leaves' artifacts, no leaf a machine may run, an `after_all` leaf that
@@ -108,6 +120,11 @@ Since si#860 a declared `workflows:` key switches off only the derived workflow 
 nothing would read it.
 So is a leaf with `python:` or `platforms:` that produces an artifact another leaf consumes: its cells would
 produce it once each, and one run hands an artifact over once.
+Since si#861 a gate's members leave the main and cadence runs for the gate's own file, and these
+are diagnoses too: a member that may not run with nobody watching, a member with `ci: skip:` (its membership
+already keeps it out of the main job), a member with `cadence:`, `platforms:` or `python:` (the gate's file
+decides when and where it runs), and an artifact handed between a gate member and a leaf of another file in
+either direction, unless it has a `registry:`: artifacts do not cross workflow files.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 
@@ -280,7 +297,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 45 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 46 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

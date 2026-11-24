@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from simplon.manifest import artifactsection, launcherenv, ports, runners, yamlkeys
 from simplon.model import task, workflowschema
-from simplon.model.command import (AggregateCommand, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
+from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
                                     TaskCommand)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
@@ -1036,10 +1036,11 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     rather than accepted as a shorthand: the opt-out is the one place a manifest says a leaf is NOT verified
     by CI, so it carries its reason where the next reader finds it. An unknown key is refused because a typo
     would be ignored and the leaf would run as if nothing were written, the "nothing to do" that is really a
-    failure. On an aggregate any key would do nothing, since a derived CI selects leaves only; and so it
-    would on any command that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or
-    `ci release` command, a Deploy), which a derived CI never selects - both are diagnoses, refused with the
-    reason (si#858 final review). So is `skip:` beside a variant key (si#860): the leaf does not run, so the
+    failure. On an aggregate (si#861) `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it, and
+    any other key would do nothing, since a derived CI selects leaves only; and so would any key on any command
+    that is not a leaf under `ci build` or `ci test` (`ci_leaf` false: a cd, support or `ci release` command, a
+    Deploy), which a derived CI never selects - both are diagnoses, refused with the reason (si#858 final
+    review), naming the `ci:` as written. So is `skip:` beside a variant key (si#860): the leaf does not run, so the
     variant would shape nothing.
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on.
@@ -1049,13 +1050,34 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
         return ""
     written = str(next(iter(raw), "skip")) if isinstance(raw, Mapping) else "skip"
     if spec.depends_on:
-        raise ValueError(
-            f"aggregate '{where}' declares `ci: {written}:`, and a derived CI runs leaves, never an aggregate, "
-            f"so the key would do nothing - declare it on the member commands it is meant for")
+        # si#861: an aggregate's `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it; every
+        # other key shapes a leaf, and a derived CI runs leaves.
+        held = ("gate", "cadence", "timeout_minutes")
+        offending = [str(key) for key in raw if key not in held] if isinstance(raw, Mapping) else [written]
+        if isinstance(raw, Mapping) and not raw:
+            said = "`ci: {}`"
+        elif not isinstance(raw, Mapping):
+            said = f"`ci: {json.dumps(raw, default=str)}`"
+        else:
+            said = f"`ci: {offending[0] if offending else written}:`"
+        if offending and (raw or not isinstance(raw, Mapping)):
+            raise ValueError(
+                f"aggregate '{where}' declares {said}, and an aggregate's `ci:` holds `gate:`, and "
+                f"`cadence:`/`timeout_minutes:` beside it - a derived CI runs leaves, so declare any other key on "
+                f"the member commands it is meant for")
     if not ci_leaf:
+        said = (f"`ci: {json.dumps(raw, default=str)}`" if not isinstance(raw, Mapping)
+                else "`ci: {}`" if not raw else f"`ci: {written}:`")
         raise ValueError(
-            f"'{where}' declares `ci: {written}:`, and a derived CI runs only the leaves under `ci build` and "
+            f"'{where}' declares {said}, and a derived CI runs only the leaves under `ci build` and "
             f"`ci test`, so the key would do nothing here - take it off")
+    if spec.depends_on:
+        if not (isinstance(raw, Mapping) and "gate" in raw):
+            raise ValueError(
+                f"aggregate '{where}' declares {said} without `gate:`, and an aggregate's `ci:` holds "
+                f"`gate:`, and `cadence:`/`timeout_minutes:` beside it: the key would shape nothing - add a "
+                f"`gate:`, or declare it on the member commands")
+        return ""
     if isinstance(raw, bool):
         raise ValueError(
             f"'{where}' declares `ci: {json.dumps(raw)}`. An opt-out without a reason is one nobody can read "
@@ -1064,6 +1086,10 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
         raise ValueError(
             f"'{where}' declares `ci: {json.dumps(raw, default=str)}`, but `ci:` on a command is a mapping. "
             f"To keep it out of the derived CI write `ci: {{ skip: \"<reason>\" }}`")
+    if "gate" in raw:
+        raise ValueError(
+            f"'{where}' declares `ci: gate:`, and `ci: gate:` sits on an aggregate: the gate runs its members in "
+            f"a workflow of their own, so a single leaf is gated by wrapping it, `depends_on: [{where.split()[-1]}]`")
     known = ("skip", "cadence", "platforms", "python", "timeout_minutes", "emulates")
     unknown = [str(key) for key in raw if key not in known]
     if unknown:
@@ -1121,6 +1147,95 @@ def _ci_variant(spec: "_CommandSpecModel", where: str) -> CiVariant:
             f"with - emulate on a leaf without `platforms:`, or name the native cell (si#860)")
     return CiVariant(cadence=_ci_cadence(raw.get("cadence"), where), platforms=platforms, python=python,
                      timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates)
+
+
+def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
+    """si#861: how a derived CI gates this aggregate's members, from the `ci: { gate: }` `_ci_skip` has let
+    stand on an aggregate. None when the aggregate writes no `gate:`.
+
+    Every refusal is a diagnosis: a value of no reading, or a gate that could never fire. `paths:` are the
+    `*`/`**` subset of GitHub's filter syntax (the derivation translates them); a glob that starts with `!` or
+    holds `?`, `+`, `[` or `]` is refused, since GitHub gives those a meaning the decide step does not implement
+    and the gate would silently never match. `env:` literals only - a secret reaches a job through the
+    secrets module (si#833). `cadence:` and `timeout_minutes:` beside `gate:` are the si#860 keys, read by the
+    same readers.
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on.
+    """
+    raw = spec.ci
+    if not isinstance(raw, Mapping) or "gate" not in raw:
+        return None
+    gate = raw["gate"]
+    if not isinstance(gate, Mapping):
+        raise ValueError(
+            f"'{where}' declares `ci: gate: {json.dumps(gate, default=str)}`, but `ci: gate:` is a mapping of "
+            f"`paths:`, `label:` and `env:`")
+    known = ("paths", "label", "env")
+    unknown = [str(key) for key in gate if key not in known]
+    if unknown:
+        raise ValueError(
+            f"'{where}' declares `ci: gate:` key {', '.join(unknown)}. The keys this kernel reads under a gate "
+            f"are {', '.join(known)} - a misspelt one would be ignored, and the gate would decide without it")
+    paths = gate.get("paths")
+    if paths is not None and (not isinstance(paths, list) or not paths
+                              or not all(isinstance(path, str) and path.strip() for path in paths)):
+        raise ValueError(
+            f"'{where}' declares `ci: gate: paths: {json.dumps(paths, default=str)}`. `paths:` is a non-empty "
+            f"list of non-empty globs, e.g. `[\"src/**\", \"**/Dockerfile\"]`")
+    for path in paths or ():
+        special = "!" if path.strip().startswith("!") else next((c for c in path if c in "?+[]"), "")
+        if special:
+            raise ValueError(
+                f"'{where}' declares `ci: gate: paths:` glob {json.dumps(path)}, and GitHub's filter syntax gives "
+                f"`{special}` a meaning this kernel does not implement, so the gate would never match what it says. "
+                f"A gate's paths are the `*`/`**` subset of GitHub's filter syntax: `*` within one directory, `**` "
+                f"across directories, every other character as written")
+    label = gate.get("label")
+    if label is not None and not (isinstance(label, str) and label.strip()):
+        raise ValueError(
+            f"'{where}' declares `ci: gate: label: {json.dumps(label, default=str)}`. `label:` is the name of a "
+            f"pull request label, a non-empty string")
+    if label is not None and "${{" in label:
+        raise ValueError(
+            f"'{where}' declares `ci: gate: label:` with a `${{{{` expression. GitHub would evaluate it in the decide "
+            f"job, and the gate would never open on the label written: name the label as it is spelt on GitHub")
+    env = gate.get("env")
+    if env is not None and not isinstance(env, Mapping):
+        raise ValueError(
+            f"'{where}' declares `ci: gate: env: {json.dumps(env, default=str)}`. `env:` is a mapping of "
+            f"variable names to literal values")
+    literals: dict[str, str] = {}
+    for name, value in (env or {}).items():
+        if not isinstance(name, str):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env:` name {json.dumps(name, default=str)}, which YAML read as a "
+                f"{type(name).__name__} and not as written: quote it, as `\"{str(name).lower()}\": ...`")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env:` name {json.dumps(str(name))}, which is no environment "
+                f"variable name: it starts with a letter or `_` and holds letters, digits and `_`")
+        if isinstance(value, float):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env: {name}: {json.dumps(value)}`, which YAML read as a number "
+                f"and not as written (3.10 reads as 3.1): quote it, as `{name}: \"...\"`")
+        if value is None or not isinstance(value, (str, int, float, bool)):
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env: {name}: {json.dumps(value, default=str)}`. An env value is "
+                f"a scalar: a string, a number or true/false")
+        text = json.dumps(value) if isinstance(value, bool) else str(value)
+        if "${{" in text:
+            raise ValueError(
+                f"'{where}' declares `ci: gate: env: {name}` with a `${{{{` expression. `env:` holds literals, "
+                f"and secrets reach a job through the secrets module (si#833)")
+        literals[str(name)] = text
+    if not paths and not label:
+        raise ValueError(
+            f"'{where}' declares a `ci: gate:` with no start: a gate with neither `paths:` "
+            f"nor `label:` never runs on a pull request. Name the paths that start it, the label that starts "
+            f"it, or both")
+    return CiGate(paths=tuple(path.strip() for path in paths or ()), label=(label or "").strip(), env=literals,
+                  cadence=_ci_cadence(raw.get("cadence"), where),
+                  timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where))
 
 
 #: si#860 final review: the five cron fields by name, and the names the fourth and fifth also take (GitHub's cron,
@@ -1240,7 +1355,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
                                      "keep_awake": spec.keep_awake}
         if not spec.produces:
-            return AggregateCommand(**common, **aggregate)
+            return AggregateCommand(**common, **aggregate, gate=_ci_gate(spec, f"{group.replace('.', ' ')} {name}"))
         # Rule 8 (spec C.4): a `ReleaseCommand` holds ONE bundle by name, so a `produces:` it cannot hold is
         # refused here, where the written map is still in hand. Placement first: a misplaced aggregate's
         # fix is to drop `produces:`, and naming its shape first would send the reader to reshape it (final

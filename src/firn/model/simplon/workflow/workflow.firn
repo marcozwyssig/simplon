@@ -139,6 +139,23 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
+// A gate on an aggregate (si#861): the changed paths (the `*`/`**` subset of GitHub's filter syntax), the PR label and the one ERE the kernel
+// derived from the globs that the decide job greps with. Set on the decide job only.
+Gate typeOf firn.core.Class extends firn.core.NamedResource {
+  property paths typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+  property label typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property pattern typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+}
+
 // One GitHub job: a machine, its steps in order, the jobs it needs, its cells, its condition and its time limit
 // (si#720's default when absent).
 Job typeOf firn.core.Class extends firn.core.NamedResource {
@@ -174,6 +191,18 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
   property timeout_minutes typeOf firn.core.Attribute {
     range = firn.core.IntegerLiteral
     subjectCardinality = 0..1
+  }
+  // The decide job of a gate (si#861) carries it; no other job does.
+  property gate typeOf firn.core.Composition {
+    range = simplon.workflow.Gate
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  // The literals a gate's `env:` puts on the gated job (si#861).
+  property env typeOf firn.core.Composition {
+    range = simplon.workflow.RunnerEnv
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
   }
 }
 

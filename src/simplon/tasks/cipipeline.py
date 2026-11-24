@@ -12,6 +12,7 @@ the generated model (`simplon.model.workflowschema`, #857), and `to_workflow` tu
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 import textwrap
 from collections.abc import Mapping, Sequence, Set
@@ -21,7 +22,7 @@ from simplon.kernel import log
 from simplon.manifest import artifactsection, runners
 from simplon.manifest.load import Manifest
 from simplon.model import workflowschema
-from simplon.model.command import TaskCommand
+from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
 from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
@@ -91,6 +92,10 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
     file's note both see why it is missing here. An `after_all` leaf with no cadence of its own (the report) is
     a verdict over whichever run it ends, so it is chosen for every cadence.
     """
+    runs = gates(manifest)
+    gated = _gated(runs)
+    for run in runs:
+        _refuse_members_consuming_from_outside(manifest, run, gated, artifacts)
     chosen: list[Leaf] = []
     skipped: list[Skipped] = []
     for group, members in manifest.commands.items():
@@ -100,6 +105,10 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
             if not isinstance(spec, TaskCommand):
                 continue
             words = _words(group, name)
+            if words in gated:
+                # si#861: a gate member runs in its gate's file, and `gates` has ruled on its keys.
+                skipped.append(Skipped(words, _behind(gated[words])))
+                continue
             if spec.ci_skip:
                 # Opted out by the product: skipped even where `unattended:` is undeclared, which only
                 # matters to a leaf that would run.
@@ -112,12 +121,13 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
                 chosen.append(Leaf(words, spec))
             else:
                 skipped.append(Skipped(words, _elsewhere(spec.ci.cadence)))
-    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts)
+    _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts, gated, _path_of(cadence))
     return Selection(order(chosen), tuple(skipped))
 
 
 def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[Leaf],
-                                          skipped: Mapping[str, str], artifacts: "Mapping[str, Declared]") -> None:
+                                          skipped: Mapping[str, str], artifacts: "Mapping[str, Declared]",
+                                          gated: "Mapping[str, GateRun]", path: str) -> None:
     running = {leaf.words for leaf in chosen}
     absent: dict[str, list[tuple[str, str]]] = {}
     for group, members in manifest.commands.items():
@@ -136,10 +146,186 @@ def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[L
             if any(artifact in handoff._bound(other.spec.produces) for other in chosen):
                 continue
             for producer, why in absent.get(artifact, ()):
+                if producer in gated:
+                    gate = gated[producer].words
+                    # An `after_all` consumer ends every run, ci.yml included, so membership would not help it.
+                    way = (f"'{leaf.words}' runs after all the others (`after_all`) and ends every run, ci.yml "
+                           f"included, so whatever it consumes must be produced in each run it ends; give "
+                           f"'{artifact}' a `registry:` it is fetched from, or consume it in a member of `{gate}`"
+                           if leaf.spec.after_all else
+                           f"Make '{leaf.words}' a member of `{gate}` too, or give '{artifact}' a `registry:` it "
+                           f"is fetched from")
+                    raise ValueError(
+                        f"derived CI: '{leaf.words}' runs in {_key_of(path)}.yml and consumes '{artifact}', which "
+                        f"'{producer}' produces, and '{producer}' is a member of `{gate}` ({why}) - "
+                        f"artifacts do not cross workflow files, so the run would fail on a missing file. {way}")
                 raise ValueError(
                     f"derived CI: '{leaf.words}' consumes '{artifact}', which '{producer}' produces, and "
                     f"'{producer}' is not run by the CI ({why}) - the run would fail on a missing file. "
                     f"Run the producer in CI, or give '{artifact}' a `registry:` it is fetched from")
+
+
+# --- the gates (si#861) -----------------------------------------------------------------------------------
+
+#: The file each gate's members run in: `stem` is the gated aggregate's command words, dashed (`test lab` ->
+#: `ci-test-lab.yml`). The workflow's key and title is the file's stem, as for a cadence file.
+GATE_PATH = ".github/workflows/ci-{stem}.yml"
+
+#: The `ci:` keys a gate member may not carry: its gate's file decides when it runs and on which machine.
+_GATE_DECIDES = ("cadence", "platforms", "python")
+
+
+class GateRun(NamedTuple):
+    """One `ci: gate:` (si#861): the gated aggregate's command words, its gate, its members (the aggregate's plan
+    leaves in plan order, a member aggregate's leaves among them, each once) and the file they run in."""
+
+    words: str
+    gate: CiGate
+    members: tuple[Leaf, ...]
+    path: str
+
+
+def gates(manifest: Manifest) -> tuple[GateRun, ...]:
+    """Every gate of the product, in manifest order, its members ruled on (si#861).
+
+    The members are `Manifest.plan_tree_for`'s leaves, so they are what `./<product>.sh <words>` runs locally: a
+    `Deploy` of an env-first group (netctl's `down`, `up`, `seed`) included, though no derived CI selects it.
+    Each member is a DIAGNOSIS away from a run that would not do what the manifest says: it must have ruled on
+    `unattended:` and be `true`, since the gated job runs it with nobody watching; `ci: skip:` would opt it out of
+    the main job its membership already keeps it out of; `cadence:`, `platforms:` and `python:` would place a
+    run the gate's file already places. `timeout_minutes:` and `emulates:` shape its step there and are read.
+    """
+    out: list[GateRun] = []
+    for group in _ci_groups(manifest):
+        for name, spec in manifest.commands[group].items():
+            if not isinstance(spec, AggregateCommand) or spec.gate is None:
+                continue
+            words = _words(group, name)
+            path = GATE_PATH.format(stem=words.replace(" ", "-"))
+            members: dict[str, Leaf] = {}
+            for node in manifest.plan_tree_for(name, group=group).leaves():
+                assert isinstance(node.spec, TaskCommand)  # a plan leaf carries a task (`PlanNode.is_leaf`)
+                member = Leaf(node.path.replace(".", " "), node.spec)
+                _refuse_member(member, words, path)
+                members.setdefault(member.words, member)
+            if all(member.spec.after_all for member in members.values()):
+                raise ValueError(
+                    f"derived CI: the gate of `{words}` has no member that runs in order - "
+                    f"{', '.join(f'`{m}`' for m in members)} all run after all the others (`after_all`), so its "
+                    f"gated job in {_key_of(path)}.yml would verify nothing and only report on it. Make a command "
+                    f"that runs in order a member of `{words}`, or take `ci: gate:` off it")
+            out.append(GateRun(words, spec.gate, tuple(members.values()), path))
+    return tuple(out)
+
+
+def glob_pattern(globs: Sequence[str]) -> str:
+    """One POSIX ERE for `grep -E` from a gate's `paths:` globs, the `*`/`**` subset of GitHub's filter syntax
+    (si#861).
+
+    Each glob is an anchored alternative `^<re>$`, joined by `|` (ERE has no `(?:`). `**/` matches zero or more
+    directories (`**/Dockerfile` matches a root `Dockerfile`), a trailing `/**` anything below, any other `**`
+    anything; `*` never crosses `/`. Every other character is literal, an ERE metacharacter escaped. The loader
+    refuses `paths: []` and a glob with `!`, `?`, `+`, `[` or `]`, which GitHub's syntax reads otherwise.
+    """
+    return "|".join("^" + _glob_re(glob) + "$" for glob in globs)
+
+
+def _glob_re(glob: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(.*/)?")
+            i += 3
+        elif glob.startswith("/**", i) and i + 3 == len(glob):
+            out.append("/.*")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append("\\" + glob[i] if glob[i] in ".+()|{}[]^$\\" else glob[i])
+            i += 1
+    return "".join(out)
+
+
+def _refuse_member(member: Leaf, gate: str, path: str) -> None:
+    where = f"derived CI, the gate of `{gate}`"
+    workflowgen.require_unattended(member.spec, member.words, where)
+    said = f"derived CI: '{member.words}' is a member of the gate of `{gate}`, so it runs in {_key_of(path)}.yml"
+    if not member.spec.unattended:
+        raise ValueError(
+            f"{said} with nobody watching, and it declares `unattended: false`. Take it out of `{gate}`, or "
+            f"declare `unattended: true` if it can run unwatched")
+    if member.spec.ci_skip:
+        raise ValueError(
+            f"{said}, and declares `ci: skip:` - membership already keeps it out of the main job, and the skip "
+            f"would not keep it out of the gated one. Take `ci: skip:` off, or take it out of `{gate}`")
+    for key in _GATE_DECIDES:
+        if getattr(member.spec.ci, key):
+            raise ValueError(
+                f"{said}, and declares `ci: {key}:` - the gate's file decides when and where it runs. Take "
+                f"`ci: {key}:` off '{member.words}', or take it out of `{gate}`")
+
+
+def _gated(runs: Sequence[GateRun]) -> dict[str, GateRun]:
+    """The gate each member leaves the main and cadence runs for, by command words; the first gate where a leaf is
+    in two. An `after_all` member (the report) is in none of them: it is a verdict over every run it ends, the
+    main and cadence runs included, as si#860 treats it."""
+    out: dict[str, GateRun] = {}
+    for run in runs:
+        for member in run.members:
+            if not member.spec.after_all:
+                out.setdefault(member.words, run)
+    return out
+
+
+def _behind(run: GateRun) -> str:
+    """Why a gate member is not in a main or cadence run, naming the file it runs in (si#861)."""
+    return f"it runs in {_key_of(run.path)}.yml, behind the gate of `{run.words}`"
+
+
+def _refuse_members_consuming_from_outside(manifest: Manifest, run: GateRun, gated: Mapping[str, GateRun],
+                                           artifacts: "Mapping[str, Declared]") -> None:
+    """A gate member that consumes what no member of its gate produces, and some other command does, is refused
+    (si#861 Review Focus 1): artifacts do not cross workflow files, so the gated run would fail on a missing file.
+    A DIAGNOSIS. An artifact with a `registry:` is exempt, as in `select`: it is fetched, not handed over. The
+    reverse, a main or cadence leaf consuming a member's artifact, is `_refuse_consumers_of_absent_producers`'s."""
+    inside = {member.words for member in run.members}
+    made = {artifact for member in run.members for artifact in handoff._bound(member.spec.produces)}
+    for member in run.members:
+        for artifact in handoff._bound(member.spec.consumes):
+            declared = artifacts.get(artifact)
+            if artifact in made or (declared is not None and declared.registry):
+                continue
+            for group, specs in manifest.commands.items():
+                for name, spec in specs.items():
+                    producer = _words(group, name)
+                    if (producer in inside or not isinstance(spec, TaskCommand)
+                            or artifact not in handoff._bound(spec.produces)):
+                        continue
+                    raise ValueError(
+                        f"derived CI: '{member.words}' runs in {_key_of(run.path)}.yml, behind the gate of "
+                        f"`{run.words}`, and consumes '{artifact}', which '{producer}' produces, and '{producer}' "
+                        f"{_runs_where(manifest, group, spec, producer, gated)} - artifacts do not cross workflow "
+                        f"files, so the gated run would fail on a missing file. Make '{producer}' a member of "
+                        f"`{run.words}` too, or give '{artifact}' a `registry:` it is fetched from")
+
+
+def _runs_where(manifest: Manifest, group: str, spec: TaskCommand, words: str, gated: Mapping[str, GateRun]) -> str:
+    """Where a producer outside a gate runs, in the words of `_refuse_members_consuming_from_outside`."""
+    if words in gated:
+        return _behind(gated[words]).removeprefix("it ")
+    if group not in _ci_groups(manifest):
+        return f"is not run by any derived CI (it is in the '{group}' group)"
+    if spec.ci_skip:
+        return f"is not run by any derived CI ({spec.ci_skip})"
+    if not spec.unattended:
+        return f"is not run by any derived CI ({ATTENDED})"
+    return f"runs in {_key_of(_path_of(spec.ci.cadence))}.yml"
 
 
 def order(leaves: Sequence[Leaf]) -> tuple[Leaf, ...]:
@@ -249,6 +435,8 @@ _TRIGGERS: Mapping[str, tuple[str, object]] = {
     "pull_request": ("pull_request", None),
     "push_main": ("push", {"branches": [workflowgen.DEFAULT_BRANCH]}),
     "dispatch": ("workflow_dispatch", None),
+    # si#861 decision 2: a gate's file, on the pull request events its decide table reads, never on a push.
+    "pull_request_gate": ("pull_request", {"types": ["opened", "reopened", "synchronize", "labeled"]}),
 }
 
 #: The coordinate `support install` instantiates; found in the product's tree by impl, as `runners.PREFLIGHT` is.
@@ -268,10 +456,12 @@ class Derivation(NamedTuple):
     """The derived workflow as the generated model, and the selection it was built from.
 
     The selection travels with the model because the model carries no names (#857): a leaf's command words
-    and the leaves left out are read off the selection by `to_workflow`."""
+    and the leaves left out are read off the selection by `to_workflow`. A gate's file (si#861) carries its
+    `GateRun` the same way, for the aggregate's words its notes name."""
 
     model: workflowschema.Workflow
     selection: Selection
+    gate: "GateRun | None" = None
 
 
 def _install(manifest: Manifest, data: Mapping[str, object]) -> "tuple[workflowgen.Step | None, str]":
@@ -310,6 +500,22 @@ def _nothing_to_run(manifest: Manifest, selection: Selection, path: str) -> str:
     verifies nothing, and `workflows: ci:` now switches off ci.yml alone, so a push CI of the product's own
     keeps the cadence files."""
     elsewhere = [] if path != PATH else [_key_of(_path_of(group[0])) + ".yml" for group in _cadence_groups(manifest)]
+    gone = {s.words for s in selection.skipped}
+    behind = [] if path != PATH else [_key_of(run.path) + ".yml" for run in gates(manifest)
+                                      if any(member.words in gone for member in run.members)]
+    if behind:
+        # si#861: the same refusal where the leaves went behind a gate, naming the gate files too, and listing the
+        # leaves left out for another reason as the plain message does.
+        cadence = " or carry a `cadence:`" if elsewhere else ""
+        moved = set(_gated(gates(manifest))) | {s.words for s in selection.skipped
+                                                if s.reason in {_elsewhere(c) for c in _cadences(manifest)}}
+        other = "; ".join(f"`{s.words}` - {s.reason}" for s in selection.skipped if s.words not in moved)
+        return (f"derived CI: the leaves of `ci build` and `ci test` a machine may run are all members of a "
+                f"gate{cadence}, so they run in {', '.join([*behind, *elsewhere])} and the push path verifies "
+                f"nothing" + (f" (left out besides: {other})" if other else "") + " - the derived "
+                f"ci.yml would be a green tick over nothing on every push. Place a leaf outside every gate"
+                f"{' and without `cadence:`' if elsewhere else ''} under `ci build` or `ci test`, or declare "
+                f"`{workflowgen.SECTION}: {KEY}:` with a push CI of your own, which switches off only ci.yml")
     if elsewhere:
         return (f"derived CI: every unattended leaf of `ci build` and `ci test` carries a `cadence:`, so the "
                 f"cadence leaves run in {', '.join(elsewhere)} and the push path verifies nothing - the derived "
@@ -430,6 +636,200 @@ def derive_all(manifest: Manifest, data: Mapping[str, object]) -> tuple[Derivati
     `ci-scheduled.yml`, each only when a leaf carries its cadence. `derive`'s refusal of a push run with nothing
     to run stands here too (Review Focus 2)."""
     return (derive(manifest, data), *_cadence_derivations(manifest, data))
+
+
+# --- a gate's own file (si#861 task 5) ---------------------------------------------------------------------
+
+#: The job in front of the gated one, and the kernel step it is: the decide table of decision 7.
+DECIDE_JOB = "decide"
+GATE_DECIDE = "gate-decide"
+#: The decide step's id, which the job's `outputs:` read.
+DECIDE_STEP = "decide"
+#: A run that hangs is neither green nor red: the decide job asks GitHub for a file list and nothing else.
+DECIDE_TIMEOUT_MINUTES = 10
+#: The gated job's condition: the decide job's verdict.
+GATE_OPEN = f"needs.{DECIDE_JOB}.outputs.run == 'true'"
+
+#: The decide table (decision 7), in bash. It reads ONLY its step's `env:` - the event fields, the gate's label
+#: and its pattern - so nothing a pull request author controls is interpolated into the script, and a test runs
+#: the rendered text as it stands. A `gh` that fails fails the step under `set -e`: a failed probe is not a pull
+#: request that changed nothing. An empty `PATTERN` (a gate with no `paths:`) asks for no files, since the
+#: empty ERE matches every one. `has_label` reads GitHub's `toJSON` of the label names, where a name is a quoted
+#: JSON string, so the gate's label is quoted the same way and a longer label holding it does not count.
+#: GitHub's files endpoint lists at most 3000 files: where no listed file matches, the pull request's own
+#: `changed_files` count is asked for, and a list shorter than that count is taken as a match, since a truncated
+#: list cannot say "nothing matches". A file name is the author's, so the listing is logged between
+#: `::stop-commands::` and its token, where a name that reads as a workflow command is only text.
+GATE_DECIDE_SCRIPT = r"""set -euo pipefail
+decide() {
+  why="$(printf '%s' "$2" | tr '\r\n' '  ')"
+  echo "run=$1" >> "$GITHUB_OUTPUT"
+  echo "why=$why" >> "$GITHUB_OUTPUT"
+  echo "run=$1 - $why"
+  exit 0
+}
+has_label() {
+  quoted="\"$(printf '%s' "$LABEL" | sed 's/[\\"]/\\&/g')\""
+  [ -n "$LABEL" ] && case "$LABELS" in *"$quoted"*) true ;; *) false ;; esac
+}
+matched=""
+changed() {
+  if [ -z "$PATTERN" ]; then
+    echo "the gate has no paths:, so no changed file opens it"
+    return 0
+  fi
+  files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" --jq '.[].filename')"
+  token="gate-$$-$RANDOM$RANDOM$RANDOM"
+  echo "changed files of pull request #$PR:"
+  echo "::stop-commands::$token"
+  printf '%s\n' "$files"
+  echo "::$token::"
+  rc=0
+  hits="$(printf '%s\n' "$files" | grep -E -- "$PATTERN")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "::error::grep could not match the gate's pattern (exit $rc): $PATTERN"
+    exit 1
+  fi
+  if [ -n "$hits" ]; then
+    matched="${hits%%$'\n'*} matches the gate's paths"
+    return 0
+  fi
+  listed="$(printf '%s' "$files" | grep -c '')" || true
+  total="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .changed_files)"
+  case "$total" in
+    ''|*[!0-9]*) echo "::error::GitHub gave no count of the changed files of pull request #$PR: '$total'"; exit 1 ;;
+  esac
+  if [ "$total" -gt "$listed" ]; then
+    matched="the pull request changes $total files and GitHub lists only the first $listed, which the gate takes as a match rather than trust a truncated list"
+  fi
+}
+case "$EVENT" in
+  workflow_dispatch) decide true "the workflow was dispatched" ;;
+  schedule) decide true "the schedule fired" ;;
+  pull_request) ;;
+  *) echo "::error::the gate reads no '$EVENT' event"; exit 1 ;;
+esac
+case "$ACTION" in
+  opened)
+    if [ -z "$PATTERN" ]; then decide false "opened, and the gate has no paths:; it opens on its label $LABEL"; fi
+    changed
+    if [ -n "$matched" ]; then decide true "opened, and $matched"; fi
+    if [ -z "$LABEL" ]; then decide false "opened, and no changed path matches the gate's paths"; fi
+    decide false "opened, and no changed path matches the gate's paths; a gate label set at opening runs it on its own labeled event" ;;
+  synchronize|reopened)
+    if has_label; then decide true "$ACTION, and the pull request carries the label $LABEL"; fi
+    changed
+    if [ -n "$matched" ]; then decide true "$ACTION, and $matched"; fi
+    decide false "$ACTION, no changed path matches the gate's paths, and the pull request does not carry the label ${LABEL:-(the gate has none)}" ;;
+  labeled)
+    if [ -z "$LABEL" ] || [ "$ADDED_LABEL" != "$LABEL" ]; then
+      decide false "labeled $ADDED_LABEL, which is not the gate's label ${LABEL:-(the gate has none)}"
+    fi
+    changed
+    if [ -n "$matched" ]; then decide false "labeled $LABEL, and $matched, so opened or synchronize already ran it for this head"; fi
+    decide true "labeled $LABEL, and no changed path matches the gate's paths" ;;
+  *) echo "::error::the gate reads no pull_request action '$ACTION'"; exit 1 ;;
+esac
+"""
+DECIDE_NAME = "Decide whether the gate opens"
+#: The event fields the decide step reads, as GitHub hands them over; a missing one is the empty string, and a
+#: missing pull request's labels are `null`.
+DECIDE_EVENT_ENV: Mapping[str, str] = {
+    "EVENT": "${{ github.event_name }}", "ACTION": "${{ github.event.action }}",
+    "ADDED_LABEL": "${{ github.event.label.name }}",
+    "LABELS": "${{ toJSON(github.event.pull_request.labels.*.name) }}",
+    "PR": "${{ github.event.pull_request.number }}"}
+VERDICT_NAME = "Say the gate's verdict"
+#: The verdict once more, where a reader of the run's page finds it without opening the log.
+VERDICT_SCRIPT = 'echo "run=$RUN - $WHY" | tee -a "$GITHUB_STEP_SUMMARY"'
+
+DECIDE_NOTE = (
+    "si#861: whether the gate of `{words}` opens, decided once per event from what the event says and the pull "
+    "request's changed files, never from earlier runs. A dispatch or the schedule runs it. A pull request "
+    "`opened` runs it when a changed path matches the gate's `paths:`; `synchronize` and `reopened` when one "
+    "matches or the pull request carries the gate's `label:`; `labeled` when the label just added is the gate's "
+    "and no changed path matches, because a match already ran it on `opened` or `synchronize`. Removing the "
+    "label and adding it again runs it again, on purpose, when no changed path matches; on a pull request whose "
+    "paths match, re-run the workflow run instead. Every verdict says why, in the log and in the job summary.",
+    "The decide step reads the event, the label and the pattern from its `env:` and nothing else is written into "
+    "its script; the token is in that step's `env:` alone. A `gh` that fails fails the step: a failed probe is "
+    "not a pull request that changed nothing. No checkout and no launcher: nothing here runs the product. "
+    "GitHub's files endpoint lists at most 3000 files: where the pull request changes more files than are "
+    "listed, the gate takes that as a match rather than trust a truncated list. The changed files are logged "
+    "with workflow commands stopped, since a file name is the pull request author's.")
+
+GATED_NOTE = (
+    "si#861: the members of `{words}`, behind its gate: this job runs only when the decide job says so. It runs "
+    "the members in plan order, a consumer after its producer, and the ones that run after all the others (the "
+    "report, a teardown) last and always. A Deploy member in plan order (a command of an env-first group) runs "
+    "like a preparation step: every later member waits for its success, so a deployment that did not come up "
+    "shows as one red step and the members after it as skipped. Every other member after the first runs unless the run is cancelled or a "
+    "preparation step or a Deploy member went red, so one red member hides none of the others.",
+    "A run in progress is never cancelled by the next one for the same ref (netctl#513): GitHub keeps one pending "
+    "run per group, and a newer one replaces it. The group is the ref and the decide job's verdict, so a run the "
+    "gate skipped only ever shares a group with skipped runs and never replaces a pending run that would have run.")
+
+
+def _gate_cron(cadence: str) -> tuple[str, ...]:
+    """The `schedule` a gate's `cadence:` adds to its own file: none for `manual` or no cadence."""
+    return (NIGHTLY_CRON,) if cadence == "nightly" else () if cadence in ("", "manual") else (cadence,)
+
+
+def derive_gate(manifest: Manifest, data: Mapping[str, object], run: GateRun) -> Derivation:
+    """A gate's own workflow file (si#861): a decide job, and the gated job behind it.
+
+    The decide job runs on the product's machine with no checkout and no preparation, and carries the gate as
+    data (`Gate`: the globs, the label, the ERE `glob_pattern` makes of them). The gated job is built as `_job`
+    builds the main one, over the gate's members in order (preparation, the members, the `after_all` ones, the
+    report upload, cleanup), and it waits for the decide job's verdict, carries the gate's `env:` and the
+    aggregate's `timeout_minutes:`. The triggers are the four pull request events the decide table reads, the
+    `cadence:`'s schedule where there is one, and dispatch; never a push (decision 2).
+    """
+    artifacts = artifactsection.declared(data)
+    _refuse_members_consuming_from_outside(manifest, run, _gated(gates(manifest)), artifacts)
+    selection = Selection(order(run.members), ())
+    runner, labels = runner_of(data)
+    kernel, _ = _kernel_steps(manifest, data, runner)
+    gate = run.gate
+    decide = workflowschema.Job(
+        key=DECIDE_JOB, step=(workflowschema.Step(kernel_step=GATE_DECIDE),), timeout_minutes=DECIDE_TIMEOUT_MINUTES,
+        runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=labels),
+        gate=workflowschema.Gate(paths=gate.paths, label=gate.label,
+                                 pattern=glob_pattern(gate.paths) if gate.paths else ""))
+    gated = dataclasses.replace(
+        _job(manifest, data, run.words.replace(" ", "-"), selection, runner, labels, kernel, run.path),
+        needs=(decide,), condition=GATE_OPEN, timeout_minutes=gate.timeout_minutes,
+        env=tuple(workflowschema.RunnerEnv(env_name=name, env_value=value) for name, value in gate.env.items()))
+    events = (workflowschema.Trigger(event="pull_request_gate"),
+              *(workflowschema.Trigger(event="schedule", cron=cron) for cron in _gate_cron(gate.cadence)),
+              workflowschema.Trigger(event="dispatch"))
+    model = workflowschema.Workflow(path=run.path, title=_key_of(run.path), job=(decide, gated), trigger=events)
+    return Derivation(model, selection, run)
+
+
+def _decide_job(job: workflowschema.Job, run: GateRun) -> workflowgen.Job:
+    """The decide job as the renderer's: two verbatim steps, no checkout, `prepared` so no preparation is added.
+    The reap step `render` puts in front of every job stays: it starts no launcher."""
+    assert job.gate is not None
+    kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
+    labels = job.runner.labels
+    decide = workflowgen.Step(verbatim={
+        "name": DECIDE_NAME, "id": DECIDE_STEP, "shell": "bash",
+        "env": {"GH_TOKEN": "${{ github.token }}", **DECIDE_EVENT_ENV, "PATTERN": job.gate.pattern,
+                "LABEL": job.gate.label},
+        "run": GATE_DECIDE_SCRIPT})
+    verdict = workflowgen.Step(verbatim={
+        "name": VERDICT_NAME, "shell": "bash",
+        "env": {"RUN": f"${{{{ steps.{DECIDE_STEP}.outputs.run }}}}",
+                "WHY": f"${{{{ steps.{DECIDE_STEP}.outputs.why }}}}"},
+        "run": VERDICT_SCRIPT})
+    extras: dict[str, object] = {
+        "timeout-minutes": job.timeout_minutes, "permissions": {"contents": "read", "pull-requests": "read"},
+        "outputs": {"run": f"${{{{ steps.{DECIDE_STEP}.outputs.run }}}}",
+                    "why": f"${{{{ steps.{DECIDE_STEP}.outputs.why }}}}"}}
+    note = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in DECIDE_NOTE)
+    return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=(decide, verdict),
+                           checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras)
 
 
 def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str, ...]) -> Derivation:
@@ -707,12 +1107,18 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         orphan = job.matrix is not None and job.condition not in mains and job.condition not in orphans
         if orphan:
             orphans.add(job.condition)
-        jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan))
+        if job.gate is not None and derivation.gate is not None:
+            jobs.append(_decide_job(job, derivation.gate))
+            continue
+        jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan,
+                            run=derivation.gate))
     # GitHub keeps one pending run per concurrency group and a newer pending run replaces it, so ci-scheduled.yml
     # keys its group on the schedule that fired: one cron's waiting run never displaces another's, and a dispatch
     # queues in a group of its own (si#860 final review).
     group = f"{key}-${{{{ github.event.schedule || 'dispatch' }}}}" if derivation.model.path == SCHEDULED_PATH else key
-    queued = {} if key == KEY else {"concurrency": {"group": group, "cancel-in-progress": False}}
+    # si#861: a gate's file queues its gated job alone, per ref (`_to_job`): the decide job is never queued.
+    queued = ({} if key == KEY or derivation.gate is not None else
+              {"concurrency": {"group": group, "cancel-in-progress": False}})
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write.
     extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **queued,
@@ -738,8 +1144,13 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
 
 
 def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, data: Mapping[str, object],
-            key: str, product: str, *, orphan: bool = False) -> workflowgen.Job:
-    """One model job as the renderer's job, its conditions written as `to_workflow` describes."""
+            key: str, product: str, *, orphan: bool = False, run: GateRun | None = None) -> workflowgen.Job:
+    """One model job as the renderer's job, its conditions written as `to_workflow` describes.
+
+    si#861 decision 6: in a gated job, a `Deploy` member (a command of an env-first group: netctl's `down`, `up`,
+    `seed`) runs like a preparation step - an id, no `if:` of its own - and every later leaf waits for its
+    success. A gated job (`needs:` a decide job) also gets its gate's `env:`, the aggregate's `timeout-minutes`
+    and a `concurrency:` per ref and verdict that never cancels a run in progress (decision 3)."""
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
     kernel, unplaced = _kernel_steps(manifest, data, runner)
@@ -748,7 +1159,10 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     leaves = [leaf for leaf in selection.leaves if id(leaf.spec) in mine]
     ids = [_PREPARES[step.kernel_step] for step in job.step if step.kernel_step in _PREPARES]
     producers = _producers(leaves)
-    leaf_ids = _leaf_ids(list(dict.fromkeys(maker for makers in producers.values() for maker in makers)))
+    # si#861 decision 6, in a gated job only: the loader's `Deploy` is the command of an env-first group.
+    deploys = {leaf.words for leaf in leaves if job.needs and isinstance(leaf.spec, Deploy) and not leaf.spec.after_all}
+    leaf_ids = _leaf_ids(list(dict.fromkeys([*(leaf.words for leaf in leaves if leaf.words in deploys),
+                                             *(maker for makers in producers.values() for maker in makers)])))
 
     def gate(line: str) -> str:
         waits = [*ids, *(leaf_ids[maker] for maker in producers.get(line, ()))]
@@ -783,7 +1197,9 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             assert isinstance(spec, TaskCommand)
             line = words[id(spec)]
             modifiers: dict[str, object] = {"id": leaf_ids[line]} if line in leaf_ids else {}
-            if spec.after_all:
+            if line in deploys:
+                ids.append(leaf_ids[line])  # a Deploy prepares: every later leaf's gate waits for it
+            elif spec.after_all:
                 modifiers["if"] = "always()"
             elif not first:
                 modifiers["if"] = gate(line)
@@ -793,6 +1209,19 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             steps.append(workflowgen.Step(command=line, modifiers=modifiers))
     labels = job.runner.labels
     gated: dict[str, object] = {"if": job.condition} if job.condition else {}
+    if job.needs:
+        # si#861: the gated job of a gate's file, behind its decide job.
+        needs = [need.key for need in job.needs]
+        gated = {"needs": needs[0] if len(needs) == 1 else needs, **gated}
+        if job.timeout_minutes is not None:
+            gated["timeout-minutes"] = job.timeout_minutes
+        # Keyed on the verdict too: whether a job its `if:` skips still enters its group and replaces a pending
+        # run is unmeasured, and this way a skipped job only ever shares a group with skipped ones.
+        verdict = f"needs.{DECIDE_JOB}.outputs.run"
+        gated["concurrency"] = {"group": f"{key}-${{{{ github.ref }}}}-${{{{ {verdict} }}}}",
+                                "cancel-in-progress": False}
+    if job.env:
+        gated["env"] = {env.env_name: env.env_value for env in job.env}
     where = f"derived workflow '{key}', job '{job.key}'"
     if job.matrix is not None:
         # si#860: a cell job. A platform job's machine, shell and launcher are the row's; a python job's is
@@ -819,13 +1248,15 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                python="" if platform else "${{ matrix.python }}",
                                entry="${{ matrix.entry }}" if platform else "",
                                extras=workflowgen._with_runner_env(runner, cell, where))
-    cadence = next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all)
     gap = ""
     if emulates and not job.runner.kind.can_emulate:
         named = ", ".join(f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates)
         gap = textwrap.fill(EMULATION_GAP.format(leaves=named, platforms=", ".join(emulates), kind=kind), width=95)
-    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap,
-                                          _derived_note(selection, cadence)) if part)
+    if run is not None:
+        said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)
+    else:
+        said = _derived_note(selection, next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all))
+    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap, said) if part)
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            note=note, runner=runner, prepared=True,
                            extras=workflowgen._with_runner_env(runner, gated, where))
@@ -859,20 +1290,52 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     """
     declared = workflowgen.parse(data)
     own = {workflow.key for workflow in declared}
+    # si#861: every gate's members are ruled on whoever writes ci.yml, and a gate's file is derived unless the
+    # product declares its key (the one switch rule).
+    runs = gates(manifest)
+    derived_gates = [run for run in runs if _key_of(run.path) not in own]
     derivations: list[Derivation] = []
+    _refuse_variants_in_owned_gates([run for run in runs if run not in derived_gates], derived_gates)
     if KEY in own:
-        _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)))
+        _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
+                                        {member.words for run in runs for member in run.members})
     else:
         push = select(manifest, artifacts=artifactsection.declared(data))
         if declared and not _runs(push) and not _cells(push):
-            log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may run - "
-                     f"place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` yourself")
+            gone = {s.words for s in push.skipped}
+            behind = [_key_of(run.path) + ".yml" for run in runs if any(m.words in gone for m in run.members)]
+            where = f" outside a gate (the gated ones run in {', '.join(behind)})" if behind else ""
+            log.info(f"no ci.yml is derived: `ci build` and `ci test` hold no unattended leaf a machine may "
+                     f"run{where} - place one with `unattended: true`, or declare `{workflowgen.SECTION}: {KEY}:` "
+                     f"yourself")
         else:
             derivations.append(derive(manifest, data))
     derivations += _cadence_derivations(manifest, data, own)
+    derivations += [derive_gate(manifest, data, run) for run in derived_gates]
     out = (*declared, *(to_workflow(derivation, manifest, data, product=product) for derivation in derivations))
     workflowgen._reject_duplicate_paths(out)
     return out
+
+
+def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[GateRun] = ()) -> None:
+    """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives no
+    such file, so `timeout_minutes:` or `emulates:` on a member would shape nothing -
+    `_refuse_variants_nobody_derives`'s DIAGNOSIS, in the words of the file the member runs in. An `after_all`
+    member also ends the derived runs, which read its keys; and a member of a `derived` gate as well runs in
+    that gate's file, which reads them (final review).
+    Not built, noted: the mirror case, an `after_all` member's key accepted where every file it ends is the
+    product's own."""
+    read = {member.words for run in derived for member in run.members}
+    for run in owned:
+        stem = _key_of(run.path)
+        for member in run.members:
+            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), None)]
+            if written and not member.spec.after_all and member.words not in read:
+                raise ValueError(
+                    f"'{member.words}' declares `ci: {written[0]}:` and is a member of the gate of `{run.words}`, so "
+                    f"it runs in the product's own {stem}.yml (`{workflowgen.SECTION}: {stem}:`): the kernel derives "
+                    f"no such file, and the key would shape nothing there. Take the key off, or drop "
+                    f"`{workflowgen.SECTION}: {stem}:` so the kernel derives {stem}.yml and reads it")
 
 
 #: si#860: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them; `cadence`
@@ -880,20 +1343,22 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
 _VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
 
 
-def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool) -> None:
+def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gated: Set[str] = frozenset()) -> None:
     """Refuse a push leaf's variant key when ci.yml is the product's own (si#860 final review).
 
     Such a leaf runs in the product's ci.yml, which the kernel does not write, so `python:`, `platforms:`,
     `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
     no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
     `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
-    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file.
+    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A gate
+    member (`gated`, si#861) is no push leaf either: its gate's file reads it, or `_refuse_variants_in_owned_gates`
+    rules on it where that file is the product's own.
     """
     for group in _ci_groups(manifest):
         for name, spec in manifest.commands[group].items():
             if not isinstance(spec, TaskCommand) or spec.ci_skip or not spec.unattended or spec.ci.cadence:
                 continue
-            if spec.after_all and cadence_files:
+            if (spec.after_all and cadence_files) or _words(group, name) in gated:
                 continue
             written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), None)]
             if written:
