@@ -35,7 +35,7 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.manifest import artifactsection, launcherenv, ports, runners, yamlkeys
+from simplon.manifest import artifactsection, launcherenv, ports, runners, sources, yamlkeys
 from simplon.model import task, workflowschema
 from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
                                     TaskCommand)
@@ -867,6 +867,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
     artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
                           manifest_path or "the manifest")
+    # si#873: a `sources:` section the kernel cannot read (a scalar, an unknown key, `..` in a path, a path
+    # twice) is refused here, before `support sources` or a workflow job meets it.
+    sources.declared(data)
     # si#492: `launcher: env: pass:` is retired for a command's own `env: pass:` (checked in `_command`); a
     # leftover section is refused HERE, on either route, with the way out.
     launcherenv.check_retired(data, manifest_path or "the manifest")

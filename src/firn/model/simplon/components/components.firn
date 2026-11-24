@@ -137,6 +137,9 @@ manifest typeOf simplon.architecture.Component {
   module m_manifest_runners typeOf simplon.architecture.Module {
     path = "manifest.runners"
   }
+  module m_manifest_sources typeOf simplon.architecture.Module {
+    path = "manifest.sources"
+  }
   module m_manifest_manifestmodel typeOf simplon.architecture.Module {
     path = "manifest.manifestmodel"
   }
