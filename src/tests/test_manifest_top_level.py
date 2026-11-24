@@ -77,6 +77,7 @@ import re
 import pytest
 import yaml
 
+from simplon.manifest import sources as sourcesdecl
 from simplon.model import carrierspec
 from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
 from simplon.adapters import gh, labegress, labinstance, nexusproxy, tracker
@@ -167,6 +168,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     # si#526: which host gates (brew, gh) support install asks; si#630: the gh extensions, through
     # `gh.declared_extensions`
     "tasks.hosttools": ("toolchains", "gh"),
+    "tasks.sources": ("sources",),                      # si#873: through sources.declared
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.fetchfile": ("artifacts",),   # a `kind: file` entry (si#343)
@@ -207,6 +209,10 @@ SILENT_ON_ABSENCE = {
           "2026-11-11). WHAT THAT COSTS: `hg:` is silent too, and the extensions are not installed - "
           "which the first `gh <extension>` the product runs then says. A key mistyped INSIDE a correctly "
           "spelled section is refused, and so is the section without the `gh` toolchain (si#630).",
+    "sources": "an absent `sources:` list is the NORMAL case (si#873): a product with no submodule to check "
+               "out declares none, and `support sources` says so in one line and succeeds. WHAT THAT COSTS: "
+               "`source:` is silent too, and the submodule is not checked out - which the first step that "
+               "needs a file from it then says.",
     "layout": "an absent `layout:` section is the NORMAL case and is what every product in this family "
               "has - the section arrived with si#250 and its defaults are exactly what the kernel "
               "assumed before it existed, so a manifest that says nothing runs the line it ran "
@@ -257,6 +263,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
                    lambda: claudeplugins.effective(context.current().manifest_data())),
     "gh": ({"toolchains": ["gh"], "gh": {"extensions": ["github/gh-stack"]}},
            lambda: gh.declared_extensions(context.current().manifest_data(), ("gh",))),
+    "sources": ({"sources": [{"submodule": "lib/platform"}]},
+                lambda: sourcesdecl.declared(context.current().manifest_data())),
     "nexus": ({"nexus": {"proxy_repositories": []}},
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     # Driven the way `support github workflows` reads it (si#858). An absent section is no longer refused by

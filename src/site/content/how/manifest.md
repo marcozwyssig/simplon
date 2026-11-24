@@ -514,6 +514,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
 | `runner:` | the derived CI workflow (si#858) | the machine its jobs run on: a kind such as `github-ubuntu` (the default), or `{ kind: self-hosted-debian, labels: <label> }` |
+| `sources:` | `support:sources` | optional (si#873): a list of `submodule:` (a path in `.gitmodules`) and, for a private one, `secret:`, the name of the variable that holds its GitHub token. `support sources` checks each out at the commit the superproject pins, handing the token to git through its environment and never its command line. An empty `secret:` variable is refused under GitHub Actions (a fork or Dependabot pull request gets no secrets) and, outside Actions, the submodule is updated with your own git configuration and the run says so. An absent section checks nothing out and says so in one line |
 | `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
 | `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |

@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Sequence
 
@@ -69,7 +70,8 @@ def _not_asked(result: Result) -> bool:
     return not result.ok and any(said in result.err for said in _NOT_ASKED)
 
 
-def git(root: Path | str, *args: str, capture: bool = True, remote: bool = False) -> Result:
+def git(root: Path | str, *args: str, capture: bool = True, remote: bool = False,
+        env: Mapping[str, str] | None = None) -> Result:
     """`git -C <root> <args>`: the kernel's one git call (#670 item 13), and a Result, never a raise.
 
     `root` is explicit, never this module's `ROOT` by default: a caller that names no repository cannot
@@ -78,6 +80,9 @@ def git(root: Path | str, *args: str, capture: bool = True, remote: bool = False
     on one, `cli.bootstrap` reads one as "no answer", `generated` refuses an empty listing.
 
     `remote=True` for a call that talks to origin: it carries `remote_auth()`, and only it does.
+
+    `env` is added to the child's environment for this call alone and wins over what the wrapper sets
+    (si#873: `support sources` hands a token and `GIT_CONFIG_GLOBAL` to one `submodule update`).
 
     An operation that talks to a remote (`limits.GIT_REMOTE_OPS`) runs under `limits.GIT_REMOTE` whether
     or not it carries the credential (si#654): a hung remote is a hung run either way.
@@ -102,10 +107,10 @@ def git(root: Path | str, *args: str, capture: bool = True, remote: bool = False
     """
     argv = ["git", "-C", str(root), *args]
     if not (args and args[0] in limits.GIT_REMOTE_OPS):
-        return run(argv, capture=capture)
-    env = {"GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS": "false", "SSH_ASKPASS_REQUIRE": "force",
-           **(remote_auth() if remote else {})}
-    result = run(argv, env=env, timeout=limits.GIT_REMOTE, terminal=False)
+        return run(argv, capture=capture, env=env)
+    child_env = {"GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS": "false", "SSH_ASKPASS_REQUIRE": "force",
+                 **(remote_auth() if remote else {}), **(env or {})}
+    result = run(argv, env=child_env, timeout=limits.GIT_REMOTE, terminal=False)
     if not capture:
         sys.stdout.write(result.out)
         sys.stderr.write(result.err)

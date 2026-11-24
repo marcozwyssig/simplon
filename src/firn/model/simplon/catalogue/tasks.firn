@@ -407,6 +407,12 @@ support_install typeOf simplon.pipeline.CatalogueTask {
   help = "Provision the host tooling the kernel needs - today oras; idempotent."
   unattended = true
 }
+support_sources typeOf simplon.pipeline.CatalogueTask {
+  key = "support:sources"
+  body = "simplon.tasks.sources:sources_cmd"
+  help = "Check out the manifest's `sources:` submodules at their pinned commits, each with its token; idempotent."
+  unattended = true
+}
 support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
   key = "support:claude-plugins"
   body = "simplon.tasks.claudeplugins:install_cmd"

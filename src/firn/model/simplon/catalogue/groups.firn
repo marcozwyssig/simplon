@@ -119,6 +119,11 @@ support typeOf simplon.pipeline.CatalogueGroup {
   command install typeOf simplon.pipeline.CatalogueCommand {
     task = simplon.catalogue.support_install
   }
+  // `support sources` (si#873): placed like `install`, because every generated job runs it right after the
+  // checkout and a product with no `sources:` is told so in one line and succeeds.
+  command sources typeOf simplon.pipeline.CatalogueCommand {
+    task = simplon.catalogue.support_sources
+  }
   // PLACED since si#550, by the same bar. si#525 made `toolchains:` a list every product has (init
   // writes claude and gh), and this is the command that adds to it, so a product without a compiled
   // language uses it too. Unplaced, the scaffold's comment promised a command nobody had.
