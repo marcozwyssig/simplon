@@ -103,3 +103,38 @@ def test_github_actions_is_never_masked(monkeypatch, tmp_path):
     cli._derived("support:sources")
 
     assert secrets.redact("ok true tok-derived-1234") == "ok true ***"
+
+
+_GENERATED = """
+product: demo
+sources:
+  - submodule: lib/platform
+    secret: PLATFORM_REPO_TOKEN
+tasks:
+  ship:
+    impl: "simplon.tasks.sources:sources_cmd"
+    help: "Ship it."
+support:
+  commands:
+    ship:
+      task: ship
+      env: { pass: [VSCE_PAT] }
+"""
+
+
+def test_the_generated_module_keeps_the_sources_names_for_support_sources_only():
+    """A generated module whose commands pass a name confines every command; `support sources` keeps what the
+    `sources:` section derives, asked when it runs, and the other command keeps only its own list."""
+    from simplon.manifest import catalogue
+    from simplon.manifest import load as manifest_load
+    from simplon.tasks import taskgen
+
+    manifest = manifest_load.load(_GENERATED, catalogue=catalogue.load())
+
+    text = taskgen.render(manifest, source="demo.yaml", product="demo", groups=frozenset({"support"}))
+
+    assert "from simplon.tasks import sources as _sources" in text
+    assert "_launcherenv.confined(() + _sources.variables_kept('support:sources'), lambda: " in text
+    assert "_launcherenv.confined(('VSCE_PAT',), lambda: " in text
+    assert text.count("_sources.variables_kept(") == 1
+    compile(text, "demo_cli.py", "exec")

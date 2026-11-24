@@ -22,6 +22,7 @@ from typing import Callable, NamedTuple
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from simplon.manifest import bound, clitaxonomy, launcherenv, results, signatures
+from simplon.manifest import sources as declared_sources
 from simplon.model import task
 from simplon.tasks import deploy, testrun
 from simplon.model.command import AggregateCommand, TaskCommand
@@ -169,6 +170,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                      for members in manifest.commands.values() for spec in members.values())
     uses_env_pass = passes_any
     uses_derived = False
+    uses_sources = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -223,6 +225,10 @@ def render(manifest: Manifest, *, source: str, product: str,
                     if spec.task in deploy.READS:
                         uses_derived = True
                         keep = f"{keep} + _deploy.variables_kept({spec.task!r})"
+                    # si#873: what the `sources:` section derives is kept by `support sources` alone.
+                    if spec.task == declared_sources.TASK:
+                        uses_sources = True
+                        keep = f"{keep} + _sources.variables_kept({spec.task!r})"
                     wrapped = f"_launcherenv.confined({keep}, lambda: {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
@@ -249,6 +255,9 @@ def render(manifest: Manifest, *, source: str, product: str,
                     if derived:
                         uses_derived = True
                         keep = f"{keep} + _deploy.variables_kept({', '.join(map(repr, derived))})"
+                    if declared_sources.TASK in launcherenv.tasks_of_plan(tree):
+                        uses_sources = True
+                        keep = f"{keep} + _sources.variables_kept({declared_sources.TASK!r})"
                     call = f"_launcherenv.confined({keep}, lambda: {call})"
                 tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "", "call": call})
 
@@ -333,7 +342,8 @@ def render(manifest: Manifest, *, source: str, product: str,
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
                                                 tasks=tasks, body=body, covered=covered,
                                                 has_aggregate=has_aggregate, uses_results=uses_results, uses_bound=uses_bound,
-                                                uses_env_pass=uses_env_pass, uses_derived=uses_derived)
+                                                uses_env_pass=uses_env_pass, uses_derived=uses_derived,
+                                                uses_sources=uses_sources)
 
 
 def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:
