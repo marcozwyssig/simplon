@@ -229,7 +229,7 @@ def _commands(data: Mapping[str, object], source: str,
 
 
 def left_out(data: Mapping[str, object], source: str = "manifest", *,
-             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+             derive: Callable[[str], tuple[str, ...]], product: str = "") -> tuple[str, ...]:
     """The derived names `declared` leaves off the launcher's list because no launcher can forward them, in
     the order written, each once (si#824) - for the renderer to name, each with `cannot_carry`."""
     out: list[str] = []
@@ -240,7 +240,7 @@ def left_out(data: Mapping[str, object], source: str = "manifest", *,
 
 
 def declared(data: Mapping[str, object], source: str = "manifest", *,
-             derive: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+             derive: Callable[[str], tuple[str, ...]], product: str = "") -> tuple[str, ...]:
     """The UNION of every task command's `env: pass:` in this document, and of the names the kernel derives
     for its task (si#810), in the order written, or () when there are none - the names the launcher
     forwards into the kernel's container.
@@ -270,11 +270,10 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
                 out.append(passed)
     # si#873: `support sources` is placed by the catalogue, so no command of this document carries its names;
     # they are derived from the `sources:` section itself, after every command's, and () without one.
-    # One the launcher forwards anyway (`GH_TOKEN`, `DELIVERY_*`, `<PRODUCT>_*`) stays off: on the list,
-    # `confine` would unset it for every other command, which it never did before.
-    product = data.get("product")
+    # One the launcher forwards anyway (`GH_TOKEN`, `DELIVERY_*`, `<PRODUCT>_*`, `product` being the name the
+    # launcher runs as) stays off: on the list, `confine` would unset it for every other command.
     out += [name for name in filter(forwardable, sources.variable_roles(data))
-            if name not in out and not forwarded_anyway(name, product if isinstance(product, str) else "")]
+            if name not in out and not forwarded_anyway(name, product)]
     return tuple(out)
 
 

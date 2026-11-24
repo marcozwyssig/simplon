@@ -827,7 +827,7 @@ def main(*, app: typer.Typer, context: ProductContext,
         data = context.manifest_data()
         stale = launcherenv.stale_launcher(
             launcherenv.declared(data, str(context.manifest_path),
-                                 derive=lambda task: deploy.variables_read(data, task)),
+                                 derive=lambda task: deploy.variables_read(data, task), product=context.name),
             os.environ, launcher(context.name))
         if stale:
             log.die(stale)

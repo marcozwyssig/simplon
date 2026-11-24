@@ -23,7 +23,8 @@ SECRET_SOURCE = {"sources": [{"submodule": "lib/platform", "secret": "PLATFORM_R
 
 
 def _declared(document):
-    return launcherenv.declared(document, derive=lambda task: deploy.variables_read(document, task))
+    return launcherenv.declared(document, derive=lambda task: deploy.variables_read(document, task),
+                                product="simplon")
 
 
 def _simplon():
