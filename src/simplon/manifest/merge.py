@@ -4,7 +4,8 @@
 
 One value, a fixed policy with no parameters; the label and the merge method become parameters only when a
 second product needs another one. `declared` is the one reading, called from the loader, so a bad value is
-refused before any command or workflow derivation meets it. An absent section is `False`, the normal case.
+refused before any command or workflow derivation meets it. An absent section is `False`, the normal case; a
+bare `merge:` (null) is refused on purpose, since a half-typed intent is not "off".
 """
 from __future__ import annotations
 

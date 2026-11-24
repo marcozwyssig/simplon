@@ -18,7 +18,7 @@ def test_absent_is_false():
     assert merge.declared({}) is False
 
 
-@pytest.mark.parametrize("value", ["manual", True, {"auto": True}, ["auto"]])
+@pytest.mark.parametrize("value", ["manual", "Auto", None, True, {"auto": True}, ["auto"]])
 def test_other_value_is_refused(value):
     # act / assert: the message names the only value there is
     with pytest.raises(ValueError, match="auto"):
