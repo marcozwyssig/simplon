@@ -187,7 +187,9 @@ Gate typeOf firn.core.Class extends firn.core.NamedResource {
 // What the kernel step `auto-merge` is given (si#874): the workflows whose runs for a commit decide the merge, by
 // FILE, since the runs are asked for by file while `workflow_run` names them by `name:`. `ci_workflow` is the CI
 // workflow's file, the one dispatched on the base after a merge; `triggers` is every trigger workflow's file, CI
-// first; `labels` is each gate with a `label:`.
+// first; `labels` is each gate with a `label:`; `derived_gates` is the file of each gate workflow the kernel derives,
+// whose decide job runs on every pull request event, so the merge asks for one of its runs (rule `derived-gate-ran`).
+// The field names are the `source` of the merge policy's inputs (`simplon.automerge.MergeInput`).
 Merge typeOf firn.core.Class extends firn.core.NamedResource {
   property ci_workflow typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
@@ -196,6 +198,10 @@ Merge typeOf firn.core.Class extends firn.core.NamedResource {
   property triggers typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 1..N
+  }
+  property derived_gates typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
   }
   property labels typeOf firn.core.Composition {
     range = simplon.workflow.GateLabel
@@ -270,6 +276,13 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..1
     objectCardinality = 0..1
   }
+  // The job's own `concurrency:` group, queued and never cancelling a run in progress. Job-level, so only a run whose
+  // job passes its `if:` takes it (si#874: a workflow-level group is taken before the `if:`, so a run that does
+  // nothing could displace a pending one that would merge). Set on the auto-merge job; the renderer writes it there.
+  property concurrency typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
   // The job starts no container, so it gets no si#756 reap step (si#874 security review). That step falls back to a
   // docker binary in the job's workspace, which on a shared self-hosted machine is a previous job's leftover, run
   // here with this job's token. Set on the auto-merge job, whose token writes.
@@ -281,7 +294,7 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
 
 // One workflow file. `title` is GitHub's `name:` (every firn resource already has a `name`). `permission` is the
 // token's scopes where a workflow needs more than the kernel's least-privilege default (si#719), which an empty
-// one keeps (si#874). No concurrency: the renderer decides it per kind of file.
+// one keeps (si#874). No workflow-level concurrency: the renderer decides it per kind of file.
 Workflow typeOf firn.core.Class extends firn.core.NamedResource {
   allowRoot = true
   property path typeOf firn.core.Attribute {

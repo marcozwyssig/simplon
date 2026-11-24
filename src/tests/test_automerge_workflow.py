@@ -97,16 +97,26 @@ def test_triggers():
         "&& github.event.label.name == 'auto-merge')")
 
 
-def test_permissions_and_concurrency():
+def test_permissions():
     doc = _doc()
     assert doc["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write",
                                   "issues": "write"}
-    assert doc["concurrency"] == {
-        "group": "auto-merge-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}",
-        "cancel-in-progress": False}
+
+
+def test_concurrency_is_the_jobs_keyed_on_the_head_commit():
+    """Workflow-level concurrency is taken before the job's `if:`, so every labeled event and every completion,
+    red ones too, would take the group and could displace a real pending run (GitHub keeps one pending run per
+    group). Only a job that passes its `if:` takes a job-level group; one per head commit, from either event."""
+    from simplon.model import automerge as policy
+    doc = _doc()
+    sha = next(expression for name, expression, *_ in policy.INPUTS if name == "SHA")
+    assert "concurrency" not in doc
+    assert doc["jobs"]["auto-merge"]["concurrency"] == {"group": f"auto-merge-{sha}", "cancel-in-progress": False}
+    assert "head_sha" in sha and "pull_request.head.sha" in sha
 
 
 def test_no_checkout_and_env():
+    from simplon.model import automerge as policy
     doc = _doc()
     job = doc["jobs"]["auto-merge"]
     assert job["runs-on"] == "ghr-1"
@@ -114,13 +124,12 @@ def test_no_checkout_and_env():
     assert not any(str(step.get("uses", "")).startswith("actions/checkout") for step in job["steps"])
     assert not any("netctl.sh" in str(step.get("run", "")) for step in job["steps"])
     env = _merge_step(doc)["env"]
-    assert env == {
-        "GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}",
-        "BRANCH": "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}",
-        "SHA": "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}",
-        "EVENT": "${{ github.event_name }}", "CI_WORKFLOW": "ci.yml", "TRIGGERS": "ci.yml ci-test-lab.yml",
-        "GATES": "ci-test-lab.yml needs-lab",
-        "LABELLER": "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"}
+    assert list(env) == [name for name, *_ in policy.INPUTS]
+    assert {name: env[name] for name, expression, *_ in policy.INPUTS if expression} == {
+        name: expression for name, expression, *_ in policy.INPUTS if expression}
+    assert {name: env[name] for name, expression, *_ in policy.INPUTS if not expression} == {
+        "CI_WORKFLOW": "ci.yml", "TRIGGERS": "ci.yml ci-test-lab.yml", "GATES": "ci-test-lab.yml needs-lab",
+        "DERIVED_GATES": "ci-test-lab.yml"}
 
 
 def test_rule_comments_come_from_the_policy():
@@ -183,6 +192,8 @@ def test_handwritten_gate_is_read_from_its_file(tmp_path):
     assert doc[True]["workflow_run"]["workflows"] == ["ci", "Lab"]
     env = _merge_step(doc)["env"]
     assert (env["TRIGGERS"], env["GATES"]) == ("ci.yml ci-test-lab.yml", "ci-test-lab.yml needs-lab")
+    # a hand-written gate may run on its label or a schedule only: it is no derived gate, which must have a run
+    assert env["DERIVED_GATES"] == ""
 
 
 def test_handwritten_file_absent_is_refused(tmp_path):
@@ -232,11 +243,11 @@ def test_check_goes_red_when_the_handwritten_name_changes(tmp_path):
 
 
 def test_the_merge_job_has_no_reap_step():
+    from simplon.model import automerge as policy
     from simplon.tasks import workflowgen
     doc = _doc()
     assert not any(step.get("name") == workflowgen.REAP_NAME for step in doc["jobs"]["auto-merge"]["steps"])
-    assert [step["name"] for step in doc["jobs"]["auto-merge"]["steps"]] == [
-        "Merge the labelled pull request once every trigger run for its head is green"]
+    assert [step["name"] for step in doc["jobs"]["auto-merge"]["steps"]] == [policy.STEP_NAME]
     # every other derived job keeps it
     for path in (".github/workflows/ci.yml", ".github/workflows/ci-test-lab.yml"):
         other = yaml.safe_load(_rendered(path=path))

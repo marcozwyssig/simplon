@@ -39,6 +39,53 @@ MergePolicy typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 1..N
     objectCardinality = 0..1
   }
+  // The script's interface: every variable the merge step's `env:` sets, in the order the step writes them.
+  property inputs typeOf firn.core.Composition {
+    range = simplon.automerge.MergeInput
+    subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+  // The merge step's `name:`.
+  property step_name typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  // The rendered job's note: `note_head` before the rules, `note_tail` after them. `@LABEL@` is `label`.
+  property note_head typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property note_tail typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// One variable of the merge step's `env:`: its name, where its value comes from, what it carries, and whether the
+// script refuses it empty. The value is either a GitHub `expression`, written whole into the step, or a `source`,
+// the field of the workflow model's `Merge` the renderer reads it from (`cipipeline._merge_job`). Never both.
+MergeInput typeOf firn.core.Class extends firn.core.NamedResource {
+  property variable typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property expression typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property source typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property meaning typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  // Empty is red before any call: without it there is no verdict.
+  property required typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
 }
 
 // One scope of the auto-merge workflow's token: its name, its access, why, and the ticket or run that measured it.
@@ -79,6 +126,65 @@ auto typeOf simplon.automerge.MergePolicy {
   // A completed trigger run that succeeded and that no schedule started, or this policy's label just added
   // (decision 9 of #874). `@LABEL@` is `label` above: the template writes it in, so the label has one source.
   condition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == '@LABEL@')"
+  step_name = "Merge the labelled pull request once every trigger run for its head is green"
+  note_head = "si#874: `merge: auto`. This job merges the open pull request labelled `@LABEL@` whose head is the commit a trigger workflow's run just verified, or whose label was just added, once every run of every trigger workflow for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:"
+  note_tail = "The job runs in the privileged context of `workflow_run` and `pull_request_target` with a write token, so no repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, so nothing a pull request author controls is written into it. A label event is filtered to `@LABEL@` by the job's `if:`, a run to a successful one that no schedule started. Only a job that passes its `if:` takes the concurrency group, one per head commit: a run for another commit, or for another label, never displaces it."
+  inputs gh_token typeOf simplon.automerge.MergeInput {
+    variable = "GH_TOKEN"
+    expression = "${{ github.token }}"
+    meaning = "the workflow's token, which gh reads"
+  }
+  inputs gh_repo typeOf simplon.automerge.MergeInput {
+    variable = "GH_REPO"
+    expression = "${{ github.repository }}"
+    meaning = "the repository, owner/name"
+    required = true
+  }
+  inputs branch typeOf simplon.automerge.MergeInput {
+    variable = "BRANCH"
+    expression = "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}"
+    meaning = "the pull request's head branch, from whichever of the two events started the run"
+    required = true
+  }
+  inputs sha typeOf simplon.automerge.MergeInput {
+    variable = "SHA"
+    expression = "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}"
+    meaning = "the commit verified, from whichever of the two events started the run"
+    required = true
+  }
+  inputs event typeOf simplon.automerge.MergeInput {
+    variable = "EVENT"
+    expression = "${{ github.event_name }}"
+    meaning = "workflow_run or pull_request_target"
+    required = true
+  }
+  inputs ci_workflow typeOf simplon.automerge.MergeInput {
+    variable = "CI_WORKFLOW"
+    source = "ci_workflow"
+    meaning = "the CI workflow's file, the one dispatched on the base after a merge"
+    required = true
+  }
+  inputs triggers typeOf simplon.automerge.MergeInput {
+    variable = "TRIGGERS"
+    source = "triggers"
+    meaning = "every trigger workflow's file, CI first, space-separated"
+    required = true
+  }
+  inputs gates typeOf simplon.automerge.MergeInput {
+    variable = "GATES"
+    source = "labels"
+    meaning = "one line of a gate's workflow file and its label per gate with a label, empty when none"
+  }
+  inputs derived_gates typeOf simplon.automerge.MergeInput {
+    variable = "DERIVED_GATES"
+    source = "derived_gates"
+    meaning = "the file of every gate workflow the kernel derives, space-separated, empty when none"
+  }
+  inputs labeller typeOf simplon.automerge.MergeInput {
+    variable = "LABELLER"
+    expression = "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"
+    meaning = "the label event's sender, empty on a run; the issue timeline can lag behind the event, and it is read only as a variable, never written into the script"
+  }
   permissions contents typeOf simplon.automerge.MergePermission {
     scope = "contents"
     access = "write"
@@ -106,7 +212,7 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules labelled_pr typeOf simplon.automerge.MergeRule {
     key = "labelled-pr"
-    reason = "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open."
+    reason = "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so on the label event itself the pull request could be missing and that event never comes back."
     source = "si#874"
   }
   rules head_is_sha typeOf simplon.automerge.MergeRule {
@@ -137,6 +243,11 @@ auto typeOf simplon.automerge.MergePolicy {
   rules ci_run_exists typeOf simplon.automerge.MergeRule {
     key = "ci-run-exists"
     reason = "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it."
+    source = "si#874"
+  }
+  rules derived_gate_ran typeOf simplon.automerge.MergeRule {
+    key = "derived-gate-ran"
+    reason = "A gate workflow the kernel derives must have a run for the commit, schedule runs aside: its decide job runs on every pull request event, so a pull request always has one, and none means no gate ever looked at this tree. That is a stacked parent after its child merged into it, whose head moved without a pull request event, so it waits for a push or for the gate's workflow to be dispatched, and the dispatch command is named. A hand-written gate may run on its label or a schedule only, so it keeps only the label rule below."
     source = "si#874"
   }
   rules gate_label_needs_run typeOf simplon.automerge.MergeRule {

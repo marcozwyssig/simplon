@@ -131,12 +131,14 @@ def derive(manifest: Manifest, data: Mapping[str, object], ci: workflowgen.Workf
         if run.gate.label:
             labels.append(workflowschema.GateLabel(workflow=_file(workflow), label=run.gate.label))
     runner, runs_on = cipipeline.runner_of(data)
+    sha = next(expression for name, expression, *_ in policy.INPUTS if name == "SHA")
     job = workflowschema.Job(
         key=KEY, step=(workflowschema.Step(kernel_step=cipipeline.AUTO_MERGE),), condition=policy.CONDITION,
-        timeout_minutes=TIMEOUT_MINUTES, starts_no_container=True,
+        timeout_minutes=TIMEOUT_MINUTES, starts_no_container=True, concurrency=f"{KEY}-{sha}",
         runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=runs_on),
         merge=workflowschema.Merge(ci_workflow=_file(ci), triggers=tuple(_file(w) for w in (ci, *gated)),
-                                   labels=tuple(labels)))
+                                   labels=tuple(labels),
+                                   derived_gates=tuple(_file(w) for w in gated if w.derived)))
     triggers = (
         workflowschema.Trigger(event="workflow_run", workflows=tuple(names),
                                types=("completed",)),

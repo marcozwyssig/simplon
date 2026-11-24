@@ -845,47 +845,31 @@ def _decide_job(job: workflowschema.Job, run: GateRun) -> workflowgen.Job:
 
 #: The kernel step that merges: the generated `MERGE_SCRIPT` of the merge policy (`simplon.model.automerge`).
 AUTO_MERGE = "auto-merge"
-MERGE_NAME = "Merge the labelled pull request once every trigger run for its head is green"
-#: The head branch and commit, from whichever of the two events started the run.
-MERGE_BRANCH = "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}"
-MERGE_SHA = "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}"
-#: Who added the label, on the label event only: the issue timeline can lag behind the event (si#874 security
-#: review). Handed over as a variable, never written into the script.
-MERGE_LABELLER = "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"
-
-MERGE_NOTE = (
-    "si#874: `merge: auto`. This job merges the open pull request labelled `{label}` whose head is the commit a "
-    "trigger workflow's run just verified, or whose label was just added, once every run of every trigger workflow "
-    "for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a "
-    "cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules "
-    "and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:",
-    "The job runs in the privileged context of `workflow_run` and `pull_request_target` with a write token, so no "
-    "repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, "
-    "so nothing a pull request author controls is written into it. A label event is filtered to `{label}` by "
-    "the job's `if:`, a run to a successful one that no schedule started.")
 
 
 def _merge_job(job: workflowschema.Job) -> workflowgen.Job:
     """The auto-merge job as the renderer's: one verbatim step running `MERGE_SCRIPT`, no checkout, `prepared` so
-    no preparation is added. The reap step `render` puts in front of every job stays: it starts no launcher."""
+    no preparation is added, and no si#756 reap step (`starts_no_container`). The step's `env:` is the policy's
+    `INPUTS`: an input's GitHub expression as written, or the field of the model's `Merge` its source names. The
+    job's own `concurrency:` group is the model's, so only a run that passes the `if:` takes it."""
     assert job.merge is not None
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     labels = job.runner.labels
     given = job.merge
-    step = workflowgen.Step(verbatim={
-        "name": MERGE_NAME, "shell": "bash",
-        "env": {"GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}", "BRANCH": MERGE_BRANCH,
-                "SHA": MERGE_SHA, "EVENT": "${{ github.event_name }}", "CI_WORKFLOW": given.ci_workflow,
-                "TRIGGERS": " ".join(given.triggers),
-                "GATES": "\n".join(f"{gate.workflow} {gate.label}" for gate in given.labels),
-                "LABELLER": MERGE_LABELLER},
-        "run": merge_policy.MERGE_SCRIPT})
-    head, tail = (part.format(label=merge_policy.LABEL) for part in MERGE_NOTE)
+    sources = {"ci_workflow": given.ci_workflow, "triggers": " ".join(given.triggers),
+               "labels": "\n".join(f"{gate.workflow} {gate.label}" for gate in given.labels),
+               "derived_gates": " ".join(given.derived_gates)}
+    env = {name: expression or sources[source] for name, expression, source, _, _ in merge_policy.INPUTS}
+    step = workflowgen.Step(verbatim={"name": merge_policy.STEP_NAME, "shell": "bash", "env": env,
+                                      "run": merge_policy.MERGE_SCRIPT})
+    head, tail = merge_policy.NOTE
     # A rule's key is one word with hyphens in it, which a wrap must not split.
     rules = [textwrap.fill(f"{key} ({source}): {reason}", width=95, subsequent_indent="  ", break_on_hyphens=False)
              for key, reason, source in merge_policy.RULES]
     note = "\n\n".join([textwrap.fill(head, width=95), "\n".join(rules), textwrap.fill(tail, width=95)])
     extras: dict[str, object] = {"if": job.condition, "timeout-minutes": job.timeout_minutes}
+    if job.concurrency:
+        extras["concurrency"] = {"group": job.concurrency, "cancel-in-progress": False}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=(step,),
                            checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras,
                            reap=not job.starts_no_container)
@@ -1193,11 +1177,11 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     queued = ({} if key == KEY or derivation.gate is not None else
               {"concurrency": {"group": group, "cancel-in-progress": False}})
     if any(job.merge is not None for job in derivation.model.job):
-        # si#874: a CI run and a gate run completing together for one commit queue per branch; the second finds
-        # the pull request merged and is a no-op. With more than two near-simultaneous events GitHub keeps one
-        # pending run per group and cancels the one it replaces; harmless, because the run that survives re-reads
-        # every run for its commit.
-        queued = {"concurrency": {"group": f"{key}-{MERGE_BRANCH}", "cancel-in-progress": False}}
+        # si#874: none at workflow level. That group is taken before the job's `if:`, so every labeled event and
+        # every completion, red ones too, would take it, and GitHub keeps one pending run per group: a run that
+        # does nothing could displace one that would merge. The merge job carries its own group, per head commit
+        # (`_merge_job`); runs for different commits race only to `--match-head-commit`.
+        queued = {}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
     # repository's default token scopes, which can include write. A model that names its scopes (si#874) gets
     # those instead.

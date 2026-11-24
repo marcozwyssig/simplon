@@ -27,9 +27,6 @@ permissions:
   pull-requests: write
   actions: write
   issues: write
-concurrency:
-  group: auto-merge-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}
-  cancel-in-progress: false
 
 jobs:
 
@@ -45,7 +42,10 @@ jobs:
   #   merging nothing, so the pulls endpoint is probed first and a failed probe is red.
   # labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is
   #   merged; the label is the opt-in. None is a green no-op, and a pull request merged by an
-  #   earlier run is no longer open.
+  #   earlier run is no longer open. The open pull requests are listed without a label filter and
+  #   the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose
+  #   index lags a label change, so on the label event itself the pull request could be missing and
+  #   that event never comes back.
   # head-is-sha (netctl#1788): Merge what was verified: only the pull request whose head is the
   #   run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a
   #   fork's pull request with the same branch name from being picked.
@@ -68,6 +68,13 @@ jobs:
   # ci-run-exists (si#874): The rules cover CI as well as the gates: a run of the CI workflow for
   #   the commit must exist, because a green gate says nothing about what CI runs, and the label
   #   event has no triggering run to stand in for it.
+  # derived-gate-ran (si#874): A gate workflow the kernel derives must have a run for the commit,
+  #   schedule runs aside: its decide job runs on every pull request event, so a pull request
+  #   always has one, and none means no gate ever looked at this tree. That is a stacked parent
+  #   after its child merged into it, whose head moved without a pull request event, so it waits
+  #   for a push or for the gate's workflow to be dispatched, and the dispatch command is named. A
+  #   hand-written gate may run on its label or a schedule only, so it keeps only the label rule
+  #   below.
   # gate-label-needs-run (netctl#1788): A gate's label takes the role of netctl's needs-lab: a pull
   #   request carrying it with no run of that gate's workflow for the commit does not merge, and
   #   the dispatch command is named.
@@ -82,11 +89,15 @@ jobs:
   # token, so no repository code runs here: no checkout and no launcher, and the script reads its
   # `env:` and nothing else, so nothing a pull request author controls is written into it. A label
   # event is filtered to `auto-merge` by the job's `if:`, a run to a successful one that no
-  # schedule started.
+  # schedule started. Only a job that passes its `if:` takes the concurrency group, one per head
+  # commit: a run for another commit, or for another label, never displaces it.
   auto-merge:
     runs-on: ghr-1
     if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == 'auto-merge')
     timeout-minutes: 10
+    concurrency:
+      group: auto-merge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+      cancel-in-progress: false
     steps:
       - name: Merge the labelled pull request once every trigger run for its head is green
         shell: bash
@@ -99,6 +110,7 @@ jobs:
           CI_WORKFLOW: ci.yml
           TRIGGERS: ci.yml ci-test-lab.yml
           GATES: ci-test-lab.yml needs-lab
+          DERIVED_GATES: ci-test-lab.yml
           LABELLER: ${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}
         run: |
           set -euo pipefail
@@ -106,12 +118,25 @@ jobs:
           # labelled auto-merge whose head is $SHA once every trigger workflow's run for that commit is green: netctl's
           # rules, and the ones si#874 decided on top. Each rule's comment is its reason and the ticket behind it.
           #
-          # Set by the step: GH_TOKEN, GH_REPO, BRANCH (the pull request's head branch), SHA (the commit verified),
-          # CI_WORKFLOW (the CI workflow's file), TRIGGERS (every trigger workflow's file, CI first, space-separated),
-          # GATES (one `<workflow file> <label>` line per gate with a label, empty when none) and EVENT
-          # (workflow_run or pull_request_target), and LABELLER (the label event's sender, empty on a run; read only as
-          # a variable, never written into this script). Writes merged_pr and base to $GITHUB_OUTPUT when it merged.
-          for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT GITHUB_OUTPUT; do
+          # Set by the step's env:, each with what it carries; a required one that is empty is red before any call.
+          #   GH_TOKEN: the workflow's token, which gh reads
+          #   GH_REPO (required): the repository, owner/name
+          #   BRANCH (required): the pull request's head branch, from whichever of the two events started the run
+          #   SHA (required): the commit verified, from whichever of the two events started the run
+          #   EVENT (required): workflow_run or pull_request_target
+          #   CI_WORKFLOW (required): the CI workflow's file, the one dispatched on the base after a merge
+          #   TRIGGERS (required): every trigger workflow's file, CI first, space-separated
+          #   GATES: one line of a gate's workflow file and its label per gate with a label, empty when none
+          #   DERIVED_GATES: the file of every gate workflow the kernel derives, space-separated, empty when none
+          #   LABELLER: the label event's sender, empty on a run; the issue timeline can lag behind the event, and it is read only as a variable, never written into the script
+          required=""
+          required="$required GH_REPO"
+          required="$required BRANCH"
+          required="$required SHA"
+          required="$required EVENT"
+          required="$required CI_WORKFLOW"
+          required="$required TRIGGERS"
+          for name in $required; do
             if [ -z "$(printenv "$name" || true)" ]; then
               echo "::error::$name is empty: the auto-merge step sets it, and without it there is no verdict." >&2
               exit 1
@@ -125,8 +150,9 @@ jobs:
               ;;
           esac
           gates=$(printenv GATES || true)
+          derived_gates=$(printenv DERIVED_GATES || true)
           # The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
-          for wf in "$CI_WORKFLOW" $(printf '%s\n' "$gates" | awk 'NF { print $1 }'); do
+          for wf in "$CI_WORKFLOW" $(printf '%s\n' "$gates" | awk 'NF { print $1 }') $derived_gates; do
             case " $TRIGGERS " in
               *" $wf "*) ;;
               *)
@@ -145,9 +171,9 @@ jobs:
             exit 1
           fi
 
-          # labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open.
-          listed=$(gh pr list --head "$BRANCH" --state open --label "auto-merge" --json number,headRefOid,baseRefName,isCrossRepository \
-            --jq '.[] | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
+          # labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so on the label event itself the pull request could be missing and that event never comes back.
+          listed=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid,baseRefName,isCrossRepository,labels \
+            --jq '.[] | select(any(.labels[]; .name == "auto-merge")) | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
           if [ -z "$listed" ]; then
             echo "No open PR labelled auto-merge for branch '$BRANCH'; nothing to do."
             exit 0
@@ -251,6 +277,16 @@ jobs:
             exit 0
           fi
 
+          # derived-gate-ran (si#874): A gate workflow the kernel derives must have a run for the commit, schedule runs aside: its decide job runs on every pull request event, so a pull request always has one, and none means no gate ever looked at this tree. That is a stacked parent after its child merged into it, whose head moved without a pull request event, so it waits for a push or for the gate's workflow to be dispatched, and the dispatch command is named. A hand-written gate may run on its label or a schedule only, so it keeps only the label rule below.
+          for wf in $derived_gates; do
+            if [ ! -s "$runs_dir/$wf" ]; then
+              echo "No run of the gate workflow $wf for $SHA (schedule runs aside); not merging PR #$pr."
+              echo "No gate looked at this commit; a stacked parent's head moves that way when its child merges into it."
+              echo "Push to '$BRANCH', or run the gate: gh workflow run $wf --ref $BRANCH"
+              exit 0
+            fi
+          done
+
           # gate-label-needs-run (netctl#1788): A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named.
           if [ -n "$gates" ]; then
             labels=$(gh pr view "$pr" --json labels --jq '.labels[].name')
@@ -267,8 +303,6 @@ jobs:
           # squash-merge (si#874): Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open.
           echo "Every run for $SHA is green: merging PR #$pr into '$base' (squash) and deleting '$BRANCH'."
           gh pr merge "$pr" --squash --delete-branch --match-head-commit "$SHA"
-          echo "merged_pr=$pr" >>"$GITHUB_OUTPUT"
-          echo "base=$base" >>"$GITHUB_OUTPUT"
 
           # dispatch-ci-on-base (netctl#964): A merge pushed under the workflow token starts no run, so the CI workflow is dispatched on the base branch afterwards; a failed dispatch is red, because the base then carries an unverified commit.
           echo "Dispatching $CI_WORKFLOW on '$base' so the merged tree gets a verdict."
