@@ -16,6 +16,15 @@ AN EMPTY TOKEN. Under GitHub Actions it is refused before git runs: a fork or De
 no secrets, and an unauthenticated clone would fail three lines later with "repository not found". Outside
 Actions it is not an error, the submodule is updated with the user's own git and the run says so.
 
+KNOWN LIMITS, unmeasured or accepted:
+- `GIT_CONFIG_GLOBAL=/dev/null` on a token call also hides a global `safe.directory` (unmeasured: a container job
+  whose uid differs from the repo owner).
+- The URL check reads `.gitmodules`; an already initialised submodule uses `submodule.<name>.url` from .git/config,
+  which a local set-url or sync can make differ.
+- A relative `.gitmodules` URL (`../x.git`) with a secret is refused by the prefix check. netctl, the one consumer
+  with a private submodule, uses an absolute https://github.com/ URL (measured via the GitHub API 2026-11-24);
+  a consumer with a relative URL reopens this.
+
 Every refusal here happens at run time and is a logged diagnosis with a non-zero rc, not a raise, so the census
 (which walks what a manifest can reach at load time) has nothing to count; the loader's own reading is
 `simplon.manifest.sources`.
@@ -23,6 +32,7 @@ Every refusal here happens at run time and is a logged diagnosis with a non-zero
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from simplon.kernel import log, secrets
@@ -36,13 +46,18 @@ GITHUB = "https://github.com/"
 REWRITE = "https://x-access-token:{token}@github.com/"
 
 
-def git_env(token: str) -> dict[str, str]:
-    """The environment that gives one git call `token` for GitHub and hides the global configuration."""
+def git_env(token: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment that gives one git call `token` for GitHub and hides the global configuration.
+
+    The rewrite is appended after any `GIT_CONFIG_*` entries `environ` (this process's by default) already
+    carries, the way `gitops.remote_auth` does, so those survive."""
+    source = os.environ if environ is None else environ
+    at = int(source.get("GIT_CONFIG_COUNT", "0") or "0")
     return {
         "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": f"url.{REWRITE.format(token=token)}.insteadOf",
-        "GIT_CONFIG_VALUE_0": GITHUB,
+        "GIT_CONFIG_COUNT": str(at + 1),
+        f"GIT_CONFIG_KEY_{at}": f"url.{REWRITE.format(token=token)}.insteadOf",
+        f"GIT_CONFIG_VALUE_{at}": GITHUB,
     }
 
 

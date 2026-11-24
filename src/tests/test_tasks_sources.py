@@ -33,6 +33,7 @@ def world(monkeypatch, tmp_path):
     """A bare `platform` repo with two commits, and a superproject that pins the FIRST of them."""
     home = tmp_path / "home"
     home.mkdir()
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     for key, value in {"HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_ALLOW_PROTOCOL": "file:https",
                        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                        "GIT_COMMITTER_EMAIL": "t@t", "PLATFORM_TOKEN": TOKEN}.items():
@@ -103,7 +104,7 @@ def test_a_stale_global_rewrite_does_not_win(monkeypatch, world):
     assert _git(world["root"] / "lib" / "platform", "rev-parse", "HEAD") == world["pinned"]
 
 
-def test_without_hiding_the_global_config_the_stale_rewrite_wins(monkeypatch, world):
+def test_without_hiding_the_global_config_the_stale_rewrite_wins(monkeypatch, world, capsys):
     """The red twin: pins WHY `GIT_CONFIG_GLOBAL` is in the environment."""
     _manifest(monkeypatch, world, SOURCES)
     _stale_global(world)
@@ -114,6 +115,16 @@ def test_without_hiding_the_global_config_the_stale_rewrite_wins(monkeypatch, wo
     rc = sources.sources_cmd()
 
     assert rc == 1
+    out = capsys.readouterr()
+    assert "/nowhere/x/platform.git" in out.out + out.err
+
+
+def test_a_git_config_entry_already_in_the_environment_survives():
+    env = sources.git_env(TOKEN, {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b"})
+
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_1"].startswith("url.") and env["GIT_CONFIG_VALUE_1"] == "https://github.com/"
+    assert "GIT_CONFIG_KEY_0" not in env
 
 
 def _recording(monkeypatch, then=None):
