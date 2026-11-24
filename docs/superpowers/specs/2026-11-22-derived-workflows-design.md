@@ -280,7 +280,7 @@ All on the command, under the one `ci:` key so a reader finds them together:
   - **Its own file**: `.github/workflows/ci-<aggregate words, dashed>.yml`, derived unless `workflows:`
     declares that stem. `paths:` are the `*`/`**` subset of GitHub's filter syntax, translated into one
     ERE at derive time; a glob with `!`, `?`, `+` or `[...]`, which GitHub reads otherwise, is refused.
-  - **Not built here:** `sources:` is #873 and `merge: auto` is #874.
+  - **Not built here:** `merge: auto` is #874. (corrected 2026-11-24, #873) `sources:` is built, see the product bullet below.
 
 On the product:
 
@@ -288,6 +288,19 @@ On the product:
   product's own, a private submodule or a second repository (netctl's submodule with a PAT, cleon-firn's
   import reading `../cleon`). `secret` names a secret through the si#833 secrets module, so it is
   masked and checked before the run.
+  (corrected 2026-11-24, #873) What was built, which differs from the bullet above: only the submodule form,
+  `sources: [{submodule, secret?}]`. `submodule` is a path in `.gitmodules`; `secret` names the variable
+  that holds a token and is optional, a public submodule needs none. It is not a further checkout the
+  checkout step performs: a catalogue command, `support sources` (`support:sources`), runs
+  `git submodule update --init --recursive` per entry, so the submodule is at the commit the superproject
+  pins, and a developer can type it (si#8). The token goes to git by `GIT_CONFIG_COUNT` and
+  `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, never argv, with `GIT_CONFIG_GLOBAL=/dev/null` on that call,
+  because a stale global `url.*.insteadOf` beats the environment's rewrite (measured, git 2.47.3). An empty
+  secret is refused under GitHub Actions and, outside it, the run falls back to the user's own git and says
+  so. The step follows the checkout (and `setup-python`) in every job that has a checkout, release jobs
+  included, as `prepare_sources` in a derived job; a `checkout: false` job gets none, and a product that
+  places no `support:sources` gets a comment instead. Not measured: a nested private submodule, a Windows or
+  macOS cell. Details: `how/manifest.md`, `sources:`.
 - `merge: auto` (netctl, #691): a derived auto-merge workflow on green CI. My call; #788 lists it as a
   hand-written reason and it is a product-level datum.
 
@@ -446,6 +459,11 @@ firn session, not built here. cleon-firn's step 4 waits on it; its steps 1 to 3 
   `depends_on: [<leaf>]` says the same thing, and the refusal names that form. What it costs: zero: #860's
   2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:` is new in
   #861. Reopens when a product asks to gate a leaf without naming an aggregate for it.
+- **`sources: [{repo, path, ref?, secret?}]`, a foreign repository beside the product** (corrected 2026-11-24,
+  #873, Marco's decision in the ticket). Not built: only the submodule form is, and the ticket narrowed it. The
+  form needs a ref policy and a clone location nobody has measured. Not an expression rule: nothing a
+  manifest could say is refused, the key is simply not offered.
+  Reopens when a product needs a foreign repository in CI.
 - **`stop_on_failure` read by a gated job** (corrected 2026-11-23, #861, Marco's decision 6). Rejected: a
   Deploy member prepares and the verifying members keep `!cancelled()`, which is netctl's `lab.yml`
   (`if: always() && steps.up.outcome == 'success'`); a local `test lab` keeps running after a red `up`,

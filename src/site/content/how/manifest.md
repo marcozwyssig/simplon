@@ -944,6 +944,72 @@ declares this section places it in one line under `test`. A checkout with no tag
 *checkout* - `actions/checkout` fetches no tags unless you ask - rather than blamed on the page, and a
 run that ruled on nothing is red rather than green.
 
+### `sources:` - submodules every job checks out at their pins
+
+A product that builds from a git submodule, a private one above all, declares it once. The kernel then makes
+it present, in every job of every workflow it writes and on your own machine, with one command you can also
+type.
+
+```yaml
+sources:
+  - submodule: lib/platform           # a path listed in .gitmodules, relative to the checkout
+    secret: PLATFORM_REPO_TOKEN       # optional: the variable that holds a token for a private clone
+```
+
+`./<product>.sh support sources` runs `git submodule update --init --recursive` for each entry, so the
+submodule lands **at the commit your superproject pins**, not at the tip of its branch. A public submodule
+declares no `secret:` and gets a plain update.
+
+**The token reaches git through the environment and nowhere else.** The kernel hands git one
+`url.<authenticated>.insteadOf` rewrite of `https://github.com/` through `GIT_CONFIG_COUNT` and its
+`GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` pair. It is on no command line and in no file, it is read through
+the same secrets module as every other token (so it is masked in the log), and git's own error output is
+redacted before it is printed.
+
+**A token call hides your global git configuration.** The call carries `GIT_CONFIG_GLOBAL=/dev/null`, because
+a stale global `url.*.insteadOf` for the same prefix beats the environment's rewrite and the clone then fails
+(measured with git 2.47.3; git prefers the first match of equal length). Your own file is hidden for that one
+call and never edited. A call without a token keeps your configuration, which is what makes a credential
+helper or an ssh rewrite work.
+
+**What an empty token means depends on where you are.**
+
+| where | the variable is unset or empty | the variable is set |
+|---|---|---|
+| under GitHub Actions | refused before git runs, naming the secret (a fork or Dependabot pull request gets no secrets, and an unauthenticated clone would fail with "repository not found") | used |
+| anywhere else | the submodule is updated with your own git configuration and credentials, and the run says so in one line | used |
+
+**Every job checks them out, right after its own checkout.** `support github workflows` places the step after
+`actions/checkout` (and `setup-python` where the job has one), before the docker probe, the disk preflight and
+`support install`. The step's `env:` names each source's secret as `${{ secrets.<NAME> }}`, on that step only.
+A derived job carries it as its first preparation step, `prepare_sources`, and each later leaf waits for its
+success, so a failed checkout stops the job instead of letting a leaf read an empty directory. The release
+workflow's jobs get it too. A job with `checkout: false` has no checkout to follow and gets no step and no
+`secrets.` reference. A product with no `sources:` section gets no step, and every file stays as it was.
+
+If the product declares `sources:` and has removed `support sources` from its tree, the job gets a comment saying
+so and the line that places it again, never a guessed command.
+
+**What is refused, and where.** At load time: `sources:` that is not a list, an entry that is not a mapping, an
+unknown key, a `submodule:` that is empty, absolute or contains `..`, a `secret:` that is not a variable name,
+and one path named twice. At run time: a path that is not in `.gitmodules` (the message lists the ones that
+are), a `secret:` on a submodule whose URL does not start with `https://github.com/` (the rewrite would not
+apply and the token would go unused without a word), and git exiting non-zero.
+
+**Limits, so the next reader finds them here.**
+
+- `GIT_CONFIG_GLOBAL=/dev/null` on a token call also hides a global `safe.directory`. Unmeasured: a container
+  job whose user differs from the repository's owner.
+- The URL check reads `.gitmodules`. A submodule that is already initialised uses the URL in `.git/config`,
+  which a local `set-url` or `sync` can make differ.
+- A relative `.gitmodules` URL with a `secret:` is refused by the prefix check. The one consumer with a private
+  submodule uses an absolute GitHub URL (read through the GitHub API, 2026-11-24); a product with a relative
+  one reopens this.
+- A nested private submodule inheriting the rewrite, and a Windows or macOS cell, are unmeasured.
+
+**Only submodules.** A foreign repository checked out beside the product, `{repo, path, ref?, secret?}`, is not
+offered. It reopens when a product needs one in CI.
+
 ### `workflows:` - the CI files, generated from this same manifest
 
 The manifest has always been meant to have **two outputs**. It assembles the command line, and - with
