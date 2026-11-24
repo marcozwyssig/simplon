@@ -168,6 +168,9 @@ def render(manifest: Manifest, *, source: str, product: str,
     # it counts as passing; what it derives is asked when it runs, so a changed environment needs no render.
     passes_any = any(isinstance(spec, TaskCommand) and (spec.env_pass or spec.task in deploy.READS)
                      for members in manifest.commands.values() for spec in members.values())
+    # si#873: a `sources:` secret is on the launcher's list too, so every command is confined and only
+    # `support sources` keeps it; a manifest without one renders as before.
+    passes_any = passes_any or any(source.secret for source in manifest.sources)
     uses_env_pass = passes_any
     uses_derived = False
     uses_sources = False

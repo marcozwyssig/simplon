@@ -196,6 +196,13 @@ def forwardable(name: str) -> bool:
     return bool(_CARRIED.match(name)) and not _kernel_owned(name)
 
 
+def forwarded_anyway(name: str, product: str) -> bool:
+    """Whether every launcher forwards `name` without a list: `FORWARDED`, the `DELIVERY_*` namespace and the
+    product's own `<PRODUCT>_*` (the launcher's `ENV_PREFIX`: upper case, `-` as `_`)."""
+    prefix = product.upper().replace("-", "_")
+    return name in FORWARDED or name.startswith("DELIVERY_") or bool(prefix) and name.startswith(f"{prefix}_")
+
+
 def cannot_carry(name: str) -> str:
     """Why the launcher does not forward the derived name `name`, and the way out (si#824) - the sentence the
     renderer and the kernel both say, so a variable the host set is never reported only as "not set"."""
@@ -263,7 +270,11 @@ def declared(data: Mapping[str, object], source: str = "manifest", *,
                 out.append(passed)
     # si#873: `support sources` is placed by the catalogue, so no command of this document carries its names;
     # they are derived from the `sources:` section itself, after every command's, and () without one.
-    out += [name for name in filter(forwardable, sources.variable_roles(data)) if name not in out]
+    # One the launcher forwards anyway (`GH_TOKEN`, `DELIVERY_*`, `<PRODUCT>_*`) stays off: on the list,
+    # `confine` would unset it for every other command, which it never did before.
+    product = data.get("product")
+    out += [name for name in filter(forwardable, sources.variable_roles(data))
+            if name not in out and not forwarded_anyway(name, product if isinstance(product, str) else "")]
     return tuple(out)
 
 

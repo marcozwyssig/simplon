@@ -76,6 +76,9 @@ class Manifest(NamedTuple):
     # The area each phase group stands in (si#344): group -> "ci" / "cd". `support` and a product's own
     # groups are absent. Read off the merged tree, so it is the catalogue's statement and not a table.
     areas: dict[str, str] = {}
+    # The `sources:` section as `simplon.manifest.sources` read it (si#873): a generated module confines its
+    # commands when one declares a secret, because the launcher then forwards that secret.
+    sources: tuple[sources.Source, ...] = ()
 
     def area_of(self, group: str) -> str | None:
         """`ci` or `cd` for a phase group and everything nested under it; None for `support` and its
@@ -869,7 +872,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                           manifest_path or "the manifest")
     # si#873: a `sources:` section the kernel cannot read (a scalar, an unknown key, `..` in a path, a path
     # twice) is refused here, before `support sources` or a workflow job meets it.
-    sources.declared(data)
+    declared_sources = sources.declared(data)
     # si#492: `launcher: env: pass:` is retired for a command's own `env: pass:` (checked in `_command`); a
     # leftover section is refused HERE, on either route, with the way out.
     launcherenv.check_retired(data, manifest_path or "the manifest")
@@ -1012,7 +1015,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     if validate_with:
         _validate_param_bindings(commands)
     loaded = Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
-                      generate=generate, areas=areas)
+                      generate=generate, areas=areas, sources=declared_sources)
     ports.check(loaded, artifactsection.declared(data),
                 getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
                 _release_workflows(data))

@@ -138,3 +138,71 @@ def test_the_generated_module_keeps_the_sources_names_for_support_sources_only()
     assert "_launcherenv.confined(('VSCE_PAT',), lambda: " in text
     assert text.count("_sources.variables_kept(") == 1
     compile(text, "demo_cli.py", "exec")
+
+
+_NO_PASS = """
+product: demo
+sources:
+  - submodule: lib/platform
+    secret: PLATFORM_REPO_TOKEN
+tasks:
+  ship:
+    impl: "simplon.tasks.sources:sources_cmd"
+    help: "Ship it."
+support:
+  commands:
+    ship: { task: ship }
+"""
+
+
+def _render(text, groups=frozenset({"support"})):
+    from simplon.manifest import catalogue
+    from simplon.manifest import load as manifest_load
+    from simplon.tasks import taskgen
+
+    return taskgen.render(manifest_load.load(text, catalogue=catalogue.load()), source="demo.yaml",
+                          product="demo", groups=groups)
+
+
+def test_a_sources_secret_alone_makes_the_generated_module_confine_every_command():
+    """No command passes a name, but the launcher forwards the `sources:` secret, so every command is confined
+    and only `support sources` keeps it."""
+    text = _render(_NO_PASS)
+
+    calls = [line for line in text.splitlines() if "lambda: _rc(" in line]
+    assert calls and all("_launcherenv.confined(" in line for line in calls)
+    assert text.count("_sources.variables_kept('support:sources')") == 1
+    compile(text, "demo_cli.py", "exec")
+
+
+def test_a_public_source_leaves_the_generated_module_unconfined():
+    text = _render(_NO_PASS.replace("    secret: PLATFORM_REPO_TOKEN\n", ""))
+
+    assert "_launcherenv.confined(" not in text
+
+
+def test_an_aggregate_whose_plan_reaches_support_sources_keeps_the_names():
+    text = _render(_NO_PASS + """
+    ci:
+      build:
+        commands:
+          prepare:
+            help: "Check out and ship."
+            depends_on: [support sources, support ship]
+    """.replace("\n    ", "\n"), groups=frozenset({"support", "build"}))
+
+    assert ("_launcherenv.confined(() + _sources.variables_kept('support:sources'), "
+            "lambda: _plan('prepare', 'build'))") in text
+
+
+def test_a_secret_the_launcher_already_forwards_stays_off_the_pass_list():
+    """`secret: GH_TOKEN` is forwarded by every launcher already; on DELIVERY_ENV_PASS confine would unset it
+    for every other command, so the derivation leaves it off (and GITHUB_ACTIONS, read for it, on)."""
+    document = {**_simplon(), "sources": [{"submodule": "lib/platform", "secret": "GH_TOKEN"}]}
+
+    names = _declared(document)
+
+    assert "GH_TOKEN" not in names and "GITHUB_ACTIONS" in names
+    for secret in ("GITHUB_TOKEN", "DELIVERY_X_TOKEN", "SIMPLON_PLATFORM_TOKEN"):
+        document = {**_simplon(), "sources": [{"submodule": "lib/platform", "secret": secret}]}
+        assert secret not in _declared(document)
