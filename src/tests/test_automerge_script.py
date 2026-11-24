@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -64,7 +65,7 @@ if answer.get("json") is not None:
 @dataclass
 class Merge:
     """One staged GitHub, and what the script did against it."""
-    prs: list = field(default_factory=lambda: [{"number": 7, "headRefOid": SHA, "baseRefName": "main"}])
+    prs: list = field(default_factory=lambda: [{"number": 7, "headRefOid": SHA, "baseRefName": "main", "isCrossRepository": False}])
     runs: dict = field(default_factory=lambda: {"ci.yml": [GREEN], "ci-test-lab.yml": []})
     labels: tuple = ("auto-merge",)
     event: str = "workflow_run"
@@ -111,8 +112,8 @@ def _dispatched(calls: str) -> bool:
 
 @pytest.fixture(autouse=True)
 def _jq_is_on_this_machine():
-    """The stand-in applies `--jq` with the real jq; without it every answer would be empty, which is the very
-    shape a green "nothing to merge" has. Red, never a skip."""
+    """The stand-in applies `--jq` with the real jq; without it the stand-in dies on FileNotFoundError, and every
+    test would fail on that traceback instead of on what it asserts. Said once here, and red, never a skip."""
     assert shutil.which("jq"), "jq is not on PATH: the stand-in gh cannot apply the script's --jq filters"
 
 
@@ -128,9 +129,10 @@ def test_rules_are_data_with_a_reason_and_a_source():
     keys = [key for key, _, _ in automerge.RULES]
 
     # assert: netctl's rules, then the two si#874 decided on top, each with its reason and the ticket behind it
-    assert keys == ["token-scope", "labelled-pr", "head-is-sha", "label-triggers", "trigger-runs-green",
+    assert keys == ["token-scope", "labelled-pr", "head-is-sha", "cross-repository", "label-triggers",
+                    "trigger-runs-green",
                     "ci-run-exists", "gate-label-needs-run", "squash-merge", "dispatch-ci-on-base"]
-    assert all(reason and source.split("#")[0] in ("netctl", "si") and source.split("#")[1].isdigit()
+    assert all(reason and re.match(r"(netctl|si)#\d+\b", source)
                for _, reason, source in automerge.RULES), automerge.RULES
 
 
@@ -144,7 +146,7 @@ def test_the_script_is_strict_bash_and_takes_label_and_method_from_the_model():
     # assert
     assert automerge.MERGE_SCRIPT.startswith("set -euo pipefail\n")
     assert f'--label "{automerge.LABEL}"' in automerge.MERGE_SCRIPT
-    assert f"--{automerge.METHOD} --delete-branch" in automerge.MERGE_SCRIPT
+    assert f'--{automerge.METHOD} --delete-branch --match-head-commit "$SHA"' in automerge.MERGE_SCRIPT
 
 
 def test_the_script_never_turns_a_failed_read_into_an_empty_one():
@@ -194,7 +196,7 @@ def test_already_merged_is_a_no_op(tmp_path):
 
 def test_head_moved_does_not_merge(tmp_path):
     # act
-    done, calls, _ = Merge(prs=[{"number": 7, "headRefOid": OTHER, "baseRefName": "main"}]).run(tmp_path)
+    done, calls, _ = Merge(prs=[{"number": 7, "headRefOid": OTHER, "baseRefName": "main", "isCrossRepository": False}]).run(tmp_path)
 
     # assert
     assert done.returncode == 0, done.stdout + done.stderr
@@ -205,14 +207,41 @@ def test_head_moved_does_not_merge(tmp_path):
 def test_selects_the_pr_whose_head_is_the_sha(tmp_path):
     """Review focus 5: a fork's PR with the same branch name is listed too; only the one at the SHA merges."""
     # act
-    done, calls, outputs = Merge(prs=[{"number": 5, "headRefOid": OTHER, "baseRefName": "main"},
-                                      {"number": 9, "headRefOid": SHA, "baseRefName": "dev"}]).run(tmp_path)
+    done, calls, outputs = Merge(prs=[{"number": 5, "headRefOid": OTHER, "baseRefName": "main", "isCrossRepository": True},
+                                      {"number": 9, "headRefOid": SHA, "baseRefName": "dev",
+                                       "isCrossRepository": False}]).run(tmp_path)
 
     # assert
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "pr merge 9 --squash --delete-branch" in calls.splitlines()
+    assert f"pr merge 9 --squash --delete-branch --match-head-commit {SHA}" in calls.splitlines()
     assert "pr merge 5" not in calls
     assert outputs == {"merged_pr": "9", "base": "dev"}
+
+
+# --- cross-repository -----------------------------------------------------------------------------------------
+
+def test_a_fork_pr_at_the_sha_is_not_merged(tmp_path):
+    """si#874 security review: a fork's pull_request runs use the fork's own workflow files."""
+    # act
+    done, calls, outputs = Merge(prs=[{"number": 7, "headRefOid": SHA, "baseRefName": "main",
+                                       "isCrossRepository": True}]).run(tmp_path)
+
+    # assert
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert ("PR #7 comes from a fork: a fork's runs use the fork's own workflow files; merge it by hand."
+            in done.stdout)
+    assert (_merged(calls), _dispatched(calls), outputs) == (False, False, {})
+    assert "isCrossRepository" in calls
+
+
+def test_a_pr_whose_origin_is_unknown_is_red(tmp_path):
+    # act
+    done, calls, _ = Merge(prs=[{"number": 7, "headRefOid": SHA, "baseRefName": "main"}]).run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "could not tell whether PR #7 comes from a fork" in done.stderr
+    assert not _merged(calls)
 
 
 # --- label-triggers and ci-run-exists -------------------------------------------------------------------------
@@ -261,18 +290,30 @@ def test_an_unknown_event_is_red(tmp_path):
 
 # --- trigger-runs-green ---------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("runs", [
-    {"ci.yml": [GREEN], "ci-test-lab.yml": [{"event": "pull_request", "status": "in_progress", "conclusion": None}]},
-    {"ci.yml": [GREEN, {"event": "workflow_dispatch", "status": "completed", "conclusion": "failure"}],
-     "ci-test-lab.yml": []},
-], ids=["gate-running", "ci-red"])
-def test_red_or_running_trigger_run_blocks(tmp_path, runs):
+RUNNING = {"event": "pull_request", "status": "in_progress", "conclusion": None}
+
+
+@pytest.mark.parametrize(("runs", "said"), [
+    ({"ci.yml": [GREEN], "ci-test-lab.yml": [RUNNING]},
+     "A run of ci-test-lab.yml for {sha} is still running; not merging PR #7.\n"
+     "This is reconsidered when it completes: ci-test-lab.yml is a trigger of this workflow."),
+    ({"ci.yml": [GREEN, {"event": "workflow_dispatch", "status": "completed", "conclusion": "failure"}],
+      "ci-test-lab.yml": []},
+     "A run of ci.yml for {sha} completed without success; not merging PR #7.\n"
+     "Re-run that run (a re-run replaces its conclusion) or push a new commit."),
+    ({"ci.yml": [GREEN, {"event": "pull_request", "status": "completed", "conclusion": "cancelled"}, RUNNING],
+      "ci-test-lab.yml": []},
+     "A run of ci.yml for {sha} completed without success; not merging PR #7.\n"
+     "Re-run that run (a re-run replaces its conclusion) or push a new commit."),
+], ids=["gate-running", "ci-red", "ci-cancelled-beside-running"])
+def test_red_or_running_trigger_run_blocks(tmp_path, runs, said):
+    """A run still going is reconsidered on its own; a red or cancelled one never is, so it says what would."""
     # act
     done, calls, _ = Merge(runs=runs).run(tmp_path)
 
     # assert
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "is not green" in done.stdout and "not merging PR #7" in done.stdout
+    assert said.format(sha=SHA) in done.stdout
     assert not _merged(calls)
 
 
@@ -333,13 +374,28 @@ def test_gate_label_with_green_gate_run_merges(tmp_path):
 
 
 def test_a_gate_not_among_the_triggers_is_red(tmp_path):
+    """Checked before any gh call, whatever the PR carries: a wiring defect is not a property of one PR."""
     # act
-    done, calls, _ = Merge(labels=("auto-merge", "needs-lab"), triggers="ci.yml").run(tmp_path)
+    done, calls, _ = Merge(labels=("auto-merge",), triggers="ci.yml").run(tmp_path)
 
     # assert
     assert done.returncode == 1
-    assert "ci-test-lab.yml" in done.stderr and "TRIGGERS" in done.stderr
-    assert not _merged(calls)
+    assert "ci-test-lab.yml is not among TRIGGERS (ci.yml)" in done.stderr
+    assert calls == ""
+
+
+@pytest.mark.parametrize("ci_runs", [[GREEN], [{"event": "push", "status": "completed", "conclusion": "failure"}]],
+                         ids=["ci-green", "a-trigger-red"])
+def test_ci_workflow_not_among_the_triggers_is_red(tmp_path, ci_runs):
+    """A red trigger run must not hide the wiring defect behind a green no-op."""
+    # act
+    done, calls, _ = Merge(triggers="ci-test-lab.yml",
+                           runs={"ci.yml": ci_runs, "ci-test-lab.yml": [ci_runs[0]]}).run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "ci.yml is not among TRIGGERS (ci-test-lab.yml)" in done.stderr
+    assert calls == ""
 
 
 def test_no_gates_reads_no_labels(tmp_path):
@@ -361,7 +417,7 @@ def test_green_merges_and_dispatches_ci_on_base(tmp_path):
     # assert: the base came from the list read before the merge; the dispatch follows the merge
     assert done.returncode == 0, done.stdout + done.stderr
     lines = calls.splitlines()
-    merge = lines.index("pr merge 7 --squash --delete-branch")
+    merge = lines.index(f"pr merge 7 --squash --delete-branch --match-head-commit {SHA}")
     dispatch = lines.index("workflow run ci.yml --ref main")
     assert merge < dispatch == len(lines) - 1
     assert outputs == {"merged_pr": "7", "base": "main"}
@@ -387,14 +443,15 @@ def test_a_failed_merge_is_red_and_dispatches_nothing(tmp_path):
     assert not _dispatched(calls) and outputs == {}
 
 
-@pytest.mark.parametrize("name", ["GH_REPO", "BRANCH", "SHA", "CI_WORKFLOW", "TRIGGERS", "EVENT"])
+@pytest.mark.parametrize("name", ["GH_REPO", "BRANCH", "SHA", "CI_WORKFLOW", "TRIGGERS", "EVENT", "GITHUB_OUTPUT"])
 def test_a_missing_input_is_red_naming_it(tmp_path, name):
     # arrange: a gh that fails every call, so the real one is never reached
     bin_dir, calls = gh_on_path(tmp_path, "exit 98\n")
     script = tmp_path / "merge.sh"
     script.write_text(automerge.MERGE_SCRIPT, encoding="utf-8")
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "GH_REPO": REPO, "BRANCH": BRANCH, "SHA": SHA, "CI_WORKFLOW": "ci.yml",
-           "TRIGGERS": "ci.yml", "GATES": "", "EVENT": "workflow_run", name: ""}
+           "TRIGGERS": "ci.yml", "GATES": "", "EVENT": "workflow_run", "GITHUB_OUTPUT": str(tmp_path / "out"),
+           name: ""}
 
     # act
     done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)

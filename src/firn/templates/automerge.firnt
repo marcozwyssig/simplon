@@ -40,7 +40,7 @@ template AutoMerge {
       |# CI_WORKFLOW (the CI workflow's file), TRIGGERS (every trigger workflow's file, CI first, space-separated),
       |# GATES (one `<workflow file> <label>` line per gate with a label, empty when none) and EVENT
       |# (workflow_run or pull_request_target). Writes merged_pr and base to $GITHUB_OUTPUT when it merged.
-      |for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT; do
+      |for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT GITHUB_OUTPUT; do
       |  if [ -z "$(printenv "$name" || true)" ]; then
       |    echo "::error::$name is empty: the auto-merge step sets it, and without it there is no verdict." >&2
       |    exit 1
@@ -53,6 +53,17 @@ template AutoMerge {
       |    exit 1
       |    ;;
       |esac
+      |gates=$(printenv GATES || true)
+      |# The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
+      |for wf in "$CI_WORKFLOW" $(printf '%s\n' "$gates" | awk 'NF { print $1 }'); do
+      |  case " $TRIGGERS " in
+      |    *" $wf "*) ;;
+      |    *)
+      |      echo "::error::$wf is not among TRIGGERS ($TRIGGERS): its runs would never be read, so there is no verdict." >&2
+      |      exit 1
+      |      ;;
+      |  esac
+      |done
       |runs_dir=$(mktemp -d)
       |trap 'rm -rf "$runs_dir"' EXIT
       for r : p.rules {
@@ -66,8 +77,8 @@ template AutoMerge {
           |fi
         }
         if r.key == "labelled-pr" {
-          |listed=$(gh pr list --head "$BRANCH" --state open --label "${p.label}" --json number,headRefOid,baseRefName \
-          |  --jq '.[] | "\(.number) \(.headRefOid) \(.baseRefName)"')
+          |listed=$(gh pr list --head "$BRANCH" --state open --label "${p.label}" --json number,headRefOid,baseRefName,isCrossRepository \
+          |  --jq '.[] | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
           |if [ -z "$listed" ]; then
           |  echo "No open PR labelled ${p.label} for branch '$BRANCH'; nothing to do."
           |  exit 0
@@ -83,6 +94,20 @@ template AutoMerge {
           |fi
           |base=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $3; exit }')
         }
+        if r.key == "cross-repository" {
+          |cross=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $4; exit }')
+          |case "$cross" in
+          |  false) ;;
+          |  true)
+          |    echo "PR #$pr comes from a fork: a fork's runs use the fork's own workflow files; merge it by hand."
+          |    exit 0
+          |    ;;
+          |  *)
+          |    echo "::error::could not tell whether PR #$pr comes from a fork (isCrossRepository is '$cross'): no verdict." >&2
+          |    exit 1
+          |    ;;
+          |esac
+        }
         if r.key == "label-triggers" {
           |if [ "$EVENT" = "pull_request_target" ]; then
           |  echo "The label ${p.label} was added to PR #$pr: no run triggered this, so the runs for $SHA are read."
@@ -95,18 +120,19 @@ template AutoMerge {
           |    echo "::error::could not read the runs of $wf for $SHA: no verdict, so no merge." >&2
           |    exit 1
           |  fi
-          |  if grep -qvx 'completed success' "$runs_dir/$wf"; then
-          |    echo "A run of $wf for $SHA is not green (still running, or red); not merging PR #$pr."
-          |    echo "This is reconsidered when that run completes: $wf is a trigger of this workflow."
+          |  if grep '^completed ' "$runs_dir/$wf" | grep -qvx 'completed success'; then
+          |    echo "A run of $wf for $SHA completed without success; not merging PR #$pr."
+          |    echo "Re-run that run (a re-run replaces its conclusion) or push a new commit."
+          |    exit 0
+          |  fi
+          |  if grep -qv '^completed ' "$runs_dir/$wf"; then
+          |    echo "A run of $wf for $SHA is still running; not merging PR #$pr."
+          |    echo "This is reconsidered when it completes: $wf is a trigger of this workflow."
           |    exit 0
           |  fi
           |done
         }
         if r.key == "ci-run-exists" {
-          |if [ ! -e "$runs_dir/$CI_WORKFLOW" ]; then
-          |  echo "::error::the CI workflow $CI_WORKFLOW is not among TRIGGERS ($TRIGGERS): its runs were never read." >&2
-          |  exit 1
-          |fi
           |if [ ! -s "$runs_dir/$CI_WORKFLOW" ]; then
           |  echo "No run of $CI_WORKFLOW for $SHA (schedule runs aside); not merging PR #$pr."
           |  echo "It merges when that run completes green: $CI_WORKFLOW is a trigger of this workflow."
@@ -114,15 +140,10 @@ template AutoMerge {
           |fi
         }
         if r.key == "gate-label-needs-run" {
-          |gates=$(printenv GATES || true)
           |if [ -n "$gates" ]; then
           |  labels=$(gh pr view "$pr" --json labels --jq '.labels[].name')
           |  while read -r file label; do
           |    [ -n "$file" ] || continue
-          |    if [ ! -e "$runs_dir/$file" ]; then
-          |      echo "::error::the gate workflow $file is not among TRIGGERS ($TRIGGERS): its runs were never read." >&2
-          |      exit 1
-          |    fi
           |    if printf '%s\n' "$labels" | grep -qxF -- "$label" && [ ! -s "$runs_dir/$file" ]; then
           |      echo "PR #$pr carries $label and no run of $file exists for $SHA; not merging."
           |      echo "Run it: gh workflow run $file --ref $BRANCH"
@@ -133,7 +154,7 @@ template AutoMerge {
         }
         if r.key == "squash-merge" {
           |echo "Every run for $SHA is green: merging PR #$pr into '$base' (${p.method}) and deleting '$BRANCH'."
-          |gh pr merge "$pr" --${p.method} --delete-branch
+          |gh pr merge "$pr" --${p.method} --delete-branch --match-head-commit "$SHA"
           |echo "merged_pr=$pr" >>"$GITHUB_OUTPUT"
           |echo "base=$base" >>"$GITHUB_OUTPUT"
         }
@@ -145,7 +166,7 @@ template AutoMerge {
           |  exit 1
           |fi
         }
-        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "label-triggers" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
+        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "label-triggers" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
           |echo "::error::the rule ${r.key} has no block in automerge.firnt: the policy cannot be applied." >&2
           |exit 1
         }

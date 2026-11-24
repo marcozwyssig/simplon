@@ -64,6 +64,11 @@ auto typeOf simplon.automerge.MergePolicy {
     reason = "Merge what was verified: only the pull request whose head is the run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a fork's pull request with the same branch name from being picked."
     source = "netctl#1788"
   }
+  rules cross_repository typeOf simplon.automerge.MergeRule {
+    key = "cross-repository"
+    reason = "A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand."
+    source = "si#874 security review"
+  }
   rules label_triggers typeOf simplon.automerge.MergeRule {
     key = "label-triggers"
     reason = "Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for."
@@ -86,7 +91,7 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules squash_merge typeOf simplon.automerge.MergeRule {
     key = "squash-merge"
-    reason = "Merge with the policy's method and delete the branch. The base is read before the merge, while the pull request is still open."
+    reason = "Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open."
     source = "si#874"
   }
   rules dispatch_ci_on_base typeOf simplon.automerge.MergeRule {

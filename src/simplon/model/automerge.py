@@ -13,11 +13,12 @@ RULES: tuple[tuple[str, str, str], ...] = (
     ("token-scope", "A token that cannot read pull requests lists none, and an empty list reads as nothing to merge: netctl#965 merged under such a token and reported success while merging nothing, so the pulls endpoint is probed first and a failed probe is red.", "netctl#964"),
     ("labelled-pr", "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open.", "si#874"),
     ("head-is-sha", "Merge what was verified: only the pull request whose head is the run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a fork's pull request with the same branch name from being picked.", "netctl#1788"),
+    ("cross-repository", "A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand.", "si#874 security review"),
     ("label-triggers", "Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for.", "si#874"),
     ("trigger-runs-green", "Every run of every trigger workflow for the commit, schedule runs aside, must have completed successfully; a running or red one holds the merge, and its completion reconsiders it. A failed read is red: a missing verdict is not a green one.", "netctl#1788"),
     ("ci-run-exists", "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it.", "si#874"),
     ("gate-label-needs-run", "A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named.", "netctl#1788"),
-    ("squash-merge", "Merge with the policy's method and delete the branch. The base is read before the merge, while the pull request is still open.", "si#874"),
+    ("squash-merge", "Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open.", "si#874"),
     ("dispatch-ci-on-base", "A merge pushed under the workflow token starts no run, so the CI workflow is dispatched on the base branch afterwards; a failed dispatch is red, because the base then carries an unverified commit.", "netctl#964"),
 )
 
@@ -32,7 +33,7 @@ MERGE_SCRIPT = r"""set -euo pipefail
 # CI_WORKFLOW (the CI workflow's file), TRIGGERS (every trigger workflow's file, CI first, space-separated),
 # GATES (one `<workflow file> <label>` line per gate with a label, empty when none) and EVENT
 # (workflow_run or pull_request_target). Writes merged_pr and base to $GITHUB_OUTPUT when it merged.
-for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT; do
+for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT GITHUB_OUTPUT; do
   if [ -z "$(printenv "$name" || true)" ]; then
     echo "::error::$name is empty: the auto-merge step sets it, and without it there is no verdict." >&2
     exit 1
@@ -45,6 +46,17 @@ case "$EVENT" in
     exit 1
     ;;
 esac
+gates=$(printenv GATES || true)
+# The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
+for wf in "$CI_WORKFLOW" $(printf '%s\n' "$gates" | awk 'NF { print $1 }'); do
+  case " $TRIGGERS " in
+    *" $wf "*) ;;
+    *)
+      echo "::error::$wf is not among TRIGGERS ($TRIGGERS): its runs would never be read, so there is no verdict." >&2
+      exit 1
+      ;;
+  esac
+done
 runs_dir=$(mktemp -d)
 trap 'rm -rf "$runs_dir"' EXIT
 
@@ -56,8 +68,8 @@ if ! gh api "repos/$GH_REPO/pulls?state=open&per_page=1" >/dev/null; then
 fi
 
 # labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open.
-listed=$(gh pr list --head "$BRANCH" --state open --label "auto-merge" --json number,headRefOid,baseRefName \
-  --jq '.[] | "\(.number) \(.headRefOid) \(.baseRefName)"')
+listed=$(gh pr list --head "$BRANCH" --state open --label "auto-merge" --json number,headRefOid,baseRefName,isCrossRepository \
+  --jq '.[] | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
 if [ -z "$listed" ]; then
   echo "No open PR labelled auto-merge for branch '$BRANCH'; nothing to do."
   exit 0
@@ -73,6 +85,20 @@ if [ -z "$pr" ]; then
 fi
 base=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $3; exit }')
 
+# cross-repository (si#874 security review): A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand.
+cross=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $4; exit }')
+case "$cross" in
+  false) ;;
+  true)
+    echo "PR #$pr comes from a fork: a fork's runs use the fork's own workflow files; merge it by hand."
+    exit 0
+    ;;
+  *)
+    echo "::error::could not tell whether PR #$pr comes from a fork (isCrossRepository is '$cross'): no verdict." >&2
+    exit 1
+    ;;
+esac
+
 # label-triggers (si#874): Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for.
 if [ "$EVENT" = "pull_request_target" ]; then
   echo "The label auto-merge was added to PR #$pr: no run triggered this, so the runs for $SHA are read."
@@ -85,18 +111,19 @@ for wf in $TRIGGERS; do
     echo "::error::could not read the runs of $wf for $SHA: no verdict, so no merge." >&2
     exit 1
   fi
-  if grep -qvx 'completed success' "$runs_dir/$wf"; then
-    echo "A run of $wf for $SHA is not green (still running, or red); not merging PR #$pr."
-    echo "This is reconsidered when that run completes: $wf is a trigger of this workflow."
+  if grep '^completed ' "$runs_dir/$wf" | grep -qvx 'completed success'; then
+    echo "A run of $wf for $SHA completed without success; not merging PR #$pr."
+    echo "Re-run that run (a re-run replaces its conclusion) or push a new commit."
+    exit 0
+  fi
+  if grep -qv '^completed ' "$runs_dir/$wf"; then
+    echo "A run of $wf for $SHA is still running; not merging PR #$pr."
+    echo "This is reconsidered when it completes: $wf is a trigger of this workflow."
     exit 0
   fi
 done
 
 # ci-run-exists (si#874): The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it.
-if [ ! -e "$runs_dir/$CI_WORKFLOW" ]; then
-  echo "::error::the CI workflow $CI_WORKFLOW is not among TRIGGERS ($TRIGGERS): its runs were never read." >&2
-  exit 1
-fi
 if [ ! -s "$runs_dir/$CI_WORKFLOW" ]; then
   echo "No run of $CI_WORKFLOW for $SHA (schedule runs aside); not merging PR #$pr."
   echo "It merges when that run completes green: $CI_WORKFLOW is a trigger of this workflow."
@@ -104,15 +131,10 @@ if [ ! -s "$runs_dir/$CI_WORKFLOW" ]; then
 fi
 
 # gate-label-needs-run (netctl#1788): A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named.
-gates=$(printenv GATES || true)
 if [ -n "$gates" ]; then
   labels=$(gh pr view "$pr" --json labels --jq '.labels[].name')
   while read -r file label; do
     [ -n "$file" ] || continue
-    if [ ! -e "$runs_dir/$file" ]; then
-      echo "::error::the gate workflow $file is not among TRIGGERS ($TRIGGERS): its runs were never read." >&2
-      exit 1
-    fi
     if printf '%s\n' "$labels" | grep -qxF -- "$label" && [ ! -s "$runs_dir/$file" ]; then
       echo "PR #$pr carries $label and no run of $file exists for $SHA; not merging."
       echo "Run it: gh workflow run $file --ref $BRANCH"
@@ -121,9 +143,9 @@ if [ -n "$gates" ]; then
   done < <(printf '%s\n' "$gates")
 fi
 
-# squash-merge (si#874): Merge with the policy's method and delete the branch. The base is read before the merge, while the pull request is still open.
+# squash-merge (si#874): Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open.
 echo "Every run for $SHA is green: merging PR #$pr into '$base' (squash) and deleting '$BRANCH'."
-gh pr merge "$pr" --squash --delete-branch
+gh pr merge "$pr" --squash --delete-branch --match-head-commit "$SHA"
 echo "merged_pr=$pr" >>"$GITHUB_OUTPUT"
 echo "base=$base" >>"$GITHUB_OUTPUT"
 
@@ -135,4 +157,4 @@ if ! gh workflow run "$CI_WORKFLOW" --ref "$base"; then
   exit 1
 fi
 """
-# Generated by firn, do not edit outside protected regions. id=[AutoMerge:,73a573c179016d96]
+# Generated by firn, do not edit outside protected regions. id=[AutoMerge:,95efc916a3d419e2]
