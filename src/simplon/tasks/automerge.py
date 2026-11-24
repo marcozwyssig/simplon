@@ -7,12 +7,12 @@ THIS MODULE DECIDES what `.github/workflows/auto-merge.yml` listens to and what 
 The trigger workflows are the CI workflow and every gate's workflow, derived or declared. `workflow_run` names
 them by their `name:`, the script asks for their runs by file, so both are read off the workflows
 `support github workflows` writes (`ci`, `gate_workflows`); a hand-written one is read from its file under the
-product root (Marco, 2026-11-24). Cadence workflows are no triggers: a nightly run says nothing about a pull
+product root (Marco, 2026-11-24) by `read_handwritten`, which the task body hands in. Cadence workflows are no triggers: a nightly run says nothing about a pull
 request's commit. The policy's data (the job's condition, the token's scopes) is the firn instance's.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -43,22 +43,39 @@ class Trigger(NamedTuple):
     on: object
 
 
-def _trigger(workflow: workflowgen.Workflow, role: str, root: Path | None) -> Trigger:
-    """A trigger workflow's `name:` and `on:`: the kernel's own for a generated one, the file's for a hand-written
-    one, read now so `--check` sees a renamed workflow as drift.
+#: Reads a hand-written trigger workflow's `name:` and `on:` (`read_handwritten` with the product root), handed in by
+#: the task body that holds the root.
+Reader = Callable[[workflowgen.Workflow, str], Trigger]
 
-    Each refusal is a DIAGNOSIS. No file: there is nothing to listen to. No `name:`: GitHub falls back to the
-    file's path, and whether `workflow_run.workflows` matches that fallback is unmeasured, so it is not guessed -
-    a guessed name is a filter that never fires, green over nothing."""
+
+def _trigger(workflow: workflowgen.Workflow, role: str, read: Reader | None) -> Trigger:
+    """A trigger workflow's `name:` and `on:`: the kernel's own for a generated one, its file's for a hand-written
+    one, read now so `--check` sees a renamed workflow as drift."""
     if not workflow.handwritten:
         return Trigger(workflow.name, workflow.on)
-    assert root is not None, "a hand-written trigger workflow is read from the product root, and none was given"
+    assert read is not None, "a hand-written trigger workflow is read from its file, and no reader was given"
+    return read(workflow, role)
+
+
+def read_handwritten(workflow: workflowgen.Workflow, role: str, *, root: Path) -> Trigger:
+    """A hand-written trigger workflow's `name:` and `on:`, read from its file under the product root.
+
+    Each refusal is a DIAGNOSIS decided by a file on disk, not by the manifest, so the refusal census does not
+    count it (NOT COUNTED BY RULING, beside `workflowgen._refuse_foreign_files`): the task body hands this in, and
+    the census's walk from `cipipeline.workflows` does not reach it. No file: nothing to listen to. A file that
+    resolves outside the root (a symlink; `_check_path` already refuses an absolute or `..` path): not the
+    product's. No `name:`: GitHub falls back to the file's path, and whether `workflow_run.workflows` matches that
+    fallback is unmeasured, so it is not guessed - a guessed name is a filter that never fires."""
     said = f"merge: auto: {role} `{workflow.key}` is declared hand-written"
     target = root / workflow.path
     if not target.is_file():
         raise ValueError(
             f"{said}, and there is no file at {workflow.path} to read its `name:` and `on:` from. Commit the "
             f"workflow at that path, or take `{workflow.key}` out of `{workflowgen.SECTION}:` so the kernel derives it")
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(
+            f"{said}, and {workflow.path} resolves to {target.resolve()}, outside the product root: it is not the "
+            f"product's workflow. Commit the workflow itself at {workflow.path}, not a link to it")
     try:
         doc = yaml.safe_load(target.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -83,12 +100,12 @@ def _dispatchable(on: object) -> bool:
 
 
 def derive(manifest: Manifest, data: Mapping[str, object], ci: workflowgen.Workflow | None,
-           gate_workflows: Mapping[str, workflowgen.Workflow], root: Path | None = None) -> cipipeline.Derivation:
+           gate_workflows: Mapping[str, workflowgen.Workflow], read: Reader | None = None) -> cipipeline.Derivation:
     """The auto-merge workflow as the generated model.
 
     `ci` is the product's CI workflow, derived or declared under `workflows: ci:`, None when there is neither;
     `gate_workflows` is each gate's workflow by its key (`ci-test-lab`), derived or declared; a hand-written one
-    is read from its file under `root` (`_trigger`). Both are refused
+    is read by `read` (`read_handwritten`). Both are refused
     where the merge could not be what the policy says: no CI workflow leaves nothing to gate the merge, and one
     without `workflow_dispatch` could not be dispatched on the base after it (rule `dispatch-ci-on-base`). Both
     are DIAGNOSES naming the way out.
@@ -98,18 +115,18 @@ def derive(manifest: Manifest, data: Mapping[str, object], ci: workflowgen.Workf
             "merge: auto: the product has no CI workflow - none is derived (no unattended leaf under `ci build` or "
             f"`ci test` outside a gate) and none is declared under `{workflowgen.SECTION}: {cipipeline.KEY}:` - so "
             "nothing gates the merge. Place a push leaf, declare a CI workflow of your own, or drop `merge: auto`")
-    read = _trigger(ci, "the CI workflow", root)
-    if not _dispatchable(read.on):
+    own = _trigger(ci, "the CI workflow", read)
+    if not _dispatchable(own.on):
         raise ValueError(
             f"merge: auto: the CI workflow `{ci.key}` ({ci.path}) has no `workflow_dispatch` trigger, so it could "
             f"not be dispatched on the base branch after a merge, and the merged commit would stay unverified. "
             f"Add `workflow_dispatch` to its `on:`")
     gated = []
-    names = [read.name]
+    names = [own.name]
     labels = []
     for run in cipipeline.gates(manifest):
         workflow = gate_workflows[cipipeline._key_of(run.path)]
-        names.append(_trigger(workflow, f"the workflow of the gate of `{run.words}`", root).name)
+        names.append(_trigger(workflow, f"the workflow of the gate of `{run.words}`", read).name)
         gated.append(workflow)
         if run.gate.label:
             labels.append(workflowschema.GateLabel(workflow=_file(workflow), label=run.gate.label))

@@ -45,7 +45,13 @@ def _workflows(text: str, root=None):
     from simplon.tasks import cipipeline
     loaded = manifest.load(text, catalogue=catalogue.load(), manifest_path="netctl.yaml")
     return loaded, {wf.path: wf for wf in cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl",
-                                                               root=root)}
+                                                               read=_reader(root))}
+
+
+def _reader(root):
+    """What `support github workflows` hands in: the hand-written trigger workflows read under `root`."""
+    from simplon.tasks import automerge
+    return None if root is None else (lambda workflow, role: automerge.read_handwritten(workflow, role, root=root))
 
 
 def _rendered(text: str | None = None, path: str = _PATH, root=None) -> str:
@@ -113,7 +119,8 @@ def test_no_checkout_and_env():
         "BRANCH": "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}",
         "SHA": "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}",
         "EVENT": "${{ github.event_name }}", "CI_WORKFLOW": "ci.yml", "TRIGGERS": "ci.yml ci-test-lab.yml",
-        "GATES": "ci-test-lab.yml needs-lab"}
+        "GATES": "ci-test-lab.yml needs-lab",
+        "LABELLER": "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"}
 
 
 def test_rule_comments_come_from_the_policy():
@@ -184,6 +191,16 @@ def test_handwritten_file_absent_is_refused(tmp_path):
         _workflows(_text(tail=_HANDWRITTEN_LAB), tmp_path)
 
 
+def test_handwritten_file_outside_the_root_is_refused(tmp_path):
+    outside = tmp_path / "elsewhere.yml"
+    outside.write_text("name: CI\non: workflow_dispatch\njobs: {}\n", encoding="utf-8")
+    root = tmp_path / "product"
+    (root / ".github/workflows").mkdir(parents=True)
+    (root / ".github/workflows/ci.yml").symlink_to(outside)
+    with pytest.raises(ValueError, match=r"merge: auto.*`ci`.*\.github/workflows/ci\.yml.*outside the product root"):
+        _workflows(_text(tail=_HANDWRITTEN_CI), root)
+
+
 def test_handwritten_file_without_name_is_refused(tmp_path):
     _own_file(tmp_path, "ci.yml", "on: [pull_request, workflow_dispatch]\njobs: {}\n")
     with pytest.raises(ValueError, match=r"merge: auto.*`ci`.*no `name:`.*Add a `name:`"):
@@ -203,7 +220,7 @@ def test_check_goes_red_when_the_handwritten_name_changes(tmp_path):
     loaded = manifest.load(text, catalogue=catalogue.load(), manifest_path="netctl.yaml")
 
     def check():
-        files = cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl", root=tmp_path)
+        files = cipipeline.workflows(loaded, yaml.safe_load(text), product="netctl", read=_reader(tmp_path))
         return files, workflowgen.check(files, tmp_path, manifest=loaded, product="netctl", source="netctl.yaml",
                                         artifacts={})
 

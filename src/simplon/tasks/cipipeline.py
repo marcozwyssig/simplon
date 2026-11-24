@@ -16,7 +16,6 @@ import dataclasses
 import re
 import textwrap
 from collections.abc import Mapping, Sequence, Set
-from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
@@ -29,6 +28,7 @@ from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
 if TYPE_CHECKING:
+    from simplon.tasks import automerge
     from simplon.manifest.artifactsection import Declared
 
 
@@ -849,6 +849,9 @@ MERGE_NAME = "Merge the labelled pull request once every trigger run for its hea
 #: The head branch and commit, from whichever of the two events started the run.
 MERGE_BRANCH = "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}"
 MERGE_SHA = "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}"
+#: Who added the label, on the label event only: the issue timeline can lag behind the event (si#874 security
+#: review). Handed over as a variable, never written into the script.
+MERGE_LABELLER = "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"
 
 MERGE_NOTE = (
     "si#874: `merge: auto`. This job merges the open pull request labelled `{label}` whose head is the commit a "
@@ -874,7 +877,8 @@ def _merge_job(job: workflowschema.Job) -> workflowgen.Job:
         "env": {"GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}", "BRANCH": MERGE_BRANCH,
                 "SHA": MERGE_SHA, "EVENT": "${{ github.event_name }}", "CI_WORKFLOW": given.ci_workflow,
                 "TRIGGERS": " ".join(given.triggers),
-                "GATES": "\n".join(f"{gate.workflow} {gate.label}" for gate in given.labels)},
+                "GATES": "\n".join(f"{gate.workflow} {gate.label}" for gate in given.labels),
+                "LABELLER": MERGE_LABELLER},
         "run": merge_policy.MERGE_SCRIPT})
     head, tail = (part.format(label=merge_policy.LABEL) for part in MERGE_NOTE)
     # A rule's key is one word with hyphens in it, which a wrap must not split.
@@ -1346,7 +1350,7 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
 
 
 def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
-              root: Path | None = None) -> tuple[workflowgen.Workflow, ...]:
+              read: "automerge.Reader | None" = None) -> tuple[workflowgen.Workflow, ...]:
     """Every workflow `support github workflows` writes or checks: the declared ones, the derived ci.yml, and
     since si#860 a derived ci-nightly.yml, ci-manual.yml and ci-scheduled.yml where a leaf carries that cadence.
 
@@ -1370,8 +1374,9 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
     the caller.
 
     si#874: `merge: auto` adds the auto-merge workflow (`automerge.derive`), listening to the CI workflow and every
-    gate's workflow as written here, derived or declared, a hand-written one read from its file under `root`, the
-    product's root; `workflows: auto-merge:` switches it off.
+    gate's workflow as written here, derived or declared, a hand-written one read by `read`
+    (`automerge.read_handwritten` with the product root, handed in by the task body); `workflows: auto-merge:`
+    switches it off.
     """
     from simplon.tasks import automerge  # it builds on this module's Derivation and gates
     declared = workflowgen.parse(data)
@@ -1403,7 +1408,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
         # si#874: the auto-merge workflow listens to the CI workflow and each gate's, whoever writes them.
         keyed = {workflow.key: workflow for workflow in out}
         merging = automerge.derive(manifest, data, keyed.get(KEY),
-                                   {_key_of(run.path): keyed[_key_of(run.path)] for run in runs}, root)
+                                   {_key_of(run.path): keyed[_key_of(run.path)] for run in runs}, read)
         out = (*out, to_workflow(merging, manifest, data, product=product))
     workflowgen._reject_duplicate_paths(out)
     return out

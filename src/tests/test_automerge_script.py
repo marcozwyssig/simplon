@@ -79,11 +79,15 @@ class Merge:
     permission: str = "write"
     events_rc: int = 0
     permission_rc: int = 0
+    #: The issue events, where a test stages them itself; None is the default timeline below.
+    events: list | None = None
+    #: The step's LABELLER, `github.event.sender.login` on a label event; None means the labeller on that event.
+    sender: str | None = None
 
     def run(self, tmp_path: Path):
         table = [["pulls?state=open&per_page=1", {"rc": self.probe_rc, "json": []}],
                  ["pr list", {"json": self.prs}],
-                 ["/events", {"rc": self.events_rc, "json": [
+                 ["/events", {"rc": self.events_rc, "json": self.events if self.events is not None else [
                      *([{"event": "labeled", "label": {"name": "auto-merge"}, "actor": {"login": "earlier"}}]
                        if self.labeller else []),
                      {"event": "labeled", "label": {"name": "needs-lab"}, "actor": {"login": "other"}},
@@ -108,7 +112,9 @@ class Merge:
         output.write_text("", encoding="utf-8")
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "GITHUB_OUTPUT": str(output),
                "GH_TOKEN": "t", "GH_REPO": REPO, "BRANCH": BRANCH, "SHA": SHA, "CI_WORKFLOW": "ci.yml",
-               "TRIGGERS": self.triggers, "GATES": self.gates, "EVENT": self.event}
+               "TRIGGERS": self.triggers, "GATES": self.gates, "EVENT": self.event,
+               "LABELLER": ((self.labeller if self.sender is None else self.sender)
+                            if self.event == "pull_request_target" else "")}
         done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)
         outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
         return done, calls_made(calls), outputs
@@ -282,6 +288,53 @@ def test_a_label_added_by_someone_who_may_merge_merges(tmp_path, permission):
     assert _merged(calls)
     assert f"api repos/{REPO}/collaborators/alice/permission" in calls
     assert "collaborators/earlier" not in calls
+
+
+def test_a_label_event_checks_its_sender_and_reads_no_timeline(tmp_path):
+    """si#874 security review: on pull_request_target the issue events can lag behind the event itself."""
+    # act
+    done, calls, _ = Merge(event="pull_request_target", sender="trudy", permission="read",
+                           events_rc=1).run(tmp_path)
+
+    # assert
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "trudy added the label auto-merge to PR #7 last" in done.stdout
+    assert "/events" not in calls and f"api repos/{REPO}/collaborators/trudy/permission" in calls
+    assert not _merged(calls)
+
+
+def test_a_label_event_with_no_sender_is_red(tmp_path):
+    # act
+    done, calls, _ = Merge(event="pull_request_target", sender="").run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "no verdict" in done.stderr and "LABELLER" in done.stderr
+    assert not _merged(calls)
+
+
+def test_a_label_last_removed_is_red(tmp_path):
+    """The PR is listed with the label, and its last event for the label is `unlabeled`: an inconsistent timeline."""
+    # act
+    done, calls, _ = Merge(events=[
+        {"event": "labeled", "label": {"name": "auto-merge"}, "actor": {"login": "alice"}},
+        {"event": "unlabeled", "label": {"name": "auto-merge"}, "actor": {"login": "alice"}}]).run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "unlabeled" in done.stderr and "no verdict" in done.stderr
+    assert not _merged(calls) and "/permission" not in calls
+
+
+def test_a_labeller_with_no_login_is_red(tmp_path):
+    # act
+    done, calls, _ = Merge(events=[
+        {"event": "labeled", "label": {"name": "auto-merge"}, "actor": None}]).run(tmp_path)
+
+    # assert
+    assert done.returncode == 1
+    assert "no login" in done.stderr and "bot or a deleted account" in done.stderr
+    assert not _merged(calls) and "/permission" not in calls
 
 
 @pytest.mark.parametrize("failing", ["events_rc", "permission_rc"])

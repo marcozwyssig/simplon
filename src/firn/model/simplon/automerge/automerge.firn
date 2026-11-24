@@ -77,9 +77,8 @@ auto typeOf simplon.automerge.MergePolicy {
   label = "auto-merge"
   method = "squash"
   // A completed trigger run that succeeded and that no schedule started, or this policy's label just added
-  // (decision 9 of #874). The label is spelled here as `label` above spells it; test_automerge_workflow.py holds
-  // the two together.
-  condition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == 'auto-merge')"
+  // (decision 9 of #874). `@LABEL@` is `label` above: the template writes it in, so the label has one source.
+  condition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == '@LABEL@')"
   permissions contents typeOf simplon.automerge.MergePermission {
     scope = "contents"
     access = "write"
@@ -122,7 +121,7 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules labeller_can_merge typeOf simplon.automerge.MergeRule {
     key = "labeller-can-merge"
-    reason = "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission, read on both events. Anyone else is a green no-op that names them; a failed read is red."
+    reason = "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. On the label event that is the event's sender, since the issue timeline can lag behind it; on a run it is the last labeled event of the timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red."
     source = "si#874 security review"
   }
   rules label_triggers typeOf simplon.automerge.MergeRule {

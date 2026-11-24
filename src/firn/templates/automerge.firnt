@@ -30,7 +30,7 @@ template AutoMerge {
       |)
       |
       |#: The auto-merge job's `if:`.
-      |CONDITION = "${p.condition}"
+      |CONDITION = "${p.condition.replace("@LABEL@", p.label)}"
       |
       |#: (scope, access, reason) per scope of the auto-merge workflow's token.
       |PERMISSIONS: tuple[tuple[str, str, str], ...] = (
@@ -40,7 +40,7 @@ template AutoMerge {
       |)
       |
       |#: The auto-merge step's `run:`. Its environment is its interface: GH_TOKEN, GH_REPO, BRANCH, SHA, CI_WORKFLOW,
-      |#: TRIGGERS, GATES and EVENT, as the script's header says.
+      |#: TRIGGERS, GATES, EVENT and LABELLER, as the script's header says.
       |MERGE_SCRIPT = r"""set -euo pipefail
       |# GENERATED from src/firn/model/simplon/automerge/automerge.firn (si#874). Merges the open pull request
       |# labelled ${p.label} whose head is $SHA once every trigger workflow's run for that commit is green: netctl's
@@ -49,7 +49,8 @@ template AutoMerge {
       |# Set by the step: GH_TOKEN, GH_REPO, BRANCH (the pull request's head branch), SHA (the commit verified),
       |# CI_WORKFLOW (the CI workflow's file), TRIGGERS (every trigger workflow's file, CI first, space-separated),
       |# GATES (one `<workflow file> <label>` line per gate with a label, empty when none) and EVENT
-      |# (workflow_run or pull_request_target). Writes merged_pr and base to $GITHUB_OUTPUT when it merged.
+      |# (workflow_run or pull_request_target), and LABELLER (the label event's sender, empty on a run; read only as
+      |# a variable, never written into this script). Writes merged_pr and base to $GITHUB_OUTPUT when it merged.
       |for name in GH_REPO BRANCH SHA CI_WORKFLOW TRIGGERS EVENT GITHUB_OUTPUT; do
       |  if [ -z "$(printenv "$name" || true)" ]; then
       |    echo "::error::$name is empty: the auto-merge step sets it, and without it there is no verdict." >&2
@@ -119,15 +120,34 @@ template AutoMerge {
           |esac
         }
         if r.key == "labeller-can-merge" {
-          |labeller=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
-          |  --jq '.[] | select(.event == "labeled" and .label.name == "${p.label}") | .actor.login') || {
-          |  echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
-          |  exit 1
-          |}
-          |labeller=$(printf '%s\n' "$labeller" | awk 'NF { last = $0 } END { print last }')
-          |if [ -z "$labeller" ]; then
-          |  echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
-          |  exit 1
+          |if [ "$EVENT" = "pull_request_target" ]; then
+          |  labeller=$(printenv LABELLER || true)
+          |  if [ -z "$labeller" ]; then
+          |    echo "::error::LABELLER is empty on the label event: who added ${p.label} to PR #$pr is unknown, no verdict, so no merge." >&2
+          |    exit 1
+          |  fi
+          |else
+          |  last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+          |    --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "${p.label}") | "\(.event) \(.actor.login // "")"') || {
+          |    echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |    exit 1
+          |  }
+          |  last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
+          |  case "$last" in
+          |    "")
+          |      echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
+          |      exit 1
+          |      ;;
+          |    unlabeled*)
+          |      echo "::error::PR #$pr is listed with ${p.label}, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
+          |      exit 1
+          |      ;;
+          |  esac
+          |  labeller=$(printf '%s' "$last" | awk '{ print $2 }')
+          |  if [ -z "$labeller" ]; then
+          |    echo "::error::whoever added ${p.label} to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
+          |    exit 1
+          |  fi
           |fi
           |if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
           |  echo "::error::could not read the permission of $labeller, who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
