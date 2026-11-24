@@ -300,6 +300,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_cidisk typeOf simplon.architecture.Module {
     path = "tasks.cidisk"
   }
+  module m_tasks_automerge typeOf simplon.architecture.Module {
+    path = "tasks.automerge"
+  }
   module m_tasks_cipipeline typeOf simplon.architecture.Module {
     path = "tasks.cipipeline"
   }

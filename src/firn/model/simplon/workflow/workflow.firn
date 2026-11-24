@@ -91,8 +91,9 @@ Runner typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-// What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch` or `schedule`; a string, not an
-// enum, so the template needs no enum case. `cron` belongs to `schedule`, `input` to `dispatch`.
+// What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch`, `schedule`, `workflow_run` or
+// `pull_request_target`; a string, not an enum, so the template needs no enum case. `cron` belongs to `schedule`,
+// `input` to `dispatch`, `workflows` to `workflow_run`.
 Trigger typeOf firn.core.Class extends firn.core.NamedResource {
   property event typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
@@ -105,6 +106,33 @@ Trigger typeOf firn.core.Class extends firn.core.NamedResource {
   property input typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..N
+  }
+  // The workflows a `workflow_run` listens to, by their `name:` (GitHub matches names, not files) (si#874).
+  property workflows typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+  // The activity types the event is narrowed to (`completed`, `labeled`); none is every type (si#874).
+  property types typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
+  }
+}
+
+// One scope of a workflow's token (si#874): `contents`, `write`, and why the workflow needs it, which the rendered
+// file says.
+Permission typeOf firn.core.Class extends firn.core.NamedResource {
+  property scope typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property access typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
   }
 }
 
@@ -156,6 +184,38 @@ Gate typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
+// What the kernel step `auto-merge` is given (si#874): the workflows whose runs for a commit decide the merge, by
+// FILE, since the runs are asked for by file while `workflow_run` names them by `name:`. `ci_workflow` is the CI
+// workflow's file, the one dispatched on the base after a merge; `triggers` is every trigger workflow's file, CI
+// first; `labels` is each gate with a `label:`.
+Merge typeOf firn.core.Class extends firn.core.NamedResource {
+  property ci_workflow typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property triggers typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..N
+  }
+  property labels typeOf firn.core.Composition {
+    range = simplon.workflow.GateLabel
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// A gate's workflow file and the label that asks for its run (si#874, the merge's rule `gate-label-needs-run`).
+GateLabel typeOf firn.core.Class extends firn.core.NamedResource {
+  property workflow typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property label typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
 // One GitHub job: a machine, its steps in order, the jobs it needs, its cells, its condition and its time limit
 // (si#720's default when absent).
 Job typeOf firn.core.Class extends firn.core.NamedResource {
@@ -204,10 +264,17 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..1
   }
+  // The auto-merge job (si#874) carries it; no other job does.
+  property merge typeOf firn.core.Composition {
+    range = simplon.workflow.Merge
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
 }
 
-// One workflow file. `title` is GitHub's `name:` (every firn resource already has a `name`). No permissions or
-// concurrency: both are kernel constants today (si#719), and nothing would read them from here yet.
+// One workflow file. `title` is GitHub's `name:` (every firn resource already has a `name`). `permission` is the
+// token's scopes where a workflow needs more than the kernel's least-privilege default (si#719), which an empty
+// one keeps (si#874). No concurrency: the renderer decides it per kind of file.
 Workflow typeOf firn.core.Class extends firn.core.NamedResource {
   allowRoot = true
   property path typeOf firn.core.Attribute {
@@ -226,6 +293,11 @@ Workflow typeOf firn.core.Class extends firn.core.NamedResource {
   property job typeOf firn.core.Composition {
     range = simplon.workflow.Job
     subjectCardinality = 1..N
+    objectCardinality = 0..1
+  }
+  property permission typeOf firn.core.Composition {
+    range = simplon.workflow.Permission
+    subjectCardinality = 0..N
     objectCardinality = 0..1
   }
 }

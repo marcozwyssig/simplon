@@ -1356,6 +1356,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_refuse_members_consuming_from_outside", "so the gated run would fail on a missing file"):
         DIAGNOSIS,
     ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,
+    # si#874: `merge: auto` derives auto-merge.yml from the CI workflow and each gate's. With no CI workflow nothing
+    # gates the merge; one without `workflow_dispatch` cannot be dispatched on the base after it (the policy's last
+    # rule); a hand-written one has a `name:` the kernel cannot read, and a guessed name is a filter that never fires.
+    ("automerge", "derive", "so nothing gates the merge"): DIAGNOSIS,
+    ("automerge", "derive", "has no `workflow_dispatch` trigger"): DIAGNOSIS,
+    ("automerge", "_readable", "is declared hand-written, so the kernel cannot read its `name:`"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

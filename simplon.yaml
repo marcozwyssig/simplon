@@ -626,6 +626,11 @@ generated:
   automerge:
     path: src/simplon/model/automerge.py
     by: build model
+  # The vocabulary of a derived GitHub workflow (si#857) and the runner kinds, generated WHOLE by firn from
+  # src/firn/model/simplon/workflow/: it has no protected region, so a hand edit is red here first (si#874).
+  workflow-schema:
+    path: src/simplon/model/workflowschema.py
+    by: build model
   # One class per catalogue task (si#400 4b), firn's whole output in this directory beside the hand-written
   # task modules: a directory entry, so a class for a new task is stale until committed.
   task-classes:

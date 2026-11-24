@@ -19,8 +19,9 @@ from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
-from simplon.manifest import artifactsection, runners, sources
+from simplon.manifest import artifactsection, merge, runners, sources
 from simplon.manifest.load import Manifest
+from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
 from simplon.model.task import class_ref
@@ -439,6 +440,9 @@ _TRIGGERS: Mapping[str, tuple[str, object]] = {
     "dispatch": ("workflow_dispatch", None),
     # si#861 decision 2: a gate's file, on the pull request events its decide table reads, never on a push.
     "pull_request_gate": ("pull_request", {"types": ["opened", "reopened", "synchronize", "labeled"]}),
+    # si#874: the auto-merge workflow's two events; the workflows and the types are the model's (`_on`).
+    "workflow_run": ("workflow_run", None),
+    "pull_request_target": ("pull_request_target", None),
 }
 
 #: The coordinate `support install` instantiates; found in the product's tree by impl, as `runners.PREFLIGHT` is.
@@ -836,6 +840,61 @@ def _decide_job(job: workflowschema.Job, run: GateRun) -> workflowgen.Job:
                            checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras)
 
 
+# --- the auto-merge workflow's job (si#874) ---------------------------------------------------------------
+
+#: The kernel step that merges: the generated `MERGE_SCRIPT` of the merge policy (`simplon.model.automerge`).
+AUTO_MERGE = "auto-merge"
+MERGE_NAME = "Merge the labelled pull request once every trigger run for its head is green"
+#: The head branch and commit, from whichever of the two events started the run.
+MERGE_BRANCH = "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}"
+MERGE_SHA = "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}"
+
+MERGE_NOTE = (
+    "si#874: `merge: auto`. This job merges the open pull request labelled `{label}` whose head is the commit a "
+    "trigger workflow's run just verified, or whose label was just added, once every run of every trigger workflow "
+    "for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a "
+    "cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules "
+    "and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:",
+    "The job runs in the privileged context of `workflow_run` and `pull_request_target` with a write token, so no "
+    "repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, "
+    "so nothing a pull request author controls is written into it. A label event is filtered to `{label}` by "
+    "the job's `if:`, a run to a successful one that no schedule started.")
+
+
+def _merge_job(job: workflowschema.Job) -> workflowgen.Job:
+    """The auto-merge job as the renderer's: one verbatim step running `MERGE_SCRIPT`, no checkout, `prepared` so
+    no preparation is added. The reap step `render` puts in front of every job stays: it starts no launcher."""
+    assert job.merge is not None
+    kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
+    labels = job.runner.labels
+    given = job.merge
+    step = workflowgen.Step(verbatim={
+        "name": MERGE_NAME, "shell": "bash",
+        "env": {"GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}", "BRANCH": MERGE_BRANCH,
+                "SHA": MERGE_SHA, "EVENT": "${{ github.event_name }}", "CI_WORKFLOW": given.ci_workflow,
+                "TRIGGERS": " ".join(given.triggers),
+                "GATES": "\n".join(f"{gate.workflow} {gate.label}" for gate in given.labels)},
+        "run": merge_policy.MERGE_SCRIPT})
+    head, tail = (part.format(label=merge_policy.LABEL) for part in MERGE_NOTE)
+    # A rule's key is one word with hyphens in it, which a wrap must not split.
+    rules = [textwrap.fill(f"{key} ({source}): {reason}", width=95, subsequent_indent="  ", break_on_hyphens=False)
+             for key, reason, source in merge_policy.RULES]
+    note = "\n\n".join([textwrap.fill(head, width=95), "\n".join(rules), textwrap.fill(tail, width=95)])
+    extras: dict[str, object] = {"if": job.condition, "timeout-minutes": job.timeout_minutes}
+    return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=(step,),
+                           checkout=False, note=note, runner=runners.TABLE[kind], prepared=True, extras=extras)
+
+
+def _permissions_note(permissions: Sequence[workflowschema.Permission]) -> str:
+    """Why the workflow's token has each scope it names (si#874); "" for the kernel's default."""
+    said = [p for p in permissions if p.reason]
+    if not said:
+        return ""
+    return "si#874: the token's scopes below, and why each one:\n" + "\n".join(
+        textwrap.fill(f"{p.scope}: {p.access} - {p.reason}", width=95, subsequent_indent="  ",
+                      break_on_hyphens=False) for p in said)
+
+
 def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str, ...]) -> Derivation:
     """One derived workflow: a job per cadence value, all of them in the one file those values go to. Only a
     cron string shares a file with others, so only `ci-scheduled.yml` has more than one job (si#860).
@@ -1115,6 +1174,9 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
         if job.gate is not None and derivation.gate is not None:
             jobs.append(_decide_job(job, derivation.gate))
             continue
+        if job.merge is not None:
+            jobs.append(_merge_job(job))
+            continue
         jobs.append(_to_job(job, derivation.selection, manifest, data, key, product, orphan=orphan,
                             run=derivation.gate))
     # GitHub keeps one pending run per concurrency group and a newer pending run replaces it, so ci-scheduled.yml
@@ -1124,12 +1186,19 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     # si#861: a gate's file queues its gated job alone, per ref (`_to_job`): the decide job is never queued.
     queued = ({} if key == KEY or derivation.gate is not None else
               {"concurrency": {"group": group, "cancel-in-progress": False}})
+    if any(job.merge is not None for job in derivation.model.job):
+        # si#874: a CI run and a gate run completing together for one commit queue per branch; the second finds
+        # the pull request merged and is a no-op.
+        queued = {"concurrency": {"group": f"{key}-{MERGE_BRANCH}", "cancel-in-progress": False}}
     # The least-privilege workflow default the release already gets (si#719): with no block, every job gets the
-    # repository's default token scopes, which can include write.
-    extras = {"permissions": dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS), **queued,
-              **workflowgen._workflow_extras({})}
+    # repository's default token scopes, which can include write. A model that names its scopes (si#874) gets
+    # those instead.
+    permissions = ({p.scope: p.access for p in derivation.model.permission} if derivation.model.permission
+                   else dict(workflowgen._WORKFLOW_DEFAULT_PERMISSIONS))
+    extras = {"permissions": permissions, **queued, **workflowgen._workflow_extras({})}
     return workflowgen.Workflow(key=key, path=derivation.model.path, name=key, on=_on(derivation.model.trigger),
-                                jobs=tuple(jobs), extras=extras, derived=True)
+                                jobs=tuple(jobs), extras=extras, derived=True,
+                                note=_permissions_note(derivation.model.permission))
 
 
 def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
@@ -1144,7 +1213,9 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
             crons.append({"cron": trigger.cron})
         else:
             event, body = _TRIGGERS[trigger.event]
-            out[event] = body
+            said = {**({"workflows": list(trigger.workflows)} if trigger.workflows else {}),
+                    **({"types": list(trigger.types)} if trigger.types else {})}
+            out[event] = {**(body if isinstance(body, Mapping) else {}), **said} if said else body
     return out
 
 
@@ -1292,7 +1363,11 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     leaves or not: the push path would verify nothing (Review Focus 2 of si#860).
     Only that case is told apart, and before deriving, so every other refusal of the derivation still reaches
     the caller.
+
+    si#874: `merge: auto` adds the auto-merge workflow (`automerge.derive`), listening to the CI workflow and every
+    gate's workflow as written here, derived or declared; `workflows: auto-merge:` switches it off.
     """
+    from simplon.tasks import automerge  # it builds on this module's Derivation and gates
     declared = workflowgen.parse(data)
     own = {workflow.key for workflow in declared}
     # si#861: every gate's members are ruled on whoever writes ci.yml, and a gate's file is derived unless the
@@ -1318,6 +1393,12 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str) -
     derivations += _cadence_derivations(manifest, data, own)
     derivations += [derive_gate(manifest, data, run) for run in derived_gates]
     out = (*declared, *(to_workflow(derivation, manifest, data, product=product) for derivation in derivations))
+    if merge.declared(data) and automerge.KEY not in own:
+        # si#874: the auto-merge workflow listens to the CI workflow and each gate's, whoever writes them.
+        keyed = {workflow.key: workflow for workflow in out}
+        merging = automerge.derive(manifest, data, keyed.get(KEY),
+                                   {_key_of(run.path): keyed[_key_of(run.path)] for run in runs})
+        out = (*out, to_workflow(merging, manifest, data, product=product))
     workflowgen._reject_duplicate_paths(out)
     return out
 
