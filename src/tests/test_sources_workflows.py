@@ -139,6 +139,8 @@ def test_cell_job_gets_sources(tmp_path, monkeypatch):
     platforms = _steps(doc, "test-plat-platforms")
     (sources,) = [step for step in platforms if _is_sources(step)]
     assert sources == {"id": "prepare_sources", "env": _ENV, "run": "${{ matrix.entry }} support sources"}
+    arch = next(i for i, s in enumerate(platforms) if "uname -m" in s.get("run", ""))
+    assert arch < platforms.index(sources)
     assert platforms.index(sources) < next(i for i, s in enumerate(platforms) if s.get("run", "").endswith("test plat"))
 
 
@@ -200,3 +202,20 @@ def test_sources_without_placement_is_said(tmp_path, monkeypatch):
         assert not any(_is_sources(step) for job in doc["jobs"].values() for step in job["steps"])
         assert "secrets.PLATFORM_REPO_TOKEN" not in text
         assert 'sources: { task: "support:sources" }' in text
+
+
+def test_the_release_job_gets_the_sources_step_after_its_checkout():
+    """The release job `render` builds itself is a job that checks out, so it gets the step there too; a later
+    `checkout=False` on it turns this red."""
+    from simplon.manifest import artifactsection, catalogue
+    from simplon.manifest import load as manifest_mod
+    from test_workflowgen import _RELEASE_PRODUCT, _RELEASE_WORKFLOWS, _section
+
+    product = _RELEASE_PRODUCT + _SOURCES
+    loaded = manifest_mod.load(product, catalogue=catalogue.load(), manifest_path="app.yaml")
+    data = {**yaml.safe_load(product), **_section(_RELEASE_WORKFLOWS)}
+    text = workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+                              artifacts=artifactsection.declared(data))
+    steps = _steps(yaml.safe_load(text), workflowgen.RELEASE_JOB)
+    assert steps[0]["uses"] == workflowgen.CHECKOUT_ACTION
+    assert steps[1] == {"env": _ENV, "run": "exec ./app.sh support sources"}
