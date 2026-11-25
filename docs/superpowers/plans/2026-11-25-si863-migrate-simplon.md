@@ -112,6 +112,28 @@ The manifest edit, exactly (the candidate diff in the scratchpad, with these rea
 - [ ] **Step 4:** Run `./simplon.sh support github workflows --check` (all agree, nothing unmanaged) and `./simplon.sh test generated`; then the full suite. Expected: only `test_type_gate.py::test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate` red (Task 3's).
 - [ ] **Step 5:** Commit manifest, both workflow files and tests: `feat(si#863): simplon's ci.yml is derived; the canary keeps its job boundary in a workflow of its own`. The suite is red on one known test between this commit and Task 3's; say so in the commit body.
 
+### Task 2b: `ci: { params: }` binds a command parameter in derived workflows only (si#368; Marco 2026-11-25)
+
+Measured in Task 2: the deleted `self-build` ran `build image` with `params: { platform: linux/amd64 }` (si#368: "the image declares arm64 too, and building that here would put an emulated stage on this runner on every push. A release builds both."). A derived step carries no parameters, so the derived ci.yml builds and tests both platforms, on ghr-8 (LXC, no emulation in a job). A pin on the command (`with:`) would also bind the release's `build image`. Marco chose a kernel key (choice list, 2026-11-25), built in this branch.
+
+**Files:**
+- Modify: the firn model that generates `CiVariant` (`simplon.model.command`; find its `.firn` under `src/firn/model/simplon/`), regenerate with `./simplon.sh build model`
+- Modify: `src/simplon/manifest/load.py` (`_ci_variant`, the `known` tuple)
+- Modify: `src/simplon/tasks/cipipeline.py` (the derived leaf step carries the params into `workflowgen.Step(params=...)`, rendered by the same code as a declared step's `params:`)
+- Modify: `simplon.yaml` (`build image` and `test image` commands: `ci: { params: { platform: linux/amd64 } }`, comment citing si#368), regenerate `.github/workflows/ci.yml`
+- Modify: `src/site/content/how/manifest.md` (variant keys section: `params:`)
+- Test: `src/tests/test_cipipeline.py` (or where the si#860 variant keys are tested), `src/tests/test_own_image.py`
+
+**Interfaces:**
+- `CiVariant.params: Mapping[str, str]` (name -> scalar text), empty by default. Same value shape as a declared step's `params:` scalars; `{ env: }` values are not accepted here (no workflow env to name).
+- Rendering: wherever the leaf runs in a derived workflow (ci.yml main job, cadence files, gate files, python and platform cells), its step is `exec ./simplon.sh <words> <rendered params>`, rendered by `workflowgen`'s existing params path, so a positional parameter renders positionally and a named one as its flag. The command's interactive form and the release are untouched.
+
+- [ ] **Step 1: Failing tests:** (a) a leaf with `ci: { params: { platform: linux/amd64 } }` renders its derived step with the same argv a declared step with `params: { platform: linux/amd64 }` gets; (b) a parameter name the task does not take is refused at load, naming the command, the name and the task's parameters (diagnosis; the same check a declared step's `params:` gets, reuse it); (c) a non-mapping or a non-scalar value is refused with the form it should take; (d) `skip:` beside `params:` is refused like `skip:` beside the other variant keys; (e) `test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only` (red since Task 2) goes green unchanged in what it protects.
+- [ ] **Step 2:** Run them; expect FAIL (`params` unknown under `ci:`).
+- [ ] **Step 3:** Model the field in firn, regenerate, read it in `_ci_variant`, carry it in `cipipeline`. Census: classify any new load-time refusal (diagnosis).
+- [ ] **Step 4:** Manifest edit, `./simplon.sh support github workflows`, `--check`, `./simplon.sh test generated`; docs paragraph in the variant keys section.
+- [ ] **Step 5:** Full suite: only Task 3's type-gate test red. Commit `feat(si#863): ci: { params: } binds a command parameter where the kernel derives the leaf, not where a person types it`.
+
 ### Task 3: The type gate is owed per interpreter, not per job
 
 **Files:**
@@ -137,3 +159,4 @@ D13: `build reference`, `build acceptance`, `build site`, `build model`, `build 
 1. **QEMU on ghr-8: yes, then superseded the same day.** ghr-8 is an LXC container, where registration is refused (#722). Marco chose: build #722 first, inside #863 (Task 1a). `emulates: [linux/arm64]` stays on `test suite`; the main job on ghr-8 (`self-hosted-container`) registers nothing and names the gap, the hosted 3.14 cell registers.
 2. **Canary: its own declared workflow** `handoff-canary.yml` until #864 adds `exception:`.
 3. **Execution: subagent-driven.**
+4. **si#368 image platform in CI:** a new kernel key `ci: { params: }`, built in this branch as Task 2b (choice list, 2026-11-25).
