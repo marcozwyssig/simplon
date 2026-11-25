@@ -134,6 +134,8 @@ are diagnoses too: a member that may not run with nobody watching, a member with
 already keeps it out of the main job), a member with `cadence:`, `platforms:` or `python:` (the gate's file
 decides when and where it runs), and an artifact handed between a gate member and a leaf of another file in
 either direction, unless it has a `registry:`: artifacts do not cross workflow files.
+Since si#887 a leaf whose catalogue task cannot run without a parameter that neither `with:` nor
+`ci: { params: }` binds is a diagnosis too, in the main, cadence and gate files alike.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

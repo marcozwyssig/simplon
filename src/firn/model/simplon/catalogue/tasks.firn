@@ -1006,7 +1006,7 @@ build_model_binary typeOf simplon.pipeline.CatalogueTask {
   params p_bootstrap typeOf simplon.pipeline.TaskParam {
     key = "bootstrap"
     required = true
-    help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false (the default) for every other build"
+    help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false for every other build"
   }
 }
 

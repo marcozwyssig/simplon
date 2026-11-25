@@ -509,6 +509,43 @@ def test_a_generated_producer_outside_the_ci_leaves_changes_nothing():
     assert "si#886" not in text
 
 
+_GATED_PRODUCER = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              x: { task: ship, unattended: true }
+              check: { task: "test:generated", unattended: true }
+              lab: { depends_on: [x, check], help: "Lab.", ci: { gate: { label: lab } } }
+        """
+
+
+def _gate_file(body: str, *extra: str) -> tuple[dict, str]:
+    """The derived ci-test-lab.yml for `_HEAD` + `body` + `extra`, rendered and read back."""
+    text = _text(body) + "".join(textwrap.dedent(part) for part in extra)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    files = {wf.path: wf for wf in cipipeline.workflows(loaded, yaml.safe_load(text), product="demo")}
+    out = workflowgen.render(files[".github/workflows/ci-test-lab.yml"], manifest=loaded, product="demo",
+                             source="demo.yaml", artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), out
+
+
+def test_a_generated_producer_leaves_a_gate_file_when_the_staleness_gate_is_a_member():
+    """si#886 in a gate's file: a member that is a `by:` runs in the same gated job as the `test:generated` member,
+    so it is left out there too, and named. Membership leaves no other way out: `ci: { skip: }` on a member is
+    refused (`_refuse_member`)."""
+    doc, text = _gate_file(_GATED_PRODUCER, _generated_by("test x"))
+    assert _job_runs(doc, "test-lab") == ["test check"]
+    assert ("`test x` - it is the `by:` of a `generated:` entry, which `test check` (`test:generated`) regenerates "
+            "and compares with the committed tree itself") in _comments(text)
+
+
+def test_a_gate_file_without_a_producer_member_says_nothing_left_out():
+    doc, text = _gate_file(_GATED_PRODUCER, _generated_by("support completion"))
+    assert _job_runs(doc, "test-lab") == ["test x", "test check"]
+    assert "Left out" not in text
+
+
 @pytest.mark.parametrize("section", ["generated: {}\n", "generated:\n  spec: { path: build/spec.json }\n"])
 def test_a_malformed_generated_section_is_not_read_without_the_staleness_gate(section):
     """si#886: the section is read only where a `test:generated` leaf runs, so a product without one generates its
@@ -608,8 +645,12 @@ def test_a_gate_member_whose_required_parameter_nothing_binds_is_refused():
               all: { depends_on: [unit], help: "All.", ci: { gate: { label: lab } } }
         """)
     (run,) = cipipeline.gates(loaded)
-    with pytest.raises(ValueError, match=r"'test unit'.*`paths`, `requirements`"):
+    with pytest.raises(ValueError, match=r"'test unit'.*`paths`, `requirements`") as refused:
         cipipeline.derive_gate(loaded, {}, run)
+    # A member's `ci: { skip: }` is refused (`_refuse_member`), so the way out offered is leaving the gate.
+    message = str(refused.value)
+    assert "ci: { skip: <why> }" not in message
+    assert "take it out of `test all`" in message and "`ci: { params: { paths: ... } }`" in message
 
 
 def test_the_job_is_keyed_ci_and_runs_on_the_product_runner():

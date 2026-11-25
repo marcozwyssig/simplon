@@ -1466,7 +1466,9 @@ on that tree instead of the committed one. So when a leaf of the run instantiate
 (whatever your command calls it), every leaf that is the `by:` of a `generated:` entry is left out and
 named in the file with that reason. You write no `ci: { skip: }` for it. Without a `test:generated` leaf
 in the run nothing compares the tree, and the producer runs like any other leaf; a `by:` that names no
-leaf of `ci build` or `ci test` (a `support` command) changes nothing.
+leaf of `ci build` or `ci test` (a `support` command) changes nothing. A gate's own file is a run of its
+own: where a gate's members hold a `test:generated` leaf, a member that is a `by:` is left out of that
+file and named there, since a member cannot declare `ci: { skip: }`.
 
 **A leaf whose task needs a parameter nothing binds is refused** (si#887). A derived step runs the
 command with nothing but its `ci: { params: }`, so a catalogue task that cannot run without a value
@@ -1474,7 +1476,8 @@ command with nothing but its `ci: { params: }`, so a catalogue task that cannot 
 port would hand it) would be red in every run. When neither the command's `with:` (a `produces:` or
 `consumes:` binding counts, it is written there) nor `ci: { params: }` binds such a parameter, generating
 the workflow is refused, naming the command, the parameter and the two ways out: bind it for the derived
-run with `ci: { params: }`, or keep the leaf out with `ci: { skip: }`. Which parameters a task cannot run
+run with `ci: { params: }`, or keep the leaf out with `ci: { skip: }` (for a gate member, which cannot
+declare `ci: { skip: }`, take it out of the gate). Which parameters a task cannot run
 without is the catalogue's (`required` on the task's parameter in its model), not the signature's: an
 empty default refused by the body counts. A leaf that is skipped or left out is not asked, and a leaf
 of a product's own task is not checked: its body may still need a parameter nothing binds.
