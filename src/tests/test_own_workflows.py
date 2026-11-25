@@ -52,6 +52,10 @@ CANARY_SKIP = "runs across a job boundary in handoff-canary.yml (si#639, spec 5.
 MODEL_SKIP = ("test generated regenerates and compares itself; run before it in the same checkout it would make "
               "that gate compare the regenerated tree with itself (si#746, si#863)")
 
+#: Why both homebrew leaves stay out of ci.yml, as simplon.yaml states it: the formula refuses a local-version wheel.
+HOMEBREW_SKIP = ("needs a tagged commit: the formula refuses a wheel with a local version (si#543), measured on "
+                 "ghr-8 in PR #890; the release checks the formula")
+
 #: Where the kernel's job-to-job hand-off (si#344 C.4) puts its archive, as the generated `tar` lines name it.
 HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
 
@@ -257,7 +261,8 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
     2026-10-24, each exits 1 at once with "source must be 'pypi' ... or 'local' ..., got ''" (and the
     same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
     and audit the formula. So a pipeline derived from them bare would go red on those two steps; since
-    si#863 ci.yml binds them with `ci: { params: }` (test_ci_runs_the_homebrew_leaves_as_a_dry_run).
+    since si#863 ci.yml leaves both out (test_ci_leaves_the_homebrew_leaves_out), because a dry run on an untagged
+    commit is red by design (si#543).
 
     si#639 added `build handoff-canary` and `test handoff-canary`, the two halves of the job hand-off canary.
     Run bare on 2026-11-13: the first exits 0 and writes `build/handoff-canary.txt`, under the ignored
@@ -283,7 +288,8 @@ def test_ci_runs_every_unattended_leaf_but_the_canary():
     The differences left are choices, and each is stated where it is made: the hand-off canary's two halves
     say `ci: { skip: }`, because in one job they would hand nothing over (si#639, spec 5.3a), and ci.yml
     names both under "Left out" with that reason. Their run is handoff-canary.yml's (the test below).
-    `build model` says `ci: { skip: }` too, for the next test's reason.
+    `build model` says `ci: { skip: }` too, for the next test's reason, and so do both homebrew leaves, for the
+    reason of test_ci_leaves_the_homebrew_leaves_out.
     """
     derived = [step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
                                                            where="measurement").steps]
@@ -291,7 +297,8 @@ def test_ci_runs_every_unattended_leaf_but_the_canary():
     ran = {step.command for step in main.steps if step.command.split(" ", 1)[0] in cipipeline.CI_PHASES}
     text = _flat(_committed_text("ci.yml"))
 
-    assert ran == set(derived) - {"build handoff-canary", "test handoff-canary", "build model"}
+    assert ran == set(derived) - {"build handoff-canary", "test handoff-canary", "build model",
+                                  "build homebrew-formula", "test homebrew-formula"}
     for words in ("build handoff-canary", "test handoff-canary"):
         assert _flat(f"`{words}` - {CANARY_SKIP}") in text, words
 
@@ -311,17 +318,19 @@ def test_ci_does_not_regenerate_before_the_staleness_gate():
     assert _flat(f"`build model` - {MODEL_SKIP}") in _flat(_committed_text("ci.yml"))
 
 
-def test_ci_runs_the_homebrew_leaves_as_a_dry_run():
-    """si#863 final review: derived bare, `build homebrew-formula` and `test homebrew-formula` refused every
-    push (`source must be 'pypi' or 'local'`, `online must be 'true' or 'false'`, si#537). CI runs them as the
-    release's dry run does: `ci: { params: }` binds `source: local` and `online: "false"` on the derived
-    steps. Held on the rendered argv of the committed ci.yml, the file GitHub runs.
+def test_ci_leaves_the_homebrew_leaves_out():
+    """si#863, measured on ghr-8 in PR #890: `build homebrew-formula --source local` is red on every untagged
+    commit, by design (si#543: the formula refuses a wheel with a local version `+...`). Both homebrew leaves
+    say `ci: { skip: }`, so ci.yml runs neither and names both under "Left out" with that reason; the release
+    checks the formula on a tagged commit.
     """
     (job,) = [job for name, job in _committed("ci.yml")["jobs"].items() if name == cipipeline.KEY]
-    runs = [step.get("run", "") for step in job["steps"]]
+    runs = " ".join(step.get("run", "") for step in job["steps"])
+    text = _flat(_committed_text("ci.yml"))
 
-    assert "exec ./simplon.sh build homebrew-formula --source local" in runs
-    assert "exec ./simplon.sh test homebrew-formula --online false" in runs
+    assert "homebrew-formula" not in runs
+    for words in ("build homebrew-formula", "test homebrew-formula"):
+        assert _flat(f"`{words}` - {HOMEBREW_SKIP}") in text, words
 
 
 def _committed_text(name: str) -> str:
@@ -453,7 +462,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
 
     It holds WHICH steps and in WHICH order - every unattended `ci build` and `ci test` leaf in manifest order
     completed by their ports, the `after_all` leaf (`test report`) last - not that each would run bare: two of
-    the D13 leaves do not (si#537, above), and measuring them on ghr-8 is #863's.
+    the D13 leaves do not (si#537, above) and say `ci: { skip: }`.
     """
     text = MANIFEST.read_text(encoding="utf-8")
     manifest = _loaded()
@@ -488,9 +497,10 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     assert expected != ["test report"]
     assert leaves == expected
     assert leaves[:-1] == in_manifest_order
-    # `build model` is the one D13 leaf ci.yml leaves out on purpose (test_ci_does_not_regenerate_before_the_
-    # staleness_gate): run before `test generated`, it would blind that gate.
-    assert [words for words in D13 if words not in leaves] == ["build model"]
+    # `build model` (test_ci_does_not_regenerate_before_the_staleness_gate) and both homebrew leaves
+    # (test_ci_leaves_the_homebrew_leaves_out) are the D13 leaves ci.yml leaves out on purpose.
+    assert [words for words in D13 if words not in leaves] == [
+        "build model", "build homebrew-formula", "test homebrew-formula"]
     assert "test walk" not in leaves
     assert f"# `test walk` - {cipipeline.ATTENDED}" in rendered
     assert "workflows" not in data or "ci" not in data["workflows"]

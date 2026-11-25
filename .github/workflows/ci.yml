@@ -36,9 +36,13 @@ jobs:
   # Left out:
   # `build handoff-canary` - runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a);
   #   one job would prove nothing
+  # `build homebrew-formula` - needs a tagged commit: the formula refuses a wheel with a local
+  #   version (si#543), measured on ghr-8 in PR #890; the release checks the formula
   # `build model` - test generated regenerates and compares itself; run before it in the same
   #   checkout it would make that gate compare the regenerated tree with itself (si#746, si#863)
   # `test walk` - it needs a person at the terminal (`unattended: false`)
+  # `test homebrew-formula` - needs a tagged commit: the formula refuses a wheel with a local
+  #   version (si#543), measured on ghr-8 in PR #890; the release checks the formula
   # `test handoff-canary` - runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a);
   #   one job would prove nothing
   ci:
@@ -147,8 +151,7 @@ jobs:
       # Every later leaf waits for this step's success: a missing toolchain would otherwise turn every leaf red.
       - id: prepare_install
         run: exec ./simplon.sh support install
-      - id: leaf_build_wheel
-        run: exec ./simplon.sh build wheel
+      - run: exec ./simplon.sh build wheel
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh build reference
@@ -162,10 +165,6 @@ jobs:
         if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh build image --platform linux/amd64
-      - id: leaf_build_homebrew_formula
-        if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
-          && steps.prepare_install.outcome == 'success' && steps.leaf_build_wheel.outcome == 'success' }}
-        run: exec ./simplon.sh build homebrew-formula --source local
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh test suite
@@ -181,10 +180,6 @@ jobs:
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_image.outcome == 'success' }}
         run: exec ./simplon.sh test image --platform linux/amd64
-      - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
-          && steps.prepare_install.outcome == 'success' && steps.leaf_build_homebrew_formula.outcome == 'success'
-          && steps.leaf_build_wheel.outcome == 'success' }}
-        run: exec ./simplon.sh test homebrew-formula --online false
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh test model
