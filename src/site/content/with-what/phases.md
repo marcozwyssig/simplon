@@ -273,6 +273,49 @@ runner's result join instead of merely resembling each other. The scenarios are 
 A step the person REFUSES becomes a bug ticket, worded by the product through a
 [`tracker:` section](../../how/manifest/#tracker---where-a-refused-step-becomes-a-ticket).
 
+**`test:unit` runs a product's own pytest suite** (si#859). The product names the data and the kernel
+supplies the mechanism: a venv it provisions itself, the requirements installed into it, pytest over the
+test roots. It is the task for the two hand-written CI lines most Python products carry
+(`pip install pytest -r requirements.txt`, then `python -m pytest <root>`), placed under the `ci test`
+group like any other test task:
+
+```yaml
+ci:
+  test:
+    commands:
+      unit:
+        task: "test:unit"
+        with:
+          paths: [tests, tools/tests]
+          requirements: requirements.txt
+          config: pytest.ini
+```
+
+- **`paths`** is a list of test roots, relative to the product root. Several roots share one venv and one
+  requirements file, which is the shape of a product with a source suite and a tooling suite. Each root is
+  collected once before the run, because `pytest a b` exits 0 when `b` is empty; a root that collects
+  nothing is **red** and named, never green. pytest's own exit 5 gets the same answer.
+- **`requirements`** is the file installed into the venv. A `-r` or `-c` include inside it is part of the
+  venv's stamp, so moving a pin in an included file rebuilds the venv. pytest is added **unpinned** only
+  when the requirements do not bring it, and the run says so; a product's own pin wins.
+- **`config`** is optional and is passed to pytest as `-c`.
+- **`timeout`** is optional, in seconds. It bounds the pytest runs only: provisioning the venv and the pip
+  installs run outside it, so a slow index cannot turn into a red suite. A run past it is red and named.
+- Every path must be relative and inside the product root; an absolute or escaping entry is refused by
+  name.
+
+**Out of scope, and what reopens it.** A uv or `pyproject.toml` project (the environment is built from a
+lock, not from a requirements file) and a `unittest` suite (not run by pytest) keep their own product
+tasks. A second product of either shape asking for it is the trigger that reopens the question.
+
+**`test:report` does not pick up `test:unit`.** The report step merges the directories a product declares
+under `merge:` in its `suites:` section and renders them; `test:unit` writes no results of its own and
+reads no `suites:` section, so there is nothing for the report to find. Allure results would need
+`allure-pytest` in the product's requirements, which the kernel does not add on its own. A product that
+wants its unit results in the archive carries that plugin in its requirements, points it at a directory
+from its pytest configuration (`addopts = --alluredir=...` in the file named by `config`), and declares
+the directory under `merge:`. Without that, the verdict of `test:unit` is its exit code and nothing more.
+
 ### `release`
 
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
