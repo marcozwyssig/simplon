@@ -16,6 +16,7 @@ tests whose subject IS the venv (rebuild, a failed install, which pytest runs) b
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -151,20 +152,22 @@ def test_a_missing_config_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_pytest_is_installed_only_when_the_requirements_lack_it(tmp_path: Path,
                                                                monkeypatch: pytest.MonkeyPatch,
                                                                capfd: pytest.CaptureFixture[str]) -> None:
-    # Without pytest in the requirements: the kernel adds its own, and says so.
+    # Without pytest in the requirements: the kernel adds pytest, UNPINNED (Marco, si#859), and says so
+    # in one line. The stamp then freezes what was installed until the requirements change.
     bare = _product(tmp_path / "bare")
     _write(bare, "t/test_t.py", PASSING)
     _as_current(monkeypatch, bare)
     assert unittests.run(paths=["t"], requirements="requirements.txt") == 0
     out = capfd.readouterr().out
-    assert "pytest" in out and "added" in out
-    assert f"pytest-{unittests.PYTEST.split('==')[1]}" in out
+    added = [line for line in out.splitlines() if "added" in line]
+    assert len(added) == 1 and "added pytest" in added[0] and "pytest==" not in added[0]
+    kernels = re.search(r"pytest-(\S+),", out)
+    assert kernels
 
     # With pytest pinned in the requirements: no second install, and THAT version is what runs. The pin
-    # differs from the kernel's own on purpose: the same version on both sides could not show which
-    # install ran.
+    # is an older release than the one the kernel just installed, so the header shows which install ran.
     pinned_version = "8.4.2"
-    assert pinned_version != unittests.PYTEST.split("==")[1]
+    assert pinned_version != kernels.group(1)
     pinned = _product(tmp_path / "pinned", f"pytest=={pinned_version}\n")
     _write(pinned, "t/test_t.py", PASSING)
     _as_current(monkeypatch, pinned)
@@ -261,3 +264,85 @@ def test_conftest_sys_path_inserts_resolve_from_the_product_root(tmp_path: Path,
 
     assert unittests.run(paths=["block/tests"], requirements="requirements.txt") == 0
 
+
+
+def test_a_root_with_no_tests_beside_one_with_tests_is_red(product: Path,
+                                                            capfd: pytest.CaptureFixture[str]) -> None:
+    # `pytest a b` with `b` empty exits 0: the run alone cannot see an empty root, and the help text
+    # promises that a root with no tests is red (#674, folded into si#859).
+    _write(product, "full/test_full.py", PASSING)
+    _write(product, "void/helpers.py", "VALUE = 1\n")
+
+    rc = unittests.run(paths=["full", "void"], requirements="requirements.txt")
+
+    assert rc != 0
+    err = capfd.readouterr().err
+    assert "void" in err and "full" not in err.split("no tests")[-1]
+
+
+def test_a_run_past_its_timeout_is_red_and_says_so(product: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    _write(product, "slow/test_slow.py", "import time\n\ndef test_sleeps():\n    time.sleep(30)\n")
+
+    rc = unittests.run(paths=["slow"], requirements="requirements.txt", timeout=3)
+
+    assert rc != 0
+    err = capfd.readouterr().err
+    assert "3 s" in err and "timeout" in err
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_a_timeout_that_is_no_limit_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                              timeout: int) -> None:
+    root = _product(tmp_path)
+    _as_current(monkeypatch, root)
+    _write(root, "t/test_t.py", PASSING)
+
+    with pytest.raises(context.TaskRefused, match="timeout"):
+        unittests.run(paths=["t"], requirements="requirements.txt", timeout=timeout)
+
+
+def test_the_default_timeout_is_named() -> None:
+    assert unittests.UNIT_TIMEOUT == 1800
+
+
+def test_a_changed_included_requirements_file_rebuilds_the_venv(tmp_path: Path,
+                                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    # The top-level file pulls the real list in with `-r`; a change there must reach the stamp too.
+    root = _product(tmp_path, "-r deps/base.txt\n")
+    _write(root, "deps/base.txt", "-c pins.txt\n")
+    _write(root, "deps/pins.txt", "# no pins\n")
+    _as_current(monkeypatch, root)
+    _write(root, "t/test_six.py",
+           "import importlib.util\n\ndef test_six_is_there():\n"
+           "    assert importlib.util.find_spec('six') is not None\n")
+    assert unittests.run(paths=["t"], requirements="requirements.txt") != 0
+
+    (root / "deps/base.txt").write_text("-c pins.txt\nsix\n")
+    (root / "deps/pins.txt").write_text("six==1.17.0\n")
+    assert unittests.run(paths=["t"], requirements="requirements.txt") == 0
+
+    # Only the constraint two levels down changes: the venv is rebuilt against it.
+    (root / "deps/pins.txt").write_text("six==1.16.0\n")
+    _write(root, "t/test_six.py",
+           "import six\n\ndef test_six_version():\n    assert six.__version__ == '1.16.0'\n")
+    assert unittests.run(paths=["t"], requirements="requirements.txt") == 0
+
+
+@pytest.mark.parametrize("field", ["requirements", "config", "paths"])
+@pytest.mark.parametrize("escape", ["absolute", "dotdot"])
+def test_a_path_outside_the_product_root_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                    field: str, escape: str) -> None:
+    root = _product(tmp_path / "product")
+    _as_current(monkeypatch, root)
+    _write(root, "t/test_t.py", PASSING)
+    outside = tmp_path / "elsewhere"
+    _write(outside, "requirements.txt", "# outside\n")
+    _write(outside, "pytest.ini", "[pytest]\n")
+    _write(outside, "test_o.py", PASSING)
+    target = {"requirements": "requirements.txt", "config": "pytest.ini", "paths": ""}[field]
+    spelled = str(outside / target) if escape == "absolute" else f"../elsewhere/{target}".rstrip("/")
+    kwargs: dict[str, object] = {"paths": ["t"], "requirements": "requirements.txt"}
+    kwargs[field] = [spelled] if field == "paths" else spelled
+
+    with pytest.raises(context.TaskRefused, match="product root"):
+        unittests.run(**kwargs)  # type: ignore[arg-type]

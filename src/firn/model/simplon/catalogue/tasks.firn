@@ -274,6 +274,10 @@ test_unit typeOf simplon.pipeline.CatalogueTask {
     key = "config"
     help = "optional pytest configuration, relative to the product root, passed as `-c`"
   }
+  params p_timeout typeOf simplon.pipeline.TaskParam {
+    key = "timeout"
+    help = "seconds the pytest run may take (default 1800); a run past it is red"
+  }
 }
 // The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
 // this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
