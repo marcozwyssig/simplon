@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from simplon.manifest import artifactsection, runners, signatures, sources
+from simplon.manifest import load as manifest_load
 from simplon.manifest.load import Manifest
 from simplon.model import task, workflowschema
 from simplon.model.command import CiRelease, EnvValue, ReleaseCommand, TaskCommand
@@ -89,10 +90,8 @@ def runner_of(ci: CiRelease) -> tuple[runners.Runner, tuple[str, ...]] | None:
     return runners.resolve({"kind": ci.runner_kind, "labels": list(ci.runner_labels)}, "release ci:")
 
 
-def release_commands(manifest: Manifest) -> tuple[tuple[str, ReleaseCommand], ...]:
-    """si#862: every ReleaseCommand of the manifest, as `(<command words>, spec)`, in manifest order."""
-    return tuple((f"{group.replace('.', ' ')} {name}", spec) for group, members in manifest.commands.items()
-                 for name, spec in members.items() if isinstance(spec, ReleaseCommand))
+#: si#862: every ReleaseCommand as `(<command words>, spec)`, in manifest order; the loader's walk, shared.
+release_commands = manifest_load.release_commands
 
 
 def _the_release(manifest: Manifest) -> tuple[str, ReleaseCommand]:
@@ -119,7 +118,7 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
     derived job's name, a `RELEASE_VERSION` in `env:` would be shadowed by the dispatch input's, and a
     `permissions:` that is not a mapping is no default for any job."""
     where = f"workflow '{entry.key}'"
-    if workflowgen.declares_trigger(entry) and not entry.flow:
+    if entry.declared_on and not entry.flow:
         raise ValueError(
             f"{where}: declares `on:`, and the trigger is derived from the release aggregate '{words}' - a dispatch "
             f"with the version and a dry run; remove `on:`")
@@ -146,6 +145,20 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
         raise ValueError(
             f"{where}: `permissions:` beside the release is a mapping of scope -> level, the default of every job "
             f"without its own block; got '{declared}'")
+
+
+def refuse_an_empty_entry(entry: workflowgen.Workflow) -> None:
+    """si#862: a `workflows: release:` entry with no `jobs:` and no `flow:` where the manifest has no
+    ReleaseCommand. Beside one, the entry's `permissions:`, `env:`, `name:` and `note:` shape the derived release;
+    without one it is an ordinary workflow with no job, which GitHub refuses. A DIAGNOSIS, the one
+    `workflowgen._workflow` gives every other key, with the reading it is missing named."""
+    if not entry.generated or entry.flow or entry.jobs:
+        return
+    raise ValueError(
+        f"workflow '{entry.key}': `jobs:` must be a non-empty mapping of job name -> its declaration, or "
+        f"`{workflowgen.FLOW_KEY}:` must name the environments this release is rolled out to - an entry without "
+        f"either only shapes the release derived from a ReleaseCommand (an aggregate under `ci: release:` that "
+        f"`produces: {{ release: <artifact> }}`), and this manifest declares none")
 
 
 def refuse_ci_where_handwritten(manifest: Manifest, entry: workflowgen.Workflow) -> None:
@@ -225,8 +238,9 @@ def derive(manifest: Manifest, data: Mapping[str, object],
         takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{line}'"))}
         params = ((workflowschema.StepParam(param_name="tag", param_env=workflowgen.RELEASE_ENV),)
                   if "tag" in takes and "tag" not in leaf.with_ else ())
-        steps.append(workflowschema.Step(command=leaf, condition=_NOT_DRY_RUN if leaf.publishes else "",
-                                         env=tuple(env), params=params))
+        steps.append(workflowschema.Step(command=leaf, command_words=line,
+                                         condition=_NOT_DRY_RUN if leaf.publishes else "", env=tuple(env),
+                                         params=params))
         if leaf.task == "release:notes" and not notes:
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
@@ -303,19 +317,11 @@ def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mappin
                    jobs=(*jobs, *base.jobs), release=words, derived=True)
 
 
-def _words(manifest: Manifest) -> dict[int, str]:
-    """Each task command's `<group> <name>`, keyed by the spec the model's step holds (si#862: one lookup over the
-    manifest, not a second walk of the plan)."""
-    return {id(spec): f"{group.replace('.', ' ')} {name}" for group, members in manifest.commands.items()
-            for name, spec in members.items() if isinstance(spec, TaskCommand)}
-
-
 def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, object], *,
             product: str) -> workflowgen.Job:
     """One model job as the renderer's job. The kernel steps are written here, and the command steps carry the
     model's `if:`, `env:` and `id:` in the order GitHub's own documentation writes them. The machine is the
     model's runner: its labels, and the kind's own `env:` beside the job's."""
-    words = _words(manifest)
     _, spec = _the_release(manifest)
     reporting = any(step.kernel_step == REPORT for step in job.step)
     archive, unarchived = workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)
@@ -324,7 +330,7 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
         if step.command is not None:
             for env in step.env:
                 if env.env_name != _GITHUB_TOKEN and env.env_value == _SECRET.format(name=env.env_name):
-                    needed.setdefault(env.env_name, []).append(words[id(step.command)])
+                    needed.setdefault(env.env_name, []).append(step.command_words)
     steps: list[workflowgen.Step] = []
     for step in job.step:
         if step.kernel_step == PASS_SECRETS_CHECK:
@@ -360,7 +366,7 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
                 modifiers["env"] = {env.env_name: env.env_value for env in step.env}
             params = {param.param_name: EnvValue(param.param_env) if param.param_env else param.param_value
                       for param in step.params}
-            steps.append(workflowgen.Step(command=words[id(step.command)], modifiers=modifiers, params=params))
+            steps.append(workflowgen.Step(command=step.command_words, modifiers=modifiers, params=params))
     kind = next(name for name, known in workflowschema.RUNNER_KINDS.items() if known is job.runner.kind)
     runner = runners.TABLE[kind]
     labels = job.runner.labels

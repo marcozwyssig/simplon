@@ -1026,12 +1026,18 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     return loaded
 
 
+def release_commands(manifest: Manifest) -> tuple[tuple[str, ReleaseCommand], ...]:
+    """si#862: every ReleaseCommand of the manifest, as `(<command words>, spec)`, in manifest order. The one walk
+    the load (`_release_commands`) and the release derivation (`releasepipeline`) both read."""
+    return tuple((f"{group.replace('.', ' ')} {name}", spec) for group, members in manifest.commands.items()
+                 for name, spec in members.items() if isinstance(spec, ReleaseCommand))
+
+
 def _release_commands(manifest: Manifest) -> dict[str, str]:
     """Each release aggregate (a ReleaseCommand) as its command words -> the bundle it `produces:` (si#487, si#862).
 
     Every one, not only one a workflow names: since si#862 a ReleaseCommand derives release.yml by itself."""
-    return {f"{group.replace('.', ' ')} {name}": spec.release for group, members in manifest.commands.items()
-            for name, spec in members.items() if isinstance(spec, ReleaseCommand)}
+    return {words: spec.release for words, spec in release_commands(manifest)}
 
 
 def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool, release: bool = False) -> str:

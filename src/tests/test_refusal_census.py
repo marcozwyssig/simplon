@@ -1270,7 +1270,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # beside the release: the release is derived from the ReleaseCommand, whose `ci:` holds the three. Nothing reads
     # the keys any more, so each would be ignored silently and the release would run elsewhere, without an emulator
     # or under another limit than the one written. One refusal names every retired key the entry writes.
-    ("workflowgen", "_refuse_retired_keys", "si#862 derives the release from the ReleaseCommand"): DIAGNOSIS,
+    ("workflowgen", "_refuse_retired_keys", "si#862 retired these keys"): DIAGNOSIS,
     # si#490's `_release_key`, `_emulates`, `_release_timeout` and `_release_extras` are gone with the keys they
     # read (si#862); what they refused beside the release is `releasepipeline._refuse_beside_the_release` now, and
     # the value checks of `ci: emulates:` and `ci: timeout_minutes:` are the loader's (`_ci_emulates`,
@@ -1404,6 +1404,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#862: with `workflows: release: { handwritten: }` no release.yml is derived, so a ReleaseCommand's `ci:` key
     # would shape nothing - `cipipeline._refuse_variants_nobody_derives`'s diagnosis, for the release.
     ("releasepipeline", "refuse_ci_where_handwritten", "so the kernel derives no release.yml"): DIAGNOSIS,
+    # si#862 review: `_workflow` lets a `release` entry with no job stand (beside a ReleaseCommand its `permissions:`
+    # shape the derived release); without one it is a workflow with no job, which GitHub refuses.
+    ("releasepipeline", "refuse_an_empty_entry", "and this manifest declares none"): DIAGNOSIS,
     # si#862: the release names its aggregate as `<group> <name>`, resolved against the command tree like a step's
     # `command:` - the same walk, so the same three refusals.
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,

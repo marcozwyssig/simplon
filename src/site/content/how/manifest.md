@@ -1168,7 +1168,8 @@ ci:
 
 **`workflows: release:` adds jobs** to the derived release.yml, beside the `release` job (they can `needs:
 release` and read `inputs.version` and `inputs.dry_run`), with the workflow's `permissions:`, `env:`, `name:`
-and `note:`. It is the one key the [switch rule](#a-product-with-no-workflows-ci) reads differently: declaring
+and `note:`; an entry with only those and no `jobs:` is fine, so `permissions: { id-token: write }` alone
+reaches the `release` job. It is the one key the [switch rule](#a-product-with-no-workflows-ci) reads differently: declaring
 it does not switch the derived file off, because PyPI's Trusted Publishing is bound to the file name
 release.yml and a publish job has to live in it. **`handwritten:`** under `release` does switch it off, and
 a `ci:` key on the release aggregate is then refused, because nothing would read it. Without a release

@@ -1541,6 +1541,8 @@ def _with_release(manifest: Manifest, data: Mapping[str, object], declared: Sequ
     from simplon.tasks import releasepipeline  # it writes its trigger with this module's `_on`
     entry = next((workflow for workflow in declared if workflow.key == workflowgen.RELEASE_KEY), None)
     if not releasepipeline.release_commands(manifest):
+        if entry is not None:
+            releasepipeline.refuse_an_empty_entry(entry)
         return tuple(declared)
     if entry is not None and not entry.generated:
         releasepipeline.refuse_ci_where_handwritten(manifest, entry)

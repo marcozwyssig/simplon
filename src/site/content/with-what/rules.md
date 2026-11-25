@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 348 | nothing - the declaration had no working meaning |
+| diagnosis | 349 | nothing - the declaration had no working meaning |
 | expression rule | 54 | something it could otherwise have said |
-| **all load-time refusals** | **402** | |
+| **all load-time refusals** | **403** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -234,7 +234,8 @@ kernel's own `ci release all` with the product's. The two si#490 expression rule
 `on:` and its own `concurrency:`, moved with the release to the ReleaseCommand and are unchanged. **Diagnoses:**
 the retired `workflows:` keys `release:`, `emulates:` and `timeout_minutes:`, and a workflow-level machine
 beside the release, each named with its new place on the ReleaseCommand's `ci:`, since nothing reads them any
-more; a ReleaseCommand `ci:` key where `workflows: release:` is `handwritten:`, which would shape nothing.
+more; a ReleaseCommand `ci:` key where `workflows: release:` is `handwritten:`, which would shape nothing; a
+`workflows: release:` with no `jobs:` and no ReleaseCommand, a workflow with no job.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an

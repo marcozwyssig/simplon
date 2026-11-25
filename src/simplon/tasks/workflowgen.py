@@ -391,6 +391,9 @@ class Workflow:
     release: str = ""
     #: si#858: derived by `cipipeline` from the CI leaves rather than declared under `workflows:`.
     derived: bool = False
+    #: si#862: the entry wrote `on:` itself, rather than taking si#787's default for a workflow of jobs only;
+    #: beside the derived release a written trigger is refused (`releasepipeline._refuse_beside_the_release`).
+    declared_on: bool = False
     #: si#873: the manifest's `sources:`, which every job that checks out gets a step for (`_sources_step`).
     #: Set by `parse` on a declared workflow; a derived job carries the step as a preparation step instead.
     sources: "tuple[sources.Source, ...]" = ()
@@ -493,6 +496,7 @@ def _workflow(key: str, body: object) -> Workflow:
         raise ValueError(f"{where}: `handwritten:` must say why this file is not generated, not be empty")
 
     trigger = _declared_trigger(body, where)
+    declared_on = trigger is not None
     stages = _stages(body, where)
     if trigger is None and not stages:
         trigger = _CI_TRIGGER
@@ -511,7 +515,10 @@ def _workflow(key: str, body: object) -> Workflow:
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
     rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
-    if not stages and (not isinstance(jobs, Mapping) or not jobs):
+    # si#862: under `release` an entry may add no job: its `permissions:`, `env:`, `name:` or `note:` shape the
+    # release derived from the ReleaseCommand. Whether one exists is the manifest's to say, so
+    # `releasepipeline.refuse_an_empty_entry` decides there.
+    if not stages and key != RELEASE_KEY and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
             f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration, or "
             f"`{FLOW_KEY}:` must name the environments this release is rolled out to")
@@ -523,13 +530,7 @@ def _workflow(key: str, body: object) -> Workflow:
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
-                    extras=_workflow_extras(body))
-
-
-def declares_trigger(workflow: Workflow) -> bool:
-    """Whether the entry wrote `on:` (or `flow:` with one), rather than taking si#787's default for a workflow of
-    jobs only. `_workflow` hands that default out as the module constant itself, so identity tells them apart."""
-    return workflow.on is not _CI_TRIGGER
+                    extras=_workflow_extras(body), declared_on=declared_on)
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
@@ -582,9 +583,10 @@ _RETIRED_KEYS: Mapping[str, str] = {
 }
 #: si#862: beside the release, a workflow-level machine named the derived release job's; nothing reads it any more.
 _RETIRED_MACHINE_KEYS = ("runs-on", "runs_on", runners.KEY)
-_RETIRED_MACHINE = ("`{key}:` is retired here: the release job's machine is `ci: {{ runner: }}` on the ReleaseCommand "
-                    "under `ci: release:`, or the product's top-level `runner:` when it names none; a job you write "
-                    "names its own")
+_RETIRED_MACHINE = ("`{key}:` is retired here: under `workflows: release:` it named the release job's machine, which "
+                    "is now `ci: {{ runner: }}` on the ReleaseCommand under `ci: release:` (the product's top-level "
+                    "`runner:` when it names none), and it names the machine of no job you write - each of those "
+                    "says `runs-on:` or `runner:` itself")
 
 
 def _refuse_retired_keys(key: str, body: Mapping[object, object], where: str) -> None:
@@ -600,7 +602,8 @@ def _refuse_retired_keys(key: str, body: Mapping[object, object], where: str) ->
     if key == RELEASE_KEY and body.get(FLOW_KEY) is None:
         said += [_RETIRED_MACHINE.format(key=name) for name in _RETIRED_MACHINE_KEYS if body.get(name) is not None]
     if said:
-        raise ValueError(f"{where}: si#862 derives the release from the ReleaseCommand - " + "; ".join(said))
+        raise ValueError(f"{where}: si#862 retired these keys, the release is derived from the ReleaseCommand - "
+                         + "; ".join(said))
 
 
 def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner", emulates: tuple[str, ...],

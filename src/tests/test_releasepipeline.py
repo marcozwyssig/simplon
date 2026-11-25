@@ -314,3 +314,39 @@ def test_a_release_command_whose_plan_does_not_start_with_the_check_is_refused_a
     with pytest.raises(ValueError, match=re.escape("the release aggregate 'release all' (it produces 'app-release' "
                                                    "and derives release.yml) starts its plan with 'notes'")):
         manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+
+
+@pytest.mark.parametrize("entry, expected", [
+    ("    permissions: { id-token: write }\n", {"id-token": "write", "contents": "write", "packages": "write"}),
+    ("    note: the release\n", {"contents": "write", "packages": "write"}),
+], ids=["permissions", "note"])
+def test_a_release_entry_without_jobs_shapes_the_derived_release(entry, expected):
+    """Review of si#862 task 3: an entry that adds no job but a scope (PyPI's Trusted Publishing needs
+    `id-token: write`) is a statement about the derived release, not an empty workflow."""
+    # act
+    doc = _rendered(extra="workflows:\n  release:\n" + entry)
+
+    # assert
+    assert list(doc["jobs"]) == ["release"]
+    assert doc["jobs"]["release"]["permissions"] == expected
+
+
+def test_a_release_entry_without_jobs_and_without_a_release_command_is_refused_naming_it():
+    with pytest.raises(ValueError, match=r"`jobs:` must be a non-empty mapping.*ReleaseCommand"):
+        _workflows("product: app\n", "workflows:\n  release:\n    permissions: { id-token: write }\n")
+
+
+def test_each_command_step_of_the_model_carries_its_command_words():
+    """Review of si#862 (Task 1, item b): the converter reads the words off the model step, not off a lookup keyed
+    by the spec's identity."""
+    # arrange
+    loaded = manifest_mod.load(PRODUCT, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+
+    # act
+    model = releasepipeline.derive(loaded, yaml.safe_load(PRODUCT), None)
+
+    # assert
+    (job,) = model.job
+    assert [s.command_words for s in job.step if s.command is not None] == [
+        "release check", "release notes", "release tag"]
+    assert not hasattr(releasepipeline, "_words")
