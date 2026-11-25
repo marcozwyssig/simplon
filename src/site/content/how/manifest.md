@@ -1468,6 +1468,17 @@ named in the file with that reason. You write no `ci: { skip: }` for it. Without
 in the run nothing compares the tree, and the producer runs like any other leaf; a `by:` that names no
 leaf of `ci build` or `ci test` (a `support` command) changes nothing.
 
+**A leaf whose task needs a parameter nothing binds is refused** (si#887). A derived step runs the
+command with nothing but its `ci: { params: }`, so a catalogue task that cannot run without a value
+(`test:unit`'s `paths` and `requirements`, `build:homebrew-formula`'s `source`, an artifact's `name` a
+port would hand it) would be red in every run. When neither the command's `with:` (a `produces:` or
+`consumes:` binding counts, it is written there) nor `ci: { params: }` binds such a parameter, generating
+the workflow is refused, naming the command, the parameter and the two ways out: bind it for the derived
+run with `ci: { params: }`, or keep the leaf out with `ci: { skip: }`. Which parameters a task cannot run
+without is the catalogue's (`required` on the task's parameter in its model), not the signature's: an
+empty default refused by the body counts. A leaf that is skipped or left out is not asked; a product's
+own task requires nothing.
+
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
 catalogue order) and, inside a group, the order your YAML writes. The one extra precedence is a port: a

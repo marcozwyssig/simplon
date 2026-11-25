@@ -25,7 +25,7 @@ from simplon.manifest.load import Manifest
 from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
-from simplon.model.task import class_ref
+from simplon.model.task import class_ref, task_class
 from simplon.tasks import generated as generated_section
 from simplon.tasks import handoff, workflowgen
 
@@ -1001,9 +1001,35 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
                               runner=workflowschema.Runner(kind=kind, labels=labels))
 
 
+def _refuse_unbound_required(leaf: Leaf) -> None:
+    """si#887: a leaf whose task cannot run without a parameter (`REQUIRED`, the model's `TaskParam.required`)
+    that neither its `with:` nor its `ci: { params: }` binds is refused here, at generation: its derived step
+    would hand it nothing and be red in every run, and the first anyone would hear of it is a red runner. A
+    port's binding (`produces:`/`consumes:`) is in `with:` by now, so it counts. Only a leaf that becomes a step
+    reaches this, so one skipped or left out is not asked.
+
+    Only a catalogue coordinate is resolved, to its generated class in the kernel: the model is where `required`
+    is said, and a product task has no `required` to say. Resolving a product task would import the product's
+    own body module to learn nothing, and a derivation that imported it would need the product's package on the
+    path (measured: simplon's own `orchestrator.cli:build_wheel` is not importable from the kernel's `src/`)."""
+    task = leaf.spec.task
+    required = task_class(class_ref(task), task, where=leaf.words).REQUIRED if ":" in task else ()
+    bound = {*leaf.spec.with_, *leaf.spec.ci.params}
+    missing = [param for param in required if param not in bound]
+    if missing:
+        names = ", ".join(f"`{param}`" for param in missing)
+        raise ValueError(
+            f"derived CI: '{leaf.words}' runs `{leaf.spec.task}`, which cannot run without {names}, and neither the "
+            f"command's `with:` nor `ci: {{ params: }}` binds it - its step would be red in every run. Bind it for "
+            f"the derived run with `ci: {{ params: {{ {missing[0]}: ... }} }}`, or leave the leaf out of the CI with "
+            f"`ci: {{ skip: <why> }}`")
+
+
 def _params_of(leaf: Leaf) -> tuple[workflowschema.StepParam, ...]:
     """A leaf's `ci: params:` as the model's step holds them (si#863): a literal as its text, a `{ env: NAME }` as
-    the variable's name, in the order written."""
+    the variable's name, in the order written. Every derived step of a leaf is built through here, the main job's
+    and a cell's alike, so the leaf's required parameters are asked for here (si#887)."""
+    _refuse_unbound_required(leaf)
     return tuple(workflowschema.StepParam(param_name=key, param_env=value.name)
                  if isinstance(value, EnvValue) else
                  workflowschema.StepParam(param_name=key, param_value=value)

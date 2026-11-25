@@ -43,6 +43,11 @@ template Tasks {
       for p : t.output {
         |${@port(p, "output")}
       }
+      // si#887: the parameters the body cannot run without (`TaskParam.required`), read by the derived CI. A task
+      // with none inherits `Task.REQUIRED`, the empty tuple.
+      if t.params[.required] {
+        |    REQUIRED = (<<for p : t.params[.required]>>"${p.key}", <<end>>)
+      }
       |
       protected "${t.name}.run" {
       |    run = staticmethod(_body)

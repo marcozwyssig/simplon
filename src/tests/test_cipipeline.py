@@ -517,6 +517,89 @@ def test_a_malformed_generated_section_is_not_read_without_the_staleness_gate(se
     assert _runs(doc) == ["build x", "build other", "test one"]
 
 
+# --- a required parameter nothing binds (si#887) -----------------------------------------------------------
+
+#: `build:model-binary` cannot run without `image` and `bootstrap` (`TaskParam.required` in the catalogue).
+_BINARY = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              binary: { task: "build:model-binary"%s }
+        """
+
+
+def test_a_leaf_whose_required_parameter_nothing_binds_is_refused():
+    """si#887: the body refuses an empty `bootstrap`, so a derived step without it is red on every run. The
+    refusal names the command, the parameter and both ways out."""
+    with pytest.raises(ValueError) as refused:
+        _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1" }')
+    message = str(refused.value)
+    assert "'build binary'" in message and "`build:model-binary`" in message
+    assert "`bootstrap`" in message and "`image`" not in message
+    assert "`ci: { params: { bootstrap: ... } }`" in message and "`ci: { skip: <why> }`" in message
+
+
+def test_every_unbound_required_parameter_is_named():
+    with pytest.raises(ValueError, match=r"`image`, `bootstrap`"):
+        _rendered(_BINARY % "")
+
+
+def test_a_required_parameter_bound_by_with_renders():
+    doc, _ = _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1", bootstrap: "false" }')
+    assert _runs(doc) == ["build one", "build binary"]
+
+
+def test_a_required_parameter_bound_by_ci_params_renders():
+    doc, _ = _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1" }, ci: { params: { bootstrap: "false" } }')
+    assert _runs(doc) == ["build one", "build binary --bootstrap false"]
+
+
+def test_a_skipped_leaf_is_not_asked_for_its_required_parameters():
+    """si#887: `ci: { skip: }` is one of the two ways out, so it must be one."""
+    doc, _ = _rendered(_BINARY % ', ci: { skip: "built by hand" }')
+    assert _runs(doc) == ["build one"]
+
+
+def test_a_leaf_the_derivation_leaves_out_is_not_asked_for_its_required_parameters():
+    """si#887 over si#886: a `generated:` producer the derivation leaves out runs nowhere, so nothing is asked of it."""
+    doc, _ = _rendered(_BINARY % "" + """
+          test:
+            commands:
+              check: { task: "test:generated", unattended: true }
+        """, _generated_by("build binary"))
+    assert _runs(doc) == ["build one", "test check"]
+
+
+def test_test_unit_without_with_is_refused():
+    """si#887, from si#859's review: `paths` and `requirements` have empty defaults in the signature, so "no
+    default" would miss them; the body refuses both empty, and the model says so."""
+    with pytest.raises(ValueError, match=r"'test unit'.*`test:unit`.*`paths`, `requirements`"):
+        _rendered("""
+            ci:
+              test:
+                commands:
+                  unit: { task: "test:unit" }
+            """)
+
+
+def test_a_gate_member_whose_required_parameter_nothing_binds_is_refused():
+    """si#887: a gate's members run in its own file, and the same step would refuse there."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              unit: { task: "test:unit" }
+              all: { depends_on: [unit], help: "All.", ci: { gate: { label: lab } } }
+        """)
+    (run,) = cipipeline.gates(loaded)
+    with pytest.raises(ValueError, match=r"'test unit'.*`paths`, `requirements`"):
+        cipipeline.derive_gate(loaded, {}, run)
+
+
 def test_the_job_is_keyed_ci_and_runs_on_the_product_runner():
     doc, _ = _rendered(_THREE, _SELF_HOSTED)
     assert list(doc["jobs"]) == ["ci"]
