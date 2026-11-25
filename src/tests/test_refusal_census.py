@@ -746,6 +746,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#861: an aggregate's `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it. Any other key
     # (a leaf's variant key, `skip:`) or a `cadence:` with no `gate:` shapes nothing on an aggregate: diagnoses.
     ("load", "_ci_skip", "a derived CI runs leaves, so declare any other key"): DIAGNOSIS,
+    ("load", "_ci_skip", "a release aggregate's `ci:` holds"): DIAGNOSIS,
     ("load", "_ci_skip", "without `gate:`, and an aggregate's `ci:` holds"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
     # si#860: the variant keys beside `skip:`. A value of the wrong shape has no reading (a cadence that is

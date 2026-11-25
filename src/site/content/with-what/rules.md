@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 351 | nothing - the declaration had no working meaning |
+| diagnosis | 352 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **404** | |
+| **all load-time refusals** | **405** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why

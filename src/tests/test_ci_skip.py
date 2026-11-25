@@ -329,3 +329,18 @@ def test_a_param_the_task_does_not_take_is_refused_at_load_naming_it_and_the_par
     with pytest.raises(ValueError, match=r"`test lab` binds key\(s\) platfrom that are not parameters of "
                                          r"simplon\.test_impls:target_and_mode \(it takes: mode, target\)"):
         manifest.load(text, catalogue=catalogue.load(), validate_with=True)
+
+
+# si#862: `runner:` is a release aggregate's key; the release aggregate's own tests are in test_release_bundle.
+
+def test_runner_on_a_non_release_aggregate_names_the_release_aggregate():
+    with pytest.raises(ValueError, match="belong on the release aggregate under `ci release`"):
+        manifest.load(textwrap.dedent("""
+            tasks:
+              ship: { impl: "simplon.test_impls:nullary", help: "Ship." }
+            ci:
+              test:
+                commands:
+                  lab: { task: ship }
+                  all: { depends_on: [lab], help: "All.", ci: { runner: github-ubuntu } }
+            """), catalogue=catalogue.load())

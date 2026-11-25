@@ -324,3 +324,43 @@ def test_a_nested_aggregate_whose_first_leaf_is_the_check_is_accepted():
 
     # act / assert
     _load(text)
+
+
+# si#862: a release aggregate's `ci:` holds the machine, emulation and time limit of the release job.
+
+def _release_ci(written):
+    return _load(_all("notes, publish, tag", f"produces: {{ release: app-release }}, ci: {written}"))
+
+
+def test_a_release_aggregate_reads_emulates_timeout_and_runner():
+    ci = _release_ci("{ emulates: [linux/arm64], timeout_minutes: 90, runner: github-ubuntu }"
+                     ).spec_for("release", "all").ci
+    assert (ci.emulates, ci.timeout_minutes, ci.runner.kind) == (("linux/arm64",), 90, "github-ubuntu")
+    assert ci.labels == ci.runner.labels
+
+
+def test_a_release_aggregate_runner_names_kind_and_labels():
+    ci = _release_ci("{ runner: { kind: self-hosted-container, labels: ghr-8 } }").spec_for("release", "all").ci
+    assert (ci.runner.kind, ci.labels) == ("self-hosted-container", ("ghr-8",))
+
+
+def test_a_release_aggregate_without_ci_holds_nothing():
+    ci = _load(_all("notes, publish, tag", "produces: { release: app-release }")).spec_for("release", "all").ci
+    assert (ci.emulates, ci.timeout_minutes, ci.runner, ci.labels) == ((), None, None, ())
+
+
+@pytest.mark.parametrize("written", ['{ skip: "x" }', "{ gate: { label: x } }", "{}", "nope", "{ cadence: nightly }"])
+def test_a_release_aggregate_ci_names_the_three_keys_it_holds(written):
+    with pytest.raises(ValueError, match="release aggregate 'release all'.*`emulates:`, `timeout_minutes:` "
+                                         "and `runner:`"):
+        _release_ci(written)
+
+
+@pytest.mark.parametrize("written, message", [
+    ("{ emulates: nope }", "`ci: emulates: \"nope\"`"),
+    ("{ timeout_minutes: 0 }", "`ci: timeout_minutes: 0`.*positive whole number"),
+    ("{ runner: nope }", "'nope' is not a runner kind"),
+])
+def test_a_bad_release_ci_value_gets_the_existing_readers_message(written, message):
+    with pytest.raises(ValueError, match=message):
+        _release_ci(written)

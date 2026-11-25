@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from simplon.model.artifactschema import Port
 
@@ -151,6 +151,19 @@ class CiGate:
 
 
 @dataclass(frozen=True)
+class CiRelease:
+    """si#862: how a derived release runs its one job, from a release aggregate's `ci: { emulates:,
+    timeout_minutes:, runner: }`. `emulates` is buildx's spelling and `timeout_minutes` None when unwritten;
+    `runner` and `labels` are what `runners.resolve` returns, None and () when no `runner:` is written (the
+    default machine is then the derivation's, not this class's)."""
+    emulates: tuple[str, ...] = ()
+    timeout_minutes: int | None = None
+    #: A `manifest.runners.Runner`, typed Any because the model layer may not import the manifest layer (si#390).
+    runner: Any = None
+    labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TaskCommand(Command):
     """A command that runs one task: `simplon.pipeline.TaskCommand`.
 
@@ -278,3 +291,6 @@ class ReleaseCommand(AggregateCommand):
 
     Until 4d the bundle WAS `produces: {release: (<bundle>,)}`; it is `release` now, and nothing else."""
     release: str = ""
+    #: si#862: the release job's machine, emulation and time limit, from `ci: { emulates:, timeout_minutes:,
+    #: runner: }`; every field empty when unwritten.
+    ci: CiRelease = field(default_factory=CiRelease)
