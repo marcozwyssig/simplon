@@ -23,7 +23,7 @@ from simplon.manifest import artifactsection, merge, runners, sources
 from simplon.manifest.load import Manifest
 from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
-from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
+from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
 from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
@@ -939,8 +939,8 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
              if name in kernel]
     steps += [workflowschema.Step(kernel_step=EMULATION)] if _emulates((*runs, *last)) and kind.can_emulate else []
     # si#860 decision 4: in a job other leaves share, the limit is the leaf's own step's.
-    steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes)
-              for leaf in (*runs, *last)]
+    steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes,
+                                  params=_params_of(leaf)) for leaf in (*runs, *last)]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
         _reports(data)  # refused here, at the decision, rather than when the step is written
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
@@ -950,6 +950,15 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
                               runner=workflowschema.Runner(kind=kind, labels=labels))
 
 
+def _params_of(leaf: Leaf) -> tuple[workflowschema.StepParam, ...]:
+    """A leaf's `ci: params:` as the model's step holds them (si#863): a literal as its text, a `{ env: NAME }` as
+    the variable's name, in the order written."""
+    return tuple(workflowschema.StepParam(param_name=key, param_env=value.name)
+                 if isinstance(value, EnvValue) else
+                 workflowschema.StepParam(param_name=key, param_value=value)
+                 for key, value in leaf.spec.ci.params.items())
+
+
 def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
     """Every platform the leaves name in `ci: emulates:`, once each, in first-written order (si#860): one
     registration serves the whole job, as binfmt is the machine's and not a step's."""
@@ -957,10 +966,12 @@ def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
 
 
 #: si#860: what a job says when a leaf of it names `ci: emulates:` and the job's machine cannot register any
-#: (`can_emulate = false`, spec 5.4). Routing such a leaf to a machine that can is #722's, not this file's.
-EMULATION_GAP = ("si#860: {leaves} name `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
+#: (`can_emulate = false`, spec 5.4: `self-hosted-container`, an LXC runner, #722). The way out is the machine's,
+#: registered once by hand (si#358), so the note names it rather than a step that cannot work there.
+EMULATION_GAP = ("si#860: {leaves} {verb} `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
                  "cannot register emulation, so no step does it here and a leaf running a foreign binary "
-                 "fails with `Exec format error`. Running such a leaf on a machine that can is #722.")
+                 "fails with `Exec format error` unless the emulator is registered once on the machine, by "
+                 "hand and as root, with `support:ci-arm64` (si#358, #722).")
 
 EMULATION_NOTE = ("si#860: the leaves' `ci: emulates:`, registered once for the job before any leaf runs; every "
                   "later leaf waits for its success. The image is the kernel's binfmt pin, as the release uses.")
@@ -996,7 +1007,7 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     steps += [workflowschema.Step(kernel_step=name) for name in (SOURCES, INSTALL) if name in kernel]
     # `emulates:` beside `platforms:` is refused at load, so this is a python cell on github-ubuntu, which can.
     steps += [workflowschema.Step(kernel_step=EMULATION)] if leaf.spec.ci.emulates else []
-    steps.append(workflowschema.Step(command=leaf.spec))
+    steps.append(workflowschema.Step(command=leaf.spec, params=_params_of(leaf)))
     if platforms:
         labels = tuple(workflowschema.PLATFORMS[cell].label for cell in platforms)
     return workflowschema.Job(
@@ -1273,7 +1284,12 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             if step.timeout_minutes is not None:
                 modifiers["timeout-minutes"] = step.timeout_minutes
             first = False
-            steps.append(workflowgen.Step(command=line, modifiers=modifiers))
+            # si#863: the model step's params go through a declared step's `params:` path, so `_parameters`
+            # checks and renders them (positional or option, quoted, `{ env: }` against what the job sets) as it
+            # would for a step the product wrote.
+            params = {param.param_name: EnvValue(param.param_env) if param.param_env
+                      else param.param_value for param in step.params}
+            steps.append(workflowgen.Step(command=line, modifiers=modifiers, params=params))
     labels = job.runner.labels
     gated: dict[str, object] = {"if": job.condition} if job.condition else {}
     if job.needs:
@@ -1317,8 +1333,10 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                extras=workflowgen._with_runner_env(runner, cell, where))
     gap = ""
     if emulates and not job.runner.kind.can_emulate:
-        named = ", ".join(f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates)
-        gap = textwrap.fill(EMULATION_GAP.format(leaves=named, platforms=", ".join(emulates), kind=kind), width=95)
+        emulating = [f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates]
+        gap = textwrap.fill(EMULATION_GAP.format(leaves=", ".join(emulating),
+                                                 verb="names" if len(emulating) == 1 else "name",
+                                                 platforms=", ".join(emulates), kind=kind), width=95)
     if run is not None:
         said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)
     else:
@@ -1399,7 +1417,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
 
 def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[GateRun] = ()) -> None:
     """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives no
-    such file, so `timeout_minutes:` or `emulates:` on a member would shape nothing -
+    such file, so `timeout_minutes:`, `emulates:` or `params:` on a member would shape nothing -
     `_refuse_variants_nobody_derives`'s DIAGNOSIS, in the words of the file the member runs in. An `after_all`
     member also ends the derived runs, which read its keys; and a member of a `derived` gate as well runs in
     that gate's file, which reads them (final review).
@@ -1409,7 +1427,7 @@ def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[
     for run in owned:
         stem = _key_of(run.path)
         for member in run.members:
-            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), None)]
+            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), {}, None)]
             if written and not member.spec.after_all and member.words not in read:
                 raise ValueError(
                     f"'{member.words}' declares `ci: {written[0]}:` and is a member of the gate of `{run.words}`, so "
@@ -1418,21 +1436,21 @@ def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[
                     f"`{workflowgen.SECTION}: {stem}:` so the kernel derives {stem}.yml and reads it")
 
 
-#: si#860: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them; `cadence`
-#: is not one, since it says which derived workflow the leaf is in.
-_VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
+#: si#860, si#863: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them;
+#: `cadence` is not one, since it says which derived workflow the leaf is in.
+_VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates", "params")
 
 
 def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gated: Set[str] = frozenset()) -> None:
     """Refuse a push leaf's variant key when ci.yml is the product's own (si#860 final review).
 
     Such a leaf runs in the product's ci.yml, which the kernel does not write, so `python:`, `platforms:`,
-    `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
-    no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
-    `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
-    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A gate
-    member (`gated`, si#861) is no push leaf either: its gate's file reads it, or `_refuse_variants_in_owned_gates`
-    rules on it where that file is the product's own.
+    `timeout_minutes:`, `emulates:` or `params:` (si#863) on it would shape nothing: a DIAGNOSIS, for the reason
+    `ci:` on a command no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence
+    file, and an `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one
+    is derived. Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any
+    file. A gate member (`gated`, si#861) is no push leaf either: its gate's file reads it, or
+    `_refuse_variants_in_owned_gates` rules on it where that file is the product's own.
     """
     for group in _ci_groups(manifest):
         for name, spec in manifest.commands[group].items():
@@ -1440,7 +1458,7 @@ def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gat
                 continue
             if (spec.after_all and cadence_files) or _words(group, name) in gated:
                 continue
-            written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), None)]
+            written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), {}, None)]
             if written:
                 raise ValueError(
                     f"'{_words(group, name)}' declares `ci: {written[0]}:` and has no `cadence:`, so it runs in "

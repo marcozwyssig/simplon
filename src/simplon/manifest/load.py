@@ -36,9 +36,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from simplon.manifest import artifactsection, launcherenv, merge, ports, runners, sources, yamlkeys
+# `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
+from simplon.model import command as command_model
 from simplon.model import task, workflowschema
-from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
-                                    TaskCommand)
+from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, EnvValue, ParamPresentation,
+                                    ReleaseCommand, TaskCommand)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.manifest import treeform
@@ -1098,7 +1100,7 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
         raise ValueError(
             f"'{where}' declares `ci: gate:`, and `ci: gate:` sits on an aggregate: the gate runs its members in "
             f"a workflow of their own, so a single leaf is gated by wrapping it, `depends_on: [{where.split()[-1]}]`")
-    known = ("skip", "cadence", "platforms", "python", "timeout_minutes", "emulates")
+    known = ("skip", "cadence", "platforms", "python", "timeout_minutes", "emulates", "params")
     unknown = [str(key) for key in raw if key not in known]
     if unknown:
         raise ValueError(
@@ -1154,7 +1156,8 @@ def _ci_variant(spec: "_CommandSpecModel", where: str) -> CiVariant:
             f"platform's own machine, and the macOS and Windows cells have no binfmt to register an emulator "
             f"with - emulate on a leaf without `platforms:`, or name the native cell (si#860)")
     return CiVariant(cadence=_ci_cadence(raw.get("cadence"), where), platforms=platforms, python=python,
-                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates)
+                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates,
+                     params=_ci_params(raw.get("params"), where))
 
 
 def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
@@ -1333,6 +1336,22 @@ def _ci_emulates(value: object, where: str) -> tuple[str, ...]:
             f"'{where}' declares `ci: emulates: {json.dumps(value, default=str)}`. `ci: emulates:` is a "
             f"non-empty list of platforms as buildx spells them, e.g. `[linux/arm64]`")
     return tuple(value)
+
+
+def _ci_params(value: object, where: str) -> dict[str, str | EnvValue]:
+    """si#863: the parameters a derived CI step hands this leaf, {} when unwritten. A pin a person typing the
+    command never gets: si#368's `platform: linux/amd64` on `build image`, which a `with:` would have pinned
+    for the release too. Each value takes a declared step's `params:` form, read by its own reader
+    (`command.param_value`): a scalar, or `{ env: NAME }`. The names are `_validate_param_bindings`'s, and
+    the rendering `workflowgen._parameters`', which also refuses, per job, a variable nothing there sets."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(
+            f"'{where}' declares `ci: params: {json.dumps(value, default=str)}`. `ci: params:` is a non-empty "
+            f"mapping of parameter names to values, e.g. `{{ platform: linux/amd64 }}`")
+    return {str(key): command_model.param_value(item, where=f"'{where}', `ci: params: {key}`")
+            for key, item in value.items()}
 
 
 def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,
@@ -1519,14 +1538,15 @@ def _validate_param_bindings(commands: dict[str, dict[str, Command]]) -> None:
 
     for group, members in commands.items():
         for name, spec in members.items():
-            if not isinstance(spec, TaskCommand) or not (spec.with_ or spec.params):
+            # si#863: a leaf's `ci: params:` names parameters too, and a typo there would fail a derived step.
+            if not isinstance(spec, TaskCommand) or not (spec.with_ or spec.params or spec.ci.params):
                 continue
             body = task.body_of(spec, where=f"{group} {name}")
             # BINDABLE parameters only, the same set the generator will substitute into. Using every
             # signature name accepted `with: {c: ...}` - binding the CLI context, the likeliest real
             # typo - and the generator then discarded it silently.
             params = {p.name for p in signatures.bindable(body)}
-            unknown = sorted((set(spec.with_) | set(spec.params)) - params)
+            unknown = sorted((set(spec.with_) | set(spec.params) | set(spec.ci.params)) - params)
             if unknown:
                 raise ValueError(
                     f"`{group} {name}` binds key(s) {', '.join(unknown)} that are not parameters "

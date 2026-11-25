@@ -1331,18 +1331,23 @@ def test_emulation_in_the_python_cell_job(tmp_path, monkeypatch):
 
 
 def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
-    """No kind on this branch has `can_emulate = false` (#722's container kind is not here), so the table is
-    patched: such a machine registers nothing, and the file names the gap rather than a step that cannot work."""
-    assert all(kind.can_emulate for kind in workflowschema.RUNNER_KINDS.values())  # why the patch
-    monkeypatch.setitem(workflowschema.RUNNER_KINDS, "github-ubuntu",
-                        dataclasses.replace(workflowschema.RUNNER_KINDS["github-ubuntu"], can_emulate=False))
+    """#722, si#863: `self-hosted-container` (an LXC runner, `can_emulate = false`) registers nothing, and the
+    file names the gap rather than a step that cannot work there."""
+    container = _SELF_HOSTED.replace("self-hosted-debian", "self-hosted-container")
 
-    files = _generated(tmp_path, monkeypatch, _EMULATES)
+    files = _generated(tmp_path, monkeypatch, _EMULATES + _top(container, _TOOLCHAINS))
 
     push, text = files[_CI_PATH]
+    assert push["jobs"]["ci"]["runs-on"] == "ghr-8"
     assert _emulations(push, "ci") == []
+    assert not any(str(step.get("uses", "")).startswith("docker/setup-qemu-action@")
+                   for job in push["jobs"].values() for step in job["steps"])
     said = _comments(text)
+    assert "self-hosted-container" in said and "cannot register emulation" in said, said
+    assert "`support:ci-arm64`" in said, said
     assert "#722" in said and "linux/arm64, linux/arm/v7" in said
+    # two leaves, so the plural verb; simplon's own ci.yml holds the singular (test_own_workflows)
+    assert "`test arm`, `test more` name `ci: emulates:`" in said, said
 
 
 # --- the final review of si#860: one switch rule, inert keys, the empty push run ---------------------------
@@ -1518,3 +1523,96 @@ def test_a_cell_leaf_producing_a_fetched_artifact_is_not_refused():
     derivation = cipipeline.derive(loaded, _DATA)
 
     assert [job.key for job in derivation.model.job] == ["ci", "build-b-produce-platforms"]
+
+
+# --- si#863: `ci: params:`, a parameter bound where the kernel derives the leaf -----------------------------
+
+_PICK = _HEAD.replace("tasks:\n", 'tasks:\n  pick: { impl: "simplon.test_impls:target_and_mode", help: "Pick." }\n')
+
+
+def _rendered_with_pick(body: str) -> tuple[dict, manifest_mod.Manifest]:
+    text = _PICK + textwrap.dedent(body)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml", validate_with=True)
+    data = yaml.safe_load(text)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
+    out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
+                             artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), loaded
+
+
+def test_ci_params_render_as_a_declared_step_s_params_in_every_job_the_leaf_runs_in():
+    """Task 2b (a): the derived step hands the command what a declared step's `params:` would, by the same
+    function, so `target` (no default in the body) is positional and `mode` an option - in the main job and in
+    the python cell alike. The command's interactive form is untouched: `ci:` is read by no CLI."""
+    doc, loaded = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              pick: { task: pick, unattended: true, ci: { params: { mode: slow, target: "a b" }, python: ["3.14"] } }
+        """)
+
+    declared = workflowgen._parameters(loaded, "test", "pick", {"mode": "slow", "target": "a b"}, where="declared")
+    assert declared == " --mode slow -- 'a b'"
+    assert _runs(doc) == ["test one", "test pick" + declared]
+    assert _job_runs(doc, "test-pick-python") == ["test pick" + declared]
+
+
+def test_a_leaf_without_ci_params_renders_bare():
+    doc, _ = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true }
+        """)
+    assert _runs(doc) == ["test pick"]
+
+
+def test_ci_params_on_a_push_leaf_under_a_declared_ci_is_refused(tmp_path, monkeypatch):
+    """`_refuse_variants_nobody_derives` over the new key: the product's own ci.yml reads no `ci:`."""
+    _product(tmp_path, monkeypatch, """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true, ci: { params: { anything: x } } }
+        """ + _DECLARED_CI)
+
+    with pytest.raises(ValueError, match=r"'build one' declares `ci: params:` and has no `cadence:`"):
+        workflows_task.generate()
+
+
+def test_an_env_ci_param_naming_a_variable_github_sets_renders_as_the_shell_expands_it():
+    """Task 2b review: `{ env: NAME }` takes a declared step's form and its rendering (si#488)."""
+    doc, _ = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true, ci: { params: { target: { env: GITHUB_SHA } } } }
+        """)
+    assert _runs(doc) == ['test pick -- "$GITHUB_SHA"']
+
+
+def test_an_env_ci_param_naming_a_variable_nothing_sets_is_refused_at_generation():
+    """`_parameters`' own diagnosis, asked per job: nothing in the derived job sets `NOPE`, so it would expand to
+    nothing and the command would run as if no value were given."""
+    with pytest.raises(ValueError, match=r"`params: target` reads \$NOPE, and NOPE is set by no `env:`"):
+        _rendered_with_pick("""
+            ci:
+              test:
+                commands:
+                  pick: { task: pick, unattended: true, ci: { params: { target: { env: NOPE } } } }
+            """)
+
+
+def test_the_model_step_carries_the_params():
+    """The firn model's `Step.params` (si#863) is what the renderer reads, not the spec behind it."""
+    loaded = manifest_mod.load(_PICK + textwrap.dedent("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true, ci: { params: { mode: slow, target: { env: GITHUB_SHA } } } }
+        """), catalogue=catalogue.load(), manifest_path="demo.yaml")
+    (job,) = cipipeline.derive(loaded, {}).model.job
+    (step,) = [step for step in job.step if step.command is not None]
+    assert step.params == (workflowschema.StepParam(param_name="mode", param_value="slow"),
+                           workflowschema.StepParam(param_name="target", param_env="GITHUB_SHA"))

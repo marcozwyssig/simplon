@@ -45,8 +45,9 @@ refusal to overwrite a file at the derived ci.yml's path that this kernel did no
 a file on disk, not by the manifest, so it is not a manifest decision with no tool consulted; the walk does
 not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing. Beside it, for
 the same reason, `automerge.read_handwritten` (si#874): a hand-written trigger workflow's `name:` and `on:`, read
-from its file under the product root (no file, a file outside the root, no workflow, no `name:`). The task body
-hands it in as a reader, so the walk from `cipipeline.workflows` does not reach it;
+from its file under the product root (no file, a file outside the root, no workflow, no `name:`).
+`workflows.assemble` (src/simplon/tasks/workflows.py) hands it in as a reader, so the walk from
+`cipipeline.workflows` does not reach it;
 `test_refusals_decided_on_disk_are_outside_the_population` holds that.
 
 WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest
@@ -340,8 +341,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_with_runner_env", "is a mapping of name -> value"): DIAGNOSIS,
     # si#488: a `params:` value is a scalar or `{ env: NAME }`. A list or another mapping used to reach the
     # command as its Python text, so neither refusal costs a working product anything
-    ("workflowgen", "_param_value", "is not an environment variable name"): DIAGNOSIS,
-    ("workflowgen", "_param_value", "must be a scalar or"): DIAGNOSIS,
+    ("command", "param_value", "is not an environment variable name"): DIAGNOSIS,
+    ("command", "param_value", "must be a scalar or"): DIAGNOSIS,
     # THE TWO THAT COST SOMETHING, and both cost the same thing: a manifest that said a fact twice.
     # Either would have produced a WORKING file - one of the two values wins and the workflow runs -
     # which is exactly the test CLAUDE.md sets, so they are expression rules and they owe the three
@@ -760,6 +761,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_python", "`ci: python:` is a non-empty list of distinct versions"): DIAGNOSIS,
     ("load", "_ci_timeout", "`ci: timeout_minutes:` is a positive whole number of minutes"): DIAGNOSIS,
     ("load", "_ci_emulates", "`ci: emulates:` is a non-empty list of platforms as buildx spells them"): DIAGNOSIS,
+    # si#863: `ci: params:` that is no mapping, or an empty one, hands a derived step nothing it could name. Its
+    # values are read by `command.param_value`, counted above with a declared step's `params:`.
+    ("load", "_ci_params", "`ci: params:` is a non-empty mapping of parameter names to values"): DIAGNOSIS,
     # THE TWO EXPRESSION RULES, both the executor's call posted with Marco's si#860 decisions (he may
     # overrule): each refuses a leaf that could have been rendered, so each costs flexibility.
     #   - `platforms:` with `python:`: a cell per platform AND a cell per version would be a cross product.
@@ -1270,6 +1274,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # a list of platforms reaches setup-qemu-action and fails there or registers nothing.
     ("workflowgen", "_emulates", "is read only beside"): DIAGNOSIS,
     ("workflowgen", "_emulates", "is a non-empty list of platforms"): DIAGNOSIS,
+    # #722, si#863: on a runner kind with `can_emulate = false` (an LXC runner) the registration is refused with
+    # `permission denied`, so the release job would fail in its first step; the message names both ways out.
+    ("workflowgen", "_refuse_emulates_where_it_cannot_register", "asks the release job to register emulation"):
+        DIAGNOSIS,
     # si#720, the same two reasons: beside no `release:` the key reaches GitHub as a workflow key, which it
     # refuses; a value that is not a positive whole number is refused by GitHub, or as 0 ends the job.
     ("workflowgen", "_release_timeout", "is read only beside"): DIAGNOSIS,

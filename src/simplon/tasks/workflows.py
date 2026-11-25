@@ -20,9 +20,24 @@ invariants a product should not have to remember.
 """
 from __future__ import annotations
 
+import functools
+from collections.abc import Mapping
+from pathlib import Path
+
 from simplon.manifest import artifactsection, context
 from simplon.kernel import log
 from simplon.tasks import automerge, cipipeline, workflowgen
+
+
+def assemble(manifest, data: Mapping, *, product: str, root: Path) -> tuple[workflowgen.Workflow, ...]:
+    """The workflows the verb writes: declared entries plus the derived ci.yml and cadence files, with a
+    hand-written trigger workflow read from its file under `root`. One function, so the verb and the own-workflow
+    test gate (si#863) cannot assemble different sets.
+
+    The reader is handed on as a `partial`, not called inside a lambda: its refusals are decided by a file on
+    disk, and the refusal census follows calls, so a call here would count them (it did, five of them)."""
+    return cipipeline.workflows(manifest, data, product=product,
+                                read=functools.partial(automerge.read_handwritten, root=root))
 
 
 def generate(check: bool = False) -> int:
@@ -61,9 +76,7 @@ def generate(check: bool = False) -> int:
     manifest = ctx.manifest()
     # si#858: the declared workflows, and ci.yml derived from the CI leaves where no entry declares it.
     # si#874: a hand-written trigger workflow of the auto-merge workflow is read from its file under the root.
-    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name,
-                                     read=lambda workflow, role: automerge.read_handwritten(workflow, role,
-                                                                                             root=ctx.root))
+    workflows = assemble(manifest, ctx.manifest_data(), product=ctx.name, root=ctx.root)
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,

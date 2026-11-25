@@ -165,6 +165,29 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
     range = firn.core.IntegerLiteral
     subjectCardinality = 0..1
   }
+  // What the step hands its command, from a leaf's `ci: { params: }` (si#863), in the order written.
+  property params typeOf firn.core.Composition {
+    range = simplon.workflow.StepParam
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// One parameter a derived step hands its command (si#863): `param_value` a scalar's text, or `param_env` the name
+// of a variable the shell expands, as a declared step's `params: { env: NAME }` (si#488). Exactly one of the two.
+StepParam typeOf firn.core.Class extends firn.core.NamedResource {
+  property param_name typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property param_value typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property param_env typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
 }
 
 // A gate on an aggregate (si#861): the changed paths (the `*`/`**` subset of GitHub's filter syntax), the PR label and the one ERE the kernel

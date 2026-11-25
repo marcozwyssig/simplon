@@ -12,6 +12,7 @@ warning for one release window. 0.34.0 closed it (si#485): reading another kind'
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
@@ -20,6 +21,45 @@ from simplon.model.artifactschema import Port
 
 if TYPE_CHECKING:
     from simplon.model.task import Task
+
+
+@dataclass(frozen=True)
+class EnvValue:
+    """A `params:` value that NAMES an environment variable, `{ env: RELEASE_VERSION }` (si#488).
+
+    Rendered as `"$RELEASE_VERSION"`: GitHub interpolates nothing into the script, the shell expands the
+    variable, and the double quotes keep whatever it holds one argument. It is how a dispatch input
+    reaches a command - through a job's `env:`, never as `${{ inputs.* }}` inside a `run:` line, which is
+    the script injection `_rollout` refuses to write. A plain `$NAME` value would not do it: it is
+    shell-quoted like any literal and reaches the command as the five characters `$NAME`."""
+
+    name: str
+
+
+#: What `{ env: NAME }` may name: a shell variable name.
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def param_value(value: object, *, where: str) -> "str | EnvValue":
+    """One `params:` value: a scalar as its text, or `{ env: NAME }` as an `EnvValue`. A declared workflow
+    step's `params:` (workflowgen) and a leaf's `ci: params:` (si#863, the loader) both read with it, so the
+    form cannot differ between the two; it sits in the model because both layers may import the model.
+
+    Anything else is REFUSED, and that is a defect si#488 found rather than a rule it added: a list or a
+    mapping used to pass through `str()`, so `{ env: X }` written before this form existed rendered as the
+    text of a Python dict - a command handed `{'env': 'X'}` as its tag, with the manifest looking right."""
+    if isinstance(value, Mapping):
+        if set(value) == {"env"}:
+            named = value["env"]
+            if not isinstance(named, str) or not ENV_NAME.fullmatch(named):
+                raise ValueError(f"{where}: `env: {named!r}` is not an environment variable name - letters, "
+                                 f"digits and `_`, not starting with a digit")
+            return EnvValue(named)
+    elif isinstance(value, (str, int, float)):          # bool is an int; it renders as YAML read it
+        return str(value)
+    raise ValueError(f"{where}: the value must be a scalar or `{{ env: NAME }}`, not {value!r} - a "
+                     f"{type(value).__name__} would reach the command as its Python text")
+
 
 class ParamPresentation(NamedTuple):
     """How a parameter is PRESENTED, never what it is (netctl#1437).
@@ -85,12 +125,15 @@ class CiVariant:
 
     `cadence` is "", `nightly`, `manual` or a five-field cron string; `platforms` names cells of
     `workflowschema.PLATFORMS` and `python` interpreter versions, each in the order written; `emulates` is
-    buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit."""
+    buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit.
+    `params` (si#863) maps a parameter name to what the derived step hands the command, a scalar's text or an
+    `EnvValue`, as a declared step's `params:` holds them; empty when unwritten."""
     cadence: str = ""
     platforms: tuple[str, ...] = ()
     python: tuple[str, ...] = ()
     timeout_minutes: int | None = None
     emulates: tuple[str, ...] = ()
+    params: "Mapping[str, str | EnvValue]" = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

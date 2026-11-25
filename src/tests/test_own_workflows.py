@@ -1,8 +1,8 @@
 """simplon's OWN workflows, held against simplon's own manifest (si#40).
 
 WHY THIS FILE EXISTS SEPARATELY from test_workflowgen.py. That module proves the generator works on a
-fixture. This one proves it is USED - that the two files in `.github/workflows/` are the ones
-`simplon.yaml` describes, and that neither of them has quietly stopped being either generated or
+fixture. This one proves it is USED - that the files in `.github/workflows/` are the ones
+`simplon.yaml` describes, and that none of them has quietly stopped being either generated or
 declared. It is the drift gate itself, run by the product's own unit suite, exactly as
 `tasks:generate --check` is meant to be.
 
@@ -24,13 +24,12 @@ every one of them, which is the "gegengeprüft, nicht behauptet" half of si#40's
 generated file does what the hand-written file did, measured by assertions written before the generator
 existed and by somebody who was not trying to make it pass.
 """
-import copy
 
 import yaml
 
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import artifactsection
-from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import cipipeline, workflowgen, workflows
 from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
@@ -40,12 +39,32 @@ MANIFEST = ROOT / "simplon.yaml"
 #: The product token the launcher carries, and therefore the one the generated steps must use.
 PRODUCT = "simplon"
 
+#: The workflow files this repository has since si#863: ci.yml derived from the command tree, the hand-off canary
+#: and the release declared under `workflows:`.
+WORKFLOW_PATHS = (".github/workflows/ci.yml", ".github/workflows/handoff-canary.yml", ".github/workflows/release.yml")
+
+#: The reason both halves of the hand-off canary give for staying out of ci.yml (si#863), as simplon.yaml states it.
+CANARY_SKIP = "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing"
+
+#: Why `build model` stays out of ci.yml (si#863 final review), as simplon.yaml states it: `test generated`
+#: (si#746) regenerates every `generated:` entry and diffs it, so a `generated:` producer run before it in the
+#: same checkout leaves that gate nothing to find.
+MODEL_SKIP = ("test generated regenerates and compares itself; run before it in the same checkout it would make "
+              "that gate compare the regenerated tree with itself (si#746, si#863)")
+
+#: Why both homebrew leaves stay out of ci.yml, as simplon.yaml states it: the formula refuses a local-version wheel.
+HOMEBREW_SKIP = ("needs a tagged commit: the formula refuses a wheel with a local version (si#543), measured on "
+                 "ghr-8 in PR #890; the release checks the formula")
+
 #: Where the kernel's job-to-job hand-off (si#344 C.4) puts its archive, as the generated `tar` lines name it.
 HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
 
 
 def _declared():
-    return workflowgen.parse(yaml.safe_load(MANIFEST.read_text(encoding="utf-8")))
+    """What the `support github workflows` verb assembles (si#863): the declared entries and the derived
+    ci.yml, through the verb's own function, so the gate cannot read a narrower set than the verb writes."""
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    return workflows.assemble(_loaded(), data, product=PRODUCT, root=ROOT)
 
 
 def _loaded():
@@ -95,37 +114,37 @@ def test_every_file_in_the_workflows_directory_has_an_owner():
 
 def test_the_gate_is_ruling_on_something():
     """A check over a predicate goes green when nothing matches it, which is how a gate quietly stops
-    holding anything. Both files are named, so both are ruled on - and if a rename makes this red, the
+    holding anything. Every file is named, so every one is ruled on - and if a rename makes this red, the
     rename also has to say what now carries the pipeline."""
     # Arrange / Act
     report = _report()
 
     # Assert
-    assert set(report.agreed) | set(report.handwritten) == {".github/workflows/ci.yml",
-                                                            ".github/workflows/release.yml"}
+    assert set(report.agreed) | set(report.handwritten) == set(WORKFLOW_PATHS)
 
 
 # --- the two decisions this repository made, stated as assertions ------------------------------------------
 
 
-def test_both_workflows_are_generated():
+def test_every_workflow_is_generated():
     """si#40's own house. simplon builds and tests itself with the kernel it ships, and generates its
     pipelines with it too - the release since si#491, which retired the hand-written file and its reason
-    (two shell scripts and two-thirds prose) by deriving the release job from `release all`."""
+    (two shell scripts and two-thirds prose) by deriving the release job from `release all`, and ci.yml since
+    si#863, derived from the command tree with no `workflows: ci:` at all."""
     # Arrange / Act
     generated = [w.path for w in _declared() if w.generated]
 
     # Assert
-    assert generated == [".github/workflows/ci.yml", ".github/workflows/release.yml"]
+    assert sorted(generated) == sorted(WORKFLOW_PATHS)
 
 
 def test_no_checkout_in_this_repository_leaves_the_job_token_in_git_config():
-    """si#622 on the real files: every actions/checkout in every job of both workflows says
+    """si#622 on the real files: every actions/checkout in every job of every workflow says
     `persist-credentials: false`, so no build or test step can read the job's token out of `.git/config`.
     The pin branch the `image` job pushes goes through `release push-pin`, which hands git the token."""
     # Arrange
     checkouts = []
-    for name in ("ci.yml", "release.yml"):
+    for name in (path.rsplit("/", 1)[1] for path in WORKFLOW_PATHS):
         jobs = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))["jobs"]
         checkouts += [(name, job, step) for job, spec in jobs.items() for step in spec["steps"]
                       if str(step.get("uses", "")).startswith("actions/checkout")]
@@ -140,51 +159,64 @@ def test_no_checkout_in_this_repository_leaves_the_job_token_in_git_config():
 
 
 def test_the_generated_workflow_carries_the_prose_it_was_written_with():
-    """The comments that used to be hand-written in ci.yml are still in ci.yml.
+    """The reasons stated in simplon.yaml reach the files that act on them.
 
-    si#40's second hard question, checked on the real file rather than on a fixture: a generator that
-    dropped the reasoning would have made this file worse than the one it replaced. Three specific
-    sentences, because "some comments survived" is not the claim - these did.
+    si#40's second hard question, checked on the real files rather than on a fixture: a generator that
+    dropped the reasoning would have made these files worse than the hand-written ones they replaced. Since
+    si#863 ci.yml's prose is the kernel's, so what is held here is this product's own: the canary's note in
+    the workflow it moved to, and in ci.yml the reason the canary is not there.
     """
     # Arrange / Act
-    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    canary = (ROOT / ".github" / "workflows" / "handoff-canary.yml").read_text(encoding="utf-8")
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     # Assert
-    assert "Stage zero is the working tree" in text
-    assert "Two ways to reach one verdict is the shape that produced that" in text
-    assert "setuptools-scm" in text, "the reason for `fetch-depth: 0` left the file with the setting"
+    assert "The job hand-off canary (si#639)" in canary
+    assert _flat(CANARY_SKIP) in _flat(ci)
 
 
 def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
-    """The join, on the real pair. Every `run:` in the generated file is the launcher plus a command that
-    resolves - so a rename anywhere in the command tree breaks generation instead of leaving this file
+    """The join, on the real files. Every `run:` in a generated CI file is the launcher plus a command that
+    resolves - so a rename anywhere in the command tree breaks generation instead of leaving a file
     calling something that is gone."""
     # Arrange
     manifest = _loaded()
-    doc = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
-    # Act - the kernel's own hand-off lines (si#344 C.4) pack and unpack an archive, and name no command;
-    # nor does si#756's reap, which runs before the checkout the launcher lives in
-    runs = [step["run"] for job in doc["jobs"].values() for step in job["steps"]
-            if "run" in step and HANDOFF_PREFIX not in step["run"] and step.get("name") != workflowgen.REAP_NAME]
+    for name in ("ci.yml", "handoff-canary.yml"):
+        doc = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
 
-    # Assert
-    assert runs, "the generated workflow runs no product command at all"
-    for run in runs:
-        assert run.startswith(f"exec ./{PRODUCT}.sh "), run
-        # The command is what precedes its flags (`build image --platform linux/amd64`, si#368).
-        workflowgen.resolve_command(manifest, run.split(" ", 2)[2].split(" --", 1)[0], where=f"ci.yml: {run}")
+        # Act - the kernel's own hand-off lines (si#344 C.4) pack and unpack an archive, and name no command;
+        # nor does si#756's reap, which runs before the checkout the launcher lives in
+        runs = [step["run"] for job in doc["jobs"].values() for step in job["steps"]
+                if "run" in step and HANDOFF_PREFIX not in step["run"]
+                and step.get("name") != workflowgen.REAP_NAME]
+
+        # Assert
+        assert runs, f"{name} runs no product command at all"
+        for run in runs:
+            assert run.startswith(f"exec ./{PRODUCT}.sh "), run
+            # The command is what precedes its flags (`build image --platform linux/amd64`, si#368).
+            workflowgen.resolve_command(manifest, run.split(" ", 2)[2].split(" --", 1)[0], where=f"{name}: {run}")
 
 
 # --- si#267: what the derivation would produce here, measured against what this repository runs -------
 
 
 def _ci_steps() -> list[str]:
-    """The commands simplon's own ci workflow runs, job by job and in order, as the manifest declares them.
-    Every job, not `self-build` alone: since si#639 the hand-off canary's two commands run in jobs of their
-    own, and a command CI runs in another job is not one it leaves out."""
+    """The product commands simplon's ci.yml runs, job by job and in order, as the verb assembles it (si#863).
+    Every job, the main one and the Python cells; the kernel's own preparation steps (`support ...`) are not
+    leaves and are left out."""
     return [step.command for w in _declared() if w.key == "ci" for job in w.jobs for step in job.steps
-            if step.command]
+            if step.command.split(" ", 1)[0] in cipipeline.CI_PHASES]
+
+
+def _ci_workflow():
+    (ci,) = [w for w in _declared() if w.key == cipipeline.KEY]
+    return ci
+
+
+def _committed(name: str) -> dict:
+    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
 
 
 def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_test_leaves():
@@ -228,8 +260,9 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
     that release.yml binds per step under the dry-run switch, and a derived step passes none: run bare on
     2026-10-24, each exits 1 at once with "source must be 'pypi' ... or 'local' ..., got ''" (and the
     same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
-    and audit the formula. So a pipeline derived from this manifest would go red on those two steps;
-    this repository derives nothing, which is why it is recorded here and not repaired in the manifest.
+    and audit the formula. So a pipeline derived from them bare would go red on those two steps; since
+    since si#863 ci.yml leaves both out (test_ci_leaves_the_homebrew_leaves_out), because a dry run on an untagged
+    commit is red by design (si#543).
 
     si#639 added `build handoff-canary` and `test handoff-canary`, the two halves of the job hand-off canary.
     Run bare on 2026-11-13: the first exits 0 and writes `build/handoff-canary.txt`, under the ignored
@@ -245,44 +278,69 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
         "test handoff-canary", "test model", "test manifest-model"]
 
 
-def test_this_repository_runs_a_subset_of_those_and_the_difference_is_a_choice_not_a_defect():
-    """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
+def test_ci_runs_every_unattended_leaf_but_the_canary():
+    """THE FINDING si#267 ended on, closed by si#863. Until then this repository ran a hand-picked subset of
+    what `derive` produced, and the test here held that the difference stayed visible: `build reference`,
+    `build acceptance`, `build site`, `build model`, `test image` and both homebrew leaves were derived but
+    not run (spec D13), chiefly so the prose gate could go LAST. Spec 5.2 replaced that ordering argument
+    with manifest order, and the job `ci` now runs every unattended leaf of `ci build` and `ci test`.
 
-    A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
-    mermaid-cli and takes about three and a half minutes, and every push to this repository starts two
-    runs. The other two it adds are nearly free - `build reference` and `build acceptance` take about a
-    second each - so the bill is one command, not four.
-
-    si#371 added `test model`, which the CI runs, and `build model`, which it does not: `firn gen` had no
-    template to render yet, so a step for it would have reported on nothing. Since si#344 B1 it has one,
-    and the CI still runs no step for it because `test generated` runs it already - the catalogue is a
-    `generated:` entry, regenerated and diffed there. It is the fourth difference, and as cheap as the two
-    above (until si#561 it was two leaves, `model-guard` and `model-gen`; `model-whole` and `model-mode`
-    stood beside them until si#400 4b folded both into `model-gen`). `test image` (si#344 C.3) is the fifth:
-    the release runs it, between building and publishing the image,
-    and ci.yml builds that image for amd64 only and does not run it. `build homebrew-formula` and `test
-    homebrew-formula` (si#537) are the sixth and seventh: the release's `publish` job runs them after the
-    PyPI upload, and the test pulls the 3.2 GB brew image, which no push to this repository should. Derived
-    bare, both would refuse for want of their step parameter (the test above), so for them "correct" is
-    not true either.
-
-    simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
-    is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
-    written cannot hide a red suite. The derived order follows the manifest's declaration order instead.
-
-    What this test holds is that the difference stays VISIBLE. If the derivation starts emitting what
-    the CI runs, or the CI starts running what is derived, somebody should be told rather than left to
-    assume the two agree.
+    The differences left are choices, and each is stated where it is made: the hand-off canary's two halves
+    say `ci: { skip: }`, because in one job they would hand nothing over (si#639, spec 5.3a), and ci.yml
+    names both under "Left out" with that reason. Their run is handoff-canary.yml's (the test below).
+    `build model` says `ci: { skip: }` too, for the next test's reason, and so do both homebrew leaves, for the
+    reason of test_ci_leaves_the_homebrew_leaves_out.
     """
-    derived = {step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
-                                                           where="measurement").steps}
+    derived = [step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
+                                                           where="measurement").steps]
+    (main,) = [job for job in _ci_workflow().jobs if job.name == cipipeline.KEY]
+    ran = {step.command for step in main.steps if step.command.split(" ", 1)[0] in cipipeline.CI_PHASES}
+    text = _flat(_committed_text("ci.yml"))
 
-    run_here = set(_ci_steps())
+    assert ran == set(derived) - {"build handoff-canary", "test handoff-canary", "build model",
+                                  "build homebrew-formula", "test homebrew-formula"}
+    for words in ("build handoff-canary", "test handoff-canary"):
+        assert _flat(f"`{words}` - {CANARY_SKIP}") in text, words
 
-    assert run_here < derived
-    assert sorted(derived - run_here) == ["build acceptance", "build homebrew-formula", "build model",
-                                          "build reference", "build site",
-                                          "test homebrew-formula", "test image"]
+
+def test_ci_does_not_regenerate_before_the_staleness_gate():
+    """si#863 final review: `test generated` (si#746) regenerates every `generated:` entry and diffs the tree.
+    ci.yml derived `build model`, a `generated:` producer, BEFORE it in the same job, so the gate compared the
+    regenerated tree with itself and could never go red, and the suite and the type gate ran on the
+    regenerated tree rather than the committed one. `build model` says `ci: { skip: }`, and ci.yml names it
+    under "Left out" with the reason. Every product with a `generated:` producer has the same order; the
+    kernel-side repair is a ticket of its own.
+    """
+    ran = [line.strip() for line in _committed_text("ci.yml").splitlines() if "./simplon.sh build model" in line]
+
+    assert ran == []
+    assert "build model" not in _ci_steps()
+    assert _flat(f"`build model` - {MODEL_SKIP}") in _flat(_committed_text("ci.yml"))
+
+
+def test_ci_leaves_the_homebrew_leaves_out():
+    """si#863, measured on ghr-8 in PR #890: `build homebrew-formula --source local` is red on every untagged
+    commit, by design (si#543: the formula refuses a wheel with a local version `+...`). Both homebrew leaves
+    say `ci: { skip: }`, so ci.yml runs neither and names both under "Left out" with that reason; the release
+    checks the formula on a tagged commit.
+    """
+    (job,) = [job for name, job in _committed("ci.yml")["jobs"].items() if name == cipipeline.KEY]
+    runs = " ".join(step.get("run", "") for step in job["steps"])
+    text = _flat(_committed_text("ci.yml"))
+
+    assert "homebrew-formula" not in runs
+    for words in ("build homebrew-formula", "test homebrew-formula"):
+        assert _flat(f"`{words}` - {HOMEBREW_SKIP}") in text, words
+
+
+def _committed_text(name: str) -> str:
+    return (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
+def _flat(text: str) -> str:
+    """`text` with the comment markers and every whitespace removed: the renderer wraps a note at its width,
+    after a hyphen too (`self-` / `hosted-container`), so a sentence is found by its characters, not its breaks."""
+    return "".join(text.replace("#", "").split())
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():
@@ -297,31 +355,27 @@ def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_m
 def test_ci_runs_the_suite_on_the_formulas_python():
     """si#537: the Homebrew formula runs simplon on python@3.14, so CI runs the suite there too.
 
-    Held on the committed ci.yml, the file GitHub runs. The runner is a hosted one because the
-    self-hosted kind refuses a `python:`; the job is found by what it does, not by its name.
+    Held on the committed ci.yml, the file GitHub runs. Since si#863 the job is the kernel's cell for
+    `test suite`'s `ci: { python: ["3.14"] }` (si#860), on a hosted runner because the product's runner kind
+    sets up no Python.
     """
-    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    job = _committed("ci.yml")["jobs"]["test-suite-python"]
+    setup = [step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-python")]
 
-    on_314 = [job for job in workflow["jobs"].values()
-              if any(step.get("uses", "").startswith("actions/setup-python")
-                     and str(step.get("with", {}).get("python-version")) == "3.14"
-                     for step in job["steps"])]
-
-    assert len(on_314) == 1
-    assert on_314[0]["runs-on"] == "ubuntu-latest"
-    assert any(step.get("run", "").endswith("test suite") for step in on_314[0]["steps"])
+    assert job["runs-on"] == "ubuntu-latest"
+    assert [str(v) for v in job["strategy"]["matrix"]["python"]] == ["3.14"]
+    assert len(setup) == 1 and setup[0]["with"]["python-version"] == "${{ matrix.python }}"
+    assert any(step.get("run", "").endswith("test suite") for step in job["steps"])
 
 
 def test_the_hosted_suite_job_can_run_linux_arm64_before_the_suite():
     """si#552: the e2e of `test:file` runs a linux/arm64 file under QEMU, and a hosted runner has no
-    emulator (measured on PR #557: "Exec format error" on ubuntu-latest). The job registers one before
-    the suite, from the same binfmt image the kernel pins, so the two cannot drift apart."""
+    emulator (measured on PR #557: "Exec format error" on ubuntu-latest). The cell registers one before
+    the suite, from the same binfmt image the kernel pins, so the two cannot drift apart. Since si#863 it
+    comes from `test suite`'s `ci: { emulates: [linux/arm64] }`."""
     from simplon.adapters.labhost import BINFMT_IMAGE
 
-    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
-    job = next(job for job in workflow["jobs"].values() if job["runs-on"] == "ubuntu-latest"
-               and any(step.get("run", "").endswith("test suite") for step in job["steps"]))
-    steps = job["steps"]
+    steps = _committed("ci.yml")["jobs"]["test-suite-python"]["steps"]
     qemu = [i for i, step in enumerate(steps) if step.get("uses", "").startswith("docker/setup-qemu-action@")]
     suite = next(i for i, step in enumerate(steps) if step.get("run", "").endswith("test suite"))
 
@@ -330,6 +384,22 @@ def test_the_hosted_suite_job_can_run_linux_arm64_before_the_suite():
     assert len(step["uses"].split("@", 1)[1]) == 40, "pinned by commit sha"
     assert step["with"]["image"] == BINFMT_IMAGE
     assert "arm64" in step["with"]["platforms"]
+
+
+def test_ci_runs_on_ghr8():
+    """si#863: the main job runs where `self-build` ran, on ghr-8, named by the top-level `runner:`. ghr-8 is an
+    LXC container (Marco, 2026-11-25), so its kind `self-hosted-container` registers no emulation (#722): the
+    job has no QEMU step and its note names `test suite` as the leaf that needs one registered by hand. It
+    reaches docker through the bootstrap, as every self-hosted kind does."""
+    job = _committed("ci.yml")["jobs"]["ci"]
+    gap = _flat(cipipeline.EMULATION_GAP.format(leaves="`test suite`", verb="names", platforms="linux/arm64",
+                                                kind="self-hosted-container"))
+    text = _flat(_committed_text("ci.yml"))
+
+    assert job["runs-on"] == "ghr-8"
+    assert job["env"]["DELIVERY_DOCKER_BOOTSTRAP"] == "1"
+    assert not any(step.get("uses", "").startswith("docker/setup-qemu-action@") for step in job["steps"])
+    assert gap in text
 
 
 def test_the_release_job_can_run_linux_arm64_before_the_suite():
@@ -346,13 +416,16 @@ def test_the_release_job_can_run_linux_arm64_before_the_suite():
     assert steps[qemu[0]]["with"] == {"image": BINFMT_IMAGE, "platforms": "linux/arm64"}
 
 
-def test_the_handoff_canary_crosses_a_job_boundary_in_ci():
+def test_the_handoff_canary_crosses_a_job_boundary_in_its_own_workflow():
     """si#639: the canary exists to run the kernel's job-to-job hand-off (si#344 C.4) on every push. Its
     writer and its checker in ONE job would stay green and hand nothing over, so this holds the committed
-    ci.yml to the shape that makes the check mean something: two jobs, the checker's needing the writer's,
-    the writer uploading the archive after it writes and the checker unpacking it before it checks. The jobs
-    are found by the commands they run, not by their names."""
-    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    handoff-canary.yml to the shape that makes the check mean something: two jobs, the checker's needing the
+    writer's, the writer uploading the archive after it writes and the checker unpacking it before it checks.
+    The jobs are found by the commands they run, not by their names. Since si#863 that file is the canary's
+    own (spec 5.3a): the derived ci.yml would put both halves in one job, so it runs neither."""
+    jobs = _committed("handoff-canary.yml")["jobs"]
+    ci_runs = [step.get("run", "") for job in _committed("ci.yml")["jobs"].values() for step in job["steps"]]
+    assert not [run for run in ci_runs if "handoff-canary" in run]
     archive = workflowgen.HANDOFF_ARCHIVE.format(artifact="handoff-canary")
 
     def runs(command: str) -> list[str]:
@@ -384,26 +457,29 @@ D13 = ("build reference", "build acceptance", "build site", "build model", "buil
 
 
 def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
-    """si#858's verification on the one manifest this repository can measure: take `workflows: ci:` away and
-    the switch derives ci.yml from the command tree.
+    """si#858's verification on the one manifest this repository can measure, on the committed manifest since
+    si#863 removed `workflows: ci:` from it: the switch derives ci.yml from the command tree.
 
     It holds WHICH steps and in WHICH order - every unattended `ci build` and `ci test` leaf in manifest order
     completed by their ports, the `after_all` leaf (`test report`) last - not that each would run bare: two of
-    the D13 leaves do not (si#537, above), and measuring them on ghr-8 is #863's. `runner:` is passed into a
-    copy of the data because simplon declares none yet; the manifest itself does not change here (#863).
+    the D13 leaves do not (si#537, above) and say `ci: { skip: }`.
     """
     text = MANIFEST.read_text(encoding="utf-8")
     manifest = _loaded()
-    data = copy.deepcopy(yaml.safe_load(text))
-    del data["workflows"]["ci"]
-    data["runner"] = {"kind": "self-hosted-debian", "labels": "ghr-8"}
+    data = yaml.safe_load(text)
 
     (ci,) = [w for w in cipipeline.workflows(manifest, data, product=PRODUCT) if w.key == cipipeline.KEY]
     rendered = workflowgen.render(ci, manifest=manifest, product=PRODUCT, source=MANIFEST.name,
                                   artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
-    (job,) = yaml.safe_load(rendered)["jobs"].values()
+    job = yaml.safe_load(rendered)["jobs"][cipipeline.KEY]
     launcher = f"exec ./{PRODUCT}.sh "
-    ran = [step["run"].removeprefix(launcher) for step in job["steps"] if step.get("run", "").startswith(launcher)]
+
+    def words_of(run: str) -> str:
+        # A leaf's `ci: params:` (si#863) follows its words as `--name value` or after `--`; this test is about
+        # which leaves run in which order, so it reads the words. test_own_image holds the parameters.
+        return run.removeprefix(launcher).split(" --", 1)[0]
+
+    ran = [words_of(step["run"]) for step in job["steps"] if step.get("run", "").startswith(launcher)]
     leaves = [words for words in ran if words.split(" ", 1)[0] in cipipeline.CI_PHASES]
     selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data))
     expected = [leaf.words for leaf in selection.leaves if not leaf.spec.after_all] + ["test report"]
@@ -413,8 +489,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
               for name in members]
     ordered = set(expected[:-1])
     in_manifest_order = [words for words in walked if words in ordered]
-    by_leaf = {step["run"].removeprefix(launcher): step for step in job["steps"]
-               if step.get("run", "").startswith(launcher)}
+    by_leaf = {words_of(step["run"]): step for step in job["steps"] if step.get("run", "").startswith(launcher)}
     prepared = [step["id"] for step in job["steps"] if step.get("id", "").startswith("prepare_")]
     gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in prepared)]) + " }}"
     (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
@@ -422,20 +497,24 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     assert expected != ["test report"]
     assert leaves == expected
     assert leaves[:-1] == in_manifest_order
-    assert [words for words in D13 if words not in leaves] == []
+    # `build model` (test_ci_does_not_regenerate_before_the_staleness_gate) and both homebrew leaves
+    # (test_ci_leaves_the_homebrew_leaves_out) are the D13 leaves ci.yml leaves out on purpose.
+    assert [words for words in D13 if words not in leaves] == [
+        "build model", "build homebrew-formula", "test homebrew-formula"]
     assert "test walk" not in leaves
     assert f"# `test walk` - {cipipeline.ATTENDED}" in rendered
+    assert "workflows" not in data or "ci" not in data["workflows"]
     assert job["runs-on"] == "ghr-8"
     # The gate (spec 5.2): on ghr-8 simplon places all three preparation steps, the first leaf waits on them by
     # GitHub's default, every later one runs unless cancelled or a preparation went red, the report always.
     assert prepared == ["prepare_docker", "prepare_disk", "prepare_install"]
     assert "if" not in by_leaf[leaves[0]]
-    # A consumer also waits for its producer (si#858 final review): `test handoff-canary` reads the file `build
-    # handoff-canary` writes, so a red producer leaves it skipped rather than red on the missing file.
-    producer = by_leaf["build handoff-canary"]["id"]
-    canary = gate.removesuffix(" }}") + f" && steps.{producer}.outcome == 'success' }}}}"
-    assert producer == "leaf_build_handoff_canary"
-    assert by_leaf["test handoff-canary"].get("if") == canary
+    # A consumer also waits for its producer (si#858 final review): `test image` runs the image `build image`
+    # builds, so a red producer leaves it skipped rather than red on the missing image.
+    producer = by_leaf["build image"]["id"]
+    consumer = gate.removesuffix(" }}") + f" && steps.{producer}.outcome == 'success' }}}}"
+    assert producer == "leaf_build_image"
+    assert by_leaf["test image"].get("if") == consumer
     # Every other later leaf has the gate, and at most the success of leaves that ran before it.
     for at, words in enumerate(leaves[1:-1], start=1):
         extra = by_leaf[words]["if"].removeprefix(gate.removesuffix(" }}")).removesuffix(" }}")
@@ -445,3 +524,14 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
         assert extra == "" or extra.startswith(" && steps.leaf_"), (words, extra)
     assert by_leaf["test report"].get("if") == "always()"
     assert upload.get("if") == "always()"
+
+
+def test_the_gate_assembles_the_workflows_the_verb_writes():
+    """si#863: with `workflows.ci` gone from the manifest, ci.yml is still among what the gate reads, because
+    the verb derives it; and the files on disk are all accounted for by that set."""
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    assembled = workflows.assemble(_loaded(), data, product=PRODUCT, root=ROOT)
+    (ci,) = [w for w in assembled if w.path == ".github/workflows/ci.yml"]
+    assert "ci" not in data.get("workflows", {})
+    assert ci.derived and ci.generated
+    assert workflowgen.unmanaged(assembled, ROOT) == ()
