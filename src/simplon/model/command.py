@@ -85,12 +85,15 @@ class CiVariant:
 
     `cadence` is "", `nightly`, `manual` or a five-field cron string; `platforms` names cells of
     `workflowschema.PLATFORMS` and `python` interpreter versions, each in the order written; `emulates` is
-    buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit."""
+    buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit.
+    `params` (si#863) maps a parameter name to the text the derived step hands the command, rendered as a
+    declared step's `params:` is; empty when unwritten."""
     cadence: str = ""
     platforms: tuple[str, ...] = ()
     python: tuple[str, ...] = ()
     timeout_minutes: int | None = None
     emulates: tuple[str, ...] = ()
+    params: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

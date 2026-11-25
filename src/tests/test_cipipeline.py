@@ -1346,6 +1346,8 @@ def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
     assert "self-hosted-container" in said and "cannot register emulation" in said, said
     assert "`support:ci-arm64`" in said, said
     assert "#722" in said and "linux/arm64, linux/arm/v7" in said
+    # two leaves, so the plural verb; simplon's own ci.yml holds the singular (test_own_workflows)
+    assert "`test arm`, `test more` name `ci: emulates:`" in said, said
 
 
 # --- the final review of si#860: one switch rule, inert keys, the empty push run ---------------------------
@@ -1521,3 +1523,59 @@ def test_a_cell_leaf_producing_a_fetched_artifact_is_not_refused():
     derivation = cipipeline.derive(loaded, _DATA)
 
     assert [job.key for job in derivation.model.job] == ["ci", "build-b-produce-platforms"]
+
+
+# --- si#863: `ci: params:`, a parameter bound where the kernel derives the leaf -----------------------------
+
+_PICK = _HEAD.replace("tasks:\n", 'tasks:\n  pick: { impl: "simplon.test_impls:target_and_mode", help: "Pick." }\n')
+
+
+def _rendered_with_pick(body: str) -> tuple[dict, manifest_mod.Manifest]:
+    text = _PICK + textwrap.dedent(body)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml", validate_with=True)
+    data = yaml.safe_load(text)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
+    out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
+                             artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), loaded
+
+
+def test_ci_params_render_as_a_declared_step_s_params_in_every_job_the_leaf_runs_in():
+    """Task 2b (a): the derived step hands the command what a declared step's `params:` would, by the same
+    function, so `target` (no default in the body) is positional and `mode` an option - in the main job and in
+    the python cell alike. The command's interactive form is untouched: `ci:` is read by no CLI."""
+    doc, loaded = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              pick: { task: pick, unattended: true, ci: { params: { mode: slow, target: "a b" }, python: ["3.14"] } }
+        """)
+
+    declared = workflowgen._parameters(loaded, "test", "pick", {"mode": "slow", "target": "a b"}, where="declared")
+    assert declared == " --mode slow -- 'a b'"
+    assert _runs(doc) == ["test one", "test pick" + declared]
+    assert _job_runs(doc, "test-pick-python") == ["test pick" + declared]
+
+
+def test_a_leaf_without_ci_params_renders_bare():
+    doc, _ = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true }
+        """)
+    assert _runs(doc) == ["test pick"]
+
+
+def test_ci_params_on_a_push_leaf_under_a_declared_ci_is_refused(tmp_path, monkeypatch):
+    """`_refuse_variants_nobody_derives` over the new key: the product's own ci.yml reads no `ci:`."""
+    _product(tmp_path, monkeypatch, """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true, ci: { params: { anything: x } } }
+        """ + _DECLARED_CI)
+
+    with pytest.raises(ValueError, match=r"'build one' declares `ci: params:` and has no `cadence:`"):
+        workflows_task.generate()

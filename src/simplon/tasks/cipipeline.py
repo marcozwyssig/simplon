@@ -959,7 +959,7 @@ def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
 #: si#860: what a job says when a leaf of it names `ci: emulates:` and the job's machine cannot register any
 #: (`can_emulate = false`, spec 5.4: `self-hosted-container`, an LXC runner, #722). The way out is the machine's,
 #: registered once by hand (si#358), so the note names it rather than a step that cannot work there.
-EMULATION_GAP = ("si#860: {leaves} name `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
+EMULATION_GAP = ("si#860: {leaves} {verb} `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
                  "cannot register emulation, so no step does it here and a leaf running a foreign binary "
                  "fails with `Exec format error` unless the emulator is registered once on the machine, by "
                  "hand and as root, with `support:ci-arm64` (si#358, #722).")
@@ -1275,7 +1275,9 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             if step.timeout_minutes is not None:
                 modifiers["timeout-minutes"] = step.timeout_minutes
             first = False
-            steps.append(workflowgen.Step(command=line, modifiers=modifiers))
+            # si#863: `ci: params:` goes through a declared step's `params:` path, so `_parameters` checks and
+            # renders it (positional or option, quoted) as it would for a step the product wrote.
+            steps.append(workflowgen.Step(command=line, modifiers=modifiers, params=dict(spec.ci.params)))
     labels = job.runner.labels
     gated: dict[str, object] = {"if": job.condition} if job.condition else {}
     if job.needs:
@@ -1319,8 +1321,9 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                extras=workflowgen._with_runner_env(runner, cell, where))
     gap = ""
     if emulates and not job.runner.kind.can_emulate:
-        named = ", ".join(f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates)
-        gap = textwrap.fill(EMULATION_GAP.format(leaves=named, platforms=", ".join(emulates), kind=kind), width=95)
+        named = [f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates]
+        gap = textwrap.fill(EMULATION_GAP.format(leaves=", ".join(named), verb="names" if len(named) == 1 else "name",
+                                                 platforms=", ".join(emulates), kind=kind), width=95)
     if run is not None:
         said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)
     else:
@@ -1401,7 +1404,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
 
 def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[GateRun] = ()) -> None:
     """Refuse a member's variant key where its gate's file is the product's own (si#861): the kernel derives no
-    such file, so `timeout_minutes:` or `emulates:` on a member would shape nothing -
+    such file, so `timeout_minutes:`, `emulates:` or `params:` on a member would shape nothing -
     `_refuse_variants_nobody_derives`'s DIAGNOSIS, in the words of the file the member runs in. An `after_all`
     member also ends the derived runs, which read its keys; and a member of a `derived` gate as well runs in
     that gate's file, which reads them (final review).
@@ -1411,7 +1414,7 @@ def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[
     for run in owned:
         stem = _key_of(run.path)
         for member in run.members:
-            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), None)]
+            written = [key for key in _VARIANT_KEYS if getattr(member.spec.ci, key) not in ((), {}, None)]
             if written and not member.spec.after_all and member.words not in read:
                 raise ValueError(
                     f"'{member.words}' declares `ci: {written[0]}:` and is a member of the gate of `{run.words}`, so "
@@ -1420,21 +1423,21 @@ def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[
                     f"`{workflowgen.SECTION}: {stem}:` so the kernel derives {stem}.yml and reads it")
 
 
-#: si#860: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them; `cadence`
-#: is not one, since it says which derived workflow the leaf is in.
-_VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates")
+#: si#860, si#863: the `ci:` keys that shape how a leaf runs in a derived workflow, as `_ci_variant` reads them;
+#: `cadence` is not one, since it says which derived workflow the leaf is in.
+_VARIANT_KEYS = ("python", "platforms", "timeout_minutes", "emulates", "params")
 
 
 def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gated: Set[str] = frozenset()) -> None:
     """Refuse a push leaf's variant key when ci.yml is the product's own (si#860 final review).
 
     Such a leaf runs in the product's ci.yml, which the kernel does not write, so `python:`, `platforms:`,
-    `timeout_minutes:` or `emulates:` on it would shape nothing: a DIAGNOSIS, for the reason `ci:` on a command
-    no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence file, and an
-    `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one is derived.
-    Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any file. A gate
-    member (`gated`, si#861) is no push leaf either: its gate's file reads it, or `_refuse_variants_in_owned_gates`
-    rules on it where that file is the product's own.
+    `timeout_minutes:`, `emulates:` or `params:` (si#863) on it would shape nothing: a DIAGNOSIS, for the reason
+    `ci:` on a command no derived CI selects is refused (si#858). A leaf with a `cadence:` is read by its cadence
+    file, and an `after_all` leaf without one ends every derived cadence file, so its keys are read wherever one
+    is derived. Only leaves a derived CI would run are asked: a skipped or attended leaf is no push leaf of any
+    file. A gate member (`gated`, si#861) is no push leaf either: its gate's file reads it, or
+    `_refuse_variants_in_owned_gates` rules on it where that file is the product's own.
     """
     for group in _ci_groups(manifest):
         for name, spec in manifest.commands[group].items():
@@ -1442,7 +1445,7 @@ def _refuse_variants_nobody_derives(manifest: Manifest, cadence_files: bool, gat
                 continue
             if (spec.after_all and cadence_files) or _words(group, name) in gated:
                 continue
-            written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), None)]
+            written = [key for key in _VARIANT_KEYS if getattr(spec.ci, key) not in ((), {}, None)]
             if written:
                 raise ValueError(
                     f"'{_words(group, name)}' declares `ci: {written[0]}:` and has no `cadence:`, so it runs in "

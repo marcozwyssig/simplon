@@ -151,6 +151,7 @@ def test_the_manifest_chapter_s_variant_example_loads_and_names_every_platform_c
         "newest": CiVariant(python=("3.14",)),
         "lab": CiVariant(timeout_minutes=95),
         "foreign": CiVariant(emulates=("linux/arm64",)),
+        "system": CiVariant(params={"name": "system"}),
     }
 
 
@@ -279,3 +280,49 @@ def test_an_empty_ci_is_refused_as_saying_nothing():
         _loaded("ci: {}")
     said = str(refused.value)
     assert "skip" in said and "cadence" in said and "drop `ci:`" in said
+
+
+# --- si#863: `ci: params:`, a parameter bound only where the kernel derives the leaf --------------------------
+
+
+def test_params_are_read_as_text_in_the_order_written():
+    assert _ci("{ params: { platform: linux/amd64, retries: 3 } }").params == {"platform": "linux/amd64",
+                                                                             "retries": "3"}
+
+
+@pytest.mark.parametrize("params", ["linux/amd64", "[platform]", "{}"])
+def test_params_that_are_not_a_non_empty_mapping_are_refused_with_the_form(params):
+    with pytest.raises(ValueError, match=r"`ci: params:` is a non-empty mapping of parameter names to scalar "
+                                         r"values, e\.g\. `\{ platform: linux/amd64 \}`"):
+        _ci(f"{{ params: {params} }}")
+
+
+@pytest.mark.parametrize("value", ["[linux/amd64]", "{ env: PLATFORM }", "~"])
+def test_a_param_value_that_is_not_a_scalar_is_refused_naming_it(value):
+    """`{ env: }` too: a declared step may name a variable its workflow sets, and a derived workflow sets none a
+    product chose, so the value would expand to nothing."""
+    said = r"'test lab' declares `ci: params: platform: .*`, and a `ci: params:` value is a scalar"
+    with pytest.raises(ValueError, match=said) as refused:
+        _ci(f"{{ params: {{ platform: {value} }} }}")
+    assert "sets no variable a product chose" in str(refused.value)
+
+
+def test_a_skip_beside_params_is_refused():
+    with pytest.raises(ValueError, match=r"`ci: skip:` beside params.*the leaf does not run in CI, so"):
+        _ci('{ skip: "needs the lab", params: { platform: linux/amd64 } }')
+
+
+def test_a_param_the_task_does_not_take_is_refused_at_load_naming_it_and_the_parameters():
+    """The check a command's own `with:` and `params:` get (`_validate_param_bindings`), so a typo breaks the
+    load rather than a derived step on a runner."""
+    text = textwrap.dedent("""
+        tasks:
+          pick: { impl: "simplon.test_impls:target_and_mode", help: "Pick." }
+        ci:
+          test:
+            commands:
+              lab: { task: pick, ci: { params: { platfrom: linux/amd64 } } }
+        """)
+    with pytest.raises(ValueError, match=r"`test lab` binds key\(s\) platfrom that are not parameters of "
+                                         r"simplon\.test_impls:target_and_mode \(it takes: mode, target\)"):
+        manifest.load(text, catalogue=catalogue.load(), validate_with=True)

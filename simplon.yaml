@@ -164,6 +164,10 @@ ci:
         task: "build:image"
         produces:
           image: kernel
+        # si#368: the image declares arm64 too, and building that here would put an emulated stage on this
+        # runner on every push; a release builds both. `ci: params:` (si#863) binds the platform only where
+        # the kernel derives the step, so a person typing `build image` and the release still build both.
+        ci: { params: { platform: linux/amd64 } }
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
       # 3). `reference` writes src/site/content/with-what/commands.md by reading the assembled CLI; `site`
       # runs Hugo over src/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
@@ -296,7 +300,8 @@ ci:
       # IT RUNS NO TESTS, which is why it is not in `all` above. It merges the raw results `test suite`
       # wrote into the shared results dir and renders the archive, so putting it inside the aggregate
       # would make one command mean two things - run the tests, and archive whatever ran last. The
-      # workflows call it AFTER the suite, by name, which is the ordering the CI note already argues for.
+      # catalogue marks `test:report` `after_all`, so the derived ci.yml runs it last and `if: always()`,
+      # after every other leaf, red ones included; the release workflow calls it after the suite, by name.
       #
       # AND IT IS GREEN ON A MACHINE WITH NO RENDERER. `test:report` is red only when a render tool was
       # present and failed; with neither the allure CLI nor Docker it writes what it can and says so.
@@ -386,6 +391,8 @@ ci:
         consumes: { image: kernel }
         produces: { test-result: kernel-checked }
         with: { argv: "simplon --help", expect: "usage: simplon" }
+        # si#368: CI builds amd64 alone (`build image`), so it runs amd64 alone; the release builds and runs both.
+        ci: { params: { platform: linux/amd64 } }
       # `brew audit` and `brew style` over the formula in the pinned brew image, and its digests against PyPI
       # and the local wheel (si#536). The verdict record is the evidence `release homebrew-tap` consumes.
       # `online` is a step parameter, like `source` above. Not in `all`, for the same 3.2 GB reason.
@@ -717,7 +724,8 @@ artifacts:
     context: .
     # Both, so a Mac with Apple silicon runs the container route natively (si#368): with amd64 alone
     # the route did not start there at all ("no matching manifest for linux/arm64"). A release builds
-    # both; CI builds amd64 only (`platform:` on its step), so the runner needs no emulator per push.
+    # both; CI builds and runs amd64 only (`ci: { params: { platform: linux/amd64 } }` on `build image` and
+    # `test image`, si#863), so the runner needs no emulator per push.
     platforms: [linux/amd64, linux/arm64]
   # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
   # is derived from what that producer consumes.

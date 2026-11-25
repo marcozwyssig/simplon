@@ -760,6 +760,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_python", "`ci: python:` is a non-empty list of distinct versions"): DIAGNOSIS,
     ("load", "_ci_timeout", "`ci: timeout_minutes:` is a positive whole number of minutes"): DIAGNOSIS,
     ("load", "_ci_emulates", "`ci: emulates:` is a non-empty list of platforms as buildx spells them"): DIAGNOSIS,
+    # si#863: `ci: params:` that is no mapping, or a value with no rendering in a derived step. A list or null has
+    # none anywhere; `{ env: NAME }` has one in a declared step, and in a derived workflow a name a product chose
+    # is set by nothing and would expand to an empty argument. Not built, noted: a GitHub-set name
+    # (`GITHUB_SHA`) would expand there; it reopens as a feature when a product asks to pass one.
+    ("load", "_ci_params", "`ci: params:` is a non-empty mapping of parameter names to scalar values"): DIAGNOSIS,
+    ("load", "_ci_params", "a `ci: params:` value is a scalar"): DIAGNOSIS,
     # THE TWO EXPRESSION RULES, both the executor's call posted with Marco's si#860 decisions (he may
     # overrule): each refuses a leaf that could have been rendered, so each costs flexibility.
     #   - `platforms:` with `python:`: a cell per platform AND a cell per version would be a cross product.

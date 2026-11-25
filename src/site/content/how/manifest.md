@@ -1517,8 +1517,8 @@ that file's own key: a hand-written nightly is kept by `workflows: ci-nightly: {
 
 #### Variant keys: how a leaf runs
 
-**`skip:` says whether a leaf runs; `cadence:`, `platforms:`, `python:`, `timeout_minutes:` and
-`emulates:` under the same `ci:` say how** (si#860). Each is
+**`skip:` says whether a leaf runs; `cadence:`, `platforms:`, `python:`, `timeout_minutes:`,
+`emulates:` and `params:` under the same `ci:` say how** (si#860, si#863). Each is
 read at load, and a value of the wrong shape is refused with the form it should take:
 
 ```yaml
@@ -1531,6 +1531,7 @@ ci:
       newest:   { task: "test:gate", ci: { python: ["3.14"] } }
       lab:      { task: "test:gate", ci: { timeout_minutes: 95 } }
       foreign:  { task: "test:gate", ci: { emulates: [linux/arm64] } }
+      system:   { task: "test:gate", ci: { params: { name: system } } }
 ```
 
 - **`cadence:`** takes the leaf out of ci.yml and into a workflow of its own, never run per push:
@@ -1575,6 +1576,14 @@ ci:
   that step's success. On a runner kind that cannot emulate (`self-hosted-container`, an LXC runner, #722),
   nothing is registered and the job's note names the gap; a leaf that runs a foreign binary there needs
   the emulator registered once on the machine with the `support:ci-arm64` task (si#358).
+- **`params:`** hands the leaf parameters in every derived workflow it runs in, and nowhere else: a
+  person typing the command and the release's step get none of them, where a `with:` would pin them for
+  both. Each value is a scalar, rendered exactly as a declared workflow step's `params:` is (si#368,
+  si#471): a parameter the task takes positionally goes after `--`, any other as its `--name`, both
+  shell-quoted. `{ env: NAME }` is refused: a derived workflow sets no `env:` a product chose. A name the
+  task does not take is refused, naming the task's parameters, as a `with:` key is. Simplon's own
+  `build image` and `test image` carry `params: { platform: linux/amd64 }` (si#368): the kernel image
+  declares arm64 too, and the release builds both, but a push should not pay for an emulated stage.
 
 `skip:` beside any of them is refused, since the leaf does not run. Two pairs are refused on one leaf:
 `platforms:` with `python:` (a cross product of cells and versions nobody has asked for; put the versions

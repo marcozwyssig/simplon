@@ -21,7 +21,7 @@ jobs:
   # `/proc/sys/fs/binfmt_misc/register` is refused there (si#358, #722), so it is registered once
   # by hand with `support:ci-arm64`.
   #
-  # si#860: `test suite` name `ci: emulates:` (linux/arm64), and this job's runner kind `self-
+  # si#860: `test suite` names `ci: emulates:` (linux/arm64), and this job's runner kind `self-
   # hosted-container` cannot register emulation, so no step does it here and a leaf running a
   # foreign binary fails with `Exec format error` unless the emulator is registered once on the
   # machine, by hand and as root, with `support:ci-arm64` (si#358, #722).
@@ -159,7 +159,7 @@ jobs:
       - id: leaf_build_image
         if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
-        run: exec ./simplon.sh build image
+        run: exec ./simplon.sh build image --platform linux/amd64
       - id: leaf_build_homebrew_formula
         if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_wheel.outcome == 'success' }}
@@ -181,7 +181,7 @@ jobs:
         run: exec ./simplon.sh test generated
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_image.outcome == 'success' }}
-        run: exec ./simplon.sh test image
+        run: exec ./simplon.sh test image --platform linux/amd64
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_homebrew_formula.outcome == 'success'
           && steps.leaf_build_wheel.outcome == 'success' }}

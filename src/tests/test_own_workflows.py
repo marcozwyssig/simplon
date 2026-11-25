@@ -348,7 +348,7 @@ def test_ci_runs_on_ghr8():
     job has no QEMU step and its note names `test suite` as the leaf that needs one registered by hand. It
     reaches docker through the bootstrap, as every self-hosted kind does."""
     job = _committed("ci.yml")["jobs"]["ci"]
-    gap = _flat(cipipeline.EMULATION_GAP.format(leaves="`test suite`", platforms="linux/arm64",
+    gap = _flat(cipipeline.EMULATION_GAP.format(leaves="`test suite`", verb="names", platforms="linux/arm64",
                                                 kind="self-hosted-container"))
     text = _flat(_committed_text("ci.yml"))
 
@@ -429,7 +429,13 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
                                   artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
     job = yaml.safe_load(rendered)["jobs"][cipipeline.KEY]
     launcher = f"exec ./{PRODUCT}.sh "
-    ran = [step["run"].removeprefix(launcher) for step in job["steps"] if step.get("run", "").startswith(launcher)]
+
+    def words_of(run: str) -> str:
+        # A leaf's `ci: params:` (si#863) follows its words as `--name value` or after `--`; this test is about
+        # which leaves run in which order, so it reads the words. test_own_image holds the parameters.
+        return run.removeprefix(launcher).split(" --", 1)[0]
+
+    ran = [words_of(step["run"]) for step in job["steps"] if step.get("run", "").startswith(launcher)]
     leaves = [words for words in ran if words.split(" ", 1)[0] in cipipeline.CI_PHASES]
     selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data))
     expected = [leaf.words for leaf in selection.leaves if not leaf.spec.after_all] + ["test report"]
@@ -439,8 +445,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
               for name in members]
     ordered = set(expected[:-1])
     in_manifest_order = [words for words in walked if words in ordered]
-    by_leaf = {step["run"].removeprefix(launcher): step for step in job["steps"]
-               if step.get("run", "").startswith(launcher)}
+    by_leaf = {words_of(step["run"]): step for step in job["steps"] if step.get("run", "").startswith(launcher)}
     prepared = [step["id"] for step in job["steps"] if step.get("id", "").startswith("prepare_")]
     gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in prepared)]) + " }}"
     (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
