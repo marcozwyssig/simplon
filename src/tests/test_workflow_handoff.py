@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from simplon.manifest import artifactsection, catalogue as catalogue_mod, load as manifest_mod
-from simplon.tasks import workflowgen
+from simplon.tasks import workflowgen, workflows
 
 from conftest import ROOT
 
@@ -196,23 +196,30 @@ def test_a_refusal_stops_generation_and_names_the_workflow():
 
 
 def test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary():
-    """Since si#639 simplon's ci.yml hands one artifact across jobs, the canary that exists for it, and
-    nothing else: a second hand-off appearing here would be a job split nobody decided."""
+    """Since si#639 simplon hands one artifact across jobs, the canary that exists for it, and nothing else:
+    a second hand-off appearing here would be a job split nobody decided. Since si#863 the canary has a
+    workflow of its own (spec 5.3a) and ci.yml is derived, so the hand-off is held in handoff-canary.yml and
+    ci.yml uploads the report and downloads nothing."""
     # arrange
     text = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
     loaded = manifest_mod.load(text, catalogue=catalogue_mod.load(), manifest_path="simplon.yaml")
     data = yaml.safe_load(text)
-    ci = next(w for w in workflowgen.parse(data) if w.key == "ci")
+    assembled = {w.key: w for w in workflows.assemble(loaded, data, product="simplon", root=ROOT)}
 
     # act
-    rendered = workflowgen.render(ci, manifest=loaded, product="simplon", source="simplon.yaml",
-                                  artifacts=artifactsection.declared(data))
+    rendered = {key: workflowgen.render(assembled[key], manifest=loaded, product="simplon", source="simplon.yaml",
+                                        artifacts=artifactsection.declared(data),
+                                        reports=workflowgen.report_dir(data))
+                for key in ("ci", "handoff-canary")}
 
     # assert
-    assert rendered == (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert rendered.count("actions/upload-artifact@") == 2  # the canary's, and the allure report's
-    assert rendered.count("actions/download-artifact@") == 1
-    assert "name: handoff-canary" in rendered
+    for key, out in rendered.items():
+        assert out == (ROOT / ".github" / "workflows" / f"{key}.yml").read_text(encoding="utf-8"), key
+    assert rendered["handoff-canary"].count("actions/upload-artifact@") == 1
+    assert rendered["handoff-canary"].count("actions/download-artifact@") == 1
+    assert "name: handoff-canary" in rendered["handoff-canary"]
+    assert rendered["ci"].count("actions/upload-artifact@") == 1  # the allure report's
+    assert rendered["ci"].count("actions/download-artifact@") == 0
 
 
 def _lines(doc):

@@ -23,7 +23,8 @@ import pytest
 import yaml
 
 from simplon.adapters import docker, githubpackages
-from simplon.tasks import image
+from simplon.manifest import catalogue as catalogue_mod, load as manifest_mod
+from simplon.tasks import image, workflows
 
 from conftest import ROOT
 
@@ -37,6 +38,16 @@ IMAGE = "kernel"
 
 def _manifest() -> dict:
     return yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+
+
+def _ci_steps() -> list:
+    """Every step of simplon's ci.yml as the `support github workflows` verb assembles it (si#863): the file is
+    derived from the command tree, so `workflows: ci:` is no longer where its steps are read."""
+    text = MANIFEST.read_text(encoding="utf-8")
+    loaded = manifest_mod.load(text, catalogue=catalogue_mod.load())
+    (ci,) = [w for w in workflows.assemble(loaded, yaml.safe_load(text), product="simplon", root=ROOT)
+             if w.key == "ci"]
+    return [step for job in ci.jobs for step in job.steps]
 
 
 def _reference(text: str) -> str:
@@ -341,10 +352,10 @@ def test_oras_is_still_out_of_the_image_because_nothing_measured_asked_for_it():
 
 def test_the_image_is_built_on_every_push_so_the_dockerfile_cannot_rot():
     # arrange
-    steps = _manifest()["workflows"]["ci"]["jobs"]["self-build"]["steps"]
+    steps = _ci_steps()
 
     # act
-    commands = [step.get("command") for step in steps]
+    commands = [step.command for step in steps]
 
     # assert
     assert "build image" in commands
@@ -359,7 +370,7 @@ def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
     on demand, and firn#198 found it four releases stale. CI still only BUILDS it: a push is not a release."""
     # arrange
     job = _release_jobs()["image"]
-    ci_steps = [step.get("command") for j in _manifest()["workflows"]["ci"]["jobs"].values() for step in j["steps"]]
+    ci_steps = [step.command for step in _ci_steps()]
     ci_text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     # act
@@ -460,19 +471,19 @@ def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
     """si#368: an amd64-only index left a Mac with Apple silicon unable to start the container route."""
     # arrange
     kernel = _manifest()["artifacts"]["kernel"]
-    ci_steps = [s for j in _manifest()["workflows"]["ci"]["jobs"].values() for s in j["steps"]]
+    ci_steps = _ci_steps()
     steps = _release_jobs()["image"]["steps"]
     runs = [step.get("run", "") for step in steps]
 
     # act
-    ci_build = next(s for s in ci_steps if s.get("command") == "build image")
+    ci_build = next(s for s in ci_steps if s.command == "build image")
     emulator = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/setup-qemu-action"))
     built = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh build image"))
 
     # assert: both declared; CI stays native; the release registers the emulator before it builds, and
     # pins the INDEX digest read from the registry, not a local image's (which holds one platform)
     assert kernel["platforms"] == ["linux/amd64", "linux/arm64"]
-    assert ci_build["params"] == {"platform": "linux/amd64"}
+    assert ci_build.params == {"platform": "linux/amd64"}
     assert emulator < built
     assert steps[emulator]["with"] == {"image": image.BINFMT_IMAGE, "platforms": "arm64"}
     assert "docker buildx imagetools inspect" in next(r for r in runs if "deploy/image/repin.sh" in r)

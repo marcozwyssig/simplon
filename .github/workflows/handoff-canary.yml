@@ -1,0 +1,279 @@
+# GENERATED from simplon.yaml by `simplon support github workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against simplon.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+# The job hand-off canary (si#639) on every push, in a workflow of its own because the derived ci.yml
+# runs its leaves in one job, where nothing would cross a job boundary (spec 5.3a). Until #864 adds
+# `exception:`, this is a plain declared workflow; that ticket turns it into one.
+name: handoff-canary
+on:
+  pull_request: null
+  push:
+    branches:
+    - main
+  workflow_dispatch: null
+
+jobs:
+
+  # A self-hosted runner that is itself an LXC container. Python and docker are reached as on a
+  # self-hosted Debian machine; emulation cannot be registered from inside a job, because
+  # `/proc/sys/fs/binfmt_misc/register` is refused there (si#358, #722), so it is registered once
+  # by hand with `support:ci-arm64`.
+  #
+  # The job hand-off canary (si#639), and this job and the next exist for it alone. One command here
+  # writes a one-line file, the command in the next job reads it back; nothing in this manifest moves
+  # it, so it arrives only through the hand-off the kernel derives from `produces:`/`consumes:`
+  # (si#344 C.4): upload after this step, `needs:` and download before the next. Until this, no
+  # generated workflow of any product ran one on every push.
+  handoff-canary-write:
+    runs-on: ghr-8
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - run: exec ./simplon.sh support ci-docker-preflight
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-container runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - run: exec ./simplon.sh support ci-disk-preflight
+      - run: exec ./simplon.sh build handoff-canary
+      # si#344 C.4: 'handoff-canary' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-handoff-canary.tar" build/handoff-canary.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handoff-canary
+          path: ${{ runner.temp }}/simplon-handoff-handoff-canary.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - if: always()
+        continue-on-error: true
+        run: exec ./simplon.sh support ci-disk-cleanup
+
+  # A self-hosted runner that is itself an LXC container. Python and docker are reached as on a
+  # self-hosted Debian machine; emulation cannot be registered from inside a job, because
+  # `/proc/sys/fs/binfmt_misc/register` is refused there (si#358, #722), so it is registered once
+  # by hand with `support:ci-arm64`.
+  #
+  # The canary's reading half (si#639). Red when the file is missing or does not hold the line the
+  # writer writes for this commit and this run, so a file the hand-off did not bring cannot pass.
+  handoff-canary-check:
+    runs-on: ghr-8
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
+    needs: handoff-canary-write
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#623: can the kernel start a container from where it uses docker - inside the kernel
+      # container through the mounted socket, or on the host? Measured on ghr-8 on 2026-11-11: after a runner
+      # update every docker call the kernel made was refused with `permission denied ... /var/run/docker.sock`
+      # while the disk preflight stayed green, and the run went thirty steps before it stopped. So this runs a
+      # pinned container first, and a refusal names the uid and groups, the socket's uid, gid and mode, the
+      # `--group-add` gids and the way out.
+      - run: exec ./simplon.sh support ci-docker-preflight
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-container runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - run: exec ./simplon.sh support ci-disk-preflight
+      # si#344 C.4: 'handoff-canary' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: handoff-canary
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-handoff-canary.tar"
+      - run: exec ./simplon.sh test handoff-canary
+      - if: always()
+        continue-on-error: true
+        run: exec ./simplon.sh support ci-disk-cleanup

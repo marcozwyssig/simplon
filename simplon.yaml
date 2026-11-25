@@ -53,7 +53,7 @@ tasks:
     token: github
     params:
       tag: { help: "the release whose pin branch is pushed (e.g. v1.4.0)", metavar: "TAG" }
-  # si#639: the two halves of the job hand-off canary in ci.yml. Product tasks, because no catalogue task
+  # si#639: the two halves of the job hand-off canary in handoff-canary.yml. Product tasks, because no catalogue task
   # writes a small file cheaply and none reads one back to compare its content: `build:fetch` downloads one,
   # `build:image-file` copies one out of an image, `test:file` runs one in a container. The `param:` hands
   # the bound artifact's name to the body.
@@ -78,14 +78,37 @@ tasks:
 #
 # A group with no command anywhere under it does not render, so `deploy` and `monitor` are absent from
 # this CLI: simplon deploys nothing and watches nothing. They are the catalogue's, not missing.
+#
+# THE MACHINE THE DERIVED ci.yml RUNS ON (si#863), moved here from the `self-build` job of the `workflows: ci:`
+# this manifest no longer declares. Named by its KIND (si#267): everything that follows from the kind - no
+# `actions/setup-python`, docker through the bootstrap, no emulation registered in a job - is the kernel's table
+# in `simplon.manifest.runners`. ghr-8 is an LXC container (Marco, 2026-11-25), so the kind is
+# `self-hosted-container` (#722). What stays this product's is the LABEL: `ghr-8` names one machine, and
+# `[self-hosted, Linux, X64]` would describe any self-hosted Linux machine this account ever registers.
+#
+# Why a job that runs where the launcher provisions itself matters to THIS product (si#3): stage zero is the
+# working tree - the launcher installs this checkout with `-e .`, so the code under test is the code that runs
+# the test, and a commit that breaks CLI assembly fails in the same round rather than after a release. And the
+# version is derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version that is
+# merely wrong rather than failing; the full history is the kernel's own emission now, this is simplon's
+# reason for caring.
+#
+# What the kind cannot say - which Python CI tests on - the leaves say, with `ci: { python: }` below.
+runner: { kind: self-hosted-container, labels: ghr-8 }
+
 ci:
   build:
     commands:
       # `dist` is the directory the wheel lands in (si#537): `build homebrew-formula` consumes it, because the
       # wheel's file name carries the version and an artifact's `path:` is fixed.
       wheel: { task: wheel, produces: { directory: dist } }
-      # si#639: one half of the hand-off canary, the half ci.yml runs in the job before `test handoff-canary`.
-      handoff-canary: { task: handoff-canary-write, produces: { canary: handoff-canary } }
+      # si#639: one half of the hand-off canary, the half handoff-canary.yml runs in the job before
+      # `test handoff-canary`. Not in ci.yml (si#863): the derived job runs every leaf in one job, where the
+      # file would cross no boundary at all (spec 5.3a).
+      handoff-canary:
+        task: handoff-canary-write
+        produces: { canary: handoff-canary }
+        ci: { skip: "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing" }
       # The command reference the documentation website embeds is GENERATED, so simplon generates its own
       # with the kernel it ships - the same rule that makes it build and test itself here.
       #
@@ -133,6 +156,10 @@ ci:
       # IT CANNOT BE RUN FROM A LINKED GIT WORKTREE, and that is worth knowing before it is discovered:
       # the wheel is built INSIDE the image, so the context has to carry a real `.git` - deploy/image/
       # Dockerfile states it, guards it and names the fix.
+      #
+      # ci.yml BUILDS it on every push and publishes it nowhere. Building needs no credential, so the half of
+      # the loop that can run on every push does - which is what keeps the Dockerfile from rotting between the
+      # releases that publish it, which are the other half.
       image:
         task: "build:image"
         produces:
@@ -215,7 +242,14 @@ ci:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
       # aggregate at the bottom of this group, and the two are not interchangeable - this one is a leaf
       # with a body, and a leaf may not also plan other commands.
-      suite: { task: suite }
+      #
+      # `python: ["3.14"]` (si#537, si#863): the interpreter the Homebrew formula runs simplon on - Homebrew's
+      # `cryptography` and `pydantic` exist only for 3.14 and 3.15, so the formula depends on `python@3.14`.
+      # Measured once, in the si#449 round of 2026-10-18 (the si#449 spec, section E): 0.34.0 runs on 3.14.8.
+      # The runner kind sets up no Python, so this cell is the one place CI says which Python it tests on.
+      # `emulates: [linux/arm64]` (si#552): the e2e of `test:file` runs a linux/arm64 file under QEMU, and a
+      # hosted runner has none (PR #557: "Exec format error"); the hosted cell registers it before the suite.
+      suite: { task: suite, ci: { python: ["3.14"], emulates: [linux/arm64] } }
       # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for
       # other products since the catalogue had a `test` namespace and had never placed it for itself, so
       # `mypy src` was something a developer ran by hand or not at all - and for months the answer was 36
@@ -232,7 +266,12 @@ ci:
       # host venv (`deploy/orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees
       # same installed set the kernel runs against), and the roots stated by the config rather than on the
       # argv.
-      typecheck-python: { task: "test:typecheck-python" }
+      #
+      # `python: ["3.14"]` (si#8, si#863): the interpreter that runs the suite owes the type verdict. si#8 was
+      # raised as "mypy is red locally and green in CI, so it must be the Python version", and the CI had never
+      # run mypy at all; mypy.ini pins `python_version`, so on 3.14 it checks the same thing under the new
+      # interpreter.
+      typecheck-python: { task: "test:typecheck-python", ci: { python: ["3.14"] } }
       # The release-notes guard (si#89), on the kernel that ships it. It lived in
       # `src/tests/test_releases_page.py` until si#89 - which guarded simplon and nothing else, so every
       # product consuming this catalogue could tag, publish and never write a word. The mechanism is the
@@ -241,6 +280,13 @@ ci:
       #
       # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
       # through the manifest, which is the whole shape of the ticket.
+      #
+      # In CI its range is `<last tag>..HEAD` of whatever the run checked out, so it says different things
+      # under the two triggers, and both are correct: a `push` to main has the merge that just landed in range,
+      # and a `pull_request` run checks out `refs/pull/N/merge` - the branch AS MERGED with the base - so a
+      # branch green on its own tip goes red when the base moves. The command prints what HEAD resolved to on
+      # every run, which is what makes that legible instead of surprising. The kernel's `fetch-depth: 0` is a
+      # precondition for it too: with no tags there is no released version to measure the page against.
       release-notes: { task: "test:release-notes" }
       # THE REPORT OVER THE KERNEL'S OWN SUITE (si#248), and the reason it exists is the one this
       # repository keeps finding in itself: the catalogue carried `test:report` and simplon placed it
@@ -256,6 +302,10 @@ ci:
       # present and failed; with neither the allure CLI nor Docker it writes what it can and says so.
       # That is deliberate in the task and worth repeating here: archiving carries no verdict, the gate
       # does.
+      #
+      # ci.yml uploads the archive as a CI artefact and deliberately NOT to the website: a published report is
+      # the last green run frozen in public, including while `main` is red. Ninety days on the run that
+      # produced it is the retention this needs (the kernel's upload, si#248, si#863).
       report: { task: "test:report" }
       # THE KERNEL RULES ON ITSELF (si#240). This gate was built because a committed generated file had
       # drifted - and the file was THIS repository's own shell completion, in 0794e24, which left `main`
@@ -297,13 +347,13 @@ ci:
       #
       # `stop_on_failure` stays at its default (false), deliberately, and here that is the load-bearing
       # half: a red suite must not hide the notes verdict and a missing section must not hide the suite.
-      # Both steps run, both verdicts print, and the aggregate takes the worst rc. That is also why
-      # ci.yml still names the four leaves rather than this command - a GitHub job stops at its first
-      # failed step, so si#89's reason for putting the prose gate LAST there is untouched by this.
+      # Both steps run, both verdicts print, and the aggregate takes the worst rc. ci.yml names the leaves
+      # rather than this command because it is derived from them (si#858, si#863), and it runs every leaf
+      # whatever the one before it said (spec 5.2), so no order there hides a verdict either.
       #
       # Siblings execute in list order, so the notes guard runs last: it costs 0.3s measured on this
       # tree, against the suite's 62s, and it rules on prose rather than on code. The type gate sits
-      # between them for the same reason it sits there in ci.yml - a verdict over code is read before a
+      # between them for the same reason - a verdict over code is read before a
       # verdict over prose - and with `stop_on_failure` false the order decides only what a reader sees
       # first, never what runs.
       #
@@ -343,8 +393,12 @@ ci:
         task: "test:homebrew-formula"
         consumes: { formula: simplon-formula, wheel: dist }
         produces: { test-result: simplon-formula-checked }
-      # si#639: the other half, run by ci.yml in a job of its own, so the file reaches it only by the hand-off.
-      handoff-canary: { task: handoff-canary-check, consumes: { canary: handoff-canary } }
+      # si#639: the other half, run by handoff-canary.yml in a job of its own, so the file reaches it only by
+      # the hand-off. Out of ci.yml for the writer's reason above (si#863).
+      handoff-canary:
+        task: handoff-canary-check
+        consumes: { canary: handoff-canary }
+        ci: { skip: "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing" }
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, the manifest's own model, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, manifest-model, release-notes]
@@ -587,6 +641,10 @@ generated:
   ci-workflow:
     path: .github/workflows/ci.yml
     by: support github workflows
+  # si#863: the hand-off canary's own workflow, declared under `workflows:` below (spec 5.3a).
+  canary-workflow:
+    path: .github/workflows/handoff-canary.yml
+    by: support github workflows
   # si#525: the central working agreements plus simplon's own region, and the plugins' native half.
   claude-md:
     path: CLAUDE.md
@@ -686,7 +744,7 @@ artifacts:
   simplon-formula-checked:
     kind: test-result
     path: build/test/homebrew-formula.json
-  # si#639: the hand-off canary, written in one job of ci.yml and read back in the next.
+  # si#639: the hand-off canary, written in one job of handoff-canary.yml and read back in the next.
   handoff-canary:
     kind: file
     path: build/handoff-canary.txt
@@ -766,162 +824,16 @@ tracker:
 # reasoning would make these files worse than the hand-written ones it replaced.
 workflows:
 
-  ci:
+  # THE HAND-OFF CANARY'S OWN WORKFLOW (si#863, spec 5.3a). ci.yml is derived from the command tree since
+  # si#863, and the derived job runs every leaf in one job, so the canary would hand nothing over there; both
+  # its leaves say `ci: { skip: }` and run here instead, one per job. #864 turns this entry into a counted
+  # `exception:`.
+  handoff-canary:
     note: |
-      Every pull request and every push to main, and every step is a command a developer can type in
-      a checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
-      produced si#8, where the CI was green for months because it had never run mypy at all.
-
-      The steps name the LEAVES, not the `test all` aggregate that plans three of them (si#156,
-      si#163). A GitHub job stops at its first failed step, so an aggregate here would put the prose
-      gate in front of the type gate and the wheel, which is exactly what the last step's note
-      refuses. si#163 folded the type gate into that aggregate and deliberately did NOT collapse
-      these steps into it: what the local gate gains is one command that really runs every test, and
-      what this file would lose is the ordering. Every verdict below still has one implementation,
-      and `test all` reaches three of them by name rather than by repeating them.
-    # No `on:` (si#787): the kernel's CI default - a pull request, a push to main, a dispatch. The
-    # `[push, pull_request, workflow_dispatch]` that stood here ran the suite twice for every push to a
-    # pull request's branch, on the one runner this repository has.
+      The job hand-off canary (si#639) on every push, in a workflow of its own because the derived ci.yml
+      runs its leaves in one job, where nothing would cross a job boundary (spec 5.3a). Until #864 adds
+      `exception:`, this is a plain declared workflow; that ticket turns it into one.
     jobs:
-      self-build:
-        note: |
-          Stage zero is the working tree. The launcher provisions its own venv and installs this
-          checkout with `-e .`, so the code under test is the code that runs the test - a commit that
-          breaks CLI assembly fails here, in the same round, rather than after a release.
-
-          Why the full history below matters to THIS product in particular (si#3): the version is
-          derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
-          that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
-          The kernel emits the setting and states what it does; this is simplon's own reason for
-          caring, which no other product has to inherit.
-        # THE MACHINE, NAMED BY ITS KIND (si#267). Everything that follows from "this is a self-hosted
-        # Debian runner" - no `actions/setup-python`, docker through the bootstrap - is the kernel's
-        # table now, in `simplon.manifest.runners`, learned once for everybody instead of a second time here.
-        # What stays this product's is the LABEL: `ghr-8` names one machine, and
-        # `[self-hosted, Linux, X64]` would describe any self-hosted Linux machine this account ever
-        # registers, so the day a second one joins the jobs would be shared out with nothing saying so.
-        #
-        # WHAT IT COSTS, stated rather than buried: nothing here says which Python version CI tests on.
-        # The kernel refuses a `python:` on this kind, which is right - a pin it cannot honour reads as
-        # a guarantee and is a wish - and putting one back means putting an interpreter where the
-        # runner can find it, which is a statement about a machine and not about this product.
-        runner: { kind: self-hosted-debian, labels: ghr-8 }
-        steps:
-          # The pytest suite, and it says `test suite` since si#156 - the name this leaf took when
-          # `test all` became the aggregate over it and the notes guard. The same run, the same body,
-          # renamed; the aggregate is the developer's one command, not the pipeline's.
-          - command: test suite
-          - note: |
-              The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
-              because the command has to be the same one a developer runs. si#8 was raised as "mypy is
-              red locally and green in CI, so it must be the Python version" - and the CI had simply
-              never run mypy at all. Two ways to reach one verdict is the shape that produced that; one
-              way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
-            command: test typecheck-python
-          - note: |
-              The staleness gate (si#240), and CI is where it earns its keep: it regenerates the two
-              committed generated files and fails if either is not what its own command produces. 0794e24
-              is why - a manifest change that never reached the shell completion, and `main` red with an
-              uncompletable command until a person noticed. It runs AFTER the type gate and before the
-              wheel, because a stale completion is a fact about the tree rather than about the build, and
-              a reader looking at a red run should see it beside the other verdicts about the tree.
-            command: test generated
-          - note: |
-              simplon's own pipeline model, checked by firn in its pinned image (si#371). A fact about the
-              tree like the two before it, so it sits beside them. The image is public and the runner
-              already reaches docker for the image build below, so it needs nothing new.
-            command: test model
-          - note: |
-              simplon's manifest, exported fresh and checked by firn against the M2 the kernel ships (si#522):
-              the route a product takes, beside the check of the tree it is copied from.
-            command: test manifest-model
-          - command: build wheel
-          - note: |
-              The kernel's own container image (si#200), BUILT here and published nowhere. Building
-              needs no credential, so the half of the loop that can run on every push does - which is
-              what keeps the Dockerfile from rotting between the releases that publish it, which are
-              the other half. It is the same argument as every other step in this file: a command a
-              developer can type, run by the pipeline rather than restated in it.
-
-              It goes after the wheel and before the prose gate for the reason the next note gives:
-              a verdict over code is read before a verdict over prose.
-              amd64 ONLY (si#368): the image declares arm64 too, and building that here would put an
-              emulated stage on this runner on every push. A release builds both.
-            command: build image
-            params: { platform: linux/amd64 }
-          - note: |
-              The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
-              hides everything behind it, and this one rules on prose rather than on code: a
-              release section still to be written must not stop a reader from seeing whether the
-              suite, the type gate and the wheel are green. It is a real gate all the same - a
-              tagged release nobody wrote up is a failure this repository has already shipped once.
-
-              Its range is `<last tag>..HEAD` of whatever this run checked out, so it says
-              different things under the two triggers this workflow declares, and both are
-              correct: a `push` to main has the merge that just landed in range, and a
-              `pull_request` run checks out `refs/pull/N/merge` - the branch AS MERGED with the
-              base - so a branch green on its own tip goes red when the base moves. The command
-              prints what HEAD resolved to on every run, which is what makes that legible instead
-              of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
-              there is no released version to measure the page against.
-            command: test release-notes
-          - note: |
-              THE REPORT (si#248), and the two `if: always()` below are the whole point of it. A GitHub
-              job stops at its first failed step, so without them the archive would exist for exactly
-              the runs nobody needs it for - the green ones - and be missing from every red one. The
-              report step itself runs no tests and carries no verdict: it merges what the suite wrote
-              and renders it, and it is green on a machine with no renderer at all.
-
-              It sits after the gates rather than beside the suite because it archives THEIR verdict.
-              A report rendered before the type gate ran would be a true report of an incomplete run,
-              which is the kind of half-truth an archive is worst at carrying.
-            command: test report
-            if: always()
-          - note: |
-              The archive as a CI artefact and deliberately NOT on the website: a published report is
-              the last green run frozen in public, including while `main` is red. Ninety days on the
-              run that produced it is the retention this needs.
-
-              `if: always()` for the same reason as the step above, and `if-no-files-found: error`
-              because an upload that finds nothing and says so is this repository's recurring defect at
-              its most ordinary - a step that cannot tell "no report" from "report uploaded".
-            uses: actions/upload-artifact@v4
-            if: always()
-            with:
-              name: allure-report
-              path: tests/reports/*.html
-              if-no-files-found: error
-              retention-days: 90
-      suite-python-3-14:
-        note: |
-          The pytest suite on Python 3.14 (si#537), the interpreter the Homebrew formula runs simplon on:
-          Homebrew's `cryptography` and `pydantic` exist only for 3.14 and 3.15, so the formula depends on
-          `python@3.14`. Measured once, in the si#449 round of 2026-10-18 (the si#449 spec, section E):
-          0.34.0 runs on 3.14.8. `self-build` above cannot say which Python it tests on, so this job is
-          the one that does.
-
-          A hosted runner, because the self-hosted kind refuses a `python:` (see `self-build`); the
-          `publish` job of the release workflow makes the same choice. The suite and the type gate run
-          here, nothing else: the other gates are facts about the tree or the build, and `self-build` has
-          already ruled on them. The type gate is here because a job that verifies the tree owes that
-          verdict (si#8); mypy.ini pins `python_version`, so on 3.14 it checks the same thing under the
-          new interpreter.
-        runs-on: ubuntu-latest
-        python: "3.14"
-        steps:
-          - name: Register linux/arm64 emulation
-            note: |
-              si#552: the e2e of `test:file` runs a linux/arm64 file under QEMU, and a hosted runner has
-              none (PR #557: "Exec format error"). `support ci-arm64` is the kernel's way, but it needs root
-              and the launcher run as root would leave root-owned files for the steps after it; the action
-              registers through docker, which this runner's user may use. The image is the kernel's own pin
-              (`labhost.BINFMT_IMAGE`), and test_own_workflows holds the two equal.
-            uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
-            with:
-              image: tonistiigi/binfmt:qemu-v10.2.3
-              platforms: arm64
-          - command: test suite
-          - command: test typecheck-python
       handoff-canary-write:
         note: |
           The job hand-off canary (si#639), and this job and the next exist for it alone. One command here
@@ -929,14 +841,14 @@ workflows:
           it, so it arrives only through the hand-off the kernel derives from `produces:`/`consumes:`
           (si#344 C.4): upload after this step, `needs:` and download before the next. Until this, no
           generated workflow of any product ran one on every push.
-        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        runner: { kind: self-hosted-container, labels: ghr-8 }
         steps:
           - command: build handoff-canary
       handoff-canary-check:
         note: |
           The canary's reading half (si#639). Red when the file is missing or does not hold the line the
           writer writes for this commit and this run, so a file the hand-off did not bring cannot pass.
-        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        runner: { kind: self-hosted-container, labels: ghr-8 }
         steps:
           - command: test handoff-canary
 
