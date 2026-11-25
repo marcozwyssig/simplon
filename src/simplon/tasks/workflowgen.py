@@ -108,17 +108,17 @@ DOWNLOAD_ACTION = "actions/download-artifact@v4"
 APP_TOKEN_ACTION = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
 APP_TOKEN_VERSION = "v3.2.0"
 
-#: si#570: the action a release's `emulates:` registers its platforms with, pinned by SHA like the app
+#: si#570: the action a release's `ci: emulates:` registers its platforms with, pinned by SHA like the app
 #: token's. It is the one simplon's own CI used for si#552 (#557); the image it runs is the kernel's own
 #: binfmt pin, `labhost.BINFMT_IMAGE`, so `support ci-arm64` and the workflow cannot drift apart.
 QEMU_ACTION = "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1"
 EMULATES_KEY = "emulates"
 APP_TOKEN_ENV = "GH_APP_TOKEN"
 
-#: si#720: the derived release job's time limit, set by `timeout_minutes:` beside `release:`. GitHub has no
-#: workflow-level limit and a product job named `release` is refused, so without this key a hung release
-#: holds its runner for GitHub's default of 360 minutes. The default is measured, not guessed: simplon's own
-#: derived release job ran 10.3 to 16.5 minutes over its green runs up to 2026-11-15, and firn's
+#: si#720: the derived release job's time limit, set by `ci: { timeout_minutes: }` on the ReleaseCommand
+#: (si#862). GitHub has no workflow-level limit and a product job named `release` is refused, so without
+#: this key a hung release holds its runner for GitHub's default of 360 minutes. The default is measured,
+#: not guessed: simplon's own derived release job ran 10.3 to 16.5 minutes over its green runs up to 2026-11-15, and firn's
 #: hand-written `image` job, which builds arm64 under emulation the way its derived job now does, ran 47.8
 #: to 62.9 minutes over its green runs up to 2026-11-15 (`gh run view --json jobs`) under the 120 firn set
 #: itself. 120 keeps firn's own limit, about twice its longest measured run.
@@ -308,7 +308,7 @@ def emulation_step(platforms: Sequence[str], *, step_id: str | None = None) -> S
     """The step that registers emulation for `platforms` on the job's machine: the QEMU action with the kernel's
     binfmt pin, `labhost.BINFMT_IMAGE`, so `support ci-arm64` and every workflow register the same thing (si#570).
 
-    One shape for the release's `emulates:` and the derived CI's `ci: emulates:` (si#860 final review), so the
+    One shape for the release's `ci: emulates:` and the derived CI's `ci: emulates:` (si#860 final review), so the
     action, the pin and the key order cannot drift apart between them. `step_id` is the id a later step's
     condition reads; the release has none. The note is the caller's."""
     from simplon.adapters.labhost import BINFMT_IMAGE
@@ -386,12 +386,9 @@ class Workflow:
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
-    #: si#490: the release aggregate's `<group> <name>`, when this workflow is its dispatch release.
+    #: si#490: the release aggregate's `<group> <name>`, when this workflow is its dispatch release; set by
+    #: `releasepipeline.to_workflow` (si#862), never by `parse`.
     release: str = ""
-    #: si#570: the platforms the derived release job registers emulation for before anything runs.
-    emulates: tuple[str, ...] = ()
-    #: si#720: the derived release job's `timeout-minutes`.
-    timeout_minutes: int = RELEASE_TIMEOUT_MINUTES
     #: si#858: derived by `cipipeline` from the CI leaves rather than declared under `workflows:`.
     derived: bool = False
     #: si#873: the manifest's `sources:`, which every job that checks out gets a step for (`_sources_step`).
@@ -474,6 +471,7 @@ def _workflow(key: str, body: object) -> Workflow:
     where = f"workflow '{key}'"
     if not isinstance(body, Mapping):
         raise ValueError(f"{where}: must be a mapping, not {type(body).__name__}")
+    _refuse_retired_keys(key, body, where)
     path = str(body.get("path") or f"{DIRECTORY}/{key}.yml")
     _check_path(path, where)
 
@@ -481,7 +479,7 @@ def _workflow(key: str, body: object) -> Workflow:
     if handwritten:
         # A declined workflow must decline COMPLETELY. Carrying jobs beside the decline would leave two
         # readings of one entry and no way to tell which the author meant.
-        stray = sorted(k for k in ("jobs", "note", "name", RELEASE_KEY) if body.get(k) is not None)
+        stray = sorted(k for k in ("jobs", "note", "name") if body.get(k) is not None)
         if _declared_trigger(body, where) is not None:
             stray = sorted([*stray, "on"])
         if stray:
@@ -494,43 +492,44 @@ def _workflow(key: str, body: object) -> Workflow:
         # An EMPTY `handwritten:` is the case worth naming: it reads as a decline and behaves as none.
         raise ValueError(f"{where}: `handwritten:` must say why this file is not generated, not be empty")
 
-    release = _release_key(body, where)
-    emulates = _emulates(body, where, release)
-    timeout = _release_timeout(body, where, release)
-    # si#862: a release's trigger is the model's (`releasepipeline.TRIGGER`), set where the entry is derived.
-    trigger = _declared_trigger(body, where) if not release else None
+    trigger = _declared_trigger(body, where)
     stages = _stages(body, where)
-    if trigger is None and not stages and not release:
+    if trigger is None and not stages:
         trigger = _CI_TRIGGER
-    if trigger is None and not release:
+    if trigger is None:
         raise ValueError(
-            f"{where}: declares no `on:` trigger. The kernel derives one for a `{RELEASE_KEY}:` workflow "
-            f"and a workflow of jobs only (pull request, push to {DEFAULT_BRANCH}, dispatch) - a "
-            f"`{FLOW_KEY}:` deploys, and whether a tag or a release starts it is this product's statement")
+            f"{where}: declares no `on:` trigger. The kernel derives one for a workflow of jobs only (pull "
+            f"request, push to {DEFAULT_BRANCH}, dispatch) and for the release (release.yml, from the "
+            f"ReleaseCommand) - a `{FLOW_KEY}:` deploys, and whether a tag or a release starts it is this "
+            f"product's statement")
     # `flow:` AND `jobs:` TOGETHER ARE ALLOWED, and the refusal that stood here was struck for si#267's
     # reason: a product wanting the rollout plus a notification job of its own was saying something the
     # kernel could honour, and forbidding it sent them back to writing the whole file. The generated
     # stage jobs carry stable names (`deploy-<environment>`), so a product's own job hangs `needs:` on
     # one and the order stays the product's.
-    runner, rollout_runs_on = ((None, "") if not stages and not release
+    runner, rollout_runs_on = ((None, "") if not stages
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
-    _refuse_emulates_where_it_cannot_register(runner, emulates, where)
     rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
-    if not stages and not release and (not isinstance(jobs, Mapping) or not jobs):
+    if not stages and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
             f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration, or "
             f"`{FLOW_KEY}:` must name the environments this release is rolled out to")
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
-                    note=str(body.get("note") or ""), on=trigger, flow=stages, release=release,
+                    note=str(body.get("note") or ""), on=trigger, flow=stages,
                     rollout_runs_on=rollout_runs_on, rollout_runner=runner,
                     rollout_env=rollout_env if isinstance(rollout_env, Mapping) else {},
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
-                    extras=_release_extras(body, where) if release else _workflow_extras(body),
-                    emulates=emulates, timeout_minutes=timeout)
+                    extras=_workflow_extras(body))
+
+
+def declares_trigger(workflow: Workflow) -> bool:
+    """Whether the entry wrote `on:` (or `flow:` with one), rather than taking si#787's default for a workflow of
+    jobs only. `_workflow` hands that default out as the module constant itself, so identity tells them apart."""
+    return workflow.on is not _CI_TRIGGER
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
@@ -538,13 +537,9 @@ def _workflow(key: str, body: object) -> Workflow:
 #: through, exactly as a job's unknown keys are.
 FLOW_KEY = "flow"
 
-# --- si#490: `release: <group> <name>` - the dispatch release, derived from a release aggregate ---------
+# --- si#490, si#862: the dispatch release, derived from the ReleaseCommand by `releasepipeline` -----------
 #
-# WHAT A RELEASE WORKFLOW DERIVES, and why the product writes none of it. A release is started by dispatch
-# with the version typed and a dry run by default (si#463 D2); the version reaches a script only through
-# the job's `env:` and a command only as `"$RELEASE_VERSION"` (si#488), never as `${{ inputs.* }}` inside a
-# `run:` line. The ORDER is the aggregate's: `plan_for` already returns it in the one order rule 8 accepts
-# (si#489), so nothing here orders anything.
+# `workflows: release:` names the release workflow's entry, which adds jobs beside the derived `release` job.
 RELEASE_KEY = "release"
 #: The dispatch release's check (si#487): the first leaf, run before the cut.
 RELEASE_CHECK = "release:check"
@@ -569,64 +564,46 @@ _CI_TRIGGER: Mapping[str, object] = {"pull_request": None, "push": {"branches": 
 _WORKFLOW_DEFAULT_PERMISSIONS: Mapping[str, str] = {"contents": "read"}
 
 
-def _release_key(body: Mapping[object, object], where: str) -> str:
-    """The aggregate a release workflow derives from, or "" - with every key it derives refused beside it."""
-    value = body.get(RELEASE_KEY)
-    if value is None:
-        return ""
-    if not isinstance(value, str) or len(value.split()) < 2:
-        raise ValueError(
-            f"{where}: `{RELEASE_KEY}:` names a release aggregate as <group> <name> (e.g. `release all`), "
-            f"got '{value}'")
-    if _declared_trigger(body, where) is not None:
-        # EXPRESSION rule (si#490 decision 1): a second trigger would start a release with no `version`.
-        raise ValueError(
-            f"{where}: declares `on:`, and the trigger is derived from `{RELEASE_KEY}:` - a dispatch with the "
-            f"version and a dry run; remove `on:`")
-    if body.get("concurrency") is not None:
-        # EXPRESSION rule: two runs of one version must queue, never cancel each other mid-release.
-        raise ValueError(
-            f"{where}: `concurrency:` is derived from `{RELEASE_KEY}:` - one release per version, never "
-            f"cancelled in progress; remove it")
-    if body.get(FLOW_KEY) is not None:
-        raise ValueError(
-            f"{where}: declares `{FLOW_KEY}:` and `{RELEASE_KEY}:` - one workflow is a rollout or a release, "
-            f"not both, because each derives its own trigger; give each its own workflow")
-    jobs = body.get("jobs")
-    if isinstance(jobs, Mapping) and RELEASE_JOB in jobs:
-        raise ValueError(
-            f"{where}: declares a job '{RELEASE_JOB}', and the derived job is named '{RELEASE_JOB}' - "
-            f"rename yours; it can still `needs: {RELEASE_JOB}`")
-    env = body.get("env")
-    if isinstance(env, Mapping) and RELEASE_ENV in env:
-        raise ValueError(
-            f"{where}: sets {RELEASE_ENV} in `env:`, and {RELEASE_ENV} is the dispatch input's - the job "
-            f"sets it from `inputs.version`, and a second value would be shadowed with nobody told")
-    return " ".join(value.split())
+#: si#862: the keys `workflows:` no longer reads, each with the place that now says it. The release is derived into
+#: release.yml from the ReleaseCommand (the aggregate under `ci: release:` that `produces: { release: <artifact> }`),
+#: and `workflows: release:` only adds jobs beside it. A retired key fails loudly rather than being ignored or carried
+#: to GitHub as a workflow key: nothing reads it any more, so a silent pass would release on another machine, with
+#: no emulator or under another time limit than the one written.
+_RETIRED_KEYS: Mapping[str, str] = {
+    RELEASE_KEY: "`release:` is retired: the release is derived into release.yml from the ReleaseCommand, the "
+               "aggregate under `ci: release:` that `produces: { release: <artifact> }`, and `workflows: release:` "
+               "adds jobs beside it - remove the key",
+    EMULATES_KEY: "`emulates:` is retired: the release job's emulation is `ci: { emulates: [...] }` on the "
+                  "ReleaseCommand under `ci: release:`; a job you write registers emulation itself, with a "
+                  f"`uses: {QEMU_ACTION}` step",
+    TIMEOUT_KEY: "`timeout_minutes:` is retired: the release job's time limit is `ci: { timeout_minutes: }` on the "
+                 "ReleaseCommand under `ci: release:` (the default is "
+                 f"{RELEASE_TIMEOUT_MINUTES}); a job you write carries `timeout-minutes:` itself",
+}
+#: si#862: beside the release, a workflow-level machine named the derived release job's; nothing reads it any more.
+_RETIRED_MACHINE_KEYS = ("runs-on", "runs_on", runners.KEY)
+_RETIRED_MACHINE = ("`{key}:` is retired here: the release job's machine is `ci: {{ runner: }}` on the ReleaseCommand "
+                    "under `ci: release:`, or the product's top-level `runner:` when it names none; a job you write "
+                    "names its own")
 
 
-def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[str, ...]:
-    """The platforms `emulates:` names, in buildx's `<os>/<arch>[/<variant>]` spelling, or ().
+def _refuse_retired_keys(key: str, body: Mapping[object, object], where: str) -> None:
+    """si#862: every retired key the entry writes, refused in one message, each with the place that now says it.
 
-    A release job is derived and takes no product step, so a suite that runs a foreign-platform file (si#552)
-    had no way to get an emulator there (si#570). Both refusals are DIAGNOSES: beside no `release:` the key
-    would reach GitHub, which refuses it, and a job the product writes carries the step itself; a value
-    that is not a list of platforms would reach `setup-qemu-action` and fail there, or register nothing."""
-    value = body.get(EMULATES_KEY)
-    if value is None:
-        return ()
-    if not release:
-        raise ValueError(
-            f"{where}: `{EMULATES_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
-            f"a job you write registers emulation itself, with a `uses: {QEMU_ACTION}` step")
-    if not runners.spelt_for_buildx(value):
-        raise ValueError(
-            f"{where}: `{EMULATES_KEY}:` is a non-empty list of platforms as buildx spells them "
-            f"(e.g. `[linux/arm64]`), got '{value}'")
-    return tuple(value)
+    A DIAGNOSIS: nothing reads these keys any more, so each would be ignored silently - the release would run on
+    another machine, register no emulator or keep another time limit than the one the manifest shows. Every key
+    is named at once, so a product that wrote several (firn's entry writes `release:`, `timeout_minutes:` and
+    `runs-on:`) learns the whole move from one run. Under any key for `release:`, `emulates:` and
+    `timeout_minutes:`, which were read only beside `release:`; the machine keys only under `release` and beside
+    no `flow:`, because a rollout's machine is still read there, under any key."""
+    said = [_RETIRED_KEYS[name] for name in _RETIRED_KEYS if body.get(name) is not None]
+    if key == RELEASE_KEY and body.get(FLOW_KEY) is None:
+        said += [_RETIRED_MACHINE.format(key=name) for name in _RETIRED_MACHINE_KEYS if body.get(name) is not None]
+    if said:
+        raise ValueError(f"{where}: si#862 derives the release from the ReleaseCommand - " + "; ".join(said))
 
 
-def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner | None", emulates: tuple[str, ...],
+def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner", emulates: tuple[str, ...],
                                               where: str) -> None:
     """#722, si#863: `emulates:` on a runner kind with `can_emulate = false` is refused at generation.
 
@@ -634,55 +611,18 @@ def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner | None", e
     `permission denied` on `/proc/sys/fs/binfmt_misc/register` (si#358), so the release job would fail in its
     first step and nothing said so when the file was written. A derived CI job names the same gap in its note
     instead (si#860); a release cannot, because it would release past a suite that never ran its foreign
-    binaries. A machine named by `runs-on:` alone carries no kind, so nothing is known to refuse."""
-    if not emulates or runner is None or workflowschema.RUNNER_KINDS[runner.kind].can_emulate:
+    binaries. Since si#862 the release job's machine is always a kind (`releasepipeline.derive`)."""
+    if not emulates or workflowschema.RUNNER_KINDS[runner.kind].can_emulate:
         return
     able = ", ".join(kind for kind, data in workflowschema.RUNNER_KINDS.items() if data.can_emulate)
     raise ValueError(
-        f"{where}: `{EMULATES_KEY}:` ({', '.join(emulates)}) asks the release job to register emulation, and its "
-        f"runner kind `{runner.kind}` cannot register emulation (#722). On an LXC runner, for example, the "
+        f"{where}: `ci: {EMULATES_KEY}:` ({', '.join(emulates)}) asks the release job to register emulation, and "
+        f"its runner kind `{runner.kind}` cannot register emulation (#722). On an LXC runner, for example, the "
         f"registration is refused with `permission denied` on `/proc/sys/fs/binfmt_misc/register`. Either "
         f"register it once on the machine itself, by hand and as root, as si#358 describes (`support:ci-arm64`; "
         f"on an LXC runner a boot-time registration in the container's own binfmt_misc), and drop "
-        f"`{EMULATES_KEY}:`, or run the release on a runner kind that can ({able})")
-
-
-def _release_timeout(body: Mapping[object, object], where: str, release: str) -> int:
-    """si#720: the derived release job's `timeout-minutes`, from `timeout_minutes:`, or the default.
-
-    Both refusals are DIAGNOSES: beside no `release:` the key would reach GitHub as a workflow key, which
-    it refuses, and a job the product writes carries `timeout-minutes:` itself; a value that is not a
-    positive whole number of minutes is refused by GitHub or, as 0, ends the job before it starts."""
-    value = body.get(TIMEOUT_KEY)
-    if value is None:
-        return RELEASE_TIMEOUT_MINUTES
-    if not release:
-        raise ValueError(
-            f"{where}: `{TIMEOUT_KEY}:` is read only beside `{RELEASE_KEY}:`, whose job the kernel derives; "
-            f"a job you write carries `timeout-minutes:` itself")
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(
-            f"{where}: `{TIMEOUT_KEY}:` is the derived release job's time limit, a positive whole number of "
-            f"minutes (the default is {RELEASE_TIMEOUT_MINUTES}), got {value!r}")
-    return value
-
-
-def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
-    """The workflow default `permissions`, then the product's own extras; the release's `concurrency` is
-    `releasepipeline.to_workflow`'s (si#862).
-
-    si#719: the write scopes the release needs are the derived JOB's (`releasepipeline.derive`), not the
-    workflow's, so every other job no longer inherits them. The workflow-level `permissions:` is the
-    default of every job without its own block: the product's, as written, or `contents: read`, the
-    least a job needs to check the repository out. Nothing a product declares here can take the release
-    job's scopes away, so the refusal that once guarded them (an EXPRESSION rule) is gone."""
-    own = _workflow_extras(body)
-    declared = own.pop("permissions", None) or dict(_WORKFLOW_DEFAULT_PERMISSIONS)
-    if not isinstance(declared, Mapping):
-        raise ValueError(
-            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, the default of "
-            f"every job without its own block; got '{declared}'")
-    return {"permissions": {str(k): v for k, v in declared.items()}, **own}
+        f"`{EMULATES_KEY}:`, or run the release on a runner kind that can ({able}), named with `ci: {{ runner: }}` "
+        f"on the release aggregate")
 
 
 class Stage(NamedTuple):
@@ -743,7 +683,8 @@ def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
     return tuple(stages)
 
 
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, EMULATES_KEY, TIMEOUT_KEY, "runs-on", "runs_on", runners.KEY, True})
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, "runs-on", "runs_on",
+                                runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
@@ -1565,11 +1506,6 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
         lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
-    if workflow.release and not workflow.derived:
-        # si#862: the release job is derived through the model (`releasepipeline`); an entry rendered without it
-        # would be a release.yml with no release job in it.
-        raise ValueError(f"workflow '{workflow.key}': a `{RELEASE_KEY}:` entry is rendered from "
-                         f"`releasepipeline.to_workflow`, which derives its release job")
     jobs = (*_rollout(workflow, environments), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
     if workflow.release:
@@ -2091,9 +2027,9 @@ def _refuse_foreign_files(workflows: Sequence[Workflow], root: Path) -> None:
         if target.exists() and not target.read_text(encoding="utf-8").startswith(GENERATED_PREFIX):
             raise ValueError(
                 f"{workflow.path} exists and was not generated (it does not start with '{GENERATED_PREFIX}'), and "
-                f"the manifest declares no `{SECTION}: {workflow.key}:`, so the kernel would derive this file over "
-                f"it. Keep it by declaring it under `{SECTION}: {workflow.key}:` as `handwritten: \"<why>\"`, or "
-                f"delete the file so the kernel derives it")
+                f"the manifest does not declare `{SECTION}: {workflow.key}:` as `handwritten:`, so the kernel would "
+                f"derive this file over it. Keep it by declaring it under `{SECTION}: {workflow.key}:` as "
+                f"`handwritten: \"<why>\"`, or delete the file so the kernel derives it")
 
 
 def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,

@@ -29,6 +29,7 @@ ci:
       image: { task: "test:image", consumes: { image: app }, produces: { test-result: app-checked } }
   release:
     commands:
+      check: { task: "release:check" }
       notes: { task: "release:notes", produces: { release-notes: app-notes } }
       publish:  { task: "release:image", consumes: { image: app, evidence: [app-checked] } }
       tag:   { task: "release:tag", consumes: { release-notes: app-notes }, produces: { tag: app-tag } }
@@ -37,7 +38,10 @@ ci:
 # `image` is also `build image` and `test image` here, while `support git push` owns `push`.
 
 
-def _all(deps, extra, stop="stop_on_failure: true, "):
+def _all(deps, extra, stop="stop_on_failure: true, ", check=True):
+    # si#862: every release aggregate starts with the dispatch-release check (si#487), so `check` leads the plan
+    # unless a test is about that rule.
+    deps = f"check, {deps}" if check else deps
     return HEAD + f"      all: {{ depends_on: [{deps}], help: 'h', {stop}{extra} }}\n"
 
 
@@ -228,7 +232,7 @@ def test_a_github_release_produced_by_a_leaf_is_in_the_model_export():
 
 def test_an_aggregate_may_name_a_github_release_as_its_bundle():
     # act
-    loaded = _load(GH + "      all: { depends_on: [notes, publish, tag], help: 'h', stop_on_failure: true, "
+    loaded = _load(GH + "      all: { depends_on: [check, notes, publish, tag], help: 'h', stop_on_failure: true, "
                         "produces: { release: app-gh } }\n")
 
     # assert
@@ -236,7 +240,7 @@ def test_an_aggregate_may_name_a_github_release_as_its_bundle():
     assert isinstance(spec, ReleaseCommand) and spec.release == "app-gh"
 
 
-BOTH = GH + ("      all: { depends_on: [notes, publish, tag, gh-publish], help: 'h', stop_on_failure: true, "
+BOTH = GH + ("      all: { depends_on: [check, notes, publish, tag, gh-publish], help: 'h', stop_on_failure: true, "
              "produces: { release: app-gh } }\n")
 
 
@@ -251,7 +255,7 @@ def test_an_aggregate_whose_bundle_its_publish_leaf_produces_is_refused():
 # --- si#489: with a draft release, the PUBLISHED release is the public statement ---------------------------
 
 def _gh_all(deps: str) -> str:
-    return GH + (f"      all: {{ depends_on: [{deps}], help: 'h', stop_on_failure: true, "
+    return GH + (f"      all: {{ depends_on: [check, {deps}], help: 'h', stop_on_failure: true, "
                  f"produces: {{ release: app-release }} }}\n")
 
 
@@ -279,32 +283,29 @@ def test_without_a_github_publish_the_tag_still_follows_every_publish():
 
 
 # --- si#487: a dispatch release starts with `release:check` ----------------------------------------------
-
-CHECK = '      check: { task: "release:check" }\n'
-RELEASE_WORKFLOW = "workflows:\n  rel:\n    release: release all\n"
-
-
-def _dispatched(deps, *, check=True, workflow=RELEASE_WORKFLOW):
-    text = _all(deps, "produces: { release: app-release }")
-    if check:
-        text = text.replace("      all:", CHECK + "      all:", 1)
-    return text + workflow
+# Since si#862 the rule holds every release aggregate: each derives release.yml by itself, so no workflow has to
+# name it first.
 
 
-def test_a_release_workflow_whose_aggregate_does_not_start_with_the_check_is_refused():
+def _dispatched(deps):
+    return _all(deps, "produces: { release: app-release }", check=False)
+
+
+def test_a_release_aggregate_that_does_not_start_with_the_check_is_refused():
     # arrange
-    text = _dispatched("notes, publish, tag", check=False)
+    text = _dispatched("notes, publish, tag")
 
     # act / assert
     with pytest.raises(ValueError) as refused:
         _load(text)
     message = str(refused.value)
     assert "release:check" in message and "first" in message
+    assert "the release aggregate 'release all'" in message
     assert 'check: { task: "release:check" }' in message
 
 
 def test_the_check_second_is_refused_too():
-    with pytest.raises(ValueError, match="starts with 'notes'"):
+    with pytest.raises(ValueError, match="starts its plan with 'notes'"):
         _load(_dispatched("notes, check, publish, tag"))
 
 
@@ -314,8 +315,11 @@ def test_the_check_first_is_accepted():
     assert loaded.plan_for("all", group="release")[0] == "check"
 
 
-def test_an_aggregate_no_workflow_names_needs_no_check():
-    _load(_dispatched("notes, publish, tag", check=False, workflow=""))
+def test_a_release_aggregate_no_workflow_names_is_held_to_the_check_too():
+    """si#862: the rule used to bind only the aggregate a `workflows: <key>: release:` named; that key is retired,
+    and a ReleaseCommand derives release.yml with no entry at all."""
+    with pytest.raises(ValueError, match="a dispatch release is checked before anything is cut"):
+        _load(_dispatched("notes, publish, tag"))
 
 
 def test_a_nested_aggregate_whose_first_leaf_is_the_check_is_accepted():

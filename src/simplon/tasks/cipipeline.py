@@ -1469,8 +1469,9 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
     since si#860 a derived ci-nightly.yml, ci-manual.yml and ci-scheduled.yml where a leaf carries that cadence.
 
     ONE SWITCH RULE (si#860 final review): A DECLARED `workflows:` KEY SWITCHES OFF THE DERIVED WORKFLOW WITH THAT
-    KEY, AND ONLY THAT ONE. `workflows: ci:` is the product's own push CI, so ci.yml is not derived and nothing
-    else changes; `workflows: ci-nightly:` (and `ci-manual`, `ci-scheduled`) is the product's own cadence file,
+    KEY, AND ONLY THAT ONE. The release is the one reading of it that differs (si#862, `_with_release`): a declared
+    `workflows: release:` adds its jobs to the derived release.yml, and only its `handwritten:` switches it off.
+    `workflows: ci:` is the product's own push CI, so ci.yml is not derived and nothing else changes; `workflows: ci-nightly:` (and `ci-manual`, `ci-scheduled`) is the product's own cadence file,
     which is the way out `workflowgen._refuse_foreign_files` names for a hand-written one. A switch that took
     the cadence files with it would drop their leaves without a word. Every other product gets the derived
     workflows beside whatever it declares, and `_reject_duplicate_paths` runs over both together, so an entry
@@ -1493,11 +1494,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
     switches it off.
     """
     from simplon.tasks import automerge  # it builds on this module's Derivation and gates
-    from simplon.tasks import releasepipeline  # it writes its trigger with this module's `_on`
-    # si#862: a declared entry with `release:` is the release workflow, derived through the model.
-    declared = tuple(releasepipeline.to_workflow(releasepipeline.derive(manifest, data, entry), manifest, data, entry,
-                                                 product=product) if entry.release else entry
-                     for entry in workflowgen.parse(data))
+    declared = _with_release(manifest, data, workflowgen.parse(data), product=product)
     own = {workflow.key for workflow in declared}
     # si#861: every gate's members are ruled on whoever writes ci.yml, and a gate's file is derived unless the
     # product declares its key (the one switch rule).
@@ -1530,6 +1527,29 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
         out = (*out, to_workflow(merging, manifest, data, product=product))
     workflowgen._reject_duplicate_paths(out)
     return out
+
+
+def _with_release(manifest: Manifest, data: Mapping[str, object], declared: Sequence[workflowgen.Workflow], *,
+                  product: str) -> tuple[workflowgen.Workflow, ...]:
+    """si#862: the declared workflows with the derived release.yml among them, where the manifest has a ReleaseCommand.
+
+    `workflows: release:` is the one key the switch rule reads differently: its jobs are ADDED to the derived
+    release.yml, beside the `release` job, and only its `handwritten:` switches the derivation off (a ReleaseCommand
+    `ci:` key is then refused as shaping nothing). Jobs rather than a file of their own because PyPI's Trusted
+    Publishing is bound to the file name release.yml. Without a ReleaseCommand the entry is an ordinary declared
+    workflow. The derived file stands where the entry stood, or after the declared ones."""
+    from simplon.tasks import releasepipeline  # it writes its trigger with this module's `_on`
+    entry = next((workflow for workflow in declared if workflow.key == workflowgen.RELEASE_KEY), None)
+    if not releasepipeline.release_commands(manifest):
+        return tuple(declared)
+    if entry is not None and not entry.generated:
+        releasepipeline.refuse_ci_where_handwritten(manifest, entry)
+        return tuple(declared)
+    release = releasepipeline.to_workflow(releasepipeline.derive(manifest, data, entry), manifest, data, entry,
+                                          product=product)
+    if entry is None:
+        return (*declared, release)
+    return tuple(release if workflow is entry else workflow for workflow in declared)
 
 
 def _refuse_variants_in_owned_gates(owned: Sequence[GateRun], derived: Sequence[GateRun] = ()) -> None:

@@ -453,7 +453,7 @@ ci:
       # release.yml's `image` job after `publish`; a failed push is finished by rerunning that job.
       # FIRST, before the suite spends three minutes (si#487): the kernel's dispatch-release check - the
       # vX.Y.Z spelling, started from main, origin fetched and carrying HEAD, no other version tag at HEAD,
-      # the tag free or at this commit on origin. The load holds it first, because release.yml names `all`.
+      # the tag free or at this commit on origin. The load holds it first, because `all` is the release aggregate.
       check: { task: "release:check" }
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
@@ -505,6 +505,10 @@ ci:
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
+        # si#862: the derived release job's machine and emulation. GitHub-hosted, because ghr-8 is an LXC runner
+        # that cannot register emulation (#722), and the suite's linux/arm64 e2e (si#552) runs a file under QEMU
+        # (si#570).
+        ci: { runner: github-ubuntu, emulates: [linux/arm64] }
         help: "The release: the release check, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders and audits the Homebrew formula and the homebrew-tap job commits it: the tap follows PyPI, so the formula never names a URL that is not live."
 
 support:
@@ -887,10 +891,8 @@ workflows:
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
       route - a hotfix merges first. The release job archives the test report of the run that gated it
       (si#509), green or red.
-    release: release all
-    # si#570: the suite's linux/arm64 e2e (si#552) runs a file under QEMU, and a hosted runner has none.
-    emulates: [linux/arm64]
-    runs-on: ubuntu-latest
+    # The `release` job is derived from `ci release all` (si#862), its machine and emulation under that
+    # aggregate's `ci:`; the jobs below land beside it in release.yml.
     jobs:
       publish:
         note: |

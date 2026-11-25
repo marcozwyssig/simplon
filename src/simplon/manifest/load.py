@@ -1022,20 +1022,16 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                       generate=generate, areas=areas, sources=declared_sources)
     ports.check(loaded, artifactsection.declared(data),
                 getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
-                _release_workflows(data))
+                _release_commands(loaded))
     return loaded
 
 
-def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
-    """Each workflow that releases through an aggregate -> the command words its `release:` names (si#487).
+def _release_commands(manifest: Manifest) -> dict[str, str]:
+    """Each release aggregate (a ReleaseCommand) as its command words -> the bundle it `produces:` (si#487, si#862).
 
-    Only well-formed entries: a malformed `workflows:` section is `workflowgen.parse`'s to diagnose, with its
-    own message, and refusing it here as well would give one mistake two voices."""
-    section = data.get("workflows")
-    if not isinstance(section, Mapping):
-        return {}
-    return {str(key): body["release"] for key, body in section.items()
-            if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
+    Every one, not only one a workflow names: since si#862 a ReleaseCommand derives release.yml by itself."""
+    return {f"{group.replace('.', ' ')} {name}": spec.release for group, members in manifest.commands.items()
+            for name, spec in members.items() if isinstance(spec, ReleaseCommand)}
 
 
 def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool, release: bool = False) -> str:
@@ -1363,7 +1359,7 @@ def _ci_timeout(value: object, where: str) -> int | None:
 
 def _ci_emulates(value: object, where: str) -> tuple[str, ...]:
     """si#860: the platforms a job registers an emulator for before this leaf, () when unwritten. The spelling
-    is `runners.spelt_for_buildx`, the one a workflow's `emulates:` takes (si#570)."""
+    is `runners.spelt_for_buildx`, the one a workflow's `emulates:` took (si#570) until si#862 moved it here."""
     if value is None:
         return ()
     if not runners.spelt_for_buildx(value):

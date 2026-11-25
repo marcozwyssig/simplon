@@ -105,8 +105,15 @@ def _runs(node):
 OLD_PATH_COMMIT = "a985296"
 
 
+#: si#862 task 3: the one line the move of `emulates:` onto the ReleaseCommand changes - the note names where it lives.
+EMULATION_NOTE_MOVED = ("# si#570: the workflow's `emulates:`, registered before anything in the job runs.",
+                        "# si#570: the release aggregate's `ci: emulates:`, registered before anything in the job runs.")
+
+
 def test_release_yml_renders_byte_identical_from_the_model():
-    """si#862: the release derived through the firn workflow model writes the bytes the old path wrote."""
+    """si#862: the release derived through the firn workflow model writes the bytes the old path wrote, but for the
+    emulation step's note, which names the key's new place (task 3 moved `emulates:` and the machine from
+    `workflows: release:` onto the ReleaseCommand's `ci:`)."""
     # arrange
     committed = subprocess.run(["git", "show", f"{OLD_PATH_COMMIT}:.github/workflows/release.yml"], cwd=ROOT,
                                capture_output=True, text=True, check=True).stdout
@@ -120,7 +127,8 @@ def test_release_yml_renders_byte_identical_from_the_model():
                               artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
 
     # assert
-    assert committed and text == committed
+    assert committed.count(EMULATION_NOTE_MOVED[0]) == 1
+    assert committed and text == committed.replace(*EMULATION_NOTE_MOVED)
 
 
 # --- the trigger, and the acceptance that hangs off it ---------------------------------------------------

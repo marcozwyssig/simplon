@@ -137,7 +137,7 @@ jobs:
             exit 1
           fi
           echo "set: HOMEBREW_TAP_CLIENT_ID HOMEBREW_TAP_APP_KEY"
-      # si#570: the workflow's `emulates:`, registered before anything in the job runs.
+      # si#570: the release aggregate's `ci: emulates:`, registered before anything in the job runs.
       - name: Register emulation for linux/arm64
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
         with:

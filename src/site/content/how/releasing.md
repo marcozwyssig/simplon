@@ -124,7 +124,7 @@ That is the escape hatch, and it is a better one than an option would be. A pers
 decided something. A `--force` flag gets set once, in a script, and is never looked at again.
 
 **In a repository whose release starts from the button, there is no such hatch.** simplon's own
-`release.yml` is derived from `release: release all` (si#491) and starts from `workflow_dispatch` and
+`release.yml` is derived from its release aggregate `release all` (si#491, si#862) and starts from `workflow_dispatch` and
 nothing else, so a hand-pushed tag releases nothing, and the cut is `release tag` itself, inside the
 run. The guard is then a refusal rather than a choice: a hotfix merges first. Until si#491 that same
 workflow triggered on any `v*` tag and only *reported* an off-`main` one in its log; the report went
@@ -411,7 +411,7 @@ A publishing task that forgot the field would run on a rehearsal, which is why t
 release tasks are held to it by a test.
 
 **The run starts with `release:check`** (si#487), before the tag is cut in the checkout and before
-anything is built. The load holds it there: the aggregate a `release:` workflow names must plan it first. It
+anything is built. The load holds it there: every release aggregate must plan it first (si#862). It
 refuses, each with its reason and the way out:
 
 - a version not spelled `vX.Y.Z` (`0.99.0`, `v1.4`, `v1.4.0-rc1`): the pattern is fixed for the dispatch
