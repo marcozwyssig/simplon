@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 349 | nothing - the declaration had no working meaning |
+| diagnosis | 357 | nothing - the declaration had no working meaning |
 | expression rule | 54 | something it could otherwise have said |
-| **all load-time refusals** | **403** | |
+| **all load-time refusals** | **411** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -236,6 +236,11 @@ the retired `workflows:` keys `release:`, `emulates:` and `timeout_minutes:`, an
 beside the release, each named with its new place on the ReleaseCommand's `ci:`, since nothing reads them any
 more; a ReleaseCommand `ci:` key where `workflows: release:` is `handwritten:`, which would shape nothing; a
 `workflows: release:` with no `jobs:` and no ReleaseCommand, a workflow with no job.
+Its `website: { pages: release, by: }` switch, which derives the `docs` and `pages` jobs, added diagnoses only:
+a `pages:` value other than `release` (cleon's per-push deploy is the trigger that would add a second), `pages:`
+without `by:` or `by:` without `pages:`, a `by:` that is not `<group> <name>`, the switch where no release.yml is
+derived, a `by:` command with a leaf that may not run with nobody watching or with no `docs:site` leaf in its
+plan, and a declared release job named `docs` or `pages`.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an

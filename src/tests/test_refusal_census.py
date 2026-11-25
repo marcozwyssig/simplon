@@ -1407,6 +1407,19 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#862 review: `_workflow` lets a `release` entry with no job stand (beside a ReleaseCommand its `permissions:`
     # shape the derived release); without one it is a workflow with no job, which GitHub refuses.
     ("releasepipeline", "refuse_an_empty_entry", "and this manifest declares none"): DIAGNOSIS,
+    # si#862 task 4: `website: { pages: release, by: }` switches on the derived `docs` and `pages` jobs (si#851's
+    # boundary). Every one is a diagnosis: a switch value the derivation has no reading for (`pages: push` is the
+    # reopening trigger, cleon's per-push deploy, not a rule against it), half of a pair that is useless alone, a
+    # `by:` that is no command line, a switch where no release.yml is derived, a leaf that would stop or be skipped
+    # with nobody watching, a plan that builds no site for the upload, a job name the derivation already takes.
+    ("site", "pages", "the one value is `{PAGES_RELEASE}`"): DIAGNOSIS,
+    ("site", "pages", "and no `pages:` says when it is deployed"): DIAGNOSIS,
+    ("site", "pages", "needs `by:`, the command that builds the site"): DIAGNOSIS,
+    ("site", "pages", "must name a group and a command (`build docs`)"): DIAGNOSIS,
+    ("releasepipeline", "refuse_pages_nobody_derives", "so nothing would deploy it"): DIAGNOSIS,
+    ("releasepipeline", "_website", "cannot run in the docs job unattended"): DIAGNOSIS,
+    ("releasepipeline", "_website", "so the docs job would upload a directory nothing built"): DIAGNOSIS,
+    ("releasepipeline", "_website", "derives a job named '{name}' - rename yours"): DIAGNOSIS,
     # si#862: the release names its aggregate as `<group> <name>`, resolved against the command tree like a step's
     # `command:` - the same walk, so the same three refusals.
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,

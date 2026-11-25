@@ -101,6 +101,12 @@ SETUP_PYTHON_ACTION = "actions/setup-python@v5"
 UPLOAD_ACTION = "actions/upload-artifact@v4"
 DOWNLOAD_ACTION = "actions/download-artifact@v4"
 
+#: si#862: the three actions the derived `docs` and `pages` jobs of release.yml deploy a website with (si#851's
+#: pair). Pinned by tag like the checkout, at the versions simplon's hand-written jobs ran green with.
+UPLOAD_PAGES_ACTION = "actions/upload-pages-artifact@v3"
+CONFIGURE_PAGES_ACTION = "actions/configure-pages@v5"
+DEPLOY_PAGES_ACTION = "actions/deploy-pages@v4"
+
 #: si#534: the action a `token: app` leaf's token is minted with, pinned by SHA because it handles a
 #: private key. Measured on 2026-10-24: that SHA is the v3.2.0 tag, whose `app-id` input is deprecated, so
 #: the step names the app by `client-id`. The leaf reads the token from the env name below, never from a
@@ -1117,6 +1123,16 @@ RELEASE_STAMP = ('described="$(git describe --tags --always --dirty)"\n'
                  '  echo "::error::the build would be stamped $described, not $RELEASE_VERSION"\n'
                  '  exit 1\n'
                  '}\n')
+#: si#491 (final review, Important 2): what a job after the release runs on a REAL run instead of the cut. The tag
+#: must be the one the release job pushed, fetched by the checkout; a tag deleted from origin after a failed
+#: publish, then "Re-run failed jobs", would otherwise be re-created locally and go out as a version origin does not
+#: carry. Copied verbatim from simplon's hand-written jobs into the derived `docs` job (si#862).
+RELEASE_ON_ORIGIN = ('tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"\n'
+                     'if [ "$tagged" != "$(git rev-parse HEAD)" ]; then\n'
+                     '  echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); '
+                     'the release job pushes it, so rerun the whole run rather than this job alone"\n'
+                     '  exit 1\n'
+                     'fi\n')
 
 
 def secret_prefix(repository: str) -> str:

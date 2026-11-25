@@ -48,6 +48,7 @@ import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from simplon.manifest import context, outputs
 from simplon.adapters import docker, hostpath
@@ -321,6 +322,57 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
                 output=_inside_the_product(out, "output", where),
                 base_url=_str(section, "base_url", where),
                 theme=_pinned_theme(theme, where) if theme else "")
+
+
+#: si#862: the one value `website: pages:` takes. The site is deployed to this repository's GitHub Pages by the
+#: derived release.yml, after the release (Marco, 2026-11-25, Q3 of si#862's decision).
+PAGES_RELEASE = "release"
+
+
+class Pages(NamedTuple):
+    """si#862: `website: { pages:, by: }` - WHEN the site goes to this repository's GitHub Pages (`on`, only
+    `release` so far) and the command that builds it (`by`, `<group> <name>` as a person types it)."""
+
+    on: str
+    by: str
+
+
+def pages(data: Mapping[str, object]) -> Pages | None:
+    """si#862: the switch for the derived `docs` and `pages` jobs of release.yml, or None when `website:` or its
+    `pages:` is absent - firn's and biz-cockpit's shape, a website deployed elsewhere or not at all.
+
+    An EXPLICIT switch rather than the presence of `website:` (Marco, 2026-11-25): measured over the reachable
+    manifests, firn declares a website and has no Pages, and biz-cockpit's is served from another repository, so
+    reading the section alone would have deployed both (and `configure-pages` would have turned Pages on).
+
+    Every refusal is a DIAGNOSIS: a value the derivation has no reading for, or half of the pair that is useless
+    alone. `pages: push` is the value cleon's per-push deploy would need; it is the trigger that reopens the one
+    value, not a rule against it."""
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
+        return None
+    on, by = section.get("pages"), section.get("by")
+    where = f"'{SECTION}'"
+    if on is None and by is None:
+        return None
+    if on is None:
+        raise ValueError(
+            f"{where}: `by: {by}` names the command that builds the site for GitHub Pages, and no `pages:` says "
+            f"when it is deployed - add `pages: {PAGES_RELEASE}`, or take `by:` out")
+    if on != PAGES_RELEASE:
+        raise ValueError(
+            f"{where}: `pages: {on}` - the one value is `{PAGES_RELEASE}`: the site is built and deployed to this "
+            f"repository's GitHub Pages by the release workflow, after the release. A deploy on every push (cleon's "
+            f"pages.yml) is not derived yet; that product's move is what would add a second value")
+    if by is None:
+        raise ValueError(
+            f"{where}: `pages: {PAGES_RELEASE}` needs `by:`, the command that builds the site as a person types it "
+            f"(`by: \"build docs\"`) - the kernel does not guess which of the commands that plan `docs:site` "
+            f"writes the whole site")
+    if not isinstance(by, str) or len(by.split()) < 2:
+        raise ValueError(
+            f"{where}: `by: {by}` must name a group and a command (`build docs`), as `generated: by:` does")
+    return Pages(on=PAGES_RELEASE, by=" ".join(by.split()))
 
 
 def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:

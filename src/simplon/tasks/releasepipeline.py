@@ -19,6 +19,11 @@ timeout_minutes: }` say the job's machine, emulation and time limit, as the same
 land beside the derived `release` job, with the workflow's `permissions:`, `env:` and `note:`, and its
 `handwritten:` switches the derivation off. PyPI's Trusted Publishing is bound to the file name release.yml, which is
 why the added jobs land in this file and not in one of their own.
+
+THE WEBSITE, WHEN `website: { pages: release, by: <command> }` SAYS SO (si#862). Two more jobs, `docs` and `pages`,
+carry si#851's boundary: `docs` builds the site with the named command and uploads it as its LAST step, and `pages`
+deploys it in a job of its own. The switch is explicit (`site.pages`), because a `website:` alone is also firn's,
+with no Pages, and biz-cockpit's, served from another repository.
 """
 from __future__ import annotations
 
@@ -31,7 +36,8 @@ from simplon.manifest import load as manifest_load
 from simplon.manifest.load import Manifest
 from simplon.model import task, workflowschema
 from simplon.model.command import CiRelease, EnvValue, ReleaseCommand, TaskCommand
-from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import cipipeline, site, workflowgen
+from simplon.tasks.docs_site import DocsSite
 
 #: The kernel steps of the release job, in the model as `Step.kernel_step` and written by `to_workflow`.
 PASS_SECRETS_CHECK = "pass-secrets-check"
@@ -41,6 +47,19 @@ RELEASE_CUT = "release-cut"
 RELEASE_STAMP = "release-stamp"
 DRY_RUN_TAIL = "dry-run-tail"
 REPORT = "report"
+#: si#862: the kernel steps of the derived `docs` and `pages` jobs.
+RELEASE_ON_ORIGIN = "release-on-origin"
+PAGES_UPLOAD = "pages-upload"
+PAGES_CONFIGURE = "pages-configure"
+PAGES_DEPLOY = "pages-deploy"
+
+#: si#862: the two jobs `website: { pages: release }` derives, and the deploy's environment and queue.
+DOCS_JOB = "docs"
+PAGES_JOB = "pages"
+PAGES_ENVIRONMENT = "github-pages"
+DEPLOYMENT_ID = "deployment"
+#: The upload's one parameter: the directory `site.declared` builds the site into.
+PATH_PARAM = "path"
 
 #: The dry-run tail's one parameter: the path of the notes the release would have published, if a leaf writes any.
 NOTES_PARAM = "notes"
@@ -48,6 +67,8 @@ NOTES_PARAM = "notes"
 _DRY_RUN = "${{ inputs.dry_run }}"
 _NOT_DRY_RUN = "${{ !inputs.dry_run }}"
 _GITHUB_TOKEN = "GITHUB_TOKEN"
+#: The dispatch's version, in the `env:` of every derived job that reads it (si#488: never `${{ inputs.* }}` in `run:`).
+_VERSION_ENV = workflowschema.RunnerEnv(env_name=workflowgen.RELEASE_ENV, env_value="${{ inputs.version }}")
 _SECRET = "${{{{ secrets.{name} }}}}"
 
 #: The dispatch a release is started by (si#490): the version, exactly as its tag will be, and a rehearsal switch
@@ -73,6 +94,32 @@ nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step ge
 manifest and prints the command list; a launcher that cannot provision is red here, before the cut."""
 
 PASS_SECRETS_CHECK_NAME = "Check the secrets every `env: pass:` step needs"
+
+#: si#862: the derived jobs' own prose, written above each in release.yml.
+DOCS_NOTE = """The website, built by `{by}` (`website: by:`) and uploaded into the run for the `pages`
+job. It waits for `release` and for every job declared beside it, so the site never documents a version
+nobody can install (D12, until #789 leaves the release nothing to publish but the promotion). The upload
+is the LAST step (si#851): no step after it can turn this job red with the artifact already made, so a
+rerun of this job never meets an upload of its own. It reads the checkout and writes nothing outside the
+run; the Pages rights are the `pages` job's."""
+
+PAGES_NOTE = """The deploy of what `docs` uploaded, in a job of its own (si#851). In one job with the
+upload, `deploy-pages` listed the run's artifacts one second after the upload, found no `github-pages`
+and failed (runs 44901604309, 44938156739). Here the job boundary stands between the upload and the
+listing. A red deploy is rerun with "Re-run failed jobs", which reruns this job alone and not `docs`,
+which succeeded, so the rerun finds the one artifact the run holds. A FULL rerun uploads a second one,
+and the deploy refuses two: delete the run's `github-pages` artifacts first. On GitHub-hosted Ubuntu
+whatever the release's machine: no checkout, nothing here reads the repository, and no container is
+started, so no reap step sits beside `pages: write` and `id-token: write`, which are this job's alone
+(si#719), as are the environment and the queue."""
+
+CUT_NOTE = """si#491 decision 5, on a REHEARSAL only: the release job's own cut. A dry run pushes no
+tag, and without it the site would be built for a version the checkout does not carry."""
+
+ON_ORIGIN_NOTE = """On a REAL run nothing is cut here: the tag must be the one the release job pushed,
+fetched by the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+would otherwise be re-created locally and documented as a version origin does not carry - the final
+review of si#491 (Important 2)."""
 
 PASS_SECRETS_NOTE = """si#836: a step below whose command declares `env: pass:` reads those names from this
 repository's Actions secrets, in its own `env:` and no other step's. A secret that is not set would reach
@@ -266,11 +313,83 @@ def derive(manifest: Manifest, data: Mapping[str, object],
         runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=labels),
         step=tuple(steps), timeout_minutes=spec.ci.timeout_minutes or workflowgen.RELEASE_TIMEOUT_MINUTES,
         permission=_permissions({**workflow_scopes, **_RELEASE_PERMISSIONS}),
-        env=(workflowschema.RunnerEnv(env_name=workflowgen.RELEASE_ENV, env_value="${{ inputs.version }}"),))
+        env=(_VERSION_ENV,))
     path = entry.path if entry is not None else f"{workflowgen.DIRECTORY}/{workflowgen.RELEASE_KEY}.yml"
     title = entry.name if entry is not None else workflowgen.RELEASE_KEY
-    return workflowschema.Workflow(path=path, title=title, trigger=(TRIGGER,), job=(job,),
+    return workflowschema.Workflow(path=path, title=title, trigger=(TRIGGER,),
+                                   job=(job, *_website(manifest, data, entry, job)),
                                    permission=_permissions(workflow_scopes))
+
+
+def refuse_pages_nobody_derives(data: Mapping[str, object], why: str) -> None:
+    """si#862: `website: { pages: release }` where no release.yml is derived - no ReleaseCommand, or a
+    `handwritten:` release. The switch would deploy nothing. A DIAGNOSIS, as `refuse_ci_where_handwritten` is for
+    the ReleaseCommand's `ci:`; `why` names which of the two."""
+    if site.pages(data) is None:
+        return
+    raise ValueError(
+        f"'{site.SECTION}: pages: {site.PAGES_RELEASE}' deploys the site from the derived release.yml, and {why}, "
+        f"so nothing would deploy it. Take `pages:` and `by:` out of `{site.SECTION}:`, or let the kernel derive "
+        f"release.yml")
+
+
+def _website(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.Workflow | None,
+             release: workflowschema.Job) -> tuple[workflowschema.Job, ...]:
+    """si#862: the `docs` and `pages` jobs `website: { pages: release, by: }` switches on, or none.
+
+    `docs` runs on the release job's machine and needs `release` and every job the entry declares, in declared
+    order (D12: those publish, and the site must not document a version nobody can install). The declared jobs are
+    the entry's, not the model's, so each is named here by a model job carrying only its key and the release's
+    machine; `to_workflow` reads nothing of them but the key. `pages` runs on GitHub-hosted Ubuntu whatever the
+    release's machine (plan decision 2): it takes no checkout and starts no container, so it needs none of a
+    self-hosted kind's steps and gets no reap step beside its `pages: write`.
+
+    Every refusal is a DIAGNOSIS: `by:` naming nothing (`workflowgen.resolve_command`), a leaf of it that would
+    stop or be skipped with nobody watching, a plan with no `docs:site` leaf (the upload would publish a directory
+    nothing built), and a declared job named `docs` or `pages` (the derived job's name, as for `release`)."""
+    pages = site.pages(data)
+    if pages is None:
+        return ()
+    where = f"'{site.SECTION}: by: {pages.by}'"
+    for name in (DOCS_JOB, PAGES_JOB):
+        if entry is not None and any(job.name == name for job in entry.jobs):
+            raise ValueError(
+                f"workflow '{entry.key}': declares a job '{name}', and `{site.SECTION}: pages: {pages.on}` derives "
+                f"a job named '{name}' - rename yours, or take `pages:` out of `{site.SECTION}:` and keep your own")
+    group, name = workflowgen.resolve_command(manifest, pages.by, where=where)
+    leaves = workflowgen._leaves(manifest, workflowgen.Step(command=pages.by), where)
+    for line, leaf in leaves:
+        workflowgen.require_unattended(leaf, line, where)
+        if leaf.unattended is not True:
+            raise ValueError(
+                f"{where}: '{line}' cannot run in the docs job unattended - it declares `unattended: false`, and "
+                f"the job would stop there or publish a site without it; name a command that plans only "
+                f"unattended leaves")
+    if not any(leaf.task == DocsSite.KEY for _, leaf in leaves):
+        raise ValueError(
+            f"{where}: '{pages.by}' plans no `{DocsSite.KEY}` leaf, so the docs job would upload a "
+            f"directory nothing built - name the command that builds the site (a `{DocsSite.KEY}` leaf, "
+            f"or an aggregate that plans one)")
+    output = site.declared(data).output
+    declared = tuple(workflowschema.Job(key=job.name, runner=release.runner) for job in (entry.jobs if entry else ()))
+    docs = workflowschema.Job(
+        key=DOCS_JOB, runner=release.runner, needs=(release, *declared),
+        permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,),
+        step=(workflowschema.Step(kernel_step=RELEASE_CUT, condition=_DRY_RUN),
+              workflowschema.Step(kernel_step=RELEASE_ON_ORIGIN, condition=_NOT_DRY_RUN),
+              workflowschema.Step(command=manifest.commands[group][name], command_words=pages.by),
+              workflowschema.Step(kernel_step=PAGES_UPLOAD,
+                                  params=(workflowschema.StepParam(param_name=PATH_PARAM, param_value=output),))))
+    deploy = workflowschema.Job(
+        key=PAGES_JOB, runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS["github-ubuntu"],
+                                                    labels=tuple(runners.TABLE["github-ubuntu"].labels)),
+        needs=(docs,), no_checkout=True, starts_no_container=True, concurrency=PAGES_JOB,
+        permission=_permissions({"pages": "write", "id-token": "write"}),
+        environment=workflowschema.DeployEnvironment(environment_name=PAGES_ENVIRONMENT,
+                                                     url=f"${{{{ steps.{DEPLOYMENT_ID}.outputs.page_url }}}}"),
+        step=(workflowschema.Step(kernel_step=PAGES_CONFIGURE),
+              workflowschema.Step(kernel_step=PAGES_DEPLOY, step_id=DEPLOYMENT_ID, condition=_NOT_DRY_RUN)))
+    return docs, deploy
 
 
 def _permissions(scopes: Mapping[str, str]) -> tuple[workflowschema.Permission, ...]:
@@ -304,7 +423,8 @@ def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mappin
                 entry: workflowgen.Workflow | None, *, product: str) -> workflowgen.Workflow:
     """The model as the `workflowgen.Workflow` the renderer writes: the model's trigger, its token scopes and the
     release concurrency, and the converted `release` job ahead of the entry's own jobs, with the entry's other
-    workflow-level keys and its note. `release` is set, because `workflowgen.render` inserts the app-secrets check
+    workflow-level keys and its note. The website's `docs` and `pages` (si#862) follow the entry's jobs, which `docs`
+    waits for. `release` is set, because `workflowgen.render` inserts the app-secrets check
     (si#574) into the job of that name; `derived` is set, because the job is."""
     words, _ = _the_release(manifest)
     base = entry if entry is not None else workflowgen.Workflow(key=workflowgen.RELEASE_KEY, path=model.path,
@@ -312,9 +432,9 @@ def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mappin
     own = {key: value for key, value in base.extras.items() if key != "permissions"}
     extras = {"permissions": {p.scope: p.access for p in model.permission}, "concurrency": dict(_RELEASE_CONCURRENCY),
               **own}
-    jobs = tuple(_to_job(job, manifest, data, product=product) for job in model.job)
+    release, *website = (_to_job(job, manifest, data, product=product) for job in model.job)
     return replace(base, name=model.title, path=model.path, on=cipipeline._on(model.trigger), extras=extras,
-                   jobs=(*jobs, *base.jobs), release=words, derived=True)
+                   jobs=(release, *base.jobs, *website), release=words, derived=True)
 
 
 def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, object], *,
@@ -344,8 +464,24 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
                                                     "run": f"{workflowgen.launcher(product)} help"},
                                           note=PROVISION_NOTE))
         elif step.kernel_step == RELEASE_CUT:
+            # The release job cuts on every run; the docs job only on a rehearsal (si#862), with the note.
             steps.append(workflowgen.Step(verbatim={"name": "Cut the tag in this checkout",
-                                                    "run": workflowgen.RELEASE_CUT}))
+                                                    **({"if": step.condition} if step.condition else {}),
+                                                    "run": workflowgen.RELEASE_CUT},
+                                          note=CUT_NOTE if step.condition else ""))
+        elif step.kernel_step == RELEASE_ON_ORIGIN:
+            steps.append(workflowgen.Step(verbatim={"name": "The tag is on origin at this commit",
+                                                    "if": step.condition, "run": workflowgen.RELEASE_ON_ORIGIN},
+                                          note=ON_ORIGIN_NOTE))
+        elif step.kernel_step == PAGES_UPLOAD:
+            path = next(p.param_value for p in step.params if p.param_name == PATH_PARAM)
+            steps.append(workflowgen.Step(verbatim={"uses": workflowgen.UPLOAD_PAGES_ACTION, "with": {"path": path}}))
+        elif step.kernel_step == PAGES_CONFIGURE:
+            steps.append(workflowgen.Step(verbatim={"uses": workflowgen.CONFIGURE_PAGES_ACTION,
+                                                    "with": {"enablement": True}}))
+        elif step.kernel_step == PAGES_DEPLOY:
+            steps.append(workflowgen.Step(verbatim={"id": step.step_id, "uses": workflowgen.DEPLOY_PAGES_ACTION,
+                                                    "if": step.condition}))
         elif step.kernel_step == RELEASE_STAMP:
             steps.append(workflowgen.Step(verbatim={"name": "The build will be stamped with the version",
                                                     "run": workflowgen.RELEASE_STAMP}))
@@ -371,17 +507,31 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     runner = runners.TABLE[kind]
     labels = job.runner.labels
     extras: dict[str, object] = {}
+    if job.needs:
+        needs = [need.key for need in job.needs]
+        extras["needs"] = needs[0] if len(needs) == 1 else needs
     if job.environment is not None:
         extras["environment"] = ({"name": job.environment.environment_name, "url": job.environment.url}
                                  if job.environment.url else job.environment.environment_name)
     if job.permission:
         extras["permissions"] = {p.scope: p.access for p in job.permission}
+    if job.concurrency:
+        extras["concurrency"] = {"group": job.concurrency, "cancel-in-progress": False}
     if job.timeout_minutes is not None:
         extras["timeout-minutes"] = job.timeout_minutes
     # The kind's own settings after the job's (si#267), as the entry's runner env stood before si#862.
-    extras["env"] = {**{env.env_name: env.env_value for env in job.env}, **runner.env}
+    job_env = {**{env.env_name: env.env_value for env in job.env}, **runner.env}
+    if job_env:
+        extras["env"] = job_env
+    note = {workflowgen.RELEASE_JOB: unarchived, DOCS_JOB: DOCS_NOTE.format(by=_by(job)), PAGES_JOB: PAGES_NOTE}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
-                           runner=runner, note=unarchived, checkout=not job.no_checkout, extras=extras)
+                           runner=runner, note=note.get(job.key, ""), checkout=not job.no_checkout, extras=extras,
+                           reap=not job.starts_no_container)
+
+
+def _by(job: workflowschema.Job) -> str:
+    """The command words of the job's one command step: the docs job's `website: by:`."""
+    return next((step.command_words for step in job.step if step.command is not None), "")
 
 
 def _pass_secrets_check(needed: Mapping[str, Sequence[str]]) -> workflowgen.Step:

@@ -1543,9 +1543,12 @@ def _with_release(manifest: Manifest, data: Mapping[str, object], declared: Sequ
     if not releasepipeline.release_commands(manifest):
         if entry is not None:
             releasepipeline.refuse_an_empty_entry(entry)
+        releasepipeline.refuse_pages_nobody_derives(data, "this manifest declares no ReleaseCommand")
         return tuple(declared)
     if entry is not None and not entry.generated:
         releasepipeline.refuse_ci_where_handwritten(manifest, entry)
+        releasepipeline.refuse_pages_nobody_derives(
+            data, f"`{workflowgen.SECTION}: {entry.key}:` is `handwritten:`, so the kernel derives no release.yml")
         return tuple(declared)
     release = releasepipeline.to_workflow(releasepipeline.derive(manifest, data, entry), manifest, data, entry,
                                           product=product)

@@ -457,6 +457,30 @@ convention without having had to read this page. Simplon itself is the first con
 leaves `source:` out, so the default is exercised by every `build docs` in the kernel's own repository
 rather than only by a test.
 
+**Deploying the site to GitHub Pages is a switch, not a consequence of the section** (si#862). A product
+whose release workflow the kernel derives says when and with which command:
+
+```yaml
+website:
+  image: "hugomods/hugo:exts-0.148.2"
+  pages: release      # deploy to this repository's GitHub Pages after each release
+  by: "build docs"    # the command that builds the whole site, as you type it
+```
+
+`support github workflows` then adds the jobs `docs` and `pages` to release.yml. `docs` runs on the release job's machine, waits
+for `release` and for every job declared beside it under `workflows: release:` (so the site never documents a
+version nobody can install), cuts the tag on a dry run or requires the pushed one on a real run, runs `by:`,
+and uploads `output` as its last step. `pages` deploys that upload in a job of its own on GitHub-hosted
+Ubuntu, with `pages: write` and `id-token: write`, and skips only the deploy on a dry run. The split is
+si#851's: in one job `deploy-pages` listed the artifacts a second after the upload and found none, and
+"Re-run failed jobs" now reruns the deploy alone. A full rerun of the run needs its `github-pages` artifacts
+deleted first, or the deploy finds two.
+
+`pages:` takes one value, `release`; a deploy on every push is not derived. `by:` must plan a `docs:site`
+leaf (an aggregate that also writes generated pages first is the usual answer) and every leaf in it must be
+`unattended: true`. A `website:` without `pages:` derives nothing: a product that serves its site from
+another repository, or not at all, says nothing more.
+
 {{< callout type="warning" >}}
 **`docs:site` writes into your working tree, on purpose.** A theme declared as a Hugo module means the
 build runs `hugo mod get <module>@<version>` before it builds, and that rewrites `go.mod` and refreshes
@@ -520,7 +544,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `toolchains:` | `support:claude-plugins`, `support:install`, `support:toolchain` | the toolchains this product uses: `python`, `java`, `cpp`, `dotnet`, `firn`, `claude`, `gh`, `brew` (si#525, si#526). `support toolchain <name>` adds one; for `firn` that is `test model`, `build model` and `test manifest-model`, which validates this manifest, exported fresh, against the firn M2 simplon ships (si#522). `claude` turns on the Claude Code plugins (eight base plugins, plus one LSP plugin per language listed here). `gh` and `brew` make `support install` provision the GitHub CLI and Homebrew: brew first, then gh through brew, winget or GitHub's signed apt repository (with sudo where needed). Each says present, installed, skipped (container, CI, a platform Homebrew does not run on), no way to install it here, or failed; the last two fail the command. An unknown name is refused, and an absent list turns everything here off |
-| `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
+| `website:` | `docs:site`, the derived release workflow (si#862) | the pinned Hugo image, where the sources live, where the site is built to; `pages: release` and `by:` deploy it to this repository's GitHub Pages after each release |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
 A key that is **mistyped** is therefore not the silent no-op it looks like. Most of the sections a
