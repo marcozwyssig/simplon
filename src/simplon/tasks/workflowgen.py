@@ -68,7 +68,7 @@ from typing import NamedTuple, cast
 import yaml
 
 from simplon.manifest import artifactsection, context, runners, signatures, sources
-from simplon.model import task
+from simplon.model import task, workflowschema
 from simplon.adapters import disk, docker, tools
 from simplon.model.command import ReleaseCommand, TaskCommand
 from simplon.manifest.load import Manifest
@@ -527,7 +527,8 @@ def _workflow(key: str, body: object) -> Workflow:
     # one and the order stays the product's.
     runner, rollout_runs_on = ((None, "") if not stages and not release
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
-    rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
+    _refuse_emulates_where_it_cannot_register(runner, emulates, where)
+    rollout_env =_with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
     if not stages and not release and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
@@ -646,6 +647,25 @@ def _emulates(body: Mapping[object, object], where: str, release: str) -> tuple[
             f"{where}: `{EMULATES_KEY}:` is a non-empty list of platforms as buildx spells them "
             f"(e.g. `[linux/arm64]`), got '{value}'")
     return tuple(value)
+
+
+def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner | None", emulates: tuple[str, ...],
+                                              where: str) -> None:
+    """#722, si#863: `emulates:` on a runner kind with `can_emulate = false` is refused at generation.
+
+    A DIAGNOSIS: on an LXC runner `tonistiigi/binfmt --install`, which `setup-qemu-action` runs, is refused with
+    `permission denied` on `/proc/sys/fs/binfmt_misc/register` (si#358), so the release job would fail in its
+    first step and nothing said so when the file was written. A derived CI job names the same gap in its note
+    instead (si#860); a release cannot, because it would release past a suite that never ran its foreign
+    binaries. A machine named by `runs-on:` alone carries no kind, so nothing is known to refuse."""
+    if not emulates or runner is None or workflowschema.RUNNER_KINDS[runner.kind].can_emulate:
+        return
+    raise ValueError(
+        f"{where}: `{EMULATES_KEY}:` ({', '.join(emulates)}) asks the release job to register emulation, and its "
+        f"runner kind `{runner.kind}` cannot: on an LXC runner the registration is refused with `permission "
+        f"denied` on `/proc/sys/fs/binfmt_misc/register` (#722). Either register it once on the LXC runner itself, "
+        f"by hand and as root, as si#358 describes (`support:ci-arm64`, a boot-time registration in the "
+        f"container's own binfmt_misc), and drop `{EMULATES_KEY}:`, or run the release on a runner kind that can ({', '.join(k for k, v in workflowschema.RUNNER_KINDS.items() if v.can_emulate)})")
 
 
 def _release_timeout(body: Mapping[object, object], where: str, release: str) -> int:

@@ -1270,6 +1270,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # a list of platforms reaches setup-qemu-action and fails there or registers nothing.
     ("workflowgen", "_emulates", "is read only beside"): DIAGNOSIS,
     ("workflowgen", "_emulates", "is a non-empty list of platforms"): DIAGNOSIS,
+    # #722, si#863: on a runner kind with `can_emulate = false` (an LXC runner) the registration is refused with
+    # `permission denied`, so the release job would fail in its first step; the message names both ways out.
+    ("workflowgen", "_refuse_emulates_where_it_cannot_register", "asks the release job to register emulation"):
+        DIAGNOSIS,
     # si#720, the same two reasons: beside no `release:` the key reaches GitHub as a workflow key, which it
     # refuses; a value that is not a positive whole number is refused by GitHub, or as 0 ends the job.
     ("workflowgen", "_release_timeout", "is read only beside"): DIAGNOSIS,

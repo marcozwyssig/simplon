@@ -3002,6 +3002,32 @@ def test_emulates_without_a_release_is_refused():
         """))
 
 
+def test_emulates_on_a_kind_that_cannot_register_is_refused_naming_the_way_out():
+    """#722, si#863: on an LXC runner `tonistiigi/binfmt --install` is refused with `permission denied`
+    (si#358), so the release job would fail in its first step. Diagnosis at generation, not at run time."""
+    section = _section(_RELEASE.replace("self-hosted-debian", "self-hosted-container")
+                       + "    emulates: [linux/arm64]\n")
+
+    with pytest.raises(ValueError) as refused:
+        workflowgen.parse(section)
+
+    said = str(refused.value)
+    assert "workflow 'rel'" in said and "self-hosted-container" in said and "#722" in said, said
+    assert "register it once on the LXC runner itself" in said and "si#358" in said, said
+    assert "`support:ci-arm64`" in said and "drop `emulates:`" in said, said
+    assert "a runner kind that can" in said, said
+
+
+def test_a_release_on_a_kind_that_cannot_emulate_and_emulates_nothing_is_not_refused():
+    """The refusal is about `emulates:`, not the machine: a release on an LXC runner that registers
+    nothing parses as before."""
+    section = _section(_RELEASE.replace("self-hosted-debian", "self-hosted-container"))
+
+    (parsed,) = workflowgen.parse(section)
+
+    assert parsed.rollout_runner.kind == "self-hosted-container" and parsed.emulates == ()
+
+
 @pytest.mark.parametrize("value", ["linux/arm64", "[]", "[arm64]", "[linux/]", "[3]"])
 def test_emulates_is_a_list_of_platforms(value):
     with pytest.raises(ValueError, match=re.escape("`emulates:` is a non-empty list of platforms")):

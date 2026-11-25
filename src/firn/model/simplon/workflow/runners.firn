@@ -21,6 +21,16 @@
 //   * THE LABEL IS THE PRODUCT'S. `[self-hosted, Linux, X64]` would describe any self-hosted Linux
 //     machine an account ever registers, so the day a second one joins the jobs are shared out with
 //     nothing saying so. A label of the machine's own is the answer, and the kernel cannot know it.
+//
+// `self-hosted-container` is a self-hosted runner that is itself an LXC container: firn's `ghr-7` (#722, reported
+// by firn's peer session on 2026-11-17) and `ghr-8` (Marco, 2026-11-25, si#863). It is `self-hosted-debian` in
+// every fact above, and one more:
+//
+//   * EMULATION CANNOT BE REGISTERED FROM INSIDE IT. `tonistiigi/binfmt --install` is refused with `permission
+//     denied` on `/proc/sys/fs/binfmt_misc/register` (si#358), and `docker/setup-qemu-action` runs exactly that.
+//     So it is registered once, by hand and as root, with `support:ci-arm64`'s boot-time registration (si#358),
+//     never by a step in a job. A derived CI job names the gap instead of the step (si#860); a release whose
+//     `emulates:` would run here is refused at generation (#722).
 package simplon.workflow.runners
 
 github_ubuntu typeOf simplon.workflow.RunnerKind {
@@ -36,6 +46,16 @@ self_hosted_debian typeOf simplon.workflow.RunnerKind {
   disk_persists = true
   can_emulate = true
   why = "A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is reached through the bootstrap, because a container job would need docker in order to start."
+  env e_bootstrap typeOf simplon.workflow.RunnerEnv {
+    env_name = "DELIVERY_DOCKER_BOOTSTRAP"
+    env_value = "1"
+  }
+}
+self_hosted_container typeOf simplon.workflow.RunnerKind {
+  setup_python = false
+  disk_persists = true
+  can_emulate = false
+  why = "A self-hosted runner that is itself an LXC container. Python and docker are reached as on a self-hosted Debian machine; emulation cannot be registered from inside a job, because `/proc/sys/fs/binfmt_misc/register` is refused there (si#358, #722), so it is registered once by hand with `support:ci-arm64`."
   env e_bootstrap typeOf simplon.workflow.RunnerEnv {
     env_name = "DELIVERY_DOCKER_BOOTSTRAP"
     env_value = "1"

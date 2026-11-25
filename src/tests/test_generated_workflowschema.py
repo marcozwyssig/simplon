@@ -27,14 +27,21 @@ SELF_HOSTED_DEBIAN = RunnerKind(
         "Debian, so the runner's own python3 is what the launcher builds its venv with; docker is reached through "
         "the bootstrap, because a container job would need docker in order to start.",
     env=(RunnerEnv(env_name="DELIVERY_DOCKER_BOOTSTRAP", env_value="1"),))
+SELF_HOSTED_CONTAINER = RunnerKind(
+    labels=(), setup_python=False, disk_persists=True, can_emulate=False,
+    why="A self-hosted runner that is itself an LXC container. Python and docker are reached as on a self-hosted "
+        "Debian machine; emulation cannot be registered from inside a job, because "
+        "`/proc/sys/fs/binfmt_misc/register` is refused there (si#358, #722), so it is registered once by hand with "
+        "`support:ci-arm64`.",
+    env=(RunnerEnv(env_name="DELIVERY_DOCKER_BOOTSTRAP", env_value="1"),))
 
 
-def test_runner_kinds_are_exactly_the_two_measured_kinds():
+def test_runner_kinds_are_exactly_the_measured_kinds():
     # act
     kinds = tuple(workflowschema.RUNNER_KINDS)
 
     # assert: in model order, and not empty - an empty table is what a selector answering nothing writes
-    assert kinds == ("github-ubuntu", "self-hosted-debian")
+    assert kinds == ("github-ubuntu", "self-hosted-debian", "self-hosted-container")
 
 
 def test_each_runner_kind_carries_todays_values():
@@ -44,6 +51,7 @@ def test_each_runner_kind_carries_todays_values():
     # assert
     assert table["github-ubuntu"] == GITHUB_UBUNTU
     assert table["self-hosted-debian"] == SELF_HOSTED_DEBIAN
+    assert table["self-hosted-container"] == SELF_HOSTED_CONTAINER
 
 
 def test_every_metamodel_class_has_a_generated_dataclass():

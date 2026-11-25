@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 340 | nothing - the declaration had no working meaning |
+| diagnosis | 341 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **393** | |
+| **all load-time refusals** | **394** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -135,6 +135,10 @@ decides when and where it runs), and an artifact handed between a gate member an
 either direction, unless it has a `registry:`: artifacts do not cross workflow files.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
+
+#722 (si#863) added one diagnosis and no expression rule: a release's `emulates:` whose job runs on a runner
+kind that cannot register emulation (`self-hosted-container`, an LXC runner). The registration is refused there
+with `permission denied`, so the job would fail in its first step; the message names both ways out.
 
 si#833 added one diagnosis and no expression rule: a name under an environment's new `secret:` key that
 is in neither its `required:` nor its `optional:`. The deployment never reads such a name, so there is no

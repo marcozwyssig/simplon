@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 from simplon.manifest import runners
+from simplon.model import workflowschema
 from simplon.tasks import workflowgen
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
@@ -54,6 +55,23 @@ def test_the_self_hosted_debian_kind_carries_the_three_facts_that_cost_a_day():
     assert runner.setup_python is False, "a kind that cannot be handed an interpreter said it could"
     assert runner.env == {runners.BOOTSTRAP: "1"}
     assert runner.labels == (), "the kernel invented a label for somebody else's machine"
+
+
+def test_the_self_hosted_container_kind_reaches_docker_like_debian_and_cannot_emulate():
+    """#722, si#863: `ghr-8` and firn's `ghr-7` are LXC containers, and `tonistiigi/binfmt --install` is
+    refused there with `permission denied` on `/proc/sys/fs/binfmt_misc/register` (si#358). Python and
+    docker are reached as on a self-hosted Debian machine; what differs is that nothing can register
+    emulation from inside the job."""
+    # arrange + act
+    runner, labels = runners.resolve({"kind": "self-hosted-container", "labels": "x"}, "`runner:`")
+
+    # assert
+    assert runner.kind == "self-hosted-container" and labels == ("x",)
+    assert workflowschema.RUNNER_KINDS[runner.kind].can_emulate is False
+    assert runner.env == {runners.BOOTSTRAP: "1"}
+    assert runner.setup_python is False and runner.disk_persists is True
+    assert runner.labels == (), "the kernel invented a label for somebody else's machine"
+    assert "LXC" in runner.why and "#722" in runner.why, runner.why
 
 
 def test_a_kind_the_kernel_does_not_carry_is_refused_naming_the_ones_it_does():

@@ -1176,7 +1176,11 @@ What the kernel writes:
   `docker/setup-qemu-action`, pinned by commit, with the kernel's own binfmt image (si#570). The job is
   derived and takes no step of yours, so this is how a suite that runs a foreign-platform file, as a
   `test:file` e2e does, gets an emulator on a hosted runner. A job you write yourself registers it with
-  its own step; `emulates:` anywhere but beside `release:` is refused.
+  its own step; `emulates:` anywhere but beside `release:` is refused. **On an LXC runner**
+  (`runner: { kind: self-hosted-container }`) it is refused too (#722): the registration is refused there
+  with `permission denied`, so the job would fail in its first step. Register the emulator once on the LXC
+  runner itself with the `support:ci-arm64` task, as si#358 describes, and drop `emulates:`, or run the
+  release on a kind that can.
 - **A time limit** (si#720). The job carries `timeout-minutes`, by default the kernel's
   `RELEASE_TIMEOUT_MINUTES` (the source of its value is named where it is set, in `workflowgen.py`), so a
   hung release does not hold its runner for GitHub's default of 360 minutes. `timeout_minutes: <n>` beside
@@ -1323,6 +1327,16 @@ comment in another product's manifest.
 |---|---|---|---|
 | `github-ubuntu` (the default) | `ubuntu-latest` | yes | — |
 | `self-hosted-debian` | yours to name | **no** | `DELIVERY_DOCKER_BOOTSTRAP: "1"` |
+| `self-hosted-container` | yours to name | **no** | `DELIVERY_DOCKER_BOOTSTRAP: "1"` |
+
+**`self-hosted-container` is a self-hosted runner that is itself an LXC container** (#722, si#863), such as
+firn's `ghr-7` and this repository's `ghr-8`. It reaches Python and docker as `self-hosted-debian` does, and it
+**cannot register emulation**: `tonistiigi/binfmt --install`, which `docker/setup-qemu-action` runs, is refused
+there with `permission denied` on `/proc/sys/fs/binfmt_misc/register` (si#358). So a derived CI job on it
+registers nothing for a leaf's `ci: emulates:` and names the gap in its note, and a release whose `emulates:`
+would run on it is refused at generation. Register the emulator once on the machine instead, by hand and as
+root, with the `support:ci-arm64` task (si#358's boot-time registration in the container's own
+`binfmt_misc`), and drop `emulates:`.
 
 The **label stays yours**: `ghr-8` names one machine and no kernel can guess it, and
 `[self-hosted, Linux, X64]` is not an answer — it describes every self-hosted Linux machine the account
@@ -1557,8 +1571,9 @@ ci:
   cell.
 - **`emulates:`** names platforms as buildx spells them. The job registers emulation for all of them once,
   before its leaves, with the action and binfmt pin the derived release uses; every later leaf waits for
-  that step's success. On a runner kind that cannot emulate, nothing is registered and the job's note
-  names the gap.
+  that step's success. On a runner kind that cannot emulate (`self-hosted-container`, an LXC runner, #722),
+  nothing is registered and the job's note names the gap; a leaf that runs a foreign binary there needs
+  the emulator registered once on the machine with the `support:ci-arm64` task (si#358).
 
 `skip:` beside any of them is refused, since the leaf does not run. Two pairs are refused on one leaf:
 `platforms:` with `python:` (a cross product of cells and versions nobody has asked for; put the versions

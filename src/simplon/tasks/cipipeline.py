@@ -957,10 +957,12 @@ def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
 
 
 #: si#860: what a job says when a leaf of it names `ci: emulates:` and the job's machine cannot register any
-#: (`can_emulate = false`, spec 5.4). Routing such a leaf to a machine that can is #722's, not this file's.
+#: (`can_emulate = false`, spec 5.4: `self-hosted-container`, an LXC runner, #722). The way out is the machine's,
+#: registered once by hand (si#358), so the note names it rather than a step that cannot work there.
 EMULATION_GAP = ("si#860: {leaves} name `ci: emulates:` ({platforms}), and this job's runner kind `{kind}` "
                  "cannot register emulation, so no step does it here and a leaf running a foreign binary "
-                 "fails with `Exec format error`. Running such a leaf on a machine that can is #722.")
+                 "fails with `Exec format error` unless the emulator is registered once on the machine, by "
+                 "hand and as root, with `support:ci-arm64` (si#358, #722).")
 
 EMULATION_NOTE = ("si#860: the leaves' `ci: emulates:`, registered once for the job before any leaf runs; every "
                   "later leaf waits for its success. The image is the kernel's binfmt pin, as the release uses.")

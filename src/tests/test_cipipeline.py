@@ -1331,17 +1331,20 @@ def test_emulation_in_the_python_cell_job(tmp_path, monkeypatch):
 
 
 def test_no_emulation_on_a_kind_that_cannot(tmp_path, monkeypatch):
-    """No kind on this branch has `can_emulate = false` (#722's container kind is not here), so the table is
-    patched: such a machine registers nothing, and the file names the gap rather than a step that cannot work."""
-    assert all(kind.can_emulate for kind in workflowschema.RUNNER_KINDS.values())  # why the patch
-    monkeypatch.setitem(workflowschema.RUNNER_KINDS, "github-ubuntu",
-                        dataclasses.replace(workflowschema.RUNNER_KINDS["github-ubuntu"], can_emulate=False))
+    """#722, si#863: `self-hosted-container` (an LXC runner, `can_emulate = false`) registers nothing, and the
+    file names the gap rather than a step that cannot work there."""
+    container = _SELF_HOSTED.replace("self-hosted-debian", "self-hosted-container")
 
-    files = _generated(tmp_path, monkeypatch, _EMULATES)
+    files = _generated(tmp_path, monkeypatch, _EMULATES + _top(container, _TOOLCHAINS))
 
     push, text = files[_CI_PATH]
+    assert push["jobs"]["ci"]["runs-on"] == "ghr-8"
     assert _emulations(push, "ci") == []
+    assert not any(str(step.get("uses", "")).startswith("docker/setup-qemu-action@")
+                   for job in push["jobs"].values() for step in job["steps"])
     said = _comments(text)
+    assert "self-hosted-container" in said and "cannot register emulation" in said, said
+    assert "`support:ci-arm64`" in said, said
     assert "#722" in said and "linux/arm64, linux/arm/v7" in said
 
 
