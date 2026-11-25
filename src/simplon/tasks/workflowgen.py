@@ -70,7 +70,9 @@ import yaml
 from simplon.manifest import artifactsection, context, runners, signatures, sources
 from simplon.model import task, workflowschema
 from simplon.adapters import disk, docker, tools
-from simplon.model.command import ReleaseCommand, TaskCommand
+# `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
+from simplon.model import command as command_model
+from simplon.model.command import EnvValue, ReleaseCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
 
@@ -317,25 +319,9 @@ def emulation_step(platforms: Sequence[str], *, step_id: str | None = None) -> S
                           "with": {"image": BINFMT_IMAGE, "platforms": ",".join(platforms)}})
 
 
-@dataclass(frozen=True)
-class EnvValue:
-    """A `params:` value that NAMES an environment variable, `{ env: RELEASE_VERSION }` (si#488).
-
-    Rendered as `"$RELEASE_VERSION"`: GitHub interpolates nothing into the script, the shell expands the
-    variable, and the double quotes keep whatever it holds one argument. It is how a dispatch input
-    reaches a command - through a job's `env:`, never as `${{ inputs.* }}` inside a `run:` line, which is
-    the script injection `_rollout` refuses to write. A plain `$NAME` value would not do it: it is
-    shell-quoted like any literal and reaches the command as the five characters `$NAME`."""
-
-    name: str
-
-
 #: The variables a runner sets with no `env:` of the workflow's - GitHub's own defaults. An `{ env: }` value
 #: naming one needs no declaration; any other name must be set by the step, the job or the workflow.
 GITHUB_SETS = re.compile(r"(GITHUB_|RUNNER_)[A-Z0-9_]+|CI")
-
-_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
 
 @dataclass(frozen=True)
 class Job:
@@ -1042,7 +1028,7 @@ def _step(item: object, where: str) -> Step:
         if not isinstance(raw, Mapping):
             raise ValueError(f"{where}: `params:` must map parameter names to values, not "
                              f"{type(raw).__name__}")
-        params = {str(k): _param_value(v, where=f"{where}, `params: {k}`") for k, v in raw.items()}
+        params = {str(k): command_model.param_value(v, where=f"{where}, `params: {k}`") for k, v in raw.items()}
         return Step(command=command, modifiers=rest, note=note, params=params)
     if not rest:
         raise ValueError(f"{where}: declares neither `command:` nor a verbatim GitHub step")
@@ -1050,25 +1036,6 @@ def _step(item: object, where: str) -> Step:
         raise ValueError(f"{where}: a verbatim step needs `uses:` or `run:`; for a product command say "
                          f"`command: <group> <name>` and let it be resolved against the manifest")
     return Step(verbatim=rest, note=note)
-
-
-def _param_value(value: object, *, where: str) -> "str | EnvValue":
-    """One `params:` value: a scalar as its text, or `{ env: NAME }` as an `EnvValue`.
-
-    Anything else is REFUSED, and that is a defect si#488 found rather than a rule it added: a list or a
-    mapping used to pass through `str()`, so `{ env: X }` written before this form existed rendered as the
-    text of a Python dict - a command handed `{'env': 'X'}` as its tag, with the manifest looking right."""
-    if isinstance(value, Mapping):
-        if set(value) == {"env"}:
-            named = value["env"]
-            if not isinstance(named, str) or not _ENV_NAME.fullmatch(named):
-                raise ValueError(f"{where}: `env: {named!r}` is not an environment variable name - letters, "
-                                 f"digits and `_`, not starting with a digit")
-            return EnvValue(named)
-    elif isinstance(value, (str, int, float)):          # bool is an int; it renders as YAML read it
-        return str(value)
-    raise ValueError(f"{where}: the value must be a scalar or `{{ env: NAME }}`, not {value!r} - a "
-                     f"{type(value).__name__} would reach the command as its Python text")
 
 
 def _rendered(value: "str | EnvValue") -> str:

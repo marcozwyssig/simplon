@@ -23,7 +23,7 @@ from simplon.manifest import artifactsection, merge, runners, sources
 from simplon.manifest.load import Manifest
 from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
-from simplon.model.command import AggregateCommand, CiGate, Deploy, TaskCommand
+from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
 from simplon.model.task import class_ref
 from simplon.tasks import handoff, workflowgen
 
@@ -954,7 +954,7 @@ def _params_of(leaf: Leaf) -> tuple[workflowschema.StepParam, ...]:
     """A leaf's `ci: params:` as the model's step holds them (si#863): a literal as its text, a `{ env: NAME }` as
     the variable's name, in the order written."""
     return tuple(workflowschema.StepParam(param_name=key, param_env=value.name)
-                 if isinstance(value, workflowgen.EnvValue) else
+                 if isinstance(value, EnvValue) else
                  workflowschema.StepParam(param_name=key, param_value=value)
                  for key, value in leaf.spec.ci.params.items())
 
@@ -1287,7 +1287,7 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             # si#863: the model step's params go through a declared step's `params:` path, so `_parameters`
             # checks and renders them (positional or option, quoted, `{ env: }` against what the job sets) as it
             # would for a step the product wrote.
-            params = {param.param_name: workflowgen.EnvValue(param.param_env) if param.param_env
+            params = {param.param_name: EnvValue(param.param_env) if param.param_env
                       else param.param_value for param in step.params}
             steps.append(workflowgen.Step(command=line, modifiers=modifiers, params=params))
     labels = job.runner.labels

@@ -30,22 +30,21 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
+from typing import Any, Callable, NamedTuple, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from simplon.manifest import artifactsection, launcherenv, merge, ports, runners, sources, yamlkeys
+# `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
+from simplon.model import command as command_model
 from simplon.model import task, workflowschema
-from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, ParamPresentation, ReleaseCommand,
-                                    TaskCommand)
+from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, EnvValue, ParamPresentation,
+                                    ReleaseCommand, TaskCommand)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.manifest import treeform
 from simplon.kernel.plan import PlanNode
-
-if TYPE_CHECKING:
-    from simplon.tasks.workflowgen import EnvValue
 
 
 def _qualified(group: str, name: str) -> str:
@@ -1339,20 +1338,19 @@ def _ci_emulates(value: object, where: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _ci_params(value: object, where: str) -> "dict[str, str | EnvValue]":
+def _ci_params(value: object, where: str) -> dict[str, str | EnvValue]:
     """si#863: the parameters a derived CI step hands this leaf, {} when unwritten. A pin a person typing the
     command never gets: si#368's `platform: linux/amd64` on `build image`, which a `with:` would have pinned
     for the release too. Each value takes a declared step's `params:` form, read by its own reader
-    (`workflowgen._param_value`): a scalar, or `{ env: NAME }`. The names are `_validate_param_bindings`'s, and
+    (`command.param_value`): a scalar, or `{ env: NAME }`. The names are `_validate_param_bindings`'s, and
     the rendering `workflowgen._parameters`', which also refuses, per job, a variable nothing there sets."""
-    from simplon.tasks import workflowgen       # lazy: workflowgen imports this module
     if value is None:
         return {}
     if not isinstance(value, Mapping) or not value:
         raise ValueError(
             f"'{where}' declares `ci: params: {json.dumps(value, default=str)}`. `ci: params:` is a non-empty "
             f"mapping of parameter names to values, e.g. `{{ platform: linux/amd64 }}`")
-    return {str(key): workflowgen._param_value(item, where=f"'{where}', `ci: params: {key}`")
+    return {str(key): command_model.param_value(item, where=f"'{where}', `ci: params: {key}`")
             for key, item in value.items()}
 
 

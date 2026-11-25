@@ -340,8 +340,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_with_runner_env", "is a mapping of name -> value"): DIAGNOSIS,
     # si#488: a `params:` value is a scalar or `{ env: NAME }`. A list or another mapping used to reach the
     # command as its Python text, so neither refusal costs a working product anything
-    ("workflowgen", "_param_value", "is not an environment variable name"): DIAGNOSIS,
-    ("workflowgen", "_param_value", "must be a scalar or"): DIAGNOSIS,
+    ("command", "param_value", "is not an environment variable name"): DIAGNOSIS,
+    ("command", "param_value", "must be a scalar or"): DIAGNOSIS,
     # THE TWO THAT COST SOMETHING, and both cost the same thing: a manifest that said a fact twice.
     # Either would have produced a WORKING file - one of the two values wins and the workflow runs -
     # which is exactly the test CLAUDE.md sets, so they are expression rules and they owe the three
@@ -761,7 +761,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_ci_timeout", "`ci: timeout_minutes:` is a positive whole number of minutes"): DIAGNOSIS,
     ("load", "_ci_emulates", "`ci: emulates:` is a non-empty list of platforms as buildx spells them"): DIAGNOSIS,
     # si#863: `ci: params:` that is no mapping, or an empty one, hands a derived step nothing it could name. Its
-    # values are read by `workflowgen._param_value`, counted above with a declared step's `params:`.
+    # values are read by `command.param_value`, counted above with a declared step's `params:`.
     ("load", "_ci_params", "`ci: params:` is a non-empty mapping of parameter names to values"): DIAGNOSIS,
     # THE TWO EXPRESSION RULES, both the executor's call posted with Marco's si#860 decisions (he may
     # overrule): each refuses a leaf that could have been rendered, so each costs flexibility.

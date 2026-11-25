@@ -299,14 +299,14 @@ def test_params_that_are_not_a_non_empty_mapping_are_refused_with_the_form(param
 
 @pytest.mark.parametrize("value", ["[linux/amd64]", "~", "{ envv: PLATFORM }"])
 def test_a_param_value_that_is_neither_a_scalar_nor_env_is_refused_naming_it(value):
-    """A declared step's `params:` reader (`workflowgen._param_value`), so the two forms cannot drift apart."""
+    """A declared step's `params:` reader (`command.param_value`), so the two forms cannot drift apart."""
     with pytest.raises(ValueError, match=r"'test lab', `ci: params: platform`: the value must be a scalar or "
                                          r"`\{ env: NAME \}`"):
         _ci(f"{{ params: {{ platform: {value} }} }}")
 
 
 def test_an_env_param_is_read_as_the_variable_it_names():
-    from simplon.tasks.workflowgen import EnvValue
+    from simplon.model.command import EnvValue
     assert _ci("{ params: { tag: { env: GITHUB_SHA } } }").params == {"tag": EnvValue("GITHUB_SHA")}
 
 
