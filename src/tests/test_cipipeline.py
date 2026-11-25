@@ -540,6 +540,27 @@ def test_a_generated_producer_leaves_a_gate_file_when_the_staleness_gate_is_a_me
             "and compares with the committed tree itself") in _comments(text)
 
 
+def test_a_gate_member_consuming_from_a_left_out_member_is_refused():
+    """si#886 in a gate's file: leaving a producer member out must not leave its consumer member running on a
+    missing file; the gate file refuses it as `select` does in ci.yml, naming why the producer is out."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              x: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+              use: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+              check: { task: "test:generated", unattended: true }
+              lab: { depends_on: [x, use, check], help: "Lab.", ci: { gate: { label: lab } } }
+        """
+    with pytest.raises(ValueError) as refused:
+        _gate_file(body, _generated_by("test x"))
+    message = str(refused.value)
+    assert "'test use' consumes 'doc', which 'test x' produces, and 'test x' is not run by the CI" in message
+    assert "it is the `by:` of a `generated:` entry" in message
+    assert "a member of `test lab`" not in message
+
+
 def test_a_gate_file_without_a_producer_member_says_nothing_left_out():
     doc, text = _gate_file(_GATED_PRODUCER, _generated_by("support completion"))
     assert _job_runs(doc, "test-lab") == ["test x", "test check"]

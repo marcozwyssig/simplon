@@ -849,11 +849,17 @@ def derive_gate(manifest: Manifest, data: Mapping[str, object], run: GateRun) ->
     `cadence:`'s schedule where there is one, and dispatch; never a push (decision 2).
     """
     artifacts = artifactsection.declared(data)
-    _refuse_members_consuming_from_outside(manifest, run, _gated(gates(manifest)), artifacts)
+    elsewhere = _gated(gates(manifest))
+    _refuse_members_consuming_from_outside(manifest, run, elsewhere, artifacts)
     # si#886: a member that is a `generated:` producer shares the gated job with a `test:generated` member, and a
     # member cannot opt out with `ci: { skip: }` (`_refuse_member`), so the derivation leaves it out here as `select`
     # does in a main or cadence run, and the file names it.
     members, regenerated = _without_producers_of_compared(list(order(run.members)), data)
+    # ... and a member that consumes what a left-out member produces is refused as `select` refuses it, naming why
+    # the producer is out. This gate's own members are not "a member of another gate" here, so they are not passed.
+    _refuse_consumers_of_absent_producers(manifest, members, dict(regenerated), artifacts,
+                                          {words: other for words, other in elsewhere.items() if other.words != run.words},
+                                          run.path)
     for member in members:
         # si#887, before `_params_of` asks the same: a member's way out is its gate, not `ci: { skip: }`.
         _refuse_unbound_required(member, gate=run.words)
