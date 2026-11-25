@@ -21,7 +21,7 @@ import yaml
 from simplon.manifest import artifactsection
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
-from simplon.tasks import workflowgen
+from simplon.tasks import releasepipeline, workflowgen
 
 from test_workflowgen import _RELEASE_PRODUCT, _RELEASE_WORKFLOWS
 
@@ -56,7 +56,10 @@ def _product(passes: str = "[GRADLE_PUBLISH_KEY, GRADLE_PUBLISH_SECRET]", token:
 def _render(product: str) -> str:
     loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **yaml.safe_load(_RELEASE_WORKFLOWS)}
-    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+    # si#862: the release entry derived through the model, as `cipipeline.workflows` hands it to the renderer.
+    entry = workflowgen.parse(data)[0]
+    release = releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
+    return workflowgen.render(release, manifest=loaded, product="app", source="app.yaml",
                               artifacts=artifactsection.declared(data))
 
 

@@ -266,6 +266,10 @@ BORROWS_A_READER = {
                      "report and on files, never on the manifest",
     "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
                    "itself and is the module the census accounts for; this module raises nothing",
+    "tasks.releasepipeline": "`_to_job` hands `workflowgen._release_archive` the `suites: reports:` directory it "
+                             "reads off the data it is handed (`workflowgen.report_dir`), so the archive never falls "
+                             "back to the registered context; this module rules on the release aggregate, never on "
+                             "what the archive reads (si#862)",
     "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "
                   "missing `tracker:` section is reported by tracker itself with `log.error` and a None, "
                   "and none of this module's raises decides on the destination (si#206)",
@@ -1377,6 +1381,21 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # docstring, beside `_refuse_foreign_files`).
     ("automerge", "derive", "so nothing gates the merge"): DIAGNOSIS,
     ("automerge", "derive", "has no `workflow_dispatch` trigger"): DIAGNOSIS,
+    # si#862: the release job is derived through the model by `releasepipeline.derive`, which
+    # `cipipeline.workflows` calls, so the walk reaches these now. They are not new rules: `workflowgen._release`
+    # raised the same text from `render`, which neither seam reaches, so they stood outside the census until
+    # then. Every one is a diagnosis: the release it refuses would reach no command with its version, hand a leaf
+    # a wrong value, release past a member nobody ran, or check a secret GitHub refuses to store.
+    ("releasepipeline", "derive", "which is not a release aggregate"): DIAGNOSIS,
+    ("releasepipeline", "derive", "passes no `tag`, so the version would reach no command"): DIAGNOSIS,
+    ("releasepipeline", "derive", "and a dispatch carries only the version"): DIAGNOSIS,
+    ("releasepipeline", "derive", "cannot run in the release job unattended"): DIAGNOSIS,
+    ("releasepipeline", "_passed_secrets", "GitHub refuses a secret named GITHUB_*"): DIAGNOSIS,
+    # si#862: the release names its aggregate as `<group> <name>`, resolved against the command tree like a step's
+    # `command:` - the same walk, so the same three refusals.
+    ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,
+    ("workflowgen", "resolve_command", "which this manifest does not declare"): DIAGNOSIS,
+    ("workflowgen", "resolve_command", "names no command in group"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

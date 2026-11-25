@@ -23,14 +23,16 @@ everything that would make such a run do the wrong thing quietly.
 """
 import itertools
 import re
+import subprocess
 import tomllib
 
 import pytest
 import yaml
 
 from simplon.tasks import site as site_task
-from simplon.tasks import workflowgen
+from simplon.tasks import workflowgen, workflows
 
+from simplon.manifest import artifactsection
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
 
@@ -96,6 +98,29 @@ def _walk(node):
 
 def _runs(node):
     return [str(value) for key, value in _walk(node) if key == "run"]
+
+
+#: si#862: the commit whose release.yml the old path (`workflowgen._release`) wrote, read through git so the pin
+#: holds while later tasks regenerate the file.
+OLD_PATH_COMMIT = "a985296"
+
+
+def test_release_yml_renders_byte_identical_from_the_model():
+    """si#862: the release derived through the firn workflow model writes the bytes the old path wrote."""
+    # arrange
+    committed = subprocess.run(["git", "show", f"{OLD_PATH_COMMIT}:.github/workflows/release.yml"], cwd=ROOT,
+                               capture_output=True, text=True, check=True).stdout
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    loaded = manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
+    (release,) = [w for w in workflows.assemble(loaded, data, product="simplon", root=ROOT)
+                  if w.path == ".github/workflows/release.yml"]
+
+    # act
+    text = workflowgen.render(release, manifest=loaded, product="simplon", source=MANIFEST.name,
+                              artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
+
+    # assert
+    assert committed and text == committed
 
 
 # --- the trigger, and the acceptance that hangs off it ---------------------------------------------------

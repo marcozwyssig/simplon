@@ -73,7 +73,7 @@ def test_job_fields_follow_the_model_and_the_class_is_frozen():
 
     # assert
     assert fields == ["key", "runner", "step", "needs", "matrix", "condition", "timeout_minutes", "gate", "env", "merge",
-                      "concurrency", "starts_no_container"]
+                      "concurrency", "starts_no_container", "permission", "environment", "no_checkout"]
     assert workflowschema.Job.__dataclass_params__.frozen
 
 

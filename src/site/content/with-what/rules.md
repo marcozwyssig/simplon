@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 343 | nothing - the declaration had no working meaning |
+| diagnosis | 351 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **396** | |
+| **all load-time refusals** | **404** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -136,6 +136,11 @@ decides when and where it runs), and an artifact handed between a gate member an
 either direction, unless it has a `registry:`: artifacts do not cross workflow files.
 Since si#887 a leaf whose catalogue task cannot run without a parameter that neither `with:` nor
 `ci: { params: }` binds is a diagnosis too, in the main, cadence and gate files alike.
+Since si#862 the release job is derived by the same verb, through the workflow model, so its refusals are
+reached and counted too; none is new, they were raised at rendering before, where no seam reaches. All are
+diagnoses: a `release:` that names no release aggregate (or no command at all), an aggregate that passes no
+`tag` or passes anything else, a member that may not run with nobody watching, and an `env: pass:` name
+starting with `GITHUB_`, which GitHub refuses to store as a secret.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

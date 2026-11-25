@@ -2483,9 +2483,19 @@ def _release_parsed(extra: str = "") -> "workflowgen.Workflow":
     return workflowgen.parse(_section(_RELEASE + textwrap.indent(textwrap.dedent(extra), "    ")))[0]
 
 
+def _release_derived(extra: str = "") -> "workflowgen.Workflow":
+    """si#862: the entry as `cipipeline.workflows` hands it to the renderer, derived through the model."""
+    from simplon.tasks import releasepipeline
+    loaded = manifest_mod.load(_RELEASE_PRODUCT, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = {**yaml.safe_load(_RELEASE_PRODUCT),
+            **_section(_RELEASE + textwrap.indent(textwrap.dedent(extra), "    "))}
+    entry = workflowgen.parse(data)[0]
+    return releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
+
+
 def test_release_derives_the_dispatch_trigger():
     """D2 (si#463): a release is started by dispatch only, with the version typed and a dry run by default."""
-    assert _release_parsed().on == {"workflow_dispatch": {"inputs": {
+    assert _release_derived().on == {"workflow_dispatch": {"inputs": {
         "version": {"description": "The version to release, exactly as its tag will be: vX.Y.Z",
                     "required": True, "type": "string"},
         "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
@@ -2494,7 +2504,7 @@ def test_release_derives_the_dispatch_trigger():
 
 def test_release_derives_permissions_and_concurrency():
     """si#719: the workflow default the kernel derives is `contents: read`; the write scopes are the job's."""
-    parsed = _release_parsed()
+    parsed = _release_derived()
     assert list(parsed.extras)[:2] == ["permissions", "concurrency"]
     assert parsed.extras["permissions"] == {"contents": "read"}
     assert parsed.extras["concurrency"] == {"group": "${{ github.workflow }}-${{ inputs.version }}",
@@ -2616,7 +2626,7 @@ def test_a_workflow_without_release_is_not_given_the_release_trigger():
         """))[0]
 
     # Assert
-    assert parsed.on != workflowgen._RELEASE_TRIGGER
+    assert parsed.on != _release_derived().on
 
 
 # --- si#490 Task 3: the derived release job ---------------------------------------------------------------
@@ -2672,7 +2682,11 @@ def _release_text(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WOR
     loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **_section(workflows)}
     from simplon.manifest import artifactsection
-    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+    from simplon.tasks import releasepipeline
+    entry = workflowgen.parse(data)[0]
+    # si#862: the release workflow is derived through the model, as `cipipeline.workflows` derives it.
+    release = releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
+    return workflowgen.render(release, manifest=loaded, product="app", source="app.yaml",
                               artifacts=artifactsection.declared(data))
 
 

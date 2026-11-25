@@ -1304,7 +1304,9 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
 
 
 def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
-    """`on:` from the model's triggers; the `schedule` triggers are one list under one key, as GitHub reads it."""
+    """`on:` from the model's triggers; the `schedule` triggers are one list under one key, as GitHub reads it. A
+    dispatch's inputs (si#862, the release's) are written in GitHub's key order, a `boolean` input's default as
+    the boolean its text names."""
     out: dict[str, object] = {}
     crons: list[dict[str, str]] = []
     for trigger in triggers:
@@ -1315,9 +1317,19 @@ def _on(triggers: Sequence[workflowschema.Trigger]) -> dict[str, object]:
             crons.append({"cron": trigger.cron})
         else:
             event, body = _TRIGGERS[trigger.event]
-            said = {**({"workflows": list(trigger.workflows)} if trigger.workflows else {}),
+            said = {**({"inputs": {i.input_name: _input(i) for i in trigger.dispatch_input}}
+                       if trigger.dispatch_input else {}),
+                    **({"workflows": list(trigger.workflows)} if trigger.workflows else {}),
                     **({"types": list(trigger.types)} if trigger.types else {})}
             out[event] = {**(body if isinstance(body, Mapping) else {}), **said} if said else body
+    return out
+
+
+def _input(given: workflowschema.DispatchInput) -> dict[str, object]:
+    """One `workflow_dispatch` input as GitHub reads it (si#862)."""
+    out: dict[str, object] = {"description": given.description, "required": given.required, "type": given.input_type}
+    if given.default_value:
+        out["default"] = given.default_value == "true" if given.input_type == "boolean" else given.default_value
     return out
 
 
@@ -1481,7 +1493,11 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
     switches it off.
     """
     from simplon.tasks import automerge  # it builds on this module's Derivation and gates
-    declared = workflowgen.parse(data)
+    from simplon.tasks import releasepipeline  # it writes its trigger with this module's `_on`
+    # si#862: a declared entry with `release:` is the release workflow, derived through the model.
+    declared = tuple(releasepipeline.to_workflow(releasepipeline.derive(manifest, data, entry), manifest, data, entry,
+                                                 product=product) if entry.release else entry
+                     for entry in workflowgen.parse(data))
     own = {workflow.key for workflow in declared}
     # si#861: every gate's members are ruled on whoever writes ci.yml, and a gate's file is derived unless the
     # product declares its key (the one switch rule).
