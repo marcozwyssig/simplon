@@ -1009,10 +1009,12 @@ def _refuse_unbound_required(leaf: Leaf) -> None:
     reaches this, so one skipped or left out is not asked.
 
     Only a catalogue coordinate is resolved, to its generated class in the kernel: the model is where `required`
-    is said, and a product task has no `required` to say. Resolving a product task would import the product's
-    own body module to learn nothing, and a derivation that imported it would need the product's package on the
-    path (measured: simplon's own `orchestrator.cli:build_wheel` is not importable from the kernel's `src/`)."""
+    is said, and a product task has none, so it is not checked (its body may still need a parameter nothing
+    binds). Resolving a product task would import the product's own body module to learn nothing, and a
+    derivation that imported it would need the product's package on the path (measured: simplon's own
+    `orchestrator.cli:build_wheel` is not importable from the kernel's `src/`)."""
     task = leaf.spec.task
+    # `class_ref(task)`, not `leaf.spec.impl`: a catalogue coordinate always maps to its generated class.
     required = task_class(class_ref(task), task, where=leaf.words).REQUIRED if ":" in task else ()
     bound = {*leaf.spec.with_, *leaf.spec.ci.params}
     missing = [param for param in required if param not in bound]

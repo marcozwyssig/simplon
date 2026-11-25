@@ -1476,8 +1476,8 @@ port would hand it) would be red in every run. When neither the command's `with:
 the workflow is refused, naming the command, the parameter and the two ways out: bind it for the derived
 run with `ci: { params: }`, or keep the leaf out with `ci: { skip: }`. Which parameters a task cannot run
 without is the catalogue's (`required` on the task's parameter in its model), not the signature's: an
-empty default refused by the body counts. A leaf that is skipped or left out is not asked; a product's
-own task requires nothing.
+empty default refused by the body counts. A leaf that is skipped or left out is not asked, and a leaf
+of a product's own task is not checked: its body may still need a parameter nothing binds.
 
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in

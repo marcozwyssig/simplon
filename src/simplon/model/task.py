@@ -28,7 +28,8 @@ class Task:
 
     KEY: ClassVar[str]
     #: The parameters the body cannot run without (si#887): `TaskParam.required` in the model, written onto a
-    #: generated class. None here, so a product task, whose class is built around its `impl:`, requires nothing.
+    #: generated class. None here: a product task, whose class is built around its `impl:`, is not checked (its
+    #: body may still need a parameter nothing binds).
     REQUIRED: ClassVar[tuple[str, ...]] = ()
     #: The body: in a generated class the wrapper `run = staticmethod(<impl>)` until the body moves into the
     #: method; its parameters are the command's (`signatures.bindable` reads them).

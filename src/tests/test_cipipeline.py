@@ -555,6 +555,18 @@ def test_a_required_parameter_bound_by_ci_params_renders():
     assert _runs(doc) == ["build one", "build binary --bootstrap false"]
 
 
+def test_a_required_parameter_bound_only_through_a_port_renders():
+    """si#887: `build:image` cannot run without `name`, and `produces: { image: img }` hands it the artifact's
+    name; the loader writes that binding into `with:`, which is where the check reads it."""
+    doc, _ = _rendered("""
+        ci:
+          build:
+            commands:
+              image: { task: "build:image", produces: { image: img } }
+        """)
+    assert _runs(doc) == ["build image"]
+
+
 def test_a_skipped_leaf_is_not_asked_for_its_required_parameters():
     """si#887: `ci: { skip: }` is one of the two ways out, so it must be one."""
     doc, _ = _rendered(_BINARY % ', ci: { skip: "built by hand" }')
