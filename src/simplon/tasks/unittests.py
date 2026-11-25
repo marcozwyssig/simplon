@@ -25,6 +25,10 @@ ignored by every scaffolded product.
 pytest IS ADDED ONLY WHEN THE REQUIREMENTS DID NOT BRING IT, AND UNPINNED (Marco, 2026-11-25), and the run
 says so in one line. A product that pins pytest gets exactly that pin. One that does not gets the release
 of the day the venv was built, and keeps it: the stamp freezes the venv until the requirements change.
+In derived CI the checkout (`actions/checkout` without `clean: false`, which runs `git clean -ffdx`)
+removes the ignored `build/` directory, so every CI job builds the unit venv fresh and an unpinned
+fallback pytest is the current release. The stamp's reuse holds on a developer's checkout. Rebuilding
+fresh is intended.
 
 A ROOT WITH NO TESTS IS RED (si#859, merged from #674). pytest exits 5 when it collected nothing, and a
 gate that read that as anything but a failure would be green precisely because the suite it guards is

@@ -292,15 +292,19 @@ ci:
 ```
 
 - **`paths`** is a list of test roots, relative to the product root. Several roots share one venv and one
-  requirements file, which is the shape of a product with a source suite and a tooling suite. Each root is
-  collected once before the run, because `pytest a b` exits 0 when `b` is empty; a root that collects
+  requirements file, which is the shape of a product with a source suite and a tooling suite. When there are several roots, each
+  is collected on its own first, because `pytest a b` exits 0 when `b` is empty; a root that collects
   nothing is **red** and named, never green. pytest's own exit 5 gets the same answer.
 - **`requirements`** is the file installed into the venv. A `-r` or `-c` include inside it is part of the
   venv's stamp, so moving a pin in an included file rebuilds the venv. pytest is added **unpinned** only
-  when the requirements do not bring it, and the run says so; a product's own pin wins.
+  when the requirements do not bring it, and the run says so; a product's own pin wins. The stamp keeps
+  that fallback pytest on a developer's checkout, but in derived CI the checkout (`actions/checkout` without
+  `clean: false`, which runs `git clean -ffdx`) removes the ignored `build/` directory, so every CI job builds
+  the venv fresh and the fallback is the current release. That is intended.
 - **`config`** is optional and is passed to pytest as `-c`.
 - **`timeout`** is optional, in seconds. It bounds the pytest runs only: provisioning the venv and the pip
-  installs run outside it, so a slow index cannot turn into a red suite. A run past it is red and named.
+  installs run outside it, so a slow index cannot turn into a red suite. The pip installs have no limit of their own;
+  pip's own socket timeouts bound a network hang. A run past it is red and named.
 - Every path must be relative and inside the product root; an absolute or escaping entry is refused by
   name.
 
@@ -314,7 +318,8 @@ reads no `suites:` section, so there is nothing for the report to find. Allure r
 `allure-pytest` in the product's requirements, which the kernel does not add on its own. A product that
 wants its unit results in the archive carries that plugin in its requirements, points it at a directory
 from its pytest configuration (`addopts = --alluredir=...` in the file named by `config`), and declares
-the directory under `merge:`. Without that, the verdict of `test:unit` is its exit code and nothing more.
+the directory under `merge:`. That `--alluredir` path is relative to the product root, because `test:unit`
+runs pytest from there, and that is the directory to declare. Without that, the verdict of `test:unit` is its exit code and nothing more.
 
 ### `release`
 
