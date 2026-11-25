@@ -66,6 +66,7 @@ claim itself, does not depend on any workflow, and names the CAUSE where the rul
 symptom.
 """
 import configparser
+import copy
 import functools
 import re
 import tomllib
@@ -74,6 +75,7 @@ import yaml
 
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
+from simplon.tasks import workflowgen, workflows
 
 from conftest import ROOT
 
@@ -189,6 +191,44 @@ def _manifest() -> dict:
     return yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
 
 
+#: The interpreter of a job that provisions none: whatever the runner carries (the self-hosted ghr-8 in
+#: `ci.yml`'s main job). Compared by equality like a version, so two such jobs answer the same question.
+RUNNERS_OWN = "the runner's own"
+
+
+def _interpreters(job: dict) -> frozenset[str]:
+    """The Python interpreter(s) a job runs its steps on: the `python-version` of its `setup-python` step
+    (a `${{ matrix.<key> }}` reads that key's values out of the job's own matrix), or `RUNNERS_OWN` when it
+    has no such step. A matrix that cannot be read raises KeyError rather than answering "no interpreter":
+    an empty answer would make the job vacuously covered, the recurring defect in this rule's own helper."""
+    for step in job.get("steps", []):
+        if str(step.get("uses", "")).startswith("actions/setup-python"):
+            value = str(step["with"]["python-version"])
+            ref = re.fullmatch(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", value)
+            if ref:
+                return frozenset(str(v) for v in job["strategy"]["matrix"][ref.group(1)])
+            return frozenset({value})
+    return frozenset({RUNNERS_OWN})
+
+
+def _rows(file: str, doc: dict) -> list[tuple[str, str, list[str], frozenset[str]]]:
+    """One workflow document as (file, job name, the `run:` lines it spells out, its interpreters)."""
+    return [(file, name,
+             # A leading `exec` (si#666: a generated step execs the launcher) changes which process runs the
+             # command, not which command runs, so it is read past - and `exec pytest` still bypasses.
+             [re.sub(r"^exec\s+", "", s["run"]) for s in job.get("steps", []) if "run" in s],
+             _interpreters(job))
+            for name, job in doc.get("jobs", {}).items()]
+
+
+def _all_rows() -> list[tuple[str, str, list[str], frozenset[str]]]:
+    """`_rows` over every committed workflow file. `*.y*ml` because GitHub reads `.yaml` exactly as it
+    reads `.yml`, and a test that globbed one of them would be the same blind spot one extension over."""
+    files = sorted(WORKFLOWS.glob("*.y*ml"))
+    assert files, WORKFLOWS
+    return [row for path in files for row in _rows(path.name, yaml.safe_load(path.read_text(encoding="utf-8")))]
+
+
 def _jobs() -> list[tuple[str, str, list[str]]]:
     """Every job in every workflow, as (file, job name, the `run:` lines it spells out).
 
@@ -196,21 +236,29 @@ def _jobs() -> list[tuple[str, str, list[str]]]:
     carries: this reads the steps a workflow spells out itself. A step inside a composite action, or
     inside a reusable workflow called with a job-level `uses:`, is invisible here - there is no file in
     this repository to read it out of. Neither exists today.
-
-    `*.y*ml` because GitHub reads `.yaml` exactly as it reads `.yml`, and a test that globbed one of them
-    would be the same blind spot one file extension over.
     """
-    files = sorted(WORKFLOWS.glob("*.y*ml"))
-    assert files, WORKFLOWS
-    out = []
-    for path in files:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for name, job in doc.get("jobs", {}).items():
-            # A leading `exec` (si#666: a generated step execs the launcher) changes which process runs the
-            # command, not which command runs, so it is read past - and `exec pytest` still bypasses.
-            out.append((path.name, name, [re.sub(r"^exec\s+", "", s["run"]) for s in job.get("steps", [])
-                                          if "run" in s]))
-    return out
+    return [(file, job, runs) for file, job, runs, _ in _all_rows()]
+
+
+def _ungated(rows: list[tuple[str, str, list[str], frozenset[str]]]) -> list[str]:
+    """The jobs that run the suite without the type gate being owed-and-paid for their interpreter.
+
+    PER INTERPRETER, NOT PER JOB (si#863). si#8's rule is that whichever workflow claims to have checked
+    this tree owes the same verdict, and "same job" was only ever how that looked while one job ran both
+    leaves. The derived `ci.yml` puts each leaf of a hosted python cell in its own job
+    (`<command words>-python`), so a suite cell on 3.14 and the gate cell on 3.14 are two jobs that
+    together make the one claim. A job running the suite on interpreter V is therefore gated when it
+    reaches the gate itself, or when its WORKFLOW has a job that reaches the gate on V. Interpreters are
+    each job's `setup-python` values, or `RUNNERS_OWN` for a job with none.
+
+    Not loosened beyond that: a gate cell on 3.12 does not gate a suite cell on 3.14, and a gate in
+    another workflow gates nothing here, because the second pipeline's verdict is not the first's.
+    """
+    gate = _gate_command()
+    gate_on = {(file, v) for file, _, runs, versions in rows if gate in _reached(runs) for v in versions}
+    return [f"{file}:{job}" for file, job, runs, versions in rows
+            if any(cmd in runs for cmd in VERIFIES) and gate not in _reached(runs)
+            and any((file, v) not in gate_on for v in versions)]
 
 
 def test_theManifestPlacesTheKernelsOwnTypeGate() -> None:
@@ -235,14 +283,34 @@ def test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate() -> None:
     # the manifest, so the question asked is the one that decides whether mypy ran.
     gate = _gate_command()
 
-    ungated = [f"{file}:{job}" for file, job, runs in _jobs()
-               if any(cmd in runs for cmd in VERIFIES) and gate not in _reached(runs)]
+    ungated = _ungated(_all_rows())
 
     assert ungated == [], (
         f"these jobs run the suite but not the type gate: {ungated}; naming `test suite` reaches the "
-        f"pytest leaf ONLY - add `./simplon.sh test {gate}` as its own step, or run the `test all` "
-        f"aggregate that plans it. A pipeline that is green because a question is not asked is the whole "
+        f"pytest leaf ONLY - add `./simplon.sh test {gate}` as its own step, run the `test all` "
+        f"aggregate that plans it, or give the gate a cell on the same interpreter in the same workflow "
+        f"(a derived `ci.yml` does that with `ci: {{ python: [...] }}` on the gate's command). A pipeline that is green because a question is not asked is the whole "
         f"of si#8")
+
+
+def test_a_suite_cell_without_its_type_gate_cell_is_red() -> None:
+    # SEE IT RED (si#863). The per-interpreter rule is satisfied today by `test-typecheck-python-python`, the
+    # gate's hosted cell, which exists because the manifest gives `typecheck-python` `ci: { python: [...] }`.
+    # Delete that declaration (the whole `ci:` key, since an empty one is refused) in a COPY of the manifest's data, assemble and render ci.yml from the copy
+    # (nothing on disk is touched), and the suite's hosted cell must be named: the gate then has no cell on
+    # its interpreter, and the main job's own gate does not stand in for a hosted 3.14.
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    edited = copy.deepcopy(data)
+    del edited["ci"]["test"]["commands"]["typecheck-python"]["ci"]
+    loaded = manifest_mod.load(yaml.safe_dump(edited), catalogue=catalogue_mod.load())
+    ci = next(w for w in workflows.assemble(loaded, edited, product="simplon", root=ROOT)
+              if w.path == ".github/workflows/ci.yml")
+    text = workflowgen.render(ci, manifest=loaded, product="simplon", source=MANIFEST.name, artifacts={})
+    rows = _rows("ci.yml", yaml.safe_load(text)) + [r for r in _all_rows() if r[0] != "ci.yml"]
+
+    assert "ci.yml:test-suite-python" in _ungated(rows)
+    # and the committed tree is the green side of the same function, so the red is the edit's doing
+    assert _ungated(_all_rows()) == []
 
 
 def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
