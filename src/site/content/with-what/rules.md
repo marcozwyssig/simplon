@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 342 | nothing - the declaration had no working meaning |
+| diagnosis | 343 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **395** | |
+| **all load-time refusals** | **396** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -134,6 +134,8 @@ are diagnoses too: a member that may not run with nobody watching, a member with
 already keeps it out of the main job), a member with `cadence:`, `platforms:` or `python:` (the gate's file
 decides when and where it runs), and an artifact handed between a gate member and a leaf of another file in
 either direction, unless it has a `registry:`: artifacts do not cross workflow files.
+Since si#887 a leaf whose catalogue task cannot run without a parameter that neither `with:` nor
+`ci: { params: }` binds is a diagnosis too, in the main, cadence and gate files alike.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

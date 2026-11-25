@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import shlex
 import textwrap
 from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
@@ -24,7 +25,8 @@ from simplon.manifest.load import Manifest
 from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
-from simplon.model.task import class_ref
+from simplon.model.task import class_ref, task_class
+from simplon.tasks import generated as generated_section
 from simplon.tasks import handoff, workflowgen
 
 if TYPE_CHECKING:
@@ -49,6 +51,14 @@ CI_PHASES = ("build", "test")
 #: Why a leaf with `unattended: false` is not in the workflow.
 ATTENDED = "it needs a person at the terminal (`unattended: false`)"
 
+#: The catalogue task that regenerates every `generated:` entry and compares it with the committed tree (si#746).
+STALENESS_TASK = "test:generated"
+
+#: Why a `generated:` producer is not in a run that holds the staleness gate (si#886); `{gate}` is its words.
+REGENERATED = ("it is the `by:` of a `generated:` entry, which `{gate}` (`" + STALENESS_TASK + "`) regenerates and "
+               "compares with the committed tree itself; run before it in the same job, it would leave that gate "
+               "comparing the regenerated tree with itself (si#886)")
+
 
 class Leaf(NamedTuple):
     """One command the CI runs: `words` is the command line as the CLI types it (`test lab smoke` for a
@@ -59,8 +69,9 @@ class Leaf(NamedTuple):
 
 
 class Skipped(NamedTuple):
-    """A leaf the CI leaves out, and why: `ci: { skip: }`'s reason, or `ATTENDED`. The reason is kept so the
-    generated file can say where a reader will be standing when they wonder (as `workflowgen.derive` does)."""
+    """A leaf the CI leaves out, and why: `ci: { skip: }`'s reason, `ATTENDED`, or `REGENERATED` (si#886). The
+    reason is kept so the generated file can say where a reader will be standing when they wonder (as
+    `workflowgen.derive` does)."""
 
     words: str
     reason: str
@@ -75,7 +86,15 @@ def _words(group: str, name: str) -> str:
     return f"{group.replace('.', ' ')} {name}"
 
 
-def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: str = "") -> Selection:
+def generated_of(data: Mapping[str, object]) -> tuple[generated_section.Entry, ...]:
+    """The product's `generated:` entries, read by the staleness gate's own reader; () when it declares none."""
+    if generated_section.SECTION not in data:
+        return ()
+    return tuple(generated_section.entries_of(dict(data), "the manifest"))
+
+
+def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", data: Mapping[str, object],
+           cadence: str = "") -> Selection:
     """The leaves a derived CI runs, in an order every consumer can be run in (si#858, spec section 4).
 
     A leaf is a `TaskCommand` in a `build` or `test` group (nested groups included) of the CI area, in the
@@ -93,6 +112,13 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
     with another cadence goes to `skipped`, named with the file it runs in, so the absent-producer check and the
     file's note both see why it is missing here. An `after_all` leaf with no cadence of its own (the report) is
     a verdict over whichever run it ends, so it is chosen for every cadence.
+
+    si#886: `data` is the product's manifest document, passed rather than defaulted so a caller cannot forget its
+    `generated:` section and blind the gate. Where this run holds a `test:generated` leaf, every leaf that is the
+    `by:` of an entry goes to `skipped`: the gate regenerates and compares, so the producer run before it would
+    leave it comparing the regenerated tree with itself, and the leaves after it running on that tree. The section
+    is read only then, so a product without the gate generates its workflows whatever the section says, and
+    `test generated` stays the one that refuses a malformed one.
     """
     runs = gates(manifest)
     gated = _gated(runs)
@@ -100,6 +126,7 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
         _refuse_members_consuming_from_outside(manifest, run, gated, artifacts)
     chosen: list[Leaf] = []
     skipped: list[Skipped] = []
+    walked: list[str] = []
     for group, members in manifest.commands.items():
         if group.split(".", 1)[0] not in CI_PHASES or manifest.area_of(group) != "ci":
             continue
@@ -107,6 +134,7 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
             if not isinstance(spec, TaskCommand):
                 continue
             words = _words(group, name)
+            walked.append(words)
             if words in gated:
                 # si#861: a gate member runs in its gate's file, and `gates` has ruled on its keys.
                 skipped.append(Skipped(words, _behind(gated[words])))
@@ -123,8 +151,35 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
                 chosen.append(Leaf(words, spec))
             else:
                 skipped.append(Skipped(words, _elsewhere(spec.ci.cadence)))
+    chosen, regenerated = _without_producers_of_compared(chosen, data)
+    # "Left out" reads in manifest order whichever rule left a leaf out.
+    skipped = sorted(skipped + regenerated, key=lambda s: walked.index(s.words))
     _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts, gated, _path_of(cadence))
     return Selection(order(chosen), tuple(skipped))
+
+
+def _without_producers_of_compared(chosen: list[Leaf], data: Mapping[str, object]
+                                   ) -> tuple[list[Leaf], list[Skipped]]:
+    """`chosen` less every `generated:` producer, and those producers as skipped, where a chosen leaf instantiates
+    `test:generated` (si#886). The leaf is matched by its task, not its word (biz-cockpit names it
+    `check-contract`); a `by:` is matched on its leading words, so arguments after the command still name it.
+
+    `REGENERATED`'s "in the same job" holds for the main job and a gate's gated job. A producer with
+    `ci: platforms:` would run in cell jobs of its own, where it could not touch the gate's tree, and is still
+    left out: the rule matches on the `by:`, not on the job. Nothing reaches that case today."""
+    gate = next((leaf.words for leaf in chosen if leaf.spec.task == STALENESS_TASK), None)
+    if gate is None:
+        return chosen, []
+    producers = [shlex.split(entry.by) for entry in generated_of(data)]
+    kept: list[Leaf] = []
+    left: list[Skipped] = []
+    for leaf in chosen:
+        words = leaf.words.split()
+        if leaf.words != gate and any(by[:len(words)] == words for by in producers):
+            left.append(Skipped(leaf.words, REGENERATED.format(gate=gate)))
+        else:
+            kept.append(leaf)
+    return kept, left
 
 
 def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[Leaf],
@@ -794,8 +849,21 @@ def derive_gate(manifest: Manifest, data: Mapping[str, object], run: GateRun) ->
     `cadence:`'s schedule where there is one, and dispatch; never a push (decision 2).
     """
     artifacts = artifactsection.declared(data)
-    _refuse_members_consuming_from_outside(manifest, run, _gated(gates(manifest)), artifacts)
-    selection = Selection(order(run.members), ())
+    elsewhere = _gated(gates(manifest))
+    _refuse_members_consuming_from_outside(manifest, run, elsewhere, artifacts)
+    # si#886: a member that is a `generated:` producer shares the gated job with a `test:generated` member, and a
+    # member cannot opt out with `ci: { skip: }` (`_refuse_member`), so the derivation leaves it out here as `select`
+    # does in a main or cadence run, and the file names it.
+    members, regenerated = _without_producers_of_compared(list(order(run.members)), data)
+    # ... and a member that consumes what a left-out member produces is refused as `select` refuses it, naming why
+    # the producer is out. This gate's own members are not "a member of another gate" here, so they are not passed.
+    _refuse_consumers_of_absent_producers(manifest, members, dict(regenerated), artifacts,
+                                          {words: other for words, other in elsewhere.items() if other.words != run.words},
+                                          run.path)
+    for member in members:
+        # si#887, before `_params_of` asks the same: a member's way out is its gate, not `ci: { skip: }`.
+        _refuse_unbound_required(member, gate=run.words)
+    selection = Selection(tuple(members), tuple(regenerated))
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     gate = run.gate
@@ -892,7 +960,7 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
     from the other's run as a nightly producer is from the push run (Review Focus 4)."""
     path = _path_of(cadences[0])
     artifacts = artifactsection.declared(data)
-    selections = [select(manifest, artifacts=artifacts, cadence=cadence) for cadence in cadences]
+    selections = [select(manifest, artifacts=artifacts, data=data, cadence=cadence) for cadence in cadences]
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     scheduled = path == SCHEDULED_PATH
@@ -950,9 +1018,41 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
                               runner=workflowschema.Runner(kind=kind, labels=labels))
 
 
+def _refuse_unbound_required(leaf: Leaf, *, gate: str = "") -> None:
+    """si#887: a leaf whose task cannot run without a parameter (`REQUIRED`, the model's `TaskParam.required`)
+    that neither its `with:` nor its `ci: { params: }` binds is refused here, at generation: its derived step
+    would hand it nothing and be red in every run, and the first anyone would hear of it is a red runner. A
+    port's binding (`produces:`/`consumes:`) is in `with:` by now, so it counts. Only a leaf that becomes a step
+    reaches this, so one skipped or left out is not asked.
+
+    Only a catalogue coordinate is resolved, to its generated class in the kernel: the model is where `required`
+    is said, and a product task has none, so it is not checked (its body may still need a parameter nothing
+    binds). Resolving a product task would import the product's own body module to learn nothing, and a
+    derivation that imported it would need the product's package on the path (measured: simplon's own
+    `orchestrator.cli:build_wheel` is not importable from the kernel's `src/`).
+
+    `gate` is the words of the gate aggregate `leaf` is a member of, "" for a main or cadence leaf: a member's
+    `ci: { skip: }` is refused (`_refuse_member`), so the way out offered there is leaving the gate."""
+    task = leaf.spec.task
+    # `class_ref(task)`, not `leaf.spec.impl`: a catalogue coordinate always maps to its generated class.
+    required = task_class(class_ref(task), task, where=leaf.words).REQUIRED if ":" in task else ()
+    bound = {*leaf.spec.with_, *leaf.spec.ci.params}
+    missing = [param for param in required if param not in bound]
+    if missing:
+        names = ", ".join(f"`{param}`" for param in missing)
+        out = (f"take it out of `{gate}`: a gate member cannot declare `ci: skip:`" if gate else
+               "leave the leaf out of the CI with `ci: { skip: <why> }`")
+        raise ValueError(
+            f"derived CI: '{leaf.words}' runs `{leaf.spec.task}`, which cannot run without {names}, and neither the "
+            f"command's `with:` nor `ci: {{ params: }}` binds it - its step would be red in every run. Bind it for "
+            f"the derived run with `ci: {{ params: {{ {missing[0]}: ... }} }}`, or {out}")
+
+
 def _params_of(leaf: Leaf) -> tuple[workflowschema.StepParam, ...]:
     """A leaf's `ci: params:` as the model's step holds them (si#863): a literal as its text, a `{ env: NAME }` as
-    the variable's name, in the order written."""
+    the variable's name, in the order written. Every derived step of a leaf is built through here, the main job's
+    and a cell's alike, so the leaf's required parameters are asked for here (si#887)."""
+    _refuse_unbound_required(leaf)
     return tuple(workflowschema.StepParam(param_name=key, param_env=value.name)
                  if isinstance(value, EnvValue) else
                  workflowschema.StepParam(param_name=key, param_value=value)
@@ -1339,6 +1439,7 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                                  platforms=", ".join(emulates), kind=kind), width=95)
     if run is not None:
         said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)
+        said += _left_out(selection, "")
     else:
         said = _derived_note(selection, next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all))
     note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap, said) if part)
@@ -1392,7 +1493,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
         _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
                                         {member.words for run in runs for member in run.members})
     else:
-        push = select(manifest, artifacts=artifactsection.declared(data))
+        push = select(manifest, artifacts=artifactsection.declared(data), data=data)
         if declared and not _runs(push) and not _cells(push):
             gone = {s.words for s in push.skipped}
             behind = [_key_of(run.path) + ".yml" for run in runs if any(m.words in gone for m in run.members)]

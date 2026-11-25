@@ -1368,6 +1368,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_refuse_members_consuming_from_outside", "so the gated run would fail on a missing file"):
         DIAGNOSIS,
     ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,
+    # si#887: a derived leaf whose task cannot run without a parameter that neither `with:` nor `ci: { params: }`
+    # binds would be red in every run; the refusal names the command, the parameter and both ways out.
+    ("cipipeline", "_refuse_unbound_required", "its step would be red in every run"): DIAGNOSIS,
     # si#874: `merge: auto` derives auto-merge.yml from the CI workflow and each gate's. With no CI workflow nothing
     # gates the merge; one without `workflow_dispatch` cannot be dispatched on the base after it (the policy's last
     # rule). A hand-written one is read from its file, and those refusals are NOT COUNTED BY RULING (module

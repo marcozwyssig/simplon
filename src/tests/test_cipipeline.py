@@ -68,7 +68,7 @@ def test_leaves_come_in_manifest_order():
             commands:
               three: { task: ship, unattended: true }
         """)
-    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == ["build one", "build two", "test three"]
+    assert _words(cipipeline.select(loaded, artifacts=_DECLARED, data={})) == ["build one", "build two", "test three"]
 
 
 _PORTS = """
@@ -84,7 +84,7 @@ _PORTS = """
 
 def test_a_consumer_moves_after_its_producer_and_nothing_else_moves():
     loaded = _load(_PORTS)
-    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == [
+    assert _words(cipipeline.select(loaded, artifacts=_DECLARED, data={})) == [
         "build a", "build b-produce", "build t-consume", "build c"]
 
 
@@ -96,7 +96,7 @@ def test_aggregates_are_not_leaves():
               one: { task: ship, unattended: true }
               all: { depends_on: [one], help: "All." }
         """)
-    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == ["test one"]
+    assert _words(cipipeline.select(loaded, artifacts=_DECLARED, data={})) == ["test one"]
 
 
 def test_an_attended_leaf_is_skipped_with_the_reason():
@@ -107,7 +107,7 @@ def test_an_attended_leaf_is_skipped_with_the_reason():
               one: { task: ship, unattended: true }
               walk: { task: ship, unattended: false }
         """)
-    selection = cipipeline.select(loaded, artifacts=_DECLARED)
+    selection = cipipeline.select(loaded, artifacts=_DECLARED, data={})
     assert _words(selection) == ["test one"]
     assert [(s.words, s.reason) for s in selection.skipped] == [("test walk", cipipeline.ATTENDED)]
 
@@ -121,7 +121,7 @@ def test_a_ci_skip_is_skipped_with_its_reason():
               walk: { task: ship, unattended: false }
               one: { task: ship, unattended: true }
         """)
-    selection = cipipeline.select(loaded, artifacts=_DECLARED)
+    selection = cipipeline.select(loaded, artifacts=_DECLARED, data={})
     assert _words(selection) == ["test one"]
     assert [(s.words, s.reason) for s in selection.skipped] == [
         ("test lab", "needs the lab"), ("test walk", cipipeline.ATTENDED)]
@@ -135,7 +135,7 @@ def test_an_undeclared_unattended_is_refused():
               one: { task: ship }
         """)
     with pytest.raises(ValueError, match="'test one' does not say whether it can run with nobody watching"):
-        cipipeline.select(loaded, artifacts=_DECLARED)
+        cipipeline.select(loaded, artifacts=_DECLARED, data={})
 
 
 def test_a_nested_group_leaf_is_selected():
@@ -160,7 +160,7 @@ def test_a_nested_group_leaf_is_selected():
                 commands:
                   smoke: { task: ship, unattended: true }
         """), catalogue=nested, manifest_path="demo.yaml")
-    assert _words(cipipeline.select(loaded, artifacts=_DECLARED)) == ["test one", "test lab smoke"]
+    assert _words(cipipeline.select(loaded, artifacts=_DECLARED, data={})) == ["test one", "test lab smoke"]
 
 
 def test_cd_groups_are_not_selected():
@@ -175,7 +175,7 @@ def test_cd_groups_are_not_selected():
               up: { task: ship, unattended: true }
               walk: { task: ship, unattended: false }
         """)
-    selection = cipipeline.select(loaded, artifacts=_DECLARED)
+    selection = cipipeline.select(loaded, artifacts=_DECLARED, data={})
     assert _words(selection) == ["test one"]
     assert selection.skipped == ()
 
@@ -189,7 +189,7 @@ def test_a_port_cycle_is_refused_naming_the_loop():
               image: { task: "toolchain:run", unattended: true, consumes: { source: doc }, produces: { out: img } }
         """)
     with pytest.raises(ValueError, match="cycle") as raised:
-        cipipeline.select(loaded, artifacts=_DECLARED)
+        cipipeline.select(loaded, artifacts=_DECLARED, data={})
     for named in ("'build pack'", "'build image'", "'doc'", "'img'"):
         assert named in str(raised.value)
 
@@ -209,16 +209,16 @@ _SKIPPED_PRODUCER = """
 def test_a_consumer_of_a_skipped_producer_is_refused():
     loaded = _load(_SKIPPED_PRODUCER)
     with pytest.raises(ValueError, match="'test t-consume' consumes 'doc'.*'build b-produce'.*needs the lab"):
-        cipipeline.select(loaded, artifacts=_DECLARED)
+        cipipeline.select(loaded, artifacts=_DECLARED, data={})
 
 
 def test_an_artifact_with_a_registry_is_exempt_when_the_registry_is_known():
     body = _SKIPPED_PRODUCER.replace("file: doc", "file: note")
     loaded = _load(body)
     artifacts = artifactsection.declared(yaml.safe_load(_text(body)))
-    assert _words(cipipeline.select(loaded, artifacts=artifacts)) == ["test t-consume"]
+    assert _words(cipipeline.select(loaded, artifacts=artifacts, data={})) == ["test t-consume"]
     with pytest.raises(ValueError, match="consumes 'note'"):
-        cipipeline.select(loaded, artifacts={})
+        cipipeline.select(loaded, artifacts={}, data={})
 
 
 def test_a_skip_wins_over_an_undeclared_unattended():
@@ -229,7 +229,7 @@ def test_a_skip_wins_over_an_undeclared_unattended():
               lab: { task: ship, ci: { skip: "needs the lab" } }
               one: { task: ship, unattended: true }
         """)
-    selection = cipipeline.select(loaded, artifacts=_DECLARED)
+    selection = cipipeline.select(loaded, artifacts=_DECLARED, data={})
     assert _words(selection) == ["test one"]
     assert [(s.words, s.reason) for s in selection.skipped] == [("test lab", "needs the lab")]
 
@@ -247,7 +247,7 @@ def test_a_consumer_whose_only_producer_is_in_cd_is_refused():
         """)
     with pytest.raises(ValueError, match="'test t-consume' consumes 'doc'.*'deploy b-produce'.*not a CI leaf "
                                          r"\(it is in the 'deploy' group\)"):
-        cipipeline.select(loaded, artifacts=_DECLARED)
+        cipipeline.select(loaded, artifacts=_DECLARED, data={})
 
 
 def test_a_leaf_that_consumes_what_it_produces_is_a_one_leaf_cycle():
@@ -258,7 +258,7 @@ def test_a_leaf_that_consumes_what_it_produces_is_a_one_leaf_cycle():
               loop: { task: "toolchain:run", unattended: true, consumes: { source: doc }, produces: { out: doc } }
         """)
     with pytest.raises(ValueError, match="cycle.*'build loop' consumes 'doc' from 'build loop'"):
-        cipipeline.select(loaded, artifacts=_DECLARED)
+        cipipeline.select(loaded, artifacts=_DECLARED, data={})
 
 
 # --- the derived workflow, as a model and as a rendered file (si#858 task 6) -----------------------------
@@ -323,7 +323,7 @@ _THREE = """
 def test_the_derived_job_runs_every_leaf_in_order():
     loaded = _load(_PORTS)
     doc, _ = _rendered(_PORTS)
-    assert _runs(doc) == _words(cipipeline.select(loaded, artifacts=_DECLARED))
+    assert _runs(doc) == _words(cipipeline.select(loaded, artifacts=_DECLARED, data={}))
 
 
 def test_every_leaf_after_the_first_runs_unless_cancelled():
@@ -452,6 +452,226 @@ def test_every_skipped_leaf_is_named_with_its_reason_in_the_file():
     assert f"`test walk` - {cipipeline.ATTENDED}" in comment
     assert comment.index("`test lab`") < comment.index("`test walk`")
     assert "manifest order" in comment
+
+
+# --- a `generated:` producer and the staleness gate (si#886) ---------------------------------------------
+
+_PRODUCER = """
+        ci:
+          build:
+            commands:
+              x: { task: ship, unattended: true }
+              other: { task: ship, unattended: true }
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              walk: { task: ship, unattended: false }
+%s
+        """
+
+#: The `test:generated` leaf, named by a word of the product's own so the derivation has to match the task.
+_STALENESS = "              check-contract: { task: \"test:generated\", unattended: true }"
+
+
+def _generated_by(by: str) -> str:
+    return f"""
+        generated:
+          spec:
+            path: build/spec.json
+            by: {by}
+        """
+
+
+def test_a_generated_producer_leaves_ci_when_the_staleness_gate_runs():
+    """si#886: `test:generated` regenerates every `generated:` entry and compares it with the committed tree, so a
+    producer run before it in the same job leaves it comparing the regenerated tree with itself. The derivation
+    leaves the producer out and says why under "Left out"."""
+    doc, text = _rendered(_PRODUCER % _STALENESS, _generated_by("build x"))
+    assert _runs(doc) == ["build other", "test one", "test check-contract"]
+    assert ("`build x` - it is the `by:` of a `generated:` entry, which `test check-contract` (`test:generated`) "
+            "regenerates and compares with the committed tree itself; run before it in the same job, it would "
+            "leave that gate comparing the regenerated tree with itself (si#886)") in _comments(text)
+    # "Left out" keeps the manifest's order, as it does for every other reason.
+    assert _comments(text).index("`build x`") < _comments(text).index("`test walk`")
+
+
+def test_a_generated_producer_still_runs_without_the_staleness_gate():
+    """si#886: with no `test:generated` leaf nothing compares the tree, so the producer is nothing's blind spot."""
+    doc, text = _rendered(_PRODUCER % "", _generated_by("build x"))
+    assert _runs(doc) == ["build x", "build other", "test one"]
+    assert "si#886" not in text
+
+
+def test_a_generated_producer_outside_the_ci_leaves_changes_nothing():
+    """si#886: a `by:` naming no CI leaf (simplon's `support ...` entries) leaves every leaf where it was."""
+    doc, text = _rendered(_PRODUCER % _STALENESS, _generated_by("support completion"))
+    assert _runs(doc) == ["build x", "build other", "test one", "test check-contract"]
+    assert "si#886" not in text
+
+
+_GATED_PRODUCER = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              x: { task: ship, unattended: true }
+              check: { task: "test:generated", unattended: true }
+              lab: { depends_on: [x, check], help: "Lab.", ci: { gate: { label: lab } } }
+        """
+
+
+def _gate_file(body: str, *extra: str) -> tuple[dict, str]:
+    """The derived ci-test-lab.yml for `_HEAD` + `body` + `extra`, rendered and read back."""
+    text = _text(body) + "".join(textwrap.dedent(part) for part in extra)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    files = {wf.path: wf for wf in cipipeline.workflows(loaded, yaml.safe_load(text), product="demo")}
+    out = workflowgen.render(files[".github/workflows/ci-test-lab.yml"], manifest=loaded, product="demo",
+                             source="demo.yaml", artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), out
+
+
+def test_a_generated_producer_leaves_a_gate_file_when_the_staleness_gate_is_a_member():
+    """si#886 in a gate's file: a member that is a `by:` runs in the same gated job as the `test:generated` member,
+    so it is left out there too, and named. Membership leaves no other way out: `ci: { skip: }` on a member is
+    refused (`_refuse_member`)."""
+    doc, text = _gate_file(_GATED_PRODUCER, _generated_by("test x"))
+    assert _job_runs(doc, "test-lab") == ["test check"]
+    assert ("`test x` - it is the `by:` of a `generated:` entry, which `test check` (`test:generated`) regenerates "
+            "and compares with the committed tree itself") in _comments(text)
+
+
+def test_a_gate_member_consuming_from_a_left_out_member_is_refused():
+    """si#886 in a gate's file: leaving a producer member out must not leave its consumer member running on a
+    missing file; the gate file refuses it as `select` does in ci.yml, naming why the producer is out."""
+    body = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              x: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+              use: { task: "toolchain:run", unattended: true, consumes: { source: doc } }
+              check: { task: "test:generated", unattended: true }
+              lab: { depends_on: [x, use, check], help: "Lab.", ci: { gate: { label: lab } } }
+        """
+    with pytest.raises(ValueError) as refused:
+        _gate_file(body, _generated_by("test x"))
+    message = str(refused.value)
+    assert "'test use' consumes 'doc', which 'test x' produces, and 'test x' is not run by the CI" in message
+    assert "it is the `by:` of a `generated:` entry" in message
+    assert "a member of `test lab`" not in message
+
+
+def test_a_gate_file_without_a_producer_member_says_nothing_left_out():
+    doc, text = _gate_file(_GATED_PRODUCER, _generated_by("support completion"))
+    assert _job_runs(doc, "test-lab") == ["test x", "test check"]
+    assert "Left out" not in text
+
+
+@pytest.mark.parametrize("section", ["generated: {}\n", "generated:\n  spec: { path: build/spec.json }\n"])
+def test_a_malformed_generated_section_is_not_read_without_the_staleness_gate(section):
+    """si#886: the section is read only where a `test:generated` leaf runs, so a product without one generates its
+    workflows as before, and `test generated` stays the one that refuses the section, at run time."""
+    doc, _ = _rendered(_PRODUCER % "", section)
+    assert _runs(doc) == ["build x", "build other", "test one"]
+
+
+# --- a required parameter nothing binds (si#887) -----------------------------------------------------------
+
+#: `build:model-binary` cannot run without `image` and `bootstrap` (`TaskParam.required` in the catalogue).
+_BINARY = """
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+              binary: { task: "build:model-binary"%s }
+        """
+
+
+def test_a_leaf_whose_required_parameter_nothing_binds_is_refused():
+    """si#887: the body refuses an empty `bootstrap`, so a derived step without it is red on every run. The
+    refusal names the command, the parameter and both ways out."""
+    with pytest.raises(ValueError) as refused:
+        _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1" }')
+    message = str(refused.value)
+    assert "'build binary'" in message and "`build:model-binary`" in message
+    assert "`bootstrap`" in message and "`image`" not in message
+    assert "`ci: { params: { bootstrap: ... } }`" in message and "`ci: { skip: <why> }`" in message
+
+
+def test_every_unbound_required_parameter_is_named():
+    with pytest.raises(ValueError, match=r"`image`, `bootstrap`"):
+        _rendered(_BINARY % "")
+
+
+def test_a_required_parameter_bound_by_with_renders():
+    doc, _ = _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1", bootstrap: "false" }')
+    assert _runs(doc) == ["build one", "build binary"]
+
+
+def test_a_required_parameter_bound_by_ci_params_renders():
+    doc, _ = _rendered(_BINARY % ', with: { image: "ghcr.io/o/firn:1" }, ci: { params: { bootstrap: "false" } }')
+    assert _runs(doc) == ["build one", "build binary --bootstrap false"]
+
+
+def test_a_required_parameter_bound_only_through_a_port_renders():
+    """si#887: `build:image` cannot run without `name`, and `produces: { image: img }` hands it the artifact's
+    name; the loader writes that binding into `with:`, which is where the check reads it."""
+    doc, _ = _rendered("""
+        ci:
+          build:
+            commands:
+              image: { task: "build:image", produces: { image: img } }
+        """)
+    assert _runs(doc) == ["build image"]
+
+
+def test_a_skipped_leaf_is_not_asked_for_its_required_parameters():
+    """si#887: `ci: { skip: }` is one of the two ways out, so it must be one."""
+    doc, _ = _rendered(_BINARY % ', ci: { skip: "built by hand" }')
+    assert _runs(doc) == ["build one"]
+
+
+def test_a_leaf_the_derivation_leaves_out_is_not_asked_for_its_required_parameters():
+    """si#887 over si#886: a `generated:` producer the derivation leaves out runs nowhere, so nothing is asked of it."""
+    doc, _ = _rendered(_BINARY % "" + """
+          test:
+            commands:
+              check: { task: "test:generated", unattended: true }
+        """, _generated_by("build binary"))
+    assert _runs(doc) == ["build one", "test check"]
+
+
+def test_test_unit_without_with_is_refused():
+    """si#887, from si#859's review: `paths` and `requirements` have empty defaults in the signature, so "no
+    default" would miss them; the body refuses both empty, and the model says so."""
+    with pytest.raises(ValueError, match=r"'test unit'.*`test:unit`.*`paths`, `requirements`"):
+        _rendered("""
+            ci:
+              test:
+                commands:
+                  unit: { task: "test:unit" }
+            """)
+
+
+def test_a_gate_member_whose_required_parameter_nothing_binds_is_refused():
+    """si#887: a gate's members run in its own file, and the same step would refuse there."""
+    loaded = _load("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              unit: { task: "test:unit" }
+              all: { depends_on: [unit], help: "All.", ci: { gate: { label: lab } } }
+        """)
+    (run,) = cipipeline.gates(loaded)
+    with pytest.raises(ValueError, match=r"'test unit'.*`paths`, `requirements`") as refused:
+        cipipeline.derive_gate(loaded, {}, run)
+    # A member's `ci: { skip: }` is refused (`_refuse_member`), so the way out offered is leaving the gate.
+    message = str(refused.value)
+    assert "ci: { skip: <why> }" not in message
+    assert "take it out of `test all`" in message and "`ci: { params: { paths: ... } }`" in message
 
 
 def test_the_job_is_keyed_ci_and_runs_on_the_product_runner():

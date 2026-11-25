@@ -264,10 +264,12 @@ test_unit typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_paths typeOf simplon.pipeline.TaskParam {
     key = "paths"
+    required = true
     help = "the test directories, a list relative to the product root, run in ONE pytest invocation; a root with no tests is red"
   }
   params p_requirements typeOf simplon.pipeline.TaskParam {
     key = "requirements"
+    required = true
     help = "the requirements file installed into the venv, relative to the product root; pytest is added only when it does not bring it"
   }
   params p_config typeOf simplon.pipeline.TaskParam {
@@ -355,6 +357,7 @@ test_manifest_model typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
+    required = true
     help = "the pinned firn image"
   }
   params p_network typeOf simplon.pipeline.TaskParam {
@@ -397,6 +400,7 @@ test_model typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
+    required = true
     help = "the pinned firn image"
   }
   params p_cwd typeOf simplon.pipeline.TaskParam {
@@ -420,6 +424,7 @@ test_model_format typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
+    required = true
     help = "the pinned firn image"
   }
   params p_cwd typeOf simplon.pipeline.TaskParam {
@@ -568,6 +573,7 @@ docs_reference typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_output typeOf simplon.pipeline.TaskParam {
     key = "output"
+    required = true
     help = "where the Markdown page goes, relative to the product root"
   }
   params p_title typeOf simplon.pipeline.TaskParam {
@@ -598,6 +604,7 @@ docs_acceptance typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_output typeOf simplon.pipeline.TaskParam {
     key = "output"
+    required = true
     help = "where the Markdown page goes, relative to the product root"
   }
   params p_source typeOf simplon.pipeline.TaskParam {
@@ -633,6 +640,7 @@ test_image typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the image to run (normally pinned per command with `with:`)"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -697,6 +705,7 @@ build_image typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the image to build (normally pinned per command with `with:`)"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -733,14 +742,17 @@ build_image_file typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the image to copy from (normally bound with `consumes:`)"
   }
   params p_file typeOf simplon.pipeline.TaskParam {
     key = "file"
+    required = true
     help = "the file artifact to write, whose `platform:` names the platform (normally bound with `produces:`)"
   }
   params p_inside typeOf simplon.pipeline.TaskParam {
     key = "inside"
+    required = true
     help = "the absolute path of the file inside the image; a symlink is followed"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -773,6 +785,7 @@ test_file typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_file typeOf simplon.pipeline.TaskParam {
     key = "file"
+    required = true
     help = "the file artifact to run, whose `platform:` names the platform (normally bound with `consumes:`)"
   }
   params p_argv typeOf simplon.pipeline.TaskParam {
@@ -860,6 +873,7 @@ build_nuget_config typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the artifact whose registry the config names (normally pinned with `with:`)"
   }
   input nuget typeOf simplon.pipeline.Port {
@@ -878,6 +892,7 @@ build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the artifact whose project and feed to restore (normally pinned with `with:`)"
   }
   input nuget typeOf simplon.pipeline.Port {
@@ -897,6 +912,7 @@ build_conan_cache typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the artifact to fetch (normally pinned per command with `with:`)"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -925,6 +941,7 @@ build_fetch typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the file to fetch, a `kind: file` entry (normally pinned per command with `with:`)"
   }
   output file typeOf simplon.pipeline.Port {
@@ -946,6 +963,7 @@ build_model typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
+    required = true
     help = "the pinned firn image"
   }
   params p_cwd typeOf simplon.pipeline.TaskParam {
@@ -974,6 +992,7 @@ build_model_binary typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_image typeOf simplon.pipeline.TaskParam {
     key = "image"
+    required = true
     help = "the pinned firn-builder image"
   }
   params p_cwd typeOf simplon.pipeline.TaskParam {
@@ -986,7 +1005,8 @@ build_model_binary typeOf simplon.pipeline.CatalogueTask {
   }
   params p_bootstrap typeOf simplon.pipeline.TaskParam {
     key = "bootstrap"
-    help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false (the default) for every other build"
+    required = true
+    help = "true for a product's FIRST binary (firn v0.6.0 on): passes -Pfirn.bootstrap=true, so the build goes on past firn's rc 7; false for every other build"
   }
 }
 
@@ -1119,6 +1139,7 @@ build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the artifact to pack (normally bound with `produces:`)"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -1228,6 +1249,7 @@ build_maven_pack typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_name typeOf simplon.pipeline.TaskParam {
     key = "name"
+    required = true
     help = "the artifact to stage (normally bound with `produces:`)"
   }
   params p_tag typeOf simplon.pipeline.TaskParam {
@@ -1283,10 +1305,12 @@ build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_wheel typeOf simplon.pipeline.TaskParam {
     key = "wheel"
+    required = true
     help = "the directory artifact holding exactly one .whl (normally bound with `consumes:`)"
   }
   params p_formula typeOf simplon.pipeline.TaskParam {
     key = "formula"
+    required = true
     help = "the homebrew-formula artifact to write (normally bound with `produces:`)"
   }
   params p_shape typeOf simplon.pipeline.TaskParam {
@@ -1295,6 +1319,7 @@ build_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   }
   params p_source typeOf simplon.pipeline.TaskParam {
     key = "source"
+    required = true
     help = "where the wheel's url and sha256 come from: pypi on a real run, local on a dry run"
   }
   params p_depends_on typeOf simplon.pipeline.TaskParam {
@@ -1335,10 +1360,12 @@ test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   unattended = true
   params p_formula typeOf simplon.pipeline.TaskParam {
     key = "formula"
+    required = true
     help = "the homebrew-formula artifact to check (normally bound with `consumes:`)"
   }
   params p_wheel typeOf simplon.pipeline.TaskParam {
     key = "wheel"
+    required = true
     help = "the directory artifact holding the wheel the formula was rendered from (normally bound with `consumes:`)"
   }
   params p_results typeOf simplon.pipeline.TaskParam {
@@ -1347,6 +1374,7 @@ test_homebrew_formula typeOf simplon.pipeline.CatalogueTask {
   }
   params p_online typeOf simplon.pipeline.TaskParam {
     key = "online"
+    required = true
     help = "true on a real run, after the PyPI upload (audit --online --new, sha256 against PyPI); false on a dry run"
   }
   input formula typeOf simplon.pipeline.Port {

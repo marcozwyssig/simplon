@@ -245,10 +245,8 @@ ci:
           image: ghcr.io/marcozwyssig/firn:v0.11.0
           cwd: src
           network: none
-        # si#863 final review: `test generated` (si#746) regenerates every `generated:` entry and diffs the
-        # tree, so this producer, derived before it into the same job, left that gate nothing to find - and
-        # the suite and the type gate ran on the regenerated tree instead of the committed one.
-        ci: { skip: "test generated regenerates and compares itself; run before it in the same checkout it would make that gate compare the regenerated tree with itself (si#746, si#863)" }
+        # No `ci: { skip: }`: this leaf is the `by:` of `generated:` entries, and the derived CI leaves such a
+        # producer out wherever `test generated` runs in the same job (si#886), which si#863 had to say here.
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the

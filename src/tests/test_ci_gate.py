@@ -232,7 +232,7 @@ def test_gate_members_are_its_plan_leaves():
 
 def test_member_leaves_the_push_run():
     from simplon.tasks import cipipeline
-    selection = cipipeline.select(_members(), artifacts={})
+    selection = cipipeline.select(_members(), artifacts={}, data={})
     assert cipipeline.Skipped("test system", _IN_LAB) in selection.skipped
     assert cipipeline.Skipped("build compile", _IN_LAB) in selection.skipped
     assert [leaf.words for leaf in selection.leaves] == ["test unit", "test report"]
@@ -241,7 +241,7 @@ def test_member_leaves_the_push_run():
 def test_member_leaves_the_nightly_run():
     from simplon.tasks import cipipeline
     loaded = _members(more="      late: { task: ship, unattended: true, ci: { cadence: nightly } }\n")
-    selection = cipipeline.select(loaded, artifacts={}, cadence="nightly")
+    selection = cipipeline.select(loaded, artifacts={}, data={}, cadence="nightly")
     # named with the gate's file, not with ci.yml's "it has no `cadence:`"
     assert cipipeline.Skipped("test system", _IN_LAB) in selection.skipped
     assert [leaf.words for leaf in selection.leaves] == ["test report", "test late"]  # manifest order
@@ -305,7 +305,7 @@ def test_member_consumes_main_job_artifact_refused():
     with pytest.raises(ValueError, match=r"'test system' runs in ci-test-lab.yml, behind the gate of `test lab`, "
                                          r"and consumes 'doc', which 'test unit' produces, and 'test unit' runs in "
                                          r"ci.yml - artifacts do not cross workflow files"):
-        cipipeline.select(loaded, artifacts=_declared())
+        cipipeline.select(loaded, artifacts=_declared(), data={})
 
 
 def test_main_job_consumes_member_artifact_refused():
@@ -314,14 +314,14 @@ def test_main_job_consumes_member_artifact_refused():
     with pytest.raises(ValueError, match=r"'test unit' runs in ci.yml and consumes 'doc', which 'test system' "
                                          r"produces, and 'test system' is a member of `test lab` \(" + _IN_LAB
                                          + r"\) - artifacts do not cross workflow files"):
-        cipipeline.select(loaded, artifacts=_declared())
+        cipipeline.select(loaded, artifacts=_declared(), data={})
 
 
 @pytest.mark.parametrize(("system", "unit"), [(", consumes: { source: note }", ", produces: { out: note }"),
                                               (", produces: { out: note }", ", consumes: { source: note }")])
 def test_a_registry_artifact_crosses_the_gate(system, unit):
     from simplon.tasks import cipipeline
-    selection = cipipeline.select(_crossing(system, unit), artifacts=_declared())
+    selection = cipipeline.select(_crossing(system, unit), artifacts=_declared(), data={})
     assert "test unit" in [leaf.words for leaf in selection.leaves]
 
 
@@ -344,7 +344,7 @@ def test_an_after_all_member_consuming_a_member_artifact_is_not_told_to_join():
                                     'report: { task: "toolchain:run", unattended: true, after_all: true, '
                                     "consumes: { source: doc } }"), catalogue=catalogue.load())
     with pytest.raises(ValueError) as refused:
-        cipipeline.select(loaded, artifacts=_declared())
+        cipipeline.select(loaded, artifacts=_declared(), data={})
     said = str(refused.value)
     assert ("'test report' runs after all the others (`after_all`) and ends every run, ci.yml included, so "
             "whatever it consumes must be produced in each run it ends") in said
