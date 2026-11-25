@@ -36,6 +36,8 @@ jobs:
   # Left out:
   # `build handoff-canary` - runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a);
   #   one job would prove nothing
+  # `build model` - test generated regenerates and compares itself; run before it in the same
+  #   checkout it would make that gate compare the regenerated tree with itself (si#746, si#863)
   # `test walk` - it needs a person at the terminal (`unattended: false`)
   # `test handoff-canary` - runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a);
   #   one job would prove nothing
@@ -163,10 +165,7 @@ jobs:
       - id: leaf_build_homebrew_formula
         if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_wheel.outcome == 'success' }}
-        run: exec ./simplon.sh build homebrew-formula
-      - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
-          && steps.prepare_install.outcome == 'success' }}
-        run: exec ./simplon.sh build model
+        run: exec ./simplon.sh build homebrew-formula --source local
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh test suite
@@ -185,7 +184,7 @@ jobs:
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' && steps.leaf_build_homebrew_formula.outcome == 'success'
           && steps.leaf_build_wheel.outcome == 'success' }}
-        run: exec ./simplon.sh test homebrew-formula
+        run: exec ./simplon.sh test homebrew-formula --online false
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh test model

@@ -45,8 +45,9 @@ refusal to overwrite a file at the derived ci.yml's path that this kernel did no
 a file on disk, not by the manifest, so it is not a manifest decision with no tool consulted; the walk does
 not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing. Beside it, for
 the same reason, `automerge.read_handwritten` (si#874): a hand-written trigger workflow's `name:` and `on:`, read
-from its file under the product root (no file, a file outside the root, no workflow, no `name:`). The task body
-hands it in as a reader, so the walk from `cipipeline.workflows` does not reach it;
+from its file under the product root (no file, a file outside the root, no workflow, no `name:`).
+`workflows.assemble` (src/simplon/tasks/workflows.py) hands it in as a reader, so the walk from
+`cipipeline.workflows` does not reach it;
 `test_refusals_decided_on_disk_are_outside_the_population` holds that.
 
 WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest

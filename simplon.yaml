@@ -209,6 +209,9 @@ ci:
           python: python@3.14
           env: { SODIUM_INSTALL: system }
           test: { args: ["--help"], expect: "usage:" }
+        # si#863: derived bare into ci.yml, the step refused every push (`source` has no default, si#537). CI
+        # renders the local wheel, as the release's dry run does; release.yml still binds `pypi` per step.
+        ci: { params: { source: local } }
       # simplon's own model, generated into the tree (si#371, si#344 B1): `firn gen` writes the kernel's
       # catalogue (src/simplon/catalogue.yaml) WHOLE since si#561 - its `kinds:` from
       # src/firn/model/simplon/vocabulary/kinds.firn, its `groups:` and `tasks:` from
@@ -241,6 +244,10 @@ ci:
           image: ghcr.io/marcozwyssig/firn:v0.11.0
           cwd: src
           network: none
+        # si#863 final review: `test generated` (si#746) regenerates every `generated:` entry and diffs the
+        # tree, so this producer, derived before it into the same job, left that gate nothing to find - and
+        # the suite and the type gate ran on the regenerated tree instead of the committed one.
+        ci: { skip: "test generated regenerates and compares itself; run before it in the same checkout it would make that gate compare the regenerated tree with itself (si#746, si#863)" }
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
@@ -400,6 +407,9 @@ ci:
         task: "test:homebrew-formula"
         consumes: { formula: simplon-formula, wheel: dist }
         produces: { test-result: simplon-formula-checked }
+        # si#863: the build's dry run above, audited offline (`online` has no default, si#537); release.yml
+        # still binds `true` per step on a real run.
+        ci: { params: { online: "false" } }
       # si#639: the other half, run by handoff-canary.yml in a job of its own, so the file reaches it only by
       # the hand-off. Out of ci.yml for the writer's reason above (si#863).
       handoff-canary:
@@ -841,6 +851,8 @@ workflows:
       The job hand-off canary (si#639) on every push, in a workflow of its own because the derived ci.yml
       runs its leaves in one job, where nothing would cross a job boundary (spec 5.3a). Until #864 adds
       `exception:`, this is a plain declared workflow; that ticket turns it into one.
+    # The token reads the repository and nothing else, as in the derived ci.yml.
+    permissions: { contents: read }
     jobs:
       handoff-canary-write:
         note: |

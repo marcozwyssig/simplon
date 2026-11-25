@@ -815,3 +815,25 @@ def test_an_after_all_deploy_member_tears_down_last_and_always():
     assert teardown["if"] == "always()" and "id" not in teardown
     assert "teardown" not in _lab_step(doc, "test system")["if"]
     assert "teardown" not in _lab_rendered(text, ".github/workflows/ci.yml")
+
+
+def _lab_with_env_param(name: str) -> str:
+    """The lab, its `test system` member a body with a parameter that `ci: params:` binds to `$name`."""
+    return (_lab_text()
+            .replace('tasks:\n', 'tasks:\n  pick: { impl: "simplon.test_impls:target_and_mode", help: "Pick." }\n', 1)
+            .replace("system: { task: ship, unattended: true }",
+                     f"system: {{ task: pick, unattended: true, ci: {{ params: {{ target: {{ env: {name} }} }} }} }}"))
+
+
+def test_a_gate_env_reaches_a_members_env_param():
+    """si#863 final review: the gate's `env:` (si#861) is the gated job's, so a member's `ci: params:` may read
+    it - `_parameters` asks per job, and the gate's names are that job's."""
+    assert _lab_step(_lab_doc(_lab_with_env_param("NETCTL_MGMT_SUBNET")),
+                     'test system -- "$NETCTL_MGMT_SUBNET"')
+
+
+def test_a_members_env_param_the_gate_does_not_set_is_refused_at_generation():
+    """The other side of the same seam: a name neither the gate nor GitHub sets would expand to nothing on the
+    runner, so generation refuses it with `_parameters`' own message."""
+    with pytest.raises(ValueError, match=r"`params: target` reads \$NOPE, and NOPE is set by no `env:`"):
+        _lab_rendered(_lab_with_env_param("NOPE"))

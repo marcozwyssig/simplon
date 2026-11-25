@@ -46,6 +46,12 @@ WORKFLOW_PATHS = (".github/workflows/ci.yml", ".github/workflows/handoff-canary.
 #: The reason both halves of the hand-off canary give for staying out of ci.yml (si#863), as simplon.yaml states it.
 CANARY_SKIP = "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing"
 
+#: Why `build model` stays out of ci.yml (si#863 final review), as simplon.yaml states it: `test generated`
+#: (si#746) regenerates every `generated:` entry and diffs it, so a `generated:` producer run before it in the
+#: same checkout leaves that gate nothing to find.
+MODEL_SKIP = ("test generated regenerates and compares itself; run before it in the same checkout it would make "
+              "that gate compare the regenerated tree with itself (si#746, si#863)")
+
 #: Where the kernel's job-to-job hand-off (si#344 C.4) puts its archive, as the generated `tar` lines name it.
 HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
 
@@ -250,8 +256,8 @@ def test_the_derived_pipeline_over_this_manifest_is_the_unattended_build_and_tes
     that release.yml binds per step under the dry-run switch, and a derived step passes none: run bare on
     2026-10-24, each exits 1 at once with "source must be 'pypi' ... or 'local' ..., got ''" (and the
     same for `online`). Run as release.yml runs them (`--source local`, `--online false`), they render
-    and audit the formula. So a pipeline derived from this manifest would go red on those two steps;
-    this repository derives nothing, which is why it is recorded here and not repaired in the manifest.
+    and audit the formula. So a pipeline derived from them bare would go red on those two steps; since
+    si#863 ci.yml binds them with `ci: { params: }` (test_ci_runs_the_homebrew_leaves_as_a_dry_run).
 
     si#639 added `build handoff-canary` and `test handoff-canary`, the two halves of the job hand-off canary.
     Run bare on 2026-11-13: the first exits 0 and writes `build/handoff-canary.txt`, under the ignored
@@ -274,9 +280,10 @@ def test_ci_runs_every_unattended_leaf_but_the_canary():
     not run (spec D13), chiefly so the prose gate could go LAST. Spec 5.2 replaced that ordering argument
     with manifest order, and the job `ci` now runs every unattended leaf of `ci build` and `ci test`.
 
-    The one difference left is a choice, and it is stated where it is made: the hand-off canary's two halves
+    The differences left are choices, and each is stated where it is made: the hand-off canary's two halves
     say `ci: { skip: }`, because in one job they would hand nothing over (si#639, spec 5.3a), and ci.yml
     names both under "Left out" with that reason. Their run is handoff-canary.yml's (the test below).
+    `build model` says `ci: { skip: }` too, for the next test's reason.
     """
     derived = [step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
                                                            where="measurement").steps]
@@ -284,9 +291,37 @@ def test_ci_runs_every_unattended_leaf_but_the_canary():
     ran = {step.command for step in main.steps if step.command.split(" ", 1)[0] in cipipeline.CI_PHASES}
     text = _flat(_committed_text("ci.yml"))
 
-    assert ran == set(derived) - {"build handoff-canary", "test handoff-canary"}
+    assert ran == set(derived) - {"build handoff-canary", "test handoff-canary", "build model"}
     for words in ("build handoff-canary", "test handoff-canary"):
         assert _flat(f"`{words}` - {CANARY_SKIP}") in text, words
+
+
+def test_ci_does_not_regenerate_before_the_staleness_gate():
+    """si#863 final review: `test generated` (si#746) regenerates every `generated:` entry and diffs the tree.
+    ci.yml derived `build model`, a `generated:` producer, BEFORE it in the same job, so the gate compared the
+    regenerated tree with itself and could never go red, and the suite and the type gate ran on the
+    regenerated tree rather than the committed one. `build model` says `ci: { skip: }`, and ci.yml names it
+    under "Left out" with the reason. Every product with a `generated:` producer has the same order; the
+    kernel-side repair is a ticket of its own.
+    """
+    ran = [line.strip() for line in _committed_text("ci.yml").splitlines() if "./simplon.sh build model" in line]
+
+    assert ran == []
+    assert "build model" not in _ci_steps()
+    assert _flat(f"`build model` - {MODEL_SKIP}") in _flat(_committed_text("ci.yml"))
+
+
+def test_ci_runs_the_homebrew_leaves_as_a_dry_run():
+    """si#863 final review: derived bare, `build homebrew-formula` and `test homebrew-formula` refused every
+    push (`source must be 'pypi' or 'local'`, `online must be 'true' or 'false'`, si#537). CI runs them as the
+    release's dry run does: `ci: { params: }` binds `source: local` and `online: "false"` on the derived
+    steps. Held on the rendered argv of the committed ci.yml, the file GitHub runs.
+    """
+    (job,) = [job for name, job in _committed("ci.yml")["jobs"].items() if name == cipipeline.KEY]
+    runs = [step.get("run", "") for step in job["steps"]]
+
+    assert "exec ./simplon.sh build homebrew-formula --source local" in runs
+    assert "exec ./simplon.sh test homebrew-formula --online false" in runs
 
 
 def _committed_text(name: str) -> str:
@@ -453,7 +488,9 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     assert expected != ["test report"]
     assert leaves == expected
     assert leaves[:-1] == in_manifest_order
-    assert [words for words in D13 if words not in leaves] == []
+    # `build model` is the one D13 leaf ci.yml leaves out on purpose (test_ci_does_not_regenerate_before_the_
+    # staleness_gate): run before `test generated`, it would blind that gate.
+    assert [words for words in D13 if words not in leaves] == ["build model"]
     assert "test walk" not in leaves
     assert f"# `test walk` - {cipipeline.ATTENDED}" in rendered
     assert "workflows" not in data or "ci" not in data["workflows"]
