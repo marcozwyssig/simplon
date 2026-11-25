@@ -241,6 +241,44 @@ test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
     help = "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)"
   }
 }
+// A product's OWN pytest suite (si#859, D7 of the derived-workflows spec). Measured through the GitHub
+// API on 2026-11-25 (the table is on si#859): cleon and asbundle each run it with two hand-written CI
+// lines, `pip install pytest -r requirements.txt` then `python -m pytest <root>`; netctl runs several
+// roots in one pytest invocation with one venv, one requirements file and `-c pytest.ini`; biz-cockpit's
+// orchestrator has the same shape; cleon-firn has a suite that nothing runs. Running pytest over a
+// directory in a venv needs no product knowledge, so it is the kernel's; WHICH directories, WHICH
+// requirements and WHICH configuration are the product's data, and arrive as parameters.
+//
+// NOT `test:gate`: that one runs a declared suite level against the RUNNING LAB, reads its requirements
+// from `<suite>/requirements.txt` and writes allure results. A unit suite needs none of the three, and
+// folding it in would make every product write a `suites:` taxonomy to run plain unit tests.
+//
+// Decided by Marco on 2026-11-25: pytest is installed only when the requirements did not bring it, and
+// the run says so, so a product's own pin wins; an empty collection (pytest exit 5) is red. OUT OF
+// SCOPE, and the trigger that reopens it: a uv project (biz-cockpit's backend) and a unittest suite
+// (firn) keep their product tasks until a second product of either shape asks.
+test_unit typeOf simplon.pipeline.CatalogueTask {
+  key = "test:unit"
+  body = "simplon.tasks.unittests:run"
+  help = "Run the product's own pytest suite in a kernel-provisioned venv."
+  unattended = true
+  params p_paths typeOf simplon.pipeline.TaskParam {
+    key = "paths"
+    help = "the test directories, a list relative to the product root, run in ONE pytest invocation; a root with no tests is red"
+  }
+  params p_requirements typeOf simplon.pipeline.TaskParam {
+    key = "requirements"
+    help = "the requirements file installed into the venv, relative to the product root; pytest is added only when it does not bring it"
+  }
+  params p_config typeOf simplon.pipeline.TaskParam {
+    key = "config"
+    help = "optional pytest configuration, relative to the product root, passed as `-c`"
+  }
+  params p_timeout typeOf simplon.pipeline.TaskParam {
+    key = "timeout"
+    help = "seconds the pytest run may take (default 1800); a run past it is red"
+  }
+}
 // The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
 // this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
 // write a word, and nothing said anything. That is netctl#1280's rule exactly: a body belongs in the

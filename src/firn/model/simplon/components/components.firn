@@ -420,6 +420,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_typecheck typeOf simplon.architecture.Module {
     path = "tasks.typecheck"
   }
+  module m_tasks_unittests typeOf simplon.architecture.Module {
+    path = "tasks.unittests"
+  }
   module m_tasks_vcs typeOf simplon.architecture.Module {
     path = "tasks.vcs"
   }

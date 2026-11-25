@@ -145,7 +145,7 @@ the number that says whether a rib is filled:
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
 | `build` | phase, agnostic | 13 |
-| `test` | phase, agnostic | 13 |
+| `test` | phase, agnostic | 14 |
 | `release` | phase, agnostic | 14 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Seventy-four coordinates: sixty-one carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
+Seventy-five coordinates: sixty-two carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -233,7 +233,7 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 
 *Verify them.* Over artefacts that already exist - the phase deliberately does not produce any.
 
-**In the catalogue today: 13 tasks.**
+**In the catalogue today: 14 tasks.**
 
 - `test:generated`
 - `test:gate`
@@ -247,6 +247,7 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 - `test:report`
 - `test:release-notes`
 - `test:typecheck-python`
+- `test:unit`
 - `test:walk`
 
 **What a product brings itself.** A `suites:` section naming its levels, and a `mypy.ini` if it wants
@@ -271,6 +272,54 @@ runner's result join instead of merely resembling each other. The scenarios are 
 [`docs:acceptance`](#docs) documents - one source, and the mode is chosen by which command is typed.
 A step the person REFUSES becomes a bug ticket, worded by the product through a
 [`tracker:` section](../../how/manifest/#tracker---where-a-refused-step-becomes-a-ticket).
+
+**`test:unit` runs a product's own pytest suite** (si#859). The product names the data and the kernel
+supplies the mechanism: a venv it provisions itself, the requirements installed into it, pytest over the
+test roots. It is the task for the two hand-written CI lines most Python products carry
+(`pip install pytest -r requirements.txt`, then `python -m pytest <root>`), placed under the `ci test`
+group like any other test task:
+
+```yaml
+ci:
+  test:
+    commands:
+      unit:
+        task: "test:unit"
+        with:
+          paths: [tests, tools/tests]
+          requirements: requirements.txt
+          config: pytest.ini
+```
+
+- **`paths`** is a list of test roots, relative to the product root. Several roots share one venv and one
+  requirements file, which is the shape of a product with a source suite and a tooling suite. When there are several roots, each
+  is collected on its own first, because `pytest a b` exits 0 when `b` is empty; a root that collects
+  nothing is **red** and named, never green. pytest's own exit 5 gets the same answer.
+- **`requirements`** is the file installed into the venv. A `-r` or `-c` include inside it is part of the
+  venv's stamp, so moving a pin in an included file rebuilds the venv. pytest is added **unpinned** only
+  when the requirements do not bring it, and the run says so; a product's own pin wins. The stamp keeps
+  that fallback pytest on a developer's checkout, but in derived CI the checkout (`actions/checkout` without
+  `clean: false`, which runs `git clean -ffdx`) removes the ignored `build/` directory, so every CI job builds
+  the venv fresh and the fallback is the current release. That is intended.
+- **`config`** is optional and is passed to pytest as `-c`.
+- **`timeout`** is optional, in seconds. It bounds the pytest runs only: provisioning the venv and the pip
+  installs run outside it, so a slow index cannot turn into a red suite. The pip installs have no limit of their own;
+  pip's own socket timeouts bound a network hang. A run past it is red and named.
+- Every path must be relative and inside the product root; an absolute or escaping entry is refused by
+  name.
+
+**Out of scope, and what reopens it.** A uv or `pyproject.toml` project (the environment is built from a
+lock, not from a requirements file) and a `unittest` suite (not run by pytest) keep their own product
+tasks. A second product of either shape asking for it is the trigger that reopens the question.
+
+**`test:report` does not pick up `test:unit`.** The report step merges the directories a product declares
+under `merge:` in its `suites:` section and renders them; `test:unit` writes no results of its own and
+reads no `suites:` section, so there is nothing for the report to find. Allure results would need
+`allure-pytest` in the product's requirements, which the kernel does not add on its own. A product that
+wants its unit results in the archive carries that plugin in its requirements, points it at a directory
+from its pytest configuration (`addopts = --alluredir=...` in the file named by `config`), and declares
+the directory under `merge:`. That `--alluredir` path is relative to the product root, because `test:unit`
+runs pytest from there, and that is the directory to declare. Without that, the verdict of `test:unit` is its exit code and nothing more.
 
 ### `release`
 
