@@ -110,7 +110,8 @@ D13: `build reference`, `build acceptance`, `build site`, `build model`, `build 
 - [ ] **Step 2:** Read each step's duration and conclusion of job `ci`: `gh run view <id> -R marcozwyssig/simplon --json jobs --jq '.jobs[] | select(.name=="ci") | .steps[] | [.name,.conclusion,.startedAt,.completedAt] | @tsv'`. Compare the job total with main's `self-build` (`gh run list --branch main --workflow ci --limit 3`, measured 2026-11-25: 15m32s for the whole run).
 - [ ] **Step 3:** Post a table on #863 (leaf, duration, verdict) and propose, per leaf, keep or `ci: { skip: "<measured reason>" }` as a choice list to Marco. A skip lands as its own commit with the regenerated `ci.yml`.
 
-## Decisions for Marco before execution
+## Decisions (Marco, 2026-11-25, by choice list)
 
-1. **QEMU on ghr-8.** `emulates:` on `test suite` registers arm64 emulation in every job that runs the leaf, so also in the main job on ghr-8 (self-hosted-debian `can_emulate = true`). The old `self-build` did not. Effect: `docker run --privileged tonistiigi/binfmt --install arm64` on the persistent host on every push, and the arm64 e2e then runs there too. Alternative: no `emulates:` and a cell that cannot run the e2e (PR #557's "Exec format error"), or a kernel change (emulation only in cells).
-2. **Canary before #864** as a plain declared workflow `handoff-canary.yml` (this plan), or wait with the canary part until #864.
+1. **QEMU on ghr-8: yes.** `emulates: [linux/arm64]` stays on `test suite`; the main job on ghr-8 registers arm64 emulation too and runs the arm64 e2e there. No kernel change.
+2. **Canary: its own declared workflow** `handoff-canary.yml` until #864 adds `exception:`.
+3. **Execution: subagent-driven.**
