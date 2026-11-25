@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
 from simplon.model.artifactschema import Port
 
@@ -154,13 +154,13 @@ class CiGate:
 class CiRelease:
     """si#862: how a derived release runs its one job, from a release aggregate's `ci: { emulates:,
     timeout_minutes:, runner: }`. `emulates` is buildx's spelling and `timeout_minutes` None when unwritten;
-    `runner` and `labels` are what `runners.resolve` returns, None and () when no `runner:` is written (the
-    default machine is then the derivation's, not this class's)."""
+    `runner_kind` and `runner_labels` are the kind and the labels `runners.resolve` accepted, plain data because the
+    model may not import the manifest layer; "" and () when no `runner:` is written (the default machine is
+    then the derivation's, not this class's). `releasepipeline.runner_of` turns them back into a `Runner`."""
     emulates: tuple[str, ...] = ()
     timeout_minutes: int | None = None
-    #: A `manifest.runners.Runner`, typed Any because the model layer may not import the manifest layer (si#390).
-    runner: Any = None
-    labels: tuple[str, ...] = ()
+    runner_kind: str = ""
+    runner_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

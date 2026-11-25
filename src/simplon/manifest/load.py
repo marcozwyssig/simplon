@@ -1182,16 +1182,17 @@ def _ci_release(spec: "_CommandSpecModel", where: str) -> CiRelease:
     """si#862: the machine, emulation and time limit of the job a derived release runs in, from the `ci:` keys
     `_ci_skip` has let stand on a release aggregate. Each value is read by the reader a leaf's or a workflow's
     own uses (`_ci_emulates`, `_ci_timeout`, `runners.resolve`), so a value has one message wherever it is
-    written. `runner` and `labels` are None and () when the aggregate writes no `runner:`.
+    written. `runner_kind` and `runner_labels` are "" and () when the aggregate writes no `runner:`.
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on.
     """
     raw = spec.ci
     if not isinstance(raw, Mapping):
         return CiRelease()
-    runner, labels = (None, ()) if "runner" not in raw else runners.resolve(raw["runner"], f"'{where}' ci:")
+    kind, labels = ("", ()) if "runner" not in raw else (lambda r: (r[0].kind, r[1]))(
+        runners.resolve(raw["runner"], f"'{where}' ci:"))
     return CiRelease(emulates=_ci_emulates(raw.get("emulates"), where),
-                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), runner=runner, labels=labels)
+                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), runner_kind=kind, runner_labels=labels)
 
 
 def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:

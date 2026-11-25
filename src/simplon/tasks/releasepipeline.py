@@ -22,10 +22,10 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
-from simplon.manifest import artifactsection, signatures
+from simplon.manifest import artifactsection, runners, signatures
 from simplon.manifest.load import Manifest
 from simplon.model import task, workflowschema
-from simplon.model.command import EnvValue, ReleaseCommand, TaskCommand
+from simplon.model.command import CiRelease, EnvValue, ReleaseCommand, TaskCommand
 from simplon.tasks import cipipeline, workflowgen
 
 #: The kernel steps of the release job, in the model as `Step.kernel_step` and written by `to_workflow`.
@@ -75,6 +75,14 @@ the step as an empty string, and a dry run skips a publishing step, so without t
 would stop there after the tag and whatever published before it (si#574's lesson). The expression
 `secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too.
 Checked here: {needs}."""
+
+
+def runner_of(ci: CiRelease) -> tuple[runners.Runner, tuple[str, ...]] | None:
+    """si#862: the `(Runner, labels)` a release aggregate's `ci: { runner: }` named, as `runners.resolve` returns
+    them, or None when it named none (the derivation's default machine is then its own choice)."""
+    if not ci.runner_kind:
+        return None
+    return runners.resolve({"kind": ci.runner_kind, "labels": list(ci.runner_labels)}, "release ci:")
 
 
 def derive(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.Workflow) -> workflowschema.Workflow:

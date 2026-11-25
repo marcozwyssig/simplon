@@ -7,7 +7,8 @@ from pathlib import Path
 from simplon.model.command import ReleaseCommand
 import pytest
 
-from simplon.manifest import catalogue, load as manifest
+from simplon.manifest import catalogue, load as manifest, runners
+from simplon.tasks import releasepipeline
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -335,18 +336,21 @@ def _release_ci(written):
 def test_a_release_aggregate_reads_emulates_timeout_and_runner():
     ci = _release_ci("{ emulates: [linux/arm64], timeout_minutes: 90, runner: github-ubuntu }"
                      ).spec_for("release", "all").ci
-    assert (ci.emulates, ci.timeout_minutes, ci.runner.kind) == (("linux/arm64",), 90, "github-ubuntu")
-    assert ci.labels == ci.runner.labels
+    assert (ci.emulates, ci.timeout_minutes, ci.runner_kind) == (("linux/arm64",), 90, "github-ubuntu")
+    assert ci.runner_kind == "github-ubuntu" and ci.runner_labels == runners.TABLE["github-ubuntu"].labels
 
 
 def test_a_release_aggregate_runner_names_kind_and_labels():
     ci = _release_ci("{ runner: { kind: self-hosted-container, labels: ghr-8 } }").spec_for("release", "all").ci
-    assert (ci.runner.kind, ci.labels) == ("self-hosted-container", ("ghr-8",))
+    assert (ci.runner_kind, ci.runner_labels) == ("self-hosted-container", ("ghr-8",))
+    runner, labels = releasepipeline.runner_of(ci)
+    assert (runner, labels) == (runners.TABLE["self-hosted-container"], ("ghr-8",))
 
 
 def test_a_release_aggregate_without_ci_holds_nothing():
     ci = _load(_all("notes, publish, tag", "produces: { release: app-release }")).spec_for("release", "all").ci
-    assert (ci.emulates, ci.timeout_minutes, ci.runner, ci.labels) == ((), None, None, ())
+    assert (ci.emulates, ci.timeout_minutes, ci.runner_kind, ci.runner_labels) == ((), None, "", ())
+    assert releasepipeline.runner_of(ci) is None
 
 
 @pytest.mark.parametrize("written", ['{ skip: "x" }', "{ gate: { label: x } }", "{}", "nope", "{ cadence: nightly }"])
