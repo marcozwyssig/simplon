@@ -1579,3 +1579,40 @@ def test_ci_params_on_a_push_leaf_under_a_declared_ci_is_refused(tmp_path, monke
 
     with pytest.raises(ValueError, match=r"'build one' declares `ci: params:` and has no `cadence:`"):
         workflows_task.generate()
+
+
+def test_an_env_ci_param_naming_a_variable_github_sets_renders_as_the_shell_expands_it():
+    """Task 2b review: `{ env: NAME }` takes a declared step's form and its rendering (si#488)."""
+    doc, _ = _rendered_with_pick("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true, ci: { params: { target: { env: GITHUB_SHA } } } }
+        """)
+    assert _runs(doc) == ['test pick -- "$GITHUB_SHA"']
+
+
+def test_an_env_ci_param_naming_a_variable_nothing_sets_is_refused_at_generation():
+    """`_parameters`' own diagnosis, asked per job: nothing in the derived job sets `NOPE`, so it would expand to
+    nothing and the command would run as if no value were given."""
+    with pytest.raises(ValueError, match=r"`params: target` reads \$NOPE, and NOPE is set by no `env:`"):
+        _rendered_with_pick("""
+            ci:
+              test:
+                commands:
+                  pick: { task: pick, unattended: true, ci: { params: { target: { env: NOPE } } } }
+            """)
+
+
+def test_the_model_step_carries_the_params():
+    """The firn model's `Step.params` (si#863) is what the renderer reads, not the spec behind it."""
+    loaded = manifest_mod.load(_PICK + textwrap.dedent("""
+        ci:
+          test:
+            commands:
+              pick: { task: pick, unattended: true, ci: { params: { mode: slow, target: { env: GITHUB_SHA } } } }
+        """), catalogue=catalogue.load(), manifest_path="demo.yaml")
+    (job,) = cipipeline.derive(loaded, {}).model.job
+    (step,) = [step for step in job.step if step.command is not None]
+    assert step.params == (workflowschema.StepParam(param_name="mode", param_value="slow"),
+                           workflowschema.StepParam(param_name="target", param_env="GITHUB_SHA"))

@@ -939,8 +939,8 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
              if name in kernel]
     steps += [workflowschema.Step(kernel_step=EMULATION)] if _emulates((*runs, *last)) and kind.can_emulate else []
     # si#860 decision 4: in a job other leaves share, the limit is the leaf's own step's.
-    steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes)
-              for leaf in (*runs, *last)]
+    steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes,
+                                  params=_params_of(leaf)) for leaf in (*runs, *last)]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
         _reports(data)  # refused here, at the decision, rather than when the step is written
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
@@ -948,6 +948,15 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
         steps.append(workflowschema.Step(kernel_step=DISK_CLEANUP))
     return workflowschema.Job(key=key, step=tuple(steps), condition=condition,
                               runner=workflowschema.Runner(kind=kind, labels=labels))
+
+
+def _params_of(leaf: Leaf) -> tuple[workflowschema.StepParam, ...]:
+    """A leaf's `ci: params:` as the model's step holds them (si#863): a literal as its text, a `{ env: NAME }` as
+    the variable's name, in the order written."""
+    return tuple(workflowschema.StepParam(param_name=key, param_env=value.name)
+                 if isinstance(value, workflowgen.EnvValue) else
+                 workflowschema.StepParam(param_name=key, param_value=value)
+                 for key, value in leaf.spec.ci.params.items())
 
 
 def _emulates(leaves: Sequence[Leaf]) -> tuple[str, ...]:
@@ -998,7 +1007,7 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     steps += [workflowschema.Step(kernel_step=name) for name in (SOURCES, INSTALL) if name in kernel]
     # `emulates:` beside `platforms:` is refused at load, so this is a python cell on github-ubuntu, which can.
     steps += [workflowschema.Step(kernel_step=EMULATION)] if leaf.spec.ci.emulates else []
-    steps.append(workflowschema.Step(command=leaf.spec))
+    steps.append(workflowschema.Step(command=leaf.spec, params=_params_of(leaf)))
     if platforms:
         labels = tuple(workflowschema.PLATFORMS[cell].label for cell in platforms)
     return workflowschema.Job(
@@ -1275,9 +1284,12 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             if step.timeout_minutes is not None:
                 modifiers["timeout-minutes"] = step.timeout_minutes
             first = False
-            # si#863: `ci: params:` goes through a declared step's `params:` path, so `_parameters` checks and
-            # renders it (positional or option, quoted) as it would for a step the product wrote.
-            steps.append(workflowgen.Step(command=line, modifiers=modifiers, params=dict(spec.ci.params)))
+            # si#863: the model step's params go through a declared step's `params:` path, so `_parameters`
+            # checks and renders them (positional or option, quoted, `{ env: }` against what the job sets) as it
+            # would for a step the product wrote.
+            params = {param.param_name: workflowgen.EnvValue(param.param_env) if param.param_env
+                      else param.param_value for param in step.params}
+            steps.append(workflowgen.Step(command=line, modifiers=modifiers, params=params))
     labels = job.runner.labels
     gated: dict[str, object] = {"if": job.condition} if job.condition else {}
     if job.needs:
@@ -1321,8 +1333,9 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
                                extras=workflowgen._with_runner_env(runner, cell, where))
     gap = ""
     if emulates and not job.runner.kind.can_emulate:
-        named = [f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates]
-        gap = textwrap.fill(EMULATION_GAP.format(leaves=", ".join(named), verb="names" if len(named) == 1 else "name",
+        emulating = [f"`{leaf.words}`" for leaf in leaves if leaf.spec.ci.emulates]
+        gap = textwrap.fill(EMULATION_GAP.format(leaves=", ".join(emulating),
+                                                 verb="names" if len(emulating) == 1 else "name",
                                                  platforms=", ".join(emulates), kind=kind), width=95)
     if run is not None:
         said = "\n\n".join(textwrap.fill(part.format(words=run.words), width=95) for part in GATED_NOTE)

@@ -292,19 +292,22 @@ def test_params_are_read_as_text_in_the_order_written():
 
 @pytest.mark.parametrize("params", ["linux/amd64", "[platform]", "{}"])
 def test_params_that_are_not_a_non_empty_mapping_are_refused_with_the_form(params):
-    with pytest.raises(ValueError, match=r"`ci: params:` is a non-empty mapping of parameter names to scalar "
-                                         r"values, e\.g\. `\{ platform: linux/amd64 \}`"):
+    with pytest.raises(ValueError, match=r"`ci: params:` is a non-empty mapping of parameter names to values, "
+                                         r"e\.g\. `\{ platform: linux/amd64 \}`"):
         _ci(f"{{ params: {params} }}")
 
 
-@pytest.mark.parametrize("value", ["[linux/amd64]", "{ env: PLATFORM }", "~"])
-def test_a_param_value_that_is_not_a_scalar_is_refused_naming_it(value):
-    """`{ env: }` too: a declared step may name a variable its workflow sets, and a derived workflow sets none a
-    product chose, so the value would expand to nothing."""
-    said = r"'test lab' declares `ci: params: platform: .*`, and a `ci: params:` value is a scalar"
-    with pytest.raises(ValueError, match=said) as refused:
+@pytest.mark.parametrize("value", ["[linux/amd64]", "~", "{ envv: PLATFORM }"])
+def test_a_param_value_that_is_neither_a_scalar_nor_env_is_refused_naming_it(value):
+    """A declared step's `params:` reader (`workflowgen._param_value`), so the two forms cannot drift apart."""
+    with pytest.raises(ValueError, match=r"'test lab', `ci: params: platform`: the value must be a scalar or "
+                                         r"`\{ env: NAME \}`"):
         _ci(f"{{ params: {{ platform: {value} }} }}")
-    assert "sets no variable a product chose" in str(refused.value)
+
+
+def test_an_env_param_is_read_as_the_variable_it_names():
+    from simplon.tasks.workflowgen import EnvValue
+    assert _ci("{ params: { tag: { env: GITHUB_SHA } } }").params == {"tag": EnvValue("GITHUB_SHA")}
 
 
 def test_a_skip_beside_params_is_refused():

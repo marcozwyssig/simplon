@@ -20,6 +20,7 @@ from simplon.model.artifactschema import Port
 
 if TYPE_CHECKING:
     from simplon.model.task import Task
+    from simplon.tasks.workflowgen import EnvValue
 
 class ParamPresentation(NamedTuple):
     """How a parameter is PRESENTED, never what it is (netctl#1437).
@@ -86,14 +87,14 @@ class CiVariant:
     `cadence` is "", `nightly`, `manual` or a five-field cron string; `platforms` names cells of
     `workflowschema.PLATFORMS` and `python` interpreter versions, each in the order written; `emulates` is
     buildx's `<os>/<arch>[/<variant>]` spelling. `timeout_minutes` is None when the leaf states no limit.
-    `params` (si#863) maps a parameter name to the text the derived step hands the command, rendered as a
-    declared step's `params:` is; empty when unwritten."""
+    `params` (si#863) maps a parameter name to what the derived step hands the command, a scalar's text or an
+    `EnvValue`, as a declared step's `params:` holds them; empty when unwritten."""
     cadence: str = ""
     platforms: tuple[str, ...] = ()
     python: tuple[str, ...] = ()
     timeout_minutes: int | None = None
     emulates: tuple[str, ...] = ()
-    params: Mapping[str, str] = field(default_factory=dict)
+    params: "Mapping[str, str | EnvValue]" = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

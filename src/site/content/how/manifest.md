@@ -1578,10 +1578,12 @@ ci:
   the emulator registered once on the machine with the `support:ci-arm64` task (si#358).
 - **`params:`** hands the leaf parameters in every derived workflow it runs in, and nowhere else: a
   person typing the command and the release's step get none of them, where a `with:` would pin them for
-  both. Each value is a scalar, rendered exactly as a declared workflow step's `params:` is (si#368,
-  si#471): a parameter the task takes positionally goes after `--`, any other as its `--name`, both
-  shell-quoted. `{ env: NAME }` is refused: a derived workflow sets no `env:` a product chose. A name the
-  task does not take is refused, naming the task's parameters, as a `with:` key is. Simplon's own
+  both. Each value takes a declared workflow step's `params:` form and is rendered exactly as one is
+  (si#368, si#471, si#488): a parameter the task takes positionally goes after `--`, any other as its
+  `--name`, a scalar shell-quoted, `{ env: NAME }` as `"$NAME"`. A variable must be one the job sets (a
+  gate's `env:`) or GitHub does (`GITHUB_SHA`); any other is refused when the workflow is generated, since
+  it would expand to nothing. A name the task does not take is refused, naming the task's parameters, as
+  a `with:` key is. Simplon's own
   `build image` and `test image` carry `params: { platform: linux/amd64 }` (si#368): the kernel image
   declares arm64 too, and the release builds both, but a push should not pay for an emulated stage.
 

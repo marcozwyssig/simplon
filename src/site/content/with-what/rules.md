@@ -71,15 +71,16 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 343 | nothing - the declaration had no working meaning |
+| diagnosis | 342 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **396** | |
+| **all load-time refusals** | **395** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
 some other non-mapping, a key under it other than the ones it reads (`skip` and si#860's `cadence`,
-`platforms`, `python`, `timeout_minutes`, `emulates`: a typo would be ignored and the leaf would run as if it
+`platforms`, `python`, `timeout_minutes`, `emulates`, and si#863's `params`: a typo would be ignored and the
+leaf would run as if it
 were not written), and any of them on a command no derived CI selects (outside `ci build`
 and `ci test`): there the key would do nothing, since a derived CI runs only those leaves. On an aggregate si#861
 reads `gate:`, `cadence:` and `timeout_minutes:`, and any other key does nothing.
@@ -124,7 +125,7 @@ produces for another, a report upload with no `suites: reports:`, and a leaf tha
 `unattended:`. An absent `workflows:` section is no longer refused: it is what switches the derivation on.
 Since si#860 a declared `workflows:` key switches off only the derived workflow of that key, so with
 `workflows: ci:` declared the cadence files are still derived, and a variant key (`python`, `platforms`,
-`timeout_minutes`, `emulates`) on a leaf that would run in the product's own ci.yml is a further diagnosis:
+`timeout_minutes`, `emulates`, `params`) on a leaf that would run in the product's own ci.yml is a further diagnosis:
 nothing would read it.
 So is a leaf with `python:` or `platforms:` that produces an artifact another leaf consumes: its cells would
 produce it once each, and one run hands an artifact over once.
