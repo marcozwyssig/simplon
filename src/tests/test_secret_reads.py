@@ -606,6 +606,7 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.site", "_renders"): _GENERATED,
     ("simplon.tasks.taskgen", "write"): _GENERATED,
     ("simplon.tasks.toolchain", "scaffold"): _GENERATED,
+    ("simplon.tasks.unittests", "_venv"): _RECORD,
     ("simplon.tasks.walk", "save_state"): _RECORD,
     ("simplon.tasks.workflowgen", "write"): _GENERATED,
     ("simplon.test_impls", "pinned_rc"): _RECORD,

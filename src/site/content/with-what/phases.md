@@ -145,7 +145,7 @@ the number that says whether a rib is filled:
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
 | `build` | phase, agnostic | 13 |
-| `test` | phase, agnostic | 13 |
+| `test` | phase, agnostic | 14 |
 | `release` | phase, agnostic | 14 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Seventy-four coordinates: sixty-one carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
+Seventy-five coordinates: sixty-two carrying a placement, thirteen free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -233,7 +233,7 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 
 *Verify them.* Over artefacts that already exist - the phase deliberately does not produce any.
 
-**In the catalogue today: 13 tasks.**
+**In the catalogue today: 14 tasks.**
 
 - `test:generated`
 - `test:gate`
@@ -247,6 +247,7 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 - `test:report`
 - `test:release-notes`
 - `test:typecheck-python`
+- `test:unit`
 - `test:walk`
 
 **What a product brings itself.** A `suites:` section naming its levels, and a `mypy.ini` if it wants
