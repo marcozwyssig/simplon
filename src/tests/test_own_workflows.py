@@ -30,7 +30,7 @@ import yaml
 
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import artifactsection
-from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import cipipeline, workflowgen, workflows
 from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
@@ -45,7 +45,10 @@ HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
 
 
 def _declared():
-    return workflowgen.parse(yaml.safe_load(MANIFEST.read_text(encoding="utf-8")))
+    """What the `support github workflows` verb assembles (si#863): the declared entries and the derived
+    ci.yml, through the verb's own function, so the gate cannot read a narrower set than the verb writes."""
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    return workflows.assemble(_loaded(), data, product=PRODUCT, root=ROOT)
 
 
 def _loaded():
@@ -445,3 +448,14 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
         assert extra == "" or extra.startswith(" && steps.leaf_"), (words, extra)
     assert by_leaf["test report"].get("if") == "always()"
     assert upload.get("if") == "always()"
+
+
+def test_the_gate_assembles_the_workflows_the_verb_writes():
+    """si#863: with `workflows.ci` gone from the manifest, ci.yml is still among what the gate reads, because
+    the verb derives it; and the files on disk are all accounted for by that set."""
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    data.get("workflows", {}).pop("ci", None)
+    manifest = manifest_mod.load(yaml.safe_dump(data), catalogue=catalogue_mod.load())
+    assembled = workflows.assemble(manifest, data, product=PRODUCT, root=ROOT)
+    assert ".github/workflows/ci.yml" in [w.path for w in assembled]
+    assert workflowgen.unmanaged(assembled, ROOT) == ()
