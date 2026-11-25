@@ -71,6 +71,7 @@ import functools
 import re
 import tomllib
 
+import pytest
 import yaml
 
 from simplon.manifest import catalogue as catalogue_mod
@@ -196,17 +197,25 @@ def _manifest() -> dict:
 RUNNERS_OWN = "the runner's own"
 
 
-def _interpreters(job: dict) -> frozenset[str]:
+def _interpreters(job: dict, where: str = "") -> frozenset[str]:
     """The Python interpreter(s) a job runs its steps on: the `python-version` of its `setup-python` step
     (a `${{ matrix.<key> }}` reads that key's values out of the job's own matrix), or `RUNNERS_OWN` when it
-    has no such step. A matrix that cannot be read raises KeyError rather than answering "no interpreter":
-    an empty answer would make the job vacuously covered, the recurring defect in this rule's own helper."""
+    has no such step. A `python-version` that is neither a literal nor `matrix.<key>` is matched as a
+    literal string, so an expression this does not read compares equal only to itself.
+
+    A matrix that cannot be read raises KeyError, and one that resolves to NO interpreter (`matrix: {py: []}`)
+    raises AssertionError naming `where`, rather than answering the empty set: `_ungated` asks `any(...)` over
+    a job's interpreters, which is False over nothing, so an empty answer would count the job as gated -
+    "nothing to check" read as "checked", the recurring defect, in this rule's own helper. Raising rather than
+    counting it ungated, because a matrix that runs no cell is a broken workflow, not a missing gate."""
     for step in job.get("steps", []):
         if str(step.get("uses", "")).startswith("actions/setup-python"):
             value = str(step["with"]["python-version"])
             ref = re.fullmatch(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", value)
             if ref:
-                return frozenset(str(v) for v in job["strategy"]["matrix"][ref.group(1)])
+                versions = frozenset(str(v) for v in job["strategy"]["matrix"][ref.group(1)])
+                assert versions, f"{where or 'a job'} runs setup-python over an empty matrix: no interpreter at all"
+                return versions
             return frozenset({value})
     return frozenset({RUNNERS_OWN})
 
@@ -217,7 +226,7 @@ def _rows(file: str, doc: dict) -> list[tuple[str, str, list[str], frozenset[str
              # A leading `exec` (si#666: a generated step execs the launcher) changes which process runs the
              # command, not which command runs, so it is read past - and `exec pytest` still bypasses.
              [re.sub(r"^exec\s+", "", s["run"]) for s in job.get("steps", []) if "run" in s],
-             _interpreters(job))
+             _interpreters(job, f"{file}:{name}"))
             for name, job in doc.get("jobs", {}).items()]
 
 
@@ -311,6 +320,18 @@ def test_a_suite_cell_without_its_type_gate_cell_is_red() -> None:
     assert "ci.yml:test-suite-python" in _ungated(rows)
     # and the committed tree is the green side of the same function, so the red is the edit's doing
     assert _ungated(_all_rows()) == []
+
+
+def test_a_suite_job_on_an_empty_matrix_is_refused_not_counted_as_gated() -> None:
+    # SEE IT RED: before the guard, `matrix: {py: []}` resolved to the empty set and `_ungated` read it as
+    # covered. It must fail loudly, naming the job.
+    doc = {"jobs": {"test-suite-python": {
+        "strategy": {"matrix": {"py": []}},
+        "steps": [{"uses": "actions/setup-python@v5", "with": {"python-version": "${{ matrix.py }}"}},
+                  {"run": "./simplon.sh test suite"}]}}}
+
+    with pytest.raises(AssertionError, match=r"x\.yml:test-suite-python.*empty matrix"):
+        _rows("x.yml", doc)
 
 
 def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
