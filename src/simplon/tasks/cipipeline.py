@@ -441,9 +441,8 @@ _TRIGGERS: Mapping[str, tuple[str, object]] = {
     "dispatch": ("workflow_dispatch", None),
     # si#861 decision 2: a gate's file, on the pull request events its decide table reads, never on a push.
     "pull_request_gate": ("pull_request", {"types": ["opened", "reopened", "synchronize", "labeled"]}),
-    # si#874: the auto-merge workflow's two events; the workflows and the types are the model's (`_on`).
+    # si#874: the auto-merge workflow's one event; the workflows and the types are the model's (`_on`).
     "workflow_run": ("workflow_run", None),
-    "pull_request_target": ("pull_request_target", None),
 }
 
 #: The coordinate `support install` instantiates; found in the product's tree by impl, as `runners.PREFLIGHT` is.

@@ -1,6 +1,6 @@
 """si#874: `merge: auto` derives `.github/workflows/auto-merge.yml` through the workflow model.
 
-`automerge.derive` builds a `workflowschema.Workflow` (the `workflow_run` and `pull_request_target` triggers, the
+`automerge.derive` builds a `workflowschema.Workflow` (the `workflow_run` trigger, the
 workflow's permissions, the job's condition, the kernel step `auto-merge`), and `cipipeline.to_workflow` renders
 it, the kernel step as the generated `MERGE_SCRIPT` with its environment. The script itself is
 test_automerge_script.py's.
@@ -89,12 +89,11 @@ def test_derive_is_a_workflow_model():
 def test_triggers():
     doc = _doc()
     on = doc[True]  # YAML 1.1 reads the bare key `on` as a bool
-    assert on == {"workflow_run": {"workflows": ["ci", "ci-test-lab"], "types": ["completed"]},
-                  "pull_request_target": {"types": ["labeled"]}}
+    # si#874, Marco 2026-11-25: no label trigger. GitHub blocks `pull_request_target` by default in public
+    # repositories from 2026-12-02; a pull request labelled after its runs are green needs a CI re-run.
+    assert on == {"workflow_run": {"workflows": ["ci", "ci-test-lab"], "types": ["completed"]}}
     assert doc["jobs"]["auto-merge"]["if"] == (
-        "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' "
-        "&& github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' "
-        "&& github.event.label.name == 'auto-merge')")
+        "github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule'")
 
 
 def test_permissions():
@@ -106,13 +105,16 @@ def test_permissions():
 def test_concurrency_is_the_jobs_keyed_on_the_head_commit():
     """Workflow-level concurrency is taken before the job's `if:`, so every labeled event and every completion,
     red ones too, would take the group and could displace a real pending run (GitHub keeps one pending run per
-    group). Only a job that passes its `if:` takes a job-level group; one per head commit, from either event."""
+    group). Only a job that passes its `if:` takes a job-level group; one per head branch and commit."""
     from simplon.model import automerge as policy
     doc = _doc()
-    sha = next(expression for name, expression, *_ in policy.INPUTS if name == "SHA")
+    given = {name: expression for name, expression, *_ in policy.INPUTS}
     assert "concurrency" not in doc
-    assert doc["jobs"]["auto-merge"]["concurrency"] == {"group": f"auto-merge-{sha}", "cancel-in-progress": False}
-    assert "head_sha" in sha and "pull_request.head.sha" in sha
+    # two branches with one head commit must not share a group, so the branch is in the key as well
+    assert doc["jobs"]["auto-merge"]["concurrency"] == {"group": f"auto-merge-{given['BRANCH']}-{given['SHA']}",
+                                                        "cancel-in-progress": False}
+    assert (given["BRANCH"], given["SHA"]) == ("${{ github.event.workflow_run.head_branch }}",
+                                               "${{ github.event.workflow_run.head_sha }}")
 
 
 def test_no_checkout_and_env():

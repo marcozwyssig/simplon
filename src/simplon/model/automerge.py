@@ -11,13 +11,12 @@ METHOD = "squash"
 #: (key, reason, source) per rule, in the order the script applies them.
 RULES: tuple[tuple[str, str, str], ...] = (
     ("token-scope", "A token that cannot read pull requests lists none, and an empty list reads as nothing to merge: netctl#965 merged under such a token and reported success while merging nothing, so the pulls endpoint is probed first and a failed probe is red.", "netctl#964"),
-    ("labelled-pr", "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so on the label event itself the pull request could be missing and that event never comes back.", "si#874"),
+    ("labelled-pr", "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so a pull request labelled just before its run completes could be missing and read as nothing to merge.", "si#874"),
     ("head-is-sha", "Merge what was verified: only the pull request whose head is the run's commit merges, a newer commit merges on its own run. Selecting by commit also keeps a fork's pull request with the same branch name from being picked.", "netctl#1788"),
     ("cross-repository", "A pull request from a fork is not merged: a fork's runs use the workflow files of the fork's own head, so a fork could turn its own runs green while the label stays on. It is merged by hand.", "si#874 security review"),
-    ("labeller-can-merge", "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. On the label event that is the event's sender, since the issue timeline can lag behind it; on a run it is the last labeled event of the timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red.", "si#874 security review"),
-    ("label-triggers", "Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for.", "si#874"),
+    ("labeller-can-merge", "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. That is the last labeled event of the issue timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red.", "si#874 security review"),
     ("trigger-runs-green", "Every run of every trigger workflow for the commit, schedule runs aside, must have completed successfully; a running or red one holds the merge, and its completion reconsiders it. A failed read is red: a missing verdict is not a green one.", "netctl#1788"),
-    ("ci-run-exists", "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it.", "si#874"),
+    ("ci-run-exists", "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate's run, which triggers this one as well, says nothing about what CI runs.", "si#874"),
     ("derived-gate-ran", "A gate workflow the kernel derives must have a run for the commit, schedule runs aside: its decide job runs on every pull request event, so a pull request always has one, and none means no gate ever looked at this tree. That is a stacked parent after its child merged into it, whose head moved without a pull request event, so it waits for a push or for the gate's workflow to be dispatched, and the dispatch command is named. A hand-written gate may run on its label or a schedule only, so it keeps only the label rule below.", "si#874"),
     ("gate-label-needs-run", "A gate's label takes the role of netctl's needs-lab: a pull request carrying it with no run of that gate's workflow for the commit does not merge, and the dispatch command is named.", "netctl#1788"),
     ("squash-merge", "Merge with the policy's method and delete the branch, bound to the verified commit: GitHub refuses the merge if the head moved between the checks and the merge. The base is read before the merge, while the pull request is still open.", "si#874"),
@@ -25,7 +24,7 @@ RULES: tuple[tuple[str, str, str], ...] = (
 )
 
 #: The auto-merge job's `if:`.
-CONDITION = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == 'auto-merge')"
+CONDITION = "github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule'"
 
 #: (scope, access, reason) per scope of the auto-merge workflow's token.
 PERMISSIONS: tuple[tuple[str, str, str], ...] = (
@@ -41,22 +40,20 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
 INPUTS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("GH_TOKEN", "${{ github.token }}", "", "the workflow's token, which gh reads", False),
     ("GH_REPO", "${{ github.repository }}", "", "the repository, owner/name", True),
-    ("BRANCH", "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}", "", "the pull request's head branch, from whichever of the two events started the run", True),
-    ("SHA", "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}", "", "the commit verified, from whichever of the two events started the run", True),
-    ("EVENT", "${{ github.event_name }}", "", "workflow_run or pull_request_target", True),
+    ("BRANCH", "${{ github.event.workflow_run.head_branch }}", "", "the pull request's head branch, the completed run's", True),
+    ("SHA", "${{ github.event.workflow_run.head_sha }}", "", "the commit verified, the completed run's", True),
     ("CI_WORKFLOW", "", "ci_workflow", "the CI workflow's file, the one dispatched on the base after a merge", True),
     ("TRIGGERS", "", "triggers", "every trigger workflow's file, CI first, space-separated", True),
     ("GATES", "", "labels", "one line of a gate's workflow file and its label per gate with a label, empty when none", False),
     ("DERIVED_GATES", "", "derived_gates", "the file of every gate workflow the kernel derives, space-separated, empty when none", False),
-    ("LABELLER", "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}", "", "the label event's sender, empty on a run; the issue timeline can lag behind the event, and it is read only as a variable, never written into the script", False),
 )
 
 #: The merge step's `name:`.
 STEP_NAME = "Merge the labelled pull request once every trigger run for its head is green"
 
 #: The rendered job's note, before the rules and after them.
-NOTE = ("si#874: `merge: auto`. This job merges the open pull request labelled `auto-merge` whose head is the commit a trigger workflow's run just verified, or whose label was just added, once every run of every trigger workflow for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:",
-        "The job runs in the privileged context of `workflow_run` and `pull_request_target` with a write token, so no repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, so nothing a pull request author controls is written into it. A label event is filtered to `auto-merge` by the job's `if:`, a run to a successful one that no schedule started. Only a job that passes its `if:` takes the concurrency group, one per head commit: a run for another commit, or for another label, never displaces it.")
+NOTE = ("si#874: `merge: auto`. This job merges the open pull request labelled `auto-merge` whose head is the commit a trigger workflow's run just verified, once every run of every trigger workflow for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:",
+        "The job runs in the privileged context of `workflow_run` with a write token, so no repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, so nothing a pull request author controls is written into it. The job's `if:` takes a run that succeeded and that no schedule started. Only a job that passes it takes the concurrency group, one per head branch and commit: a red run, or a run for another commit, never displaces it. There is no label trigger: GitHub blocks `pull_request_target` by default in public repositories, so a pull request labelled after its runs are green merges when CI is re-run.")
 
 #: The auto-merge step's `run:`. Its environment is its interface, `INPUTS` above, as the script's header says.
 MERGE_SCRIPT = r"""set -euo pipefail
@@ -67,19 +64,16 @@ MERGE_SCRIPT = r"""set -euo pipefail
 # Set by the step's env:, each with what it carries; a required one that is empty is red before any call.
 #   GH_TOKEN: the workflow's token, which gh reads
 #   GH_REPO (required): the repository, owner/name
-#   BRANCH (required): the pull request's head branch, from whichever of the two events started the run
-#   SHA (required): the commit verified, from whichever of the two events started the run
-#   EVENT (required): workflow_run or pull_request_target
+#   BRANCH (required): the pull request's head branch, the completed run's
+#   SHA (required): the commit verified, the completed run's
 #   CI_WORKFLOW (required): the CI workflow's file, the one dispatched on the base after a merge
 #   TRIGGERS (required): every trigger workflow's file, CI first, space-separated
 #   GATES: one line of a gate's workflow file and its label per gate with a label, empty when none
 #   DERIVED_GATES: the file of every gate workflow the kernel derives, space-separated, empty when none
-#   LABELLER: the label event's sender, empty on a run; the issue timeline can lag behind the event, and it is read only as a variable, never written into the script
 required=""
 required="$required GH_REPO"
 required="$required BRANCH"
 required="$required SHA"
-required="$required EVENT"
 required="$required CI_WORKFLOW"
 required="$required TRIGGERS"
 for name in $required; do
@@ -88,13 +82,6 @@ for name in $required; do
     exit 1
   fi
 done
-case "$EVENT" in
-  workflow_run | pull_request_target) ;;
-  *)
-    echo "::error::EVENT is '$EVENT': the merge runs on workflow_run or pull_request_target only." >&2
-    exit 1
-    ;;
-esac
 gates=$(printenv GATES || true)
 derived_gates=$(printenv DERIVED_GATES || true)
 # The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
@@ -117,7 +104,7 @@ if ! gh api "repos/$GH_REPO/pulls?state=open&per_page=1" >/dev/null; then
   exit 1
 fi
 
-# labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so on the label event itself the pull request could be missing and that event never comes back.
+# labelled-pr (si#874): Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so a pull request labelled just before its run completes could be missing and read as nothing to merge.
 listed=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid,baseRefName,isCrossRepository,labels \
   --jq '.[] | select(any(.labels[]; .name == "auto-merge")) | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
 if [ -z "$listed" ]; then
@@ -149,35 +136,27 @@ case "$cross" in
     ;;
 esac
 
-# labeller-can-merge (si#874 security review): The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. On the label event that is the event's sender, since the issue timeline can lag behind it; on a run it is the last labeled event of the timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red.
-if [ "$EVENT" = "pull_request_target" ]; then
-  labeller=$(printenv LABELLER || true)
-  if [ -z "$labeller" ]; then
-    echo "::error::LABELLER is empty on the label event: who added auto-merge to PR #$pr is unknown, no verdict, so no merge." >&2
+# labeller-can-merge (si#874 security review): The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. That is the last labeled event of the issue timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red.
+last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "auto-merge") | "\(.event) \(.actor.login // "")"') || {
+  echo "::error::could not read who labelled PR #$pr auto-merge: no verdict, so no merge." >&2
+  exit 1
+}
+last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
+case "$last" in
+  "")
+    echo "::error::PR #$pr carries auto-merge and no labeled event names who added it: no verdict, so no merge." >&2
     exit 1
-  fi
-else
-  last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
-    --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "auto-merge") | "\(.event) \(.actor.login // "")"') || {
-    echo "::error::could not read who labelled PR #$pr auto-merge: no verdict, so no merge." >&2
+    ;;
+  unlabeled*)
+    echo "::error::PR #$pr is listed with auto-merge, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
     exit 1
-  }
-  last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
-  case "$last" in
-    "")
-      echo "::error::PR #$pr carries auto-merge and no labeled event names who added it: no verdict, so no merge." >&2
-      exit 1
-      ;;
-    unlabeled*)
-      echo "::error::PR #$pr is listed with auto-merge, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
-      exit 1
-      ;;
-  esac
-  labeller=$(printf '%s' "$last" | awk '{ print $2 }')
-  if [ -z "$labeller" ]; then
-    echo "::error::whoever added auto-merge to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
-    exit 1
-  fi
+    ;;
+esac
+labeller=$(printf '%s' "$last" | awk '{ print $2 }')
+if [ -z "$labeller" ]; then
+  echo "::error::whoever added auto-merge to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
+  exit 1
 fi
 if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
   echo "::error::could not read the permission of $labeller, who labelled PR #$pr auto-merge: no verdict, so no merge." >&2
@@ -187,15 +166,10 @@ case "$access" in
   admin | maintain | write) ;;
   *)
     echo "$labeller added the label auto-merge to PR #$pr last, and has '$access' permission, not write, maintain or admin."
-    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it and add it again."
+    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it, add it again, and re-run CI."
     exit 0
     ;;
 esac
-
-# label-triggers (si#874): Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for.
-if [ "$EVENT" = "pull_request_target" ]; then
-  echo "The label auto-merge was added to PR #$pr: no run triggered this, so the runs for $SHA are read."
-fi
 
 # trigger-runs-green (netctl#1788): Every run of every trigger workflow for the commit, schedule runs aside, must have completed successfully; a running or red one holds the merge, and its completion reconsiders it. A failed read is red: a missing verdict is not a green one.
 for wf in $TRIGGERS; do
@@ -216,7 +190,7 @@ for wf in $TRIGGERS; do
   fi
 done
 
-# ci-run-exists (si#874): The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it.
+# ci-run-exists (si#874): The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate's run, which triggers this one as well, says nothing about what CI runs.
 if [ ! -s "$runs_dir/$CI_WORKFLOW" ]; then
   echo "No run of $CI_WORKFLOW for $SHA (schedule runs aside); not merging PR #$pr."
   echo "It merges when that run completes green: $CI_WORKFLOW is a trigger of this workflow."
@@ -258,4 +232,4 @@ if ! gh workflow run "$CI_WORKFLOW" --ref "$base"; then
   exit 1
 fi
 """
-# Generated by firn, do not edit outside protected regions. id=[AutoMerge:,ddddaeec53a5cce8]
+# Generated by firn, do not edit outside protected regions. id=[AutoMerge:,371863795b8159f1]

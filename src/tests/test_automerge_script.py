@@ -76,7 +76,6 @@ class Merge:
     prs: list = field(default_factory=lambda: [_pr(7, SHA)])
     runs: dict = field(default_factory=lambda: {"ci.yml": [GREEN], "ci-test-lab.yml": []})
     labels: tuple = ("auto-merge",)
-    event: str = "workflow_run"
     triggers: str = "ci.yml ci-test-lab.yml"
     gates: str = "ci-test-lab.yml needs-lab"
     #: The step's DERIVED_GATES; "" stages the gate as a hand-written one, which keeps only the label rule.
@@ -91,8 +90,6 @@ class Merge:
     permission_rc: int = 0
     #: The issue events, where a test stages them itself; None is the default timeline below.
     events: list | None = None
-    #: The step's LABELLER, `github.event.sender.login` on a label event; None means the labeller on that event.
-    sender: str | None = None
 
     def run(self, tmp_path: Path):
         table = [["pulls?state=open&per_page=1", {"rc": self.probe_rc, "json": []}],
@@ -120,9 +117,7 @@ class Merge:
         script.write_text(automerge.MERGE_SCRIPT, encoding="utf-8")
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}",
                "GH_TOKEN": "t", "GH_REPO": REPO, "BRANCH": BRANCH, "SHA": SHA, "CI_WORKFLOW": "ci.yml",
-               "TRIGGERS": self.triggers, "GATES": self.gates, "DERIVED_GATES": self.derived, "EVENT": self.event,
-               "LABELLER": ((self.labeller if self.sender is None else self.sender)
-                            if self.event == "pull_request_target" else "")}
+               "TRIGGERS": self.triggers, "GATES": self.gates, "DERIVED_GATES": self.derived}
         assert set(env) - {"PATH"} == {name for name, *_ in automerge.INPUTS}, "the stage sets every input"
         done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)
         return done, calls_made(calls)
@@ -156,7 +151,6 @@ def test_rules_are_data_with_a_reason_and_a_source():
 
     # assert: netctl's rules, then the two si#874 decided on top, each with its reason and the ticket behind it
     assert keys == ["token-scope", "labelled-pr", "head-is-sha", "cross-repository", "labeller-can-merge",
-                    "label-triggers",
                     "trigger-runs-green",
                     "ci-run-exists", "derived-gate-ran", "gate-label-needs-run", "squash-merge",
                     "dispatch-ci-on-base"]
@@ -210,7 +204,7 @@ def test_no_labelled_pr_is_a_green_no_op(tmp_path):
 
 def test_the_listing_leaves_the_label_to_jq_not_to_github_search(tmp_path):
     """`gh pr list --label` goes through GitHub's search API (`GH_DEBUG=api` shows a `search(q: ... label:...)`
-    query), whose index lags a label change: on the label event itself the PR would not be listed yet."""
+    query), whose index lags a label change: a PR labelled just before its run completes would not be listed yet."""
     # act
     _, calls = Merge().run(tmp_path)
 
@@ -302,11 +296,10 @@ def test_a_pr_whose_origin_is_unknown_is_red(tmp_path):
 
 # --- labeller-can-merge ---------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("event", ["workflow_run", "pull_request_target"])
-def test_a_label_added_by_someone_who_may_not_merge_does_not_merge(tmp_path, event):
+def test_a_label_added_by_someone_who_may_not_merge_does_not_merge(tmp_path):
     """si#874 security review: a triage-role user can add the label and may not merge."""
     # act
-    done, calls = Merge(event=event, labeller="trudy", permission="read").run(tmp_path)
+    done, calls = Merge(labeller="trudy", permission="read").run(tmp_path)
 
     # assert
     assert done.returncode == 0, done.stdout + done.stderr
@@ -325,29 +318,6 @@ def test_a_label_added_by_someone_who_may_merge_merges(tmp_path, permission):
     assert _merged(calls)
     assert f"api repos/{REPO}/collaborators/alice/permission" in calls
     assert "collaborators/earlier" not in calls
-
-
-def test_a_label_event_checks_its_sender_and_reads_no_timeline(tmp_path):
-    """si#874 security review: on pull_request_target the issue events can lag behind the event itself."""
-    # act
-    done, calls = Merge(event="pull_request_target", sender="trudy", permission="read",
-                           events_rc=1).run(tmp_path)
-
-    # assert
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert "trudy added the label auto-merge to PR #7 last" in done.stdout
-    assert "/events" not in calls and f"api repos/{REPO}/collaborators/trudy/permission" in calls
-    assert not _merged(calls)
-
-
-def test_a_label_event_with_no_sender_is_red(tmp_path):
-    # act
-    done, calls = Merge(event="pull_request_target", sender="").run(tmp_path)
-
-    # assert
-    assert done.returncode == 1
-    assert "no verdict" in done.stderr and "LABELLER" in done.stderr
-    assert not _merged(calls)
 
 
 def test_a_label_last_removed_is_red(tmp_path):
@@ -395,28 +365,7 @@ def test_a_label_with_no_labeled_event_is_red(tmp_path):
     assert not _merged(calls)
 
 
-# --- label-triggers and ci-run-exists -------------------------------------------------------------------------
-
-def test_label_event_needs_a_ci_run_for_the_sha(tmp_path):
-    """Review focus 2: the label added with no CI run for the head SHA does not merge, and says why."""
-    # act
-    done, calls = Merge(event="pull_request_target", runs={"ci.yml": [], "ci-test-lab.yml": []}).run(tmp_path)
-
-    # assert
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert f"No run of ci.yml for {SHA}" in done.stdout
-    assert not _merged(calls)
-
-
-def test_label_event_with_a_green_ci_run_merges(tmp_path):
-    # act
-    done, calls = Merge(event="pull_request_target").run(tmp_path)
-
-    # assert
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert "label" in done.stdout
-    assert _merged(calls)
-
+# --- ci-run-exists --------------------------------------------------------------------------------------------
 
 def test_a_gate_run_without_any_ci_run_does_not_merge(tmp_path):
     """Rule 4 covers CI: a green gate run alone is no verdict on the unit levels."""
@@ -426,16 +375,6 @@ def test_a_gate_run_without_any_ci_run_does_not_merge(tmp_path):
     # assert
     assert done.returncode == 0, done.stdout + done.stderr
     assert f"No run of ci.yml for {SHA}" in done.stdout
-    assert not _merged(calls)
-
-
-def test_an_unknown_event_is_red(tmp_path):
-    # act
-    done, calls = Merge(event="push").run(tmp_path)
-
-    # assert
-    assert done.returncode == 1
-    assert "EVENT" in done.stderr and "push" in done.stderr
     assert not _merged(calls)
 
 
@@ -652,6 +591,13 @@ def test_a_failed_merge_is_red_and_dispatches_nothing(tmp_path):
 
 # --- the inputs -----------------------------------------------------------------------------------------------
 
+def test_the_inputs_name_no_label_event():
+    """si#874, Marco 2026-11-25: no `pull_request_target` trigger, so neither the event's name nor its sender."""
+    # assert
+    assert {name for name, *_ in automerge.INPUTS}.isdisjoint({"EVENT", "LABELLER"})
+    assert "pull_request_target" not in automerge.MERGE_SCRIPT and "pull_request_target" not in automerge.CONDITION
+
+
 def test_inputs_are_data_with_a_source_and_a_meaning():
     # assert: each input comes from a GitHub expression or from the derivation, never both, never neither
     assert [name for name, *_ in automerge.INPUTS][:1] == ["GH_TOKEN"]
@@ -674,7 +620,7 @@ def test_a_missing_input_is_red_naming_it(tmp_path, name):
     script = tmp_path / "merge.sh"
     script.write_text(automerge.MERGE_SCRIPT, encoding="utf-8")
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "GH_REPO": REPO, "BRANCH": BRANCH, "SHA": SHA, "CI_WORKFLOW": "ci.yml",
-           "TRIGGERS": "ci.yml", "GATES": "", "EVENT": "workflow_run", name: ""}
+           "TRIGGERS": "ci.yml", "GATES": "", name: ""}
 
     # act
     done = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=30)

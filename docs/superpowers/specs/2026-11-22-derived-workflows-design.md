@@ -312,7 +312,10 @@ On the product:
     script and the rendered file's comments are generated from it, and the workflow goes through the workflow
     model like every derived file.
   - **Listens to** the CI workflow and every gate's workflow (derived or declared; a hand-written one is
-    read from its file for `name:` and `on:`), plus the label event (`pull_request_target: labeled`, decision 9).
+    read from its file for `name:` and `on:`), by `workflow_run` alone. Decision 9 (the label event,
+    `pull_request_target: labeled`) was reversed by Marco on 2026-11-25: GitHub blocks `pull_request_target` by
+    default in public repositories from 2026-12-02, so, as in netctl, a pull request labelled late merges on a
+    CI re-run.
     Rule 4 covers CI too: every non-schedule run of every trigger workflow for the commit must be green, and a
     CI run must exist, and so must a run of every gate workflow the kernel derives (a stacked parent waits for a
     push or a dispatch after its child merges); a hand-written gate keeps only the label rule. No CI workflow, or
@@ -321,13 +324,11 @@ On the product:
     launcher, as si#861's decide job; so no si#756 reap step either.
   - **Rules beyond netctl's**, from reviews: a pull request from a fork is never merged; the merge is bound
     to the verified commit (`--match-head-commit`); whoever added the label last must have write, maintain or
-    admin permission (on the label event the event's sender, otherwise the last labeled event of the
-    timeline).
+    admin permission (the last labeled event of the timeline; an inconsistent timeline is red).
   - **Switched off** by `workflows: auto-merge:` (the one switch rule); an undeclared hand-written
     `auto-merge.yml` is refused.
-  - **Which file runs:** `workflow_run` fires only from the workflow file on the default branch and
-    `pull_request_target` from the base branch's, so the pull request introducing `merge: auto` cannot merge
-    itself and a stacked child needs `auto-merge.yml` on its base.
+  - **Which file runs:** `workflow_run` fires only from the workflow file on the default branch, so the pull
+    request introducing `merge: auto` cannot merge itself.
   - **Unmeasured:** whether `GITHUB_TOKEN` may read `collaborators/<login>/permission` (red if not); netctl's
     note that the repository's default workflow permissions must be write. Details: `how/manifest.md`, `merge:`,
     and the generated `with-what/auto-merge.md`.

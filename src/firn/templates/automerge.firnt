@@ -97,13 +97,6 @@ template AutoMerge {
       |    exit 1
       |  fi
       |done
-      |case "$EVENT" in
-      |  workflow_run | pull_request_target) ;;
-      |  *)
-      |    echo "::error::EVENT is '$EVENT': the merge runs on workflow_run or pull_request_target only." >&2
-      |    exit 1
-      |    ;;
-      |esac
       |gates=$(printenv GATES || true)
       |derived_gates=$(printenv DERIVED_GATES || true)
       |# The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
@@ -161,34 +154,26 @@ template AutoMerge {
           |esac
         }
         if r.key == "labeller-can-merge" {
-          |if [ "$EVENT" = "pull_request_target" ]; then
-          |  labeller=$(printenv LABELLER || true)
-          |  if [ -z "$labeller" ]; then
-          |    echo "::error::LABELLER is empty on the label event: who added ${p.label} to PR #$pr is unknown, no verdict, so no merge." >&2
+          |last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+          |  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "${p.label}") | "\(.event) \(.actor.login // "")"') || {
+          |  echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |  exit 1
+          |}
+          |last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
+          |case "$last" in
+          |  "")
+          |    echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
           |    exit 1
-          |  fi
-          |else
-          |  last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
-          |    --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "${p.label}") | "\(.event) \(.actor.login // "")"') || {
-          |    echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |    ;;
+          |  unlabeled*)
+          |    echo "::error::PR #$pr is listed with ${p.label}, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
           |    exit 1
-          |  }
-          |  last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
-          |  case "$last" in
-          |    "")
-          |      echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
-          |      exit 1
-          |      ;;
-          |    unlabeled*)
-          |      echo "::error::PR #$pr is listed with ${p.label}, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
-          |      exit 1
-          |      ;;
-          |  esac
-          |  labeller=$(printf '%s' "$last" | awk '{ print $2 }')
-          |  if [ -z "$labeller" ]; then
-          |    echo "::error::whoever added ${p.label} to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
-          |    exit 1
-          |  fi
+          |    ;;
+          |esac
+          |labeller=$(printf '%s' "$last" | awk '{ print $2 }')
+          |if [ -z "$labeller" ]; then
+          |  echo "::error::whoever added ${p.label} to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
+          |  exit 1
           |fi
           |if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
           |  echo "::error::could not read the permission of $labeller, who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
@@ -198,15 +183,10 @@ template AutoMerge {
           |  admin | maintain | write) ;;
           |  *)
           |    echo "$labeller added the label ${p.label} to PR #$pr last, and has '$access' permission, not write, maintain or admin."
-          |    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it and add it again."
+          |    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it, add it again, and re-run CI."
           |    exit 0
           |    ;;
           |esac
-        }
-        if r.key == "label-triggers" {
-          |if [ "$EVENT" = "pull_request_target" ]; then
-          |  echo "The label ${p.label} was added to PR #$pr: no run triggered this, so the runs for $SHA are read."
-          |fi
         }
         if r.key == "trigger-runs-green" {
           |for wf in $TRIGGERS; do
@@ -269,7 +249,7 @@ template AutoMerge {
           |  exit 1
           |fi
         }
-        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "labeller-can-merge" and r.key != "label-triggers" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "derived-gate-ran" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
+        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "labeller-can-merge" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "derived-gate-ran" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
           |echo "::error::the rule ${r.key} has no block in automerge.firnt: the policy cannot be applied." >&2
           |exit 1
         }

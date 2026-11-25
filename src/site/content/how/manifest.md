@@ -1695,18 +1695,24 @@ needs another one. Absent, the section derives nothing. Any other value, or a ba
 load time, naming `auto`.
 
 **What it listens to.** `workflow_run` of the product's CI workflow and of every gate's workflow (derived
-`ci-<words>.yml`, or declared), by their `name:`, and `pull_request_target` when a label is added (the job runs
-only when that label is `auto-merge`). Cadence workflows (nightly, manual, scheduled) are no triggers: their
+`ci-<words>.yml`, or declared), by their `name:`; the job runs for a completed run that succeeded and that no
+schedule started. Cadence workflows (nightly, manual, scheduled) are no triggers: their
 run says nothing about a pull request's commit. A hand-written CI or gate workflow, one declared under
 `workflows:` with `handwritten:`, is read from its file for its `name:` and `on:`, so a rename shows as drift
 under `--check`.
 
+**There is no label trigger.** GitHub blocks `pull_request_target` by default in public repositories from
+2026-12-02, so the label is read when a run completes, as netctl does: a pull request labelled after its runs
+are green merges once CI is re-run on it.
+
 **The job is one inline script, and no repository code runs in it.** It runs in the privileged `workflow_run`
-and `pull_request_target` context with a write token, so it has no checkout and no launcher. Its concurrency
-group is the job's own, one per head commit, with `cancel-in-progress: false`: only a run whose job passes its
-`if:` takes it, so a labeled event for another label or a red completion never displaces a run that would merge.
-A CI run and a gate run completing together for one commit queue, and the second finds the pull request merged
-and does nothing; runs for different commits are kept apart by `--match-head-commit`.
+context with a write token, so it has no checkout and no launcher. Its concurrency group is the job's own, one
+per head branch and commit, with `cancel-in-progress: false`: only a run whose job passes its `if:` takes it,
+so a red completion never displaces a run that would merge. A CI run and a gate run completing together for one
+commit queue, and the second finds the pull request merged and does nothing. With more than two runs for one
+commit, GitHub keeps one pending run per group and cancels the pending one it replaces; harmless, because the
+run that survives reads every run for that commit again. Runs for different commits are kept apart by
+`--match-head-commit`.
 
 **The rules, the token and the script's inputs** are on [the auto-merge policy](../../with-what/auto-merge/),
 generated from the model (`src/firn/model/simplon/automerge/automerge.firn`) that the script and the workflow's
@@ -1722,10 +1728,8 @@ for a push to its branch or for the gate's workflow to be dispatched there (the 
 `gh workflow run` command). A hand-written gate, such as one that runs on its label or a schedule only, is not
 asked for a run unless the pull request carries its label.
 
-**Which file GitHub runs.** `workflow_run` fires only from the workflow file on the default branch, and
-`pull_request_target` from the file on the pull request's base branch. So the pull request that introduces
-`merge: auto` cannot merge itself, and a stacked child merges only when its base branch already carries
-`auto-merge.yml`.
+**Which file GitHub runs.** `workflow_run` fires only from the workflow file on the default branch, so the pull
+request that introduces `merge: auto` cannot merge itself.
 
 **Keeping your own file.** The derived file is switched off by declaring the key:
 
@@ -1753,7 +1757,7 @@ GitHub's fallback to the path is not measured to match).
   this.
 - A label added by a GitHub App (`renovate[bot]`, say): its login is no collaborator, so the permission read is
   expected to fail and the run to be red, not a green "may not merge" (read off the script, not run against
-  GitHub). Someone who may merge removes the label and adds it again.
+  GitHub). Someone who may merge removes the label, adds it again and re-runs CI.
 - netctl's note that the repository's default workflow permissions must be set to write for the `permissions:`
   block to take effect. It is netctl's prerequisite, recorded here as stated and not measured by this kernel.
 

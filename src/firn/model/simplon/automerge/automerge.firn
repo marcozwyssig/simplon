@@ -28,7 +28,7 @@ MergePolicy typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 1..N
     objectCardinality = 0..1
   }
-  // The auto-merge job's `if:`: which of its two events may merge. A GitHub expression, written whole.
+  // The auto-merge job's `if:`: which completed runs may merge. A GitHub expression, written whole.
   property condition typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 1..1
@@ -123,12 +123,13 @@ MergeRule typeOf firn.core.Class extends firn.core.NamedResource {
 auto typeOf simplon.automerge.MergePolicy {
   label = "auto-merge"
   method = "squash"
-  // A completed trigger run that succeeded and that no schedule started, or this policy's label just added
-  // (decision 9 of #874). `@LABEL@` is `label` above: the template writes it in, so the label has one source.
-  condition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule') || (github.event_name == 'pull_request_target' && github.event.label.name == '@LABEL@')"
+  // A completed trigger run that succeeded and that no schedule started. No label trigger (si#874, Marco
+  // 2026-11-25, decision 9 reversed): GitHub blocks `pull_request_target` by default in public repositories from
+  // 2026-12-02, so a pull request labelled after its runs are green merges on a CI re-run, as in netctl.
+  condition = "github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'schedule'"
   step_name = "Merge the labelled pull request once every trigger run for its head is green"
-  note_head = "si#874: `merge: auto`. This job merges the open pull request labelled `@LABEL@` whose head is the commit a trigger workflow's run just verified, or whose label was just added, once every run of every trigger workflow for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:"
-  note_tail = "The job runs in the privileged context of `workflow_run` and `pull_request_target` with a write token, so no repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, so nothing a pull request author controls is written into it. A label event is filtered to `@LABEL@` by the job's `if:`, a run to a successful one that no schedule started. Only a job that passes its `if:` takes the concurrency group, one per head commit: a run for another commit, or for another label, never displaces it."
+  note_head = "si#874: `merge: auto`. This job merges the open pull request labelled `@LABEL@` whose head is the commit a trigger workflow's run just verified, once every run of every trigger workflow for that commit is green. The workflows it listens to are the CI workflow and every gate's workflow; a cadence workflow is none, since its run says nothing about a pull request's commit. It runs netctl's rules and the ones si#874 decided on top, in this order; the script carries the same reasons beside each rule:"
+  note_tail = "The job runs in the privileged context of `workflow_run` with a write token, so no repository code runs here: no checkout and no launcher, and the script reads its `env:` and nothing else, so nothing a pull request author controls is written into it. The job's `if:` takes a run that succeeded and that no schedule started. Only a job that passes it takes the concurrency group, one per head branch and commit: a red run, or a run for another commit, never displaces it. There is no label trigger: GitHub blocks `pull_request_target` by default in public repositories, so a pull request labelled after its runs are green merges when CI is re-run."
   inputs gh_token typeOf simplon.automerge.MergeInput {
     variable = "GH_TOKEN"
     expression = "${{ github.token }}"
@@ -142,20 +143,14 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   inputs branch typeOf simplon.automerge.MergeInput {
     variable = "BRANCH"
-    expression = "${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}"
-    meaning = "the pull request's head branch, from whichever of the two events started the run"
+    expression = "${{ github.event.workflow_run.head_branch }}"
+    meaning = "the pull request's head branch, the completed run's"
     required = true
   }
   inputs sha typeOf simplon.automerge.MergeInput {
     variable = "SHA"
-    expression = "${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}"
-    meaning = "the commit verified, from whichever of the two events started the run"
-    required = true
-  }
-  inputs event typeOf simplon.automerge.MergeInput {
-    variable = "EVENT"
-    expression = "${{ github.event_name }}"
-    meaning = "workflow_run or pull_request_target"
+    expression = "${{ github.event.workflow_run.head_sha }}"
+    meaning = "the commit verified, the completed run's"
     required = true
   }
   inputs ci_workflow typeOf simplon.automerge.MergeInput {
@@ -179,11 +174,6 @@ auto typeOf simplon.automerge.MergePolicy {
     variable = "DERIVED_GATES"
     source = "derived_gates"
     meaning = "the file of every gate workflow the kernel derives, space-separated, empty when none"
-  }
-  inputs labeller typeOf simplon.automerge.MergeInput {
-    variable = "LABELLER"
-    expression = "${{ github.event_name == 'pull_request_target' && github.event.sender.login || '' }}"
-    meaning = "the label event's sender, empty on a run; the issue timeline can lag behind the event, and it is read only as a variable, never written into the script"
   }
   permissions contents typeOf simplon.automerge.MergePermission {
     scope = "contents"
@@ -212,7 +202,7 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules labelled_pr typeOf simplon.automerge.MergeRule {
     key = "labelled-pr"
-    reason = "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so on the label event itself the pull request could be missing and that event never comes back."
+    reason = "Only an open pull request for the run's branch carrying the label is merged; the label is the opt-in. None is a green no-op, and a pull request merged by an earlier run is no longer open. The open pull requests are listed without a label filter and the label is matched in the listing: `gh pr list --label` asks GitHub's search API, whose index lags a label change, so a pull request labelled just before its run completes could be missing and read as nothing to merge."
     source = "si#874"
   }
   rules head_is_sha typeOf simplon.automerge.MergeRule {
@@ -227,13 +217,8 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules labeller_can_merge typeOf simplon.automerge.MergeRule {
     key = "labeller-can-merge"
-    reason = "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. On the label event that is the event's sender, since the issue timeline can lag behind it; on a run it is the last labeled event of the timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red."
+    reason = "The label is only an opt-in from someone who may merge: a triage-role user can add a label and may not merge, so whoever added the label most recently must have write, maintain or admin permission. That is the last labeled event of the issue timeline, and a timeline whose last event for the label is unlabeled is red. Anyone else is a green no-op that names them; a failed read, or a labeller with no login, is red."
     source = "si#874 security review"
-  }
-  rules label_triggers typeOf simplon.automerge.MergeRule {
-    key = "label-triggers"
-    reason = "Adding the label triggers too, a deviation from netctl: a pull request labelled after its runs are green merges without a new run. That event carries no run of its own, so the runs for the head commit are asked for."
-    source = "si#874"
   }
   rules trigger_runs_green typeOf simplon.automerge.MergeRule {
     key = "trigger-runs-green"
@@ -242,7 +227,7 @@ auto typeOf simplon.automerge.MergePolicy {
   }
   rules ci_run_exists typeOf simplon.automerge.MergeRule {
     key = "ci-run-exists"
-    reason = "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate says nothing about what CI runs, and the label event has no triggering run to stand in for it."
+    reason = "The rules cover CI as well as the gates: a run of the CI workflow for the commit must exist, because a green gate's run, which triggers this one as well, says nothing about what CI runs."
     source = "si#874"
   }
   rules derived_gate_ran typeOf simplon.automerge.MergeRule {

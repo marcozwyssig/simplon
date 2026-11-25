@@ -91,8 +91,8 @@ Runner typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-// What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch`, `schedule`, `workflow_run` or
-// `pull_request_target`; a string, not an enum, so the template needs no enum case. `cron` belongs to `schedule`,
+// What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch`, `schedule` or `workflow_run`;
+// a string, not an enum, so the template needs no enum case. `cron` belongs to `schedule`,
 // `input` to `dispatch`, `workflows` to `workflow_run`.
 Trigger typeOf firn.core.Class extends firn.core.NamedResource {
   property event typeOf firn.core.Attribute {

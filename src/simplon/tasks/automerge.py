@@ -131,18 +131,17 @@ def derive(manifest: Manifest, data: Mapping[str, object], ci: workflowgen.Workf
         if run.gate.label:
             labels.append(workflowschema.GateLabel(workflow=_file(workflow), label=run.gate.label))
     runner, runs_on = cipipeline.runner_of(data)
-    sha = next(expression for name, expression, *_ in policy.INPUTS if name == "SHA")
+    given = {name: expression for name, expression, *_ in policy.INPUTS}
     job = workflowschema.Job(
         key=KEY, step=(workflowschema.Step(kernel_step=cipipeline.AUTO_MERGE),), condition=policy.CONDITION,
-        timeout_minutes=TIMEOUT_MINUTES, starts_no_container=True, concurrency=f"{KEY}-{sha}",
+        timeout_minutes=TIMEOUT_MINUTES, starts_no_container=True, concurrency=f"{KEY}-{given['BRANCH']}-{given['SHA']}",
         runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS[runner.kind], labels=runs_on),
         merge=workflowschema.Merge(ci_workflow=_file(ci), triggers=tuple(_file(w) for w in (ci, *gated)),
                                    labels=tuple(labels),
                                    derived_gates=tuple(_file(w) for w in gated if w.derived)))
-    triggers = (
-        workflowschema.Trigger(event="workflow_run", workflows=tuple(names),
-                               types=("completed",)),
-        workflowschema.Trigger(event="pull_request_target", types=("labeled",)))
+    # No label trigger (si#874, Marco 2026-11-25): GitHub blocks `pull_request_target` by default in public
+    # repositories from 2026-12-02. A pull request labelled after its runs are green merges on a CI re-run.
+    triggers = (workflowschema.Trigger(event="workflow_run", workflows=tuple(names), types=("completed",)),)
     permissions = tuple(workflowschema.Permission(scope=scope, access=access, reason=reason)
                         for scope, access, reason in policy.PERMISSIONS)
     model = workflowschema.Workflow(path=PATH, title=KEY, trigger=triggers, job=(job,), permission=permissions)
