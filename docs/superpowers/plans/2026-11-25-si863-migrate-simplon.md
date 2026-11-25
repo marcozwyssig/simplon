@@ -23,7 +23,7 @@
 ## Measured before writing (2026-11-25, worktree si863 off b1ef7b9)
 
 - `workflows.ci` deleted, nothing else: the derived `ci.yml` runs every unattended leaf in one job `ci` **on `ubuntu-latest`**, the canary's writer and reader in that same job, no 3.14 run. Left out: `test walk` only.
-- With the candidate keys of Task 2 (diff saved at `/tmp/claude-0/-root-git-simplon/f6f1f3c0-cc0f-4e52-8c5d-8780bc7b8fe4/scratchpad/si863-candidate.diff`): `ci` on `ghr-8` with docker and disk preflight, a QEMU registration step in the main job (new on ghr-8), and two hosted cell jobs `test-suite-python` and `test-typecheck-python-python`.
+- With the candidate keys of Task 2 (diff saved at `/tmp/claude-0/-root-git-simplon/f6f1f3c0-cc0f-4e52-8c5d-8780bc7b8fe4/scratchpad/si863-candidate.diff`): `ci` on `ghr-8` with docker and disk preflight, a QEMU registration step in the main job (new on ghr-8, and refused there: ghr-8 is LXC, #722), and two hosted cell jobs `test-suite-python` and `test-typecheck-python-python`.
 - Full suite over that candidate: the only failures are in tests that read simplon's own workflows: `test_own_workflows.py`, `test_own_image.py` (`KeyError: 'ci'`), `test_type_gate.py::test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate`, `test_workflow_handoff.py::test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary`.
 - `test_own_workflows._declared()` uses `workflowgen.parse` (declared entries only), while the verb uses `cipipeline.workflows(..., read=automerge.read_handwritten ...)`. So the gate called the derived `ci.yml` "named by nothing". Test defect, not kernel defect: the verb itself reported nothing unmanaged.
 
@@ -54,6 +54,28 @@
 - [ ] **Step 4:** Run `src/tests/test_own_workflows.py src/tests/test_workflows*.py`; expect PASS.
 - [ ] **Step 5:** Commit: `fix(si#863): the own-workflow gate assembles the workflows the verb writes, derived ones included`.
 
+### Task 1a: Runner kind `self-hosted-container` (spec 5.4, D10; closes #722)
+
+ghr-8 is an LXC container (Marco, 2026-11-25), where `tonistiigi/binfmt --install` is refused with `permission denied` on `/proc/sys/fs/binfmt_misc/register` (#722, si#358). The derived CI already renders no registration and a named gap on a kind with `can_emulate = false` (`cipipeline.py`, `EMULATION_GAP`); what is missing is the kind, and the release path, which registers whatever the kind.
+
+**Files:**
+- Modify: `src/firn/model/simplon/workflow/runners.firn` (new instance), regenerate with `./simplon.sh build model`
+- Modify: the kind table reader if it lists kinds by name (`src/simplon/manifest/runners.py`; find the kind spelling `self-hosted-debian` -> instance `self_hosted_debian` mapping and follow it)
+- Modify: `src/simplon/tasks/workflowgen.py` (release `emulates:` on a kind that cannot emulate)
+- Modify: `src/site/content/how/manifest.md` (the kind table / `runner:` section and the `emulates:` paragraphs name the LXC case)
+- Test: the runner-kind tests (`src/tests/test_runners*.py` or where `self-hosted-debian` is tested) and the release emulation tests (`grep -rln "emulates" src/tests`)
+
+**Interfaces:**
+- Produces: kind `self-hosted-container`: `setup_python = false`, `disk_persists = true`, `can_emulate = false`, env `DELIVERY_DOCKER_BOOTSTRAP: "1"` (same as `self_hosted_debian`; the LXC runner reaches docker the same way), `why` naming LXC and si#358/#722.
+
+- [ ] **Step 1: Failing tests:** (a) `runner: { kind: self-hosted-container, labels: x }` resolves to a kind with `can_emulate is False` and the bootstrap env; (b) a derived CI whose leaf has `ci: emulates: [linux/arm64]` on that kind renders no `docker/setup-qemu-action` step and the `EMULATION_GAP` note; (c) a release with `emulates:` whose job runs on that kind is refused at generation, the message naming the kind, #722 and the way out (register on the LXC host as si#358 describes and drop `emulates:`, or run the job on a kind that can).
+- [ ] **Step 2:** Run them; expect FAIL (unknown kind).
+- [ ] **Step 3:** Add the instance, regenerate (`./simplon.sh build model`, then `./simplon.sh test generated` green), add the release refusal. If `test_refusal_census.py` goes red, classify the refusal as a diagnosis with the reason above.
+- [ ] **Step 4:** Docs: the kind table and `emulates:` paragraphs in `how/manifest.md` name the LXC case. `./simplon.sh build docs` only if the page has generated parts.
+- [ ] **Step 5:** Full suite; commit `feat(si#863): runner kind self-hosted-container, which cannot register emulation (closes #722's case)`.
+
+Out of this task, by ruling: spec 5.4's `DOCKER_CONFIG` "empty per-job directory". A job-level `env:` cannot read `runner.temp`, so it needs a kernel step, and its reason (a stale ghcr login, firn#957, firn#1039) is firn's, not measured on ghr-8. Reopens at firn's migration ticket.
+
 ### Task 2: Delete `workflows.ci`; the leaves and the canary carry what it said
 
 **Files:**
@@ -67,7 +89,7 @@
 
 The manifest edit, exactly (the candidate diff in the scratchpad, with these reasons):
 
-- `runner: { kind: self-hosted-debian, labels: ghr-8 }` at top level, directly above `ci:`, with a comment carrying the reason `self-build`'s note gave (si#3: version from the git tag, so the job runs where the launcher provisions itself; full history is the kernel's own emission now).
+- `runner: { kind: self-hosted-container, labels: ghr-8 }` (Task 1a's kind: ghr-8 is an LXC container, Marco 2026-11-25) at top level, directly above `ci:`, with a comment carrying the reason `self-build`'s note gave (si#3: version from the git tag, so the job runs where the launcher provisions itself; full history is the kernel's own emission now).
 - `suite: { task: suite, ci: { python: ["3.14"], emulates: [linux/arm64] } }`, comment: the formula's interpreter (si#537) and the arm64 e2e of `test:file` (si#552, PR #557).
 - `typecheck-python: { task: "test:typecheck-python", ci: { python: ["3.14"] } }`, comment: si#8, the interpreter that runs the suite owes the type verdict.
 - Both canary commands get `ci: { skip: "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing" }`.
@@ -83,7 +105,7 @@ The manifest edit, exactly (the candidate diff in the scratchpad, with these rea
   - `test_the_hosted_suite_job_can_run_linux_arm64_before_the_suite`: in `test-suite-python`, the `docker/setup-qemu-action` step with `image: <labhost.BINFMT_IMAGE>` precedes `./simplon.sh test suite`.
   - `test_the_handoff_canary_crosses_a_job_boundary_in_ci` -> `..._in_its_own_workflow`: `handoff-canary.yml` has the two jobs, the reader `needs:` the writer, and `ci.yml` runs neither command.
   - `test_simplon_without_its_ci_entry_derives_every_leaf_report_last`: now simplon itself has no `ci` entry; assert on the committed manifest directly, report last.
-  - New: `test_ci_runs_on_ghr8`: job `ci` has `runs-on: ghr-8`.
+  - New: `test_ci_runs_on_ghr8`: job `ci` has `runs-on: ghr-8`, has no `docker/setup-qemu-action` step, and its note carries the `EMULATION_GAP` text naming `test suite`; it keeps the `DELIVERY_DOCKER_BOOTSTRAP: "1"` env.
   - `test_own_image.py` (`KeyError: 'ci'`) and `test_workflow_handoff.py::test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary`: read `ci.yml`/`handoff-canary.yml` from the assembled workflows; the hand-off assertion moves to `handoff-canary.yml`.
 - [ ] **Step 2:** Run those files; expect the rewritten tests FAIL (manifest still declares `workflows.ci`).
 - [ ] **Step 3:** Make the manifest edit above; run `./simplon.sh support github workflows`; expect "regenerated ... ci.yml, handoff-canary.yml".
@@ -112,6 +134,6 @@ D13: `build reference`, `build acceptance`, `build site`, `build model`, `build 
 
 ## Decisions (Marco, 2026-11-25, by choice list)
 
-1. **QEMU on ghr-8: yes.** `emulates: [linux/arm64]` stays on `test suite`; the main job on ghr-8 registers arm64 emulation too and runs the arm64 e2e there. No kernel change.
+1. **QEMU on ghr-8: yes, then superseded the same day.** ghr-8 is an LXC container, where registration is refused (#722). Marco chose: build #722 first, inside #863 (Task 1a). `emulates: [linux/arm64]` stays on `test suite`; the main job on ghr-8 (`self-hosted-container`) registers nothing and names the gap, the hosted 3.14 cell registers.
 2. **Canary: its own declared workflow** `handoff-canary.yml` until #864 adds `exception:`.
 3. **Execution: subagent-driven.**
