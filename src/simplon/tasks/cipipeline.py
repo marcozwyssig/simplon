@@ -93,8 +93,8 @@ def generated_of(data: Mapping[str, object]) -> tuple[generated_section.Entry, .
     return tuple(generated_section.entries_of(dict(data), "the manifest"))
 
 
-def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]",
-           generated: "Sequence[generated_section.Entry]", cadence: str = "") -> Selection:
+def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", data: Mapping[str, object],
+           cadence: str = "") -> Selection:
     """The leaves a derived CI runs, in an order every consumer can be run in (si#858, spec section 4).
 
     A leaf is a `TaskCommand` in a `build` or `test` group (nested groups included) of the CI area, in the
@@ -113,10 +113,12 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]",
     file's note both see why it is missing here. An `after_all` leaf with no cadence of its own (the report) is
     a verdict over whichever run it ends, so it is chosen for every cadence.
 
-    si#886: `generated` is the product's `generated:` entries (`generated_of`), passed rather than defaulted so a
-    caller cannot forget them and blind the gate. Where this run holds a `test:generated` leaf, every leaf that is
-    the `by:` of an entry goes to `skipped`: the gate regenerates and compares, so the producer run before it
-    would leave it comparing the regenerated tree with itself, and the leaves after it running on that tree.
+    si#886: `data` is the product's manifest document, passed rather than defaulted so a caller cannot forget its
+    `generated:` section and blind the gate. Where this run holds a `test:generated` leaf, every leaf that is the
+    `by:` of an entry goes to `skipped`: the gate regenerates and compares, so the producer run before it would
+    leave it comparing the regenerated tree with itself, and the leaves after it running on that tree. The section
+    is read only then, so a product without the gate generates its workflows whatever the section says, and
+    `test generated` stays the one that refuses a malformed one.
     """
     runs = gates(manifest)
     gated = _gated(runs)
@@ -149,14 +151,14 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]",
                 chosen.append(Leaf(words, spec))
             else:
                 skipped.append(Skipped(words, _elsewhere(spec.ci.cadence)))
-    chosen, regenerated = _without_producers_of_compared(chosen, generated)
+    chosen, regenerated = _without_producers_of_compared(chosen, data)
     # "Left out" reads in manifest order whichever rule left a leaf out.
     skipped = sorted(skipped + regenerated, key=lambda s: walked.index(s.words))
     _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts, gated, _path_of(cadence))
     return Selection(order(chosen), tuple(skipped))
 
 
-def _without_producers_of_compared(chosen: list[Leaf], generated: "Sequence[generated_section.Entry]"
+def _without_producers_of_compared(chosen: list[Leaf], data: Mapping[str, object]
                                    ) -> tuple[list[Leaf], list[Skipped]]:
     """`chosen` less every `generated:` producer, and those producers as skipped, where a chosen leaf instantiates
     `test:generated` (si#886). The leaf is matched by its task, not its word (biz-cockpit names it
@@ -164,7 +166,7 @@ def _without_producers_of_compared(chosen: list[Leaf], generated: "Sequence[gene
     gate = next((leaf.words for leaf in chosen if leaf.spec.task == STALENESS_TASK), None)
     if gate is None:
         return chosen, []
-    producers = [shlex.split(entry.by) for entry in generated]
+    producers = [shlex.split(entry.by) for entry in generated_of(data)]
     kept: list[Leaf] = []
     left: list[Skipped] = []
     for leaf in chosen:
@@ -941,8 +943,7 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
     from the other's run as a nightly producer is from the push run (Review Focus 4)."""
     path = _path_of(cadences[0])
     artifacts = artifactsection.declared(data)
-    generated = generated_of(data)
-    selections = [select(manifest, artifacts=artifacts, generated=generated, cadence=cadence) for cadence in cadences]
+    selections = [select(manifest, artifacts=artifacts, data=data, cadence=cadence) for cadence in cadences]
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     scheduled = path == SCHEDULED_PATH
@@ -1442,7 +1443,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
         _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
                                         {member.words for run in runs for member in run.members})
     else:
-        push = select(manifest, artifacts=artifactsection.declared(data), generated=generated_of(data))
+        push = select(manifest, artifacts=artifactsection.declared(data), data=data)
         if declared and not _runs(push) and not _cells(push):
             gone = {s.words for s in push.skipped}
             behind = [_key_of(run.path) + ".yml" for run in runs if any(m.words in gone for m in run.members)]

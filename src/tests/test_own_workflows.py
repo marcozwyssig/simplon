@@ -483,7 +483,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
 
     ran = [words_of(step["run"]) for step in job["steps"] if step.get("run", "").startswith(launcher)]
     leaves = [words for words in ran if words.split(" ", 1)[0] in cipipeline.CI_PHASES]
-    selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data), generated=cipipeline.generated_of(data))
+    selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data), data=data)
     expected = [leaf.words for leaf in selection.leaves if not leaf.spec.after_all] + ["test report"]
     # The manifest's own order, walked here rather than read off `select`, so a sort that reshuffles what no
     # port forces turns this red too: no leaf of this manifest consumes from a later one, so the two agree.
