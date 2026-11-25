@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import shlex
 import textwrap
 from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
@@ -25,6 +26,7 @@ from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
 from simplon.model.task import class_ref
+from simplon.tasks import generated as generated_section
 from simplon.tasks import handoff, workflowgen
 
 if TYPE_CHECKING:
@@ -49,6 +51,14 @@ CI_PHASES = ("build", "test")
 #: Why a leaf with `unattended: false` is not in the workflow.
 ATTENDED = "it needs a person at the terminal (`unattended: false`)"
 
+#: The catalogue task that regenerates every `generated:` entry and compares it with the committed tree (si#746).
+STALENESS_TASK = "test:generated"
+
+#: Why a `generated:` producer is not in a run that holds the staleness gate (si#886); `{gate}` is its words.
+REGENERATED = ("it is the `by:` of a `generated:` entry, which `{gate}` (`" + STALENESS_TASK + "`) regenerates and "
+               "compares with the committed tree itself; run before it in the same job, it would leave that gate "
+               "comparing the regenerated tree with itself (si#886)")
+
 
 class Leaf(NamedTuple):
     """One command the CI runs: `words` is the command line as the CLI types it (`test lab smoke` for a
@@ -59,8 +69,9 @@ class Leaf(NamedTuple):
 
 
 class Skipped(NamedTuple):
-    """A leaf the CI leaves out, and why: `ci: { skip: }`'s reason, or `ATTENDED`. The reason is kept so the
-    generated file can say where a reader will be standing when they wonder (as `workflowgen.derive` does)."""
+    """A leaf the CI leaves out, and why: `ci: { skip: }`'s reason, `ATTENDED`, or `REGENERATED` (si#886). The
+    reason is kept so the generated file can say where a reader will be standing when they wonder (as
+    `workflowgen.derive` does)."""
 
     words: str
     reason: str
@@ -75,7 +86,15 @@ def _words(group: str, name: str) -> str:
     return f"{group.replace('.', ' ')} {name}"
 
 
-def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: str = "") -> Selection:
+def generated_of(data: Mapping[str, object]) -> tuple[generated_section.Entry, ...]:
+    """The product's `generated:` entries, read by the staleness gate's own reader; () when it declares none."""
+    if generated_section.SECTION not in data:
+        return ()
+    return tuple(generated_section.entries_of(dict(data), "the manifest"))
+
+
+def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]",
+           generated: "Sequence[generated_section.Entry]", cadence: str = "") -> Selection:
     """The leaves a derived CI runs, in an order every consumer can be run in (si#858, spec section 4).
 
     A leaf is a `TaskCommand` in a `build` or `test` group (nested groups included) of the CI area, in the
@@ -93,6 +112,11 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
     with another cadence goes to `skipped`, named with the file it runs in, so the absent-producer check and the
     file's note both see why it is missing here. An `after_all` leaf with no cadence of its own (the report) is
     a verdict over whichever run it ends, so it is chosen for every cadence.
+
+    si#886: `generated` is the product's `generated:` entries (`generated_of`), passed rather than defaulted so a
+    caller cannot forget them and blind the gate. Where this run holds a `test:generated` leaf, every leaf that is
+    the `by:` of an entry goes to `skipped`: the gate regenerates and compares, so the producer run before it
+    would leave it comparing the regenerated tree with itself, and the leaves after it running on that tree.
     """
     runs = gates(manifest)
     gated = _gated(runs)
@@ -100,6 +124,7 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
         _refuse_members_consuming_from_outside(manifest, run, gated, artifacts)
     chosen: list[Leaf] = []
     skipped: list[Skipped] = []
+    walked: list[str] = []
     for group, members in manifest.commands.items():
         if group.split(".", 1)[0] not in CI_PHASES or manifest.area_of(group) != "ci":
             continue
@@ -107,6 +132,7 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
             if not isinstance(spec, TaskCommand):
                 continue
             words = _words(group, name)
+            walked.append(words)
             if words in gated:
                 # si#861: a gate member runs in its gate's file, and `gates` has ruled on its keys.
                 skipped.append(Skipped(words, _behind(gated[words])))
@@ -123,8 +149,31 @@ def select(manifest: Manifest, *, artifacts: "Mapping[str, Declared]", cadence: 
                 chosen.append(Leaf(words, spec))
             else:
                 skipped.append(Skipped(words, _elsewhere(spec.ci.cadence)))
+    chosen, regenerated = _without_producers_of_compared(chosen, generated)
+    # "Left out" reads in manifest order whichever rule left a leaf out.
+    skipped = sorted(skipped + regenerated, key=lambda s: walked.index(s.words))
     _refuse_consumers_of_absent_producers(manifest, chosen, dict(skipped), artifacts, gated, _path_of(cadence))
     return Selection(order(chosen), tuple(skipped))
+
+
+def _without_producers_of_compared(chosen: list[Leaf], generated: "Sequence[generated_section.Entry]"
+                                   ) -> tuple[list[Leaf], list[Skipped]]:
+    """`chosen` less every `generated:` producer, and those producers as skipped, where a chosen leaf instantiates
+    `test:generated` (si#886). The leaf is matched by its task, not its word (biz-cockpit names it
+    `check-contract`); a `by:` is matched on its leading words, so arguments after the command still name it."""
+    gate = next((leaf.words for leaf in chosen if leaf.spec.task == STALENESS_TASK), None)
+    if gate is None:
+        return chosen, []
+    producers = [shlex.split(entry.by) for entry in generated]
+    kept: list[Leaf] = []
+    left: list[Skipped] = []
+    for leaf in chosen:
+        words = leaf.words.split()
+        if leaf.words != gate and any(by[:len(words)] == words for by in producers):
+            left.append(Skipped(leaf.words, REGENERATED.format(gate=gate)))
+        else:
+            kept.append(leaf)
+    return kept, left
 
 
 def _refuse_consumers_of_absent_producers(manifest: Manifest, chosen: Sequence[Leaf],
@@ -892,7 +941,8 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
     from the other's run as a nightly producer is from the push run (Review Focus 4)."""
     path = _path_of(cadences[0])
     artifacts = artifactsection.declared(data)
-    selections = [select(manifest, artifacts=artifacts, cadence=cadence) for cadence in cadences]
+    generated = generated_of(data)
+    selections = [select(manifest, artifacts=artifacts, generated=generated, cadence=cadence) for cadence in cadences]
     runner, labels = runner_of(data)
     kernel, _ = _kernel_steps(manifest, data, runner)
     scheduled = path == SCHEDULED_PATH
@@ -1392,7 +1442,7 @@ def workflows(manifest: Manifest, data: Mapping[str, object], *, product: str,
         _refuse_variants_nobody_derives(manifest, bool(_cadence_groups(manifest, own)),
                                         {member.words for run in runs for member in run.members})
     else:
-        push = select(manifest, artifacts=artifactsection.declared(data))
+        push = select(manifest, artifacts=artifactsection.declared(data), generated=generated_of(data))
         if declared and not _runs(push) and not _cells(push):
             gone = {s.words for s in push.skipped}
             behind = [_key_of(run.path) + ".yml" for run in runs if any(m.words in gone for m in run.members)]

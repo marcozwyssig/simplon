@@ -38,8 +38,9 @@ jobs:
   #   one job would prove nothing
   # `build homebrew-formula` - needs a tagged commit: the formula refuses a wheel with a local
   #   version (si#543), measured on ghr-8 in PR #890; the release checks the formula
-  # `build model` - test generated regenerates and compares itself; run before it in the same
-  #   checkout it would make that gate compare the regenerated tree with itself (si#746, si#863)
+  # `build model` - it is the `by:` of a `generated:` entry, which `test generated`
+  #   (`test:generated`) regenerates and compares with the committed tree itself; run before it in
+  #   the same job, it would leave that gate comparing the regenerated tree with itself (si#886)
   # `test walk` - it needs a person at the terminal (`unattended: false`)
   # `test homebrew-formula` - needs a tagged commit: the formula refuses a wheel with a local
   #   version (si#543), measured on ghr-8 in PR #890; the release checks the formula

@@ -46,11 +46,12 @@ WORKFLOW_PATHS = (".github/workflows/ci.yml", ".github/workflows/handoff-canary.
 #: The reason both halves of the hand-off canary give for staying out of ci.yml (si#863), as simplon.yaml states it.
 CANARY_SKIP = "runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a); one job would prove nothing"
 
-#: Why `build model` stays out of ci.yml (si#863 final review), as simplon.yaml states it: `test generated`
-#: (si#746) regenerates every `generated:` entry and diffs it, so a `generated:` producer run before it in the
-#: same checkout leaves that gate nothing to find.
-MODEL_SKIP = ("test generated regenerates and compares itself; run before it in the same checkout it would make "
-              "that gate compare the regenerated tree with itself (si#746, si#863)")
+#: Why `build model` stays out of ci.yml (si#863 final review), as the derivation states it since si#886: `test
+#: generated` (si#746) regenerates every `generated:` entry and diffs it, so a `generated:` producer run before it
+#: in the same checkout leaves that gate nothing to find.
+MODEL_LEFT_OUT = ("it is the `by:` of a `generated:` entry, which `test generated` (`test:generated`) regenerates "
+                  "and compares with the committed tree itself; run before it in the same job, it would leave that "
+                  "gate comparing the regenerated tree with itself (si#886)")
 
 #: Why both homebrew leaves stay out of ci.yml, as simplon.yaml states it: the formula refuses a local-version wheel.
 HOMEBREW_SKIP = ("needs a tagged commit: the formula refuses a wheel with a local version (si#543), measured on "
@@ -288,8 +289,8 @@ def test_ci_runs_every_unattended_leaf_but_the_canary():
     The differences left are choices, and each is stated where it is made: the hand-off canary's two halves
     say `ci: { skip: }`, because in one job they would hand nothing over (si#639, spec 5.3a), and ci.yml
     names both under "Left out" with that reason. Their run is handoff-canary.yml's (the test below).
-    `build model` says `ci: { skip: }` too, for the next test's reason, and so do both homebrew leaves, for the
-    reason of test_ci_leaves_the_homebrew_leaves_out.
+    `build model` stays out for the next test's reason, which the derivation decides (si#886), and both homebrew
+    leaves say `ci: { skip: }`, for the reason of test_ci_leaves_the_homebrew_leaves_out.
     """
     derived = [step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
                                                            where="measurement").steps]
@@ -307,15 +308,16 @@ def test_ci_does_not_regenerate_before_the_staleness_gate():
     """si#863 final review: `test generated` (si#746) regenerates every `generated:` entry and diffs the tree.
     ci.yml derived `build model`, a `generated:` producer, BEFORE it in the same job, so the gate compared the
     regenerated tree with itself and could never go red, and the suite and the type gate ran on the
-    regenerated tree rather than the committed one. `build model` says `ci: { skip: }`, and ci.yml names it
-    under "Left out" with the reason. Every product with a `generated:` producer has the same order; the
-    kernel-side repair is a ticket of its own.
+    regenerated tree rather than the committed one. si#863 opted `build model` out with `ci: { skip: }`; since
+    si#886 the derivation leaves every `generated:` producer out when a `test:generated` leaf runs, so the
+    manifest carries no skip for it and ci.yml names it under "Left out" with the derivation's reason.
     """
     ran = [line.strip() for line in _committed_text("ci.yml").splitlines() if "./simplon.sh build model" in line]
 
     assert ran == []
     assert "build model" not in _ci_steps()
-    assert _flat(f"`build model` - {MODEL_SKIP}") in _flat(_committed_text("ci.yml"))
+    assert not _loaded().commands["build"]["model"].ci_skip
+    assert _flat(f"`build model` - {MODEL_LEFT_OUT}") in _flat(_committed_text("ci.yml"))
 
 
 def test_ci_leaves_the_homebrew_leaves_out():
@@ -481,7 +483,7 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
 
     ran = [words_of(step["run"]) for step in job["steps"] if step.get("run", "").startswith(launcher)]
     leaves = [words for words in ran if words.split(" ", 1)[0] in cipipeline.CI_PHASES]
-    selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data))
+    selection = cipipeline.select(manifest, artifacts=artifactsection.declared(data), generated=cipipeline.generated_of(data))
     expected = [leaf.words for leaf in selection.leaves if not leaf.spec.after_all] + ["test report"]
     # The manifest's own order, walked here rather than read off `select`, so a sort that reshuffles what no
     # port forces turns this red too: no leaf of this manifest consumes from a later one, so the two agree.

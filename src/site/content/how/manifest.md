@@ -1458,6 +1458,16 @@ ci:
       lab: { task: "test:gate", ci: { skip: "needs a running lab; run by hand before a release" } }
 ```
 
+**A `generated:` producer is left out where `test:generated` runs** (si#886). The staleness gate
+regenerates every [`generated:`](#generated---the-files-that-must-be-what-their-command-produces) entry
+and compares it with the committed tree, so the entry's `by:` command run before it in the same job
+would leave it comparing the regenerated tree with itself, and every leaf after the producer would run
+on that tree instead of the committed one. So when a leaf of the run instantiates `test:generated`
+(whatever your command calls it), every leaf that is the `by:` of a `generated:` entry is left out and
+named in the file with that reason. You write no `ci: { skip: }` for it. Without a `test:generated` leaf
+in the run nothing compares the tree, and the producer runs like any other leaf; a `by:` that names no
+leaf of `ci build` or `ci test` (a `support` command) changes nothing.
+
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
 catalogue order) and, inside a group, the order your YAML writes. The one extra precedence is a port: a
