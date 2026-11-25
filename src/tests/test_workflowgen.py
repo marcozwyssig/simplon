@@ -3013,7 +3013,8 @@ def test_emulates_on_a_kind_that_cannot_register_is_refused_naming_the_way_out()
 
     said = str(refused.value)
     assert "workflow 'rel'" in said and "self-hosted-container" in said and "#722" in said, said
-    assert "register it once on the LXC runner itself" in said and "si#358" in said, said
+    assert "runner kind `self-hosted-container` cannot register emulation" in said, said
+    assert "register it once on the machine itself" in said and "si#358" in said, said
     assert "`support:ci-arm64`" in said and "drop `emulates:`" in said, said
     assert "a runner kind that can" in said, said
 

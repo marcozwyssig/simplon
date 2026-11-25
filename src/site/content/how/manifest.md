@@ -1180,7 +1180,8 @@ What the kernel writes:
   (`runner: { kind: self-hosted-container }`) it is refused too (#722): the registration is refused there
   with `permission denied`, so the job would fail in its first step. Register the emulator once on the LXC
   runner itself with the `support:ci-arm64` task, as si#358 describes, and drop `emulates:`, or run the
-  release on a kind that can.
+  release on a kind that can. A release job named by `runs-on:` alone, with no `runner:`, carries no kind
+  and is not checked.
 - **A time limit** (si#720). The job carries `timeout-minutes`, by default the kernel's
   `RELEASE_TIMEOUT_MINUTES` (the source of its value is named where it is set, in `workflowgen.py`), so a
   hung release does not hold its runner for GitHub's default of 360 minutes. `timeout_minutes: <n>` beside

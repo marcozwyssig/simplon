@@ -528,7 +528,7 @@ def _workflow(key: str, body: object) -> Workflow:
     runner, rollout_runs_on = ((None, "") if not stages and not release
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
     _refuse_emulates_where_it_cannot_register(runner, emulates, where)
-    rollout_env =_with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
+    rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
     if not stages and not release and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
@@ -660,12 +660,14 @@ def _refuse_emulates_where_it_cannot_register(runner: "runners.Runner | None", e
     binaries. A machine named by `runs-on:` alone carries no kind, so nothing is known to refuse."""
     if not emulates or runner is None or workflowschema.RUNNER_KINDS[runner.kind].can_emulate:
         return
+    able = ", ".join(kind for kind, data in workflowschema.RUNNER_KINDS.items() if data.can_emulate)
     raise ValueError(
         f"{where}: `{EMULATES_KEY}:` ({', '.join(emulates)}) asks the release job to register emulation, and its "
-        f"runner kind `{runner.kind}` cannot: on an LXC runner the registration is refused with `permission "
-        f"denied` on `/proc/sys/fs/binfmt_misc/register` (#722). Either register it once on the LXC runner itself, "
-        f"by hand and as root, as si#358 describes (`support:ci-arm64`, a boot-time registration in the "
-        f"container's own binfmt_misc), and drop `{EMULATES_KEY}:`, or run the release on a runner kind that can ({', '.join(k for k, v in workflowschema.RUNNER_KINDS.items() if v.can_emulate)})")
+        f"runner kind `{runner.kind}` cannot register emulation (#722). On an LXC runner, for example, the "
+        f"registration is refused with `permission denied` on `/proc/sys/fs/binfmt_misc/register`. Either "
+        f"register it once on the machine itself, by hand and as root, as si#358 describes (`support:ci-arm64`; "
+        f"on an LXC runner a boot-time registration in the container's own binfmt_misc), and drop "
+        f"`{EMULATES_KEY}:`, or run the release on a runner kind that can ({able})")
 
 
 def _release_timeout(body: Mapping[object, object], where: str, release: str) -> int:
