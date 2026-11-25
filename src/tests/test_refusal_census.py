@@ -43,7 +43,11 @@ funnel, and `test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model
 NOT COUNTED BY RULING, and named so nobody adds it back: `workflowgen._refuse_foreign_files` (si#858), the
 refusal to overwrite a file at the derived ci.yml's path that this kernel did not generate. It is decided by
 a file on disk, not by the manifest, so it is not a manifest decision with no tool consulted; the walk does
-not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing.
+not reach `workflowgen.write` or `check` from either seam, and a key for it would match nothing. Beside it, for
+the same reason, `automerge.read_handwritten` (si#874): a hand-written trigger workflow's `name:` and `on:`, read
+from its file under the product root (no file, a file outside the root, no workflow, no `name:`). The task body
+hands it in as a reader, so the walk from `cipipeline.workflows` does not reach it;
+`test_refusals_decided_on_disk_are_outside_the_population` holds that.
 
 WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest
 document INLINE, in the middle of a task body, so the reading and the tool-running are one function and no
@@ -1221,6 +1225,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("sources", "declared", "`secret:` must be a variable name"): DIAGNOSIS,
     ("sources", "declared", "names the submodule"): DIAGNOSIS,
 
+    # --- manifest/merge.py: the `merge:` section, the switch for the derived auto-merge workflow (si#874) -----
+    # A diagnosis: the section has one value, and the message names it. Nothing was said that could have worked.
+    ("merge", "declared", "`merge:` must be"): DIAGNOSIS,
+
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):
         DIAGNOSIS,
@@ -1352,6 +1360,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("cipipeline", "_refuse_members_consuming_from_outside", "so the gated run would fail on a missing file"):
         DIAGNOSIS,
     ("cipipeline", "_refuse_consumers_of_absent_producers", "so the run would fail on a missing file"): DIAGNOSIS,
+    # si#874: `merge: auto` derives auto-merge.yml from the CI workflow and each gate's. With no CI workflow nothing
+    # gates the merge; one without `workflow_dispatch` cannot be dispatched on the base after it (the policy's last
+    # rule). A hand-written one is read from its file, and those refusals are NOT COUNTED BY RULING (module
+    # docstring, beside `_refuse_foreign_files`).
+    ("automerge", "derive", "so nothing gates the merge"): DIAGNOSIS,
+    ("automerge", "derive", "has no `workflow_dispatch` trigger"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
@@ -2905,3 +2919,19 @@ def test_the_chapters_existing_anchors_still_resolve():
     # assert
     assert linked, "no page links into this chapter any more - the assertion below would hold vacuously"
     assert linked <= available, f"a link into this chapter no longer resolves: {sorted(linked - available)}"
+
+
+def test_refusals_decided_on_disk_are_outside_the_population():
+    """NOT COUNTED BY RULING (module docstring): a refusal decided by a file on disk rather than by the manifest
+    is no load-time refusal. `automerge.read_handwritten` refuses on a hand-written workflow's file; the walk
+    must not reach it, and it must still refuse (else this would hold over nothing)."""
+    # arrange
+    import inspect
+    from simplon.tasks import automerge
+
+    # act
+    reached = [site for site in _all_refusals() if site[0] == "automerge" and site[1] == "read_handwritten"]
+
+    # assert
+    assert reached == []
+    assert inspect.getsource(automerge.read_handwritten).count("raise ValueError(") >= 4

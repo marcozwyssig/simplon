@@ -510,6 +510,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
+| `merge:` | the derived auto-merge workflow (si#874) | `auto`, the only value: the kernel derives `auto-merge.yml`, which merges a labelled pull request once every run for its commit is green |
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
@@ -1680,6 +1681,85 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `cd: environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `merge:` - the workflow that merges a green pull request
+
+```yaml
+merge: auto
+```
+
+One value and no parameters: a fixed policy. `support github workflows` then derives
+`.github/workflows/auto-merge.yml`, which squash-merges an open pull request carrying the label `auto-merge`
+once every run for its head commit is green. The label and the method become parameters when a second product
+needs another one. Absent, the section derives nothing. Any other value, or a bare `merge:`, is refused at
+load time, naming `auto`.
+
+**What it listens to.** `workflow_run` of the product's CI workflow and of every gate's workflow (derived
+`ci-<words>.yml`, or declared), by their `name:`; the job runs for a completed run that succeeded and that no
+schedule started. Cadence workflows (nightly, manual, scheduled) are no triggers: their
+run says nothing about a pull request's commit. A hand-written CI or gate workflow, one declared under
+`workflows:` with `handwritten:`, is read from its file for its `name:` and `on:`, so a rename shows as drift
+under `--check`.
+
+**There is no label trigger.** GitHub blocks `pull_request_target` by default in public repositories from
+2026-12-02, so the label is read when a run completes, as netctl does: a pull request labelled after its runs
+are green merges once CI is re-run on it.
+
+**The job is one inline script, and no repository code runs in it.** It runs in the privileged `workflow_run`
+context with a write token, so it has no checkout and no launcher. Its concurrency group is the job's own, one
+per head branch and commit, with `cancel-in-progress: false`: only a run whose job passes its `if:` takes it,
+so a red completion never displaces a run that would merge. A CI run and a gate run completing together for one
+commit queue, and the second finds the pull request merged and does nothing. With more than two runs for one
+commit, GitHub keeps one pending run per group and cancels the pending one it replaces; harmless, because the
+run that survives reads every run for that commit again. Runs for different commits are kept apart by
+`--match-head-commit`.
+
+**The rules, the token and the script's inputs** are on [the auto-merge policy](../../with-what/auto-merge/),
+generated from the model (`src/firn/model/simplon/automerge/automerge.firn`) that the script and the workflow's
+comments are generated from too. A rule that holds the merge says why in the log: a run that is still running
+and a run that completed red are told apart, and the first is reconsidered when that run completes. A fork's
+pull request is never merged. The merge is bound to the verified commit with `--match-head-commit`.
+
+**A gate the kernel derives must have run for the commit; a hand-written one only when its label is on.** A
+derived gate's decide job runs on every pull request event, so a pull request always has a run of it. A stacked
+pull request is where that matters: when a child merges into its labelled parent, the merge dispatches CI on the
+parent's branch, and that head moved without a pull request event, so no gate ran on it. The parent then waits
+for a push to its branch or for the gate's workflow to be dispatched there (the log names the
+`gh workflow run` command). A hand-written gate, such as one that runs on its label or a schedule only, is not
+asked for a run unless the pull request carries its label.
+
+**Which file GitHub runs.** `workflow_run` fires only from the workflow file on the default branch, so the pull
+request that introduces `merge: auto` cannot merge itself.
+
+**Keeping your own file.** The derived file is switched off by declaring the key:
+
+```yaml
+workflows:
+  auto-merge:
+    handwritten: "<why>"
+```
+
+A hand-written `.github/workflows/auto-merge.yml` that is not declared is refused, since the kernel would derive
+over it: delete it, or declare it as above.
+A product that moves from its own file to `merge: auto` deletes the file and keeps its gate's `label:`, which
+stands in for what netctl's script called `needs-lab`.
+
+**What is refused.** At load time: a `merge:` value other than `auto`. At derive time, each a diagnosis naming
+the way out: no CI workflow at all (nothing would gate the merge), a CI workflow without `workflow_dispatch`
+(rule `dispatch-ci-on-base` could not dispatch it), and a hand-written trigger workflow with no file, a file
+outside the product root, a file that is not a workflow, or no `name:` (`workflow_run` filters by name, and
+GitHub's fallback to the path is not measured to match).
+
+**Unmeasured, so the next reader finds it here.**
+
+- Whether `GITHUB_TOKEN` may read `collaborators/<login>/permission`, which rule `labeller-can-merge` needs. If
+  it may not, every merge is red, not green: a failed read is no verdict. The first product to run it measures
+  this.
+- A label added by a GitHub App (`renovate[bot]`, say): its login is no collaborator, so the permission read is
+  expected to fail and the run to be red, not a green "may not merge" (read off the script, not run against
+  GitHub). Someone who may merge removes the label, adds it again and re-runs CI.
+- netctl's note that the repository's default workflow permissions must be set to write for the `permissions:`
+  block to take effect. It is netctl's prerequisite, recorded here as stated and not measured by this kernel.
 
 ### `output:` - the one directory a build writes into
 

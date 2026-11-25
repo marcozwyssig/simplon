@@ -367,6 +367,10 @@ class Job:
     #: `${{ matrix.entry }}`, because its Windows cell types `<product>.cmd` where every other cell types the
     #: shell launcher; "" is the launcher, as for every job before si#860.
     entry: str = ""
+    #: si#874 security review: False for a job that starts no container, which gets no si#756 reap step. That step
+    #: falls back to a docker binary in the job's workspace, a previous job's leftover on a shared self-hosted
+    #: machine, and the auto-merge job's token writes.
+    reap: bool = True
 
 
 @dataclass(frozen=True)
@@ -1988,10 +1992,12 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
     lines.append("    steps:")
 
     # si#756: FIRST, ahead of the checkout, and on every job - including one that declines the generated
-    # checkout, because its own steps start containers in the same workspace. See REAP_NOTE.
-    reap = _reap_step(product)
-    lines += _comment(reap.note, "      ")
-    lines += _dumped_step(reap.verbatim or {}, "      ")
+    # checkout, because its own steps start containers in the same workspace. See REAP_NOTE. Not on a job that
+    # starts no container (`Job.reap`, si#874).
+    if job.reap:
+        reap = _reap_step(product)
+        lines += _comment(reap.note, "      ")
+        lines += _dumped_step(reap.verbatim or {}, "      ")
     if job.checkout:
         # si#3's invariant, emitted rather than declared - see the module docstring. A job that wants a
         # different checkout says `checkout: false` and writes its own, which is visible in the manifest

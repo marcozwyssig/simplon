@@ -78,6 +78,7 @@ import pytest
 import yaml
 
 from simplon.manifest import sources as sourcesdecl
+from simplon.manifest import merge as mergedecl
 from simplon.model import carrierspec
 from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
 from simplon.adapters import gh, labegress, labinstance, nexusproxy, tracker
@@ -182,7 +183,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands
     # hands the document to `cipipeline.workflows`, which parses `workflows:` and, where no entry is keyed
     # `ci`, derives ci.yml on the machine `runner:` names (si#858); `runners.resolve` owns its validation
-    "tasks.workflows": ("workflows", "runner"),
+    # (si#874: and `merge:`, through `merge.declared`, which switches the derived auto-merge workflow on)
+    "tasks.workflows": ("workflows", "runner", "merge"),
     # A rollout workflow (`flow:`) is written from the ENVIRONMENT MATRIX: the flow says the order, the
     # matrix says what each environment receives. So the generator reads the two sections the matrix
     # lives in, and only when a workflow declares stages - a product with no `flow:` hands it nothing.
@@ -213,6 +215,10 @@ SILENT_ON_ABSENCE = {
                "out declares none, and `support sources` says so in one line and succeeds. WHAT THAT COSTS: "
                "`source:` is silent too, and the submodule is not checked out - which the first step that "
                "needs a file from it then says.",
+    "merge": "an absent `merge:` is the NORMAL case (si#874): a product that merges by hand writes nothing, and "
+             "no auto-merge workflow is derived. WHAT THAT COSTS: `merg:` is silent too, and a product that "
+             "meant `merge: auto` gets no auto-merge and nothing says so - the missing "
+             "`.github/workflows/auto-merge.yml` is the only sign. A value other than `auto` is refused at load.",
     "layout": "an absent `layout:` section is the NORMAL case and is what every product in this family "
               "has - the section arrived with si#250 and its defaults are exactly what the kernel "
               "assumed before it existed, so a manifest that says nothing runs the line it ran "
@@ -265,6 +271,7 @@ DRIVERS: dict[str, tuple[dict, object]] = {
            lambda: gh.declared_extensions(context.current().manifest_data(), ("gh",))),
     "sources": ({"sources": [{"submodule": "lib/platform"}]},
                 lambda: sourcesdecl.declared(context.current().manifest_data())),
+    "merge": ({"merge": "auto"}, lambda: mergedecl.declared(context.current().manifest_data())),
     "nexus": ({"nexus": {"proxy_repositories": []}},
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     # Driven the way `support github workflows` reads it (si#858). An absent section is no longer refused by

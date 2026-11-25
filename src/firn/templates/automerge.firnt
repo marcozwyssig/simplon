@@ -1,0 +1,260 @@
+template AutoMerge {
+
+  // src/simplon/model/automerge.py (si#874): the merge policy of simplon.automerge as data, and the bash script the
+  // auto-merge job runs, generated from its one instance. A WHOLE module with no protected region. The script's
+  // label and method are the instance's, never typed here, and each rule's comment is its reason and source.
+  //
+  // THE SCRIPT IS WRITTEN IN THE MODEL'S RULE ORDER: one block per rule, chosen by its key. A rule whose key has no
+  // block here renders a script that stops red at that rule, so a rule added to the model without its code cannot
+  // pass src/tests/test_automerge_script.py.
+  //
+  // An output line has no escape: `${` and `<<` open something, so the script spells its variables `$NAME` and
+  // never uses a here-string.
+  file "model/automerge.py" language python {
+    for p : `simplon.automerge.MergePolicy` {
+      |# GENERATED from src/firn/model/simplon/automerge/automerge.firn by `./simplon.sh build model`. Do not edit:
+      |# firn rewrites the whole file on every run, and this file has no protected region.
+      |"""The merge policy `merge: auto` switches on (si#874): its label, its method, its rules, and its script."""
+      |
+      |#: The label that opts a pull request in.
+      |LABEL = "${p.label}"
+      |
+      |#: The `gh pr merge` method.
+      |METHOD = "${p.method}"
+      |
+      |#: (key, reason, source) per rule, in the order the script applies them.
+      |RULES: tuple[tuple[str, str, str], ...] = (
+      for r : p.rules {
+        |    ("${r.key}", "${r.reason}", "${r.source}"),
+      }
+      |)
+      |
+      |#: The auto-merge job's `if:`.
+      |CONDITION = "${p.condition.replace("@LABEL@", p.label)}"
+      |
+      |#: (scope, access, reason) per scope of the auto-merge workflow's token.
+      |PERMISSIONS: tuple[tuple[str, str, str], ...] = (
+      for q : p.permissions {
+        |    ("${q.scope}", "${q.access}", "${q.reason}"),
+      }
+      |)
+      |
+      |#: (variable, GitHub expression, derivation source, meaning, required) per variable of the merge step's `env:`,
+      |#: in the order the step writes them. An input has an expression or a source, never both: the source is the
+      |#: field of the workflow model's `Merge` that `cipipeline._merge_job` reads its value from.
+      |INPUTS: tuple[tuple[str, str, str, str, bool], ...] = (
+      for i : p.inputs {
+        if i.expression {
+          if i.required {
+            |    ("${i.variable}", "${i.expression}", "", "${i.meaning}", True),
+          }
+          if not i.required {
+            |    ("${i.variable}", "${i.expression}", "", "${i.meaning}", False),
+          }
+        }
+        if not i.expression {
+          if i.required {
+            |    ("${i.variable}", "", "${i.source}", "${i.meaning}", True),
+          }
+          if not i.required {
+            |    ("${i.variable}", "", "${i.source}", "${i.meaning}", False),
+          }
+        }
+      }
+      |)
+      |
+      |#: The merge step's `name:`.
+      |STEP_NAME = "${p.step_name}"
+      |
+      |#: The rendered job's note, before the rules and after them.
+      |NOTE = ("${p.note_head.replace("@LABEL@", p.label)}",
+      |        "${p.note_tail.replace("@LABEL@", p.label)}")
+      |
+      |#: The auto-merge step's `run:`. Its environment is its interface, `INPUTS` above, as the script's header says.
+      |MERGE_SCRIPT = r"""set -euo pipefail
+      |# GENERATED from src/firn/model/simplon/automerge/automerge.firn (si#874). Merges the open pull request
+      |# labelled ${p.label} whose head is $SHA once every trigger workflow's run for that commit is green: netctl's
+      |# rules, and the ones si#874 decided on top. Each rule's comment is its reason and the ticket behind it.
+      |#
+      |# Set by the step's env:, each with what it carries; a required one that is empty is red before any call.
+      for i : p.inputs {
+        if i.required {
+          |#   ${i.variable} (required): ${i.meaning}
+        }
+        if not i.required {
+          |#   ${i.variable}: ${i.meaning}
+        }
+      }
+      |required=""
+      for i : p.inputs {
+        if i.required {
+          |required="$required ${i.variable}"
+        }
+      }
+      |for name in $required; do
+      |  if [ -z "$(printenv "$name" || true)" ]; then
+      |    echo "::error::$name is empty: the auto-merge step sets it, and without it there is no verdict." >&2
+      |    exit 1
+      |  fi
+      |done
+      |gates=$(printenv GATES || true)
+      |derived_gates=$(printenv DERIVED_GATES || true)
+      |# The CI workflow and every gate are read as triggers below; one that is not among TRIGGERS would never be read.
+      |for wf in "$CI_WORKFLOW" $(printf '%s\n' "$gates" | awk 'NF { print $1 }') $derived_gates; do
+      |  case " $TRIGGERS " in
+      |    *" $wf "*) ;;
+      |    *)
+      |      echo "::error::$wf is not among TRIGGERS ($TRIGGERS): its runs would never be read, so there is no verdict." >&2
+      |      exit 1
+      |      ;;
+      |  esac
+      |done
+      |runs_dir=$(mktemp -d)
+      |trap 'rm -rf "$runs_dir"' EXIT
+      for r : p.rules {
+        |
+        |# ${r.key} (${r.source}): ${r.reason}
+        if r.key == "token-scope" {
+          |if ! gh api "repos/$GH_REPO/pulls?state=open&per_page=1" >/dev/null; then
+          |  echo "::error::the merge token cannot read the pull requests of $GH_REPO: auto-merge is not functional." >&2
+          |  echo "::error::this is a token scope problem, NOT 'nothing to merge'." >&2
+          |  exit 1
+          |fi
+        }
+        if r.key == "labelled-pr" {
+          |listed=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid,baseRefName,isCrossRepository,labels \
+          |  --jq '.[] | select(any(.labels[]; .name == "${p.label}")) | "\(.number) \(.headRefOid) \(.baseRefName) \(.isCrossRepository)"')
+          |if [ -z "$listed" ]; then
+          |  echo "No open PR labelled ${p.label} for branch '$BRANCH'; nothing to do."
+          |  exit 0
+          |fi
+        }
+        if r.key == "head-is-sha" {
+          |pr=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $1; exit }')
+          |if [ -z "$pr" ]; then
+          |  echo "The labelled PR for '$BRANCH' has moved on: this run verified $SHA, and no open labelled PR has it as its head."
+          |  printf '%s\n' "$listed" | awk '{ print "  PR #" $1 " is at " $2 }'
+          |  echo "Not merging: the newer commit merges on its own run."
+          |  exit 0
+          |fi
+          |base=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $3; exit }')
+        }
+        if r.key == "cross-repository" {
+          |cross=$(printf '%s\n' "$listed" | awk -v sha="$SHA" '$2 == sha { print $4; exit }')
+          |case "$cross" in
+          |  false) ;;
+          |  true)
+          |    echo "PR #$pr comes from a fork: a fork's runs use the fork's own workflow files; merge it by hand."
+          |    exit 0
+          |    ;;
+          |  *)
+          |    echo "::error::could not tell whether PR #$pr comes from a fork (isCrossRepository is '$cross'): no verdict." >&2
+          |    exit 1
+          |    ;;
+          |esac
+        }
+        if r.key == "labeller-can-merge" {
+          |last=$(gh api --paginate "repos/$GH_REPO/issues/$pr/events" \
+          |  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "${p.label}") | "\(.event) \(.actor.login // "")"') || {
+          |  echo "::error::could not read who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |  exit 1
+          |}
+          |last=$(printf '%s\n' "$last" | awk 'NF { line = $0 } END { print line }')
+          |case "$last" in
+          |  "")
+          |    echo "::error::PR #$pr carries ${p.label} and no labeled event names who added it: no verdict, so no merge." >&2
+          |    exit 1
+          |    ;;
+          |  unlabeled*)
+          |    echo "::error::PR #$pr is listed with ${p.label}, and its last event for that label is unlabeled: an inconsistent timeline, no verdict, so no merge." >&2
+          |    exit 1
+          |    ;;
+          |esac
+          |labeller=$(printf '%s' "$last" | awk '{ print $2 }')
+          |if [ -z "$labeller" ]; then
+          |  echo "::error::whoever added ${p.label} to PR #$pr has no login (a bot or a deleted account): no verdict, so no merge." >&2
+          |  exit 1
+          |fi
+          |if ! access=$(gh api "repos/$GH_REPO/collaborators/$labeller/permission" --jq .permission); then
+          |  echo "::error::could not read the permission of $labeller, who labelled PR #$pr ${p.label}: no verdict, so no merge." >&2
+          |  exit 1
+          |fi
+          |case "$access" in
+          |  admin | maintain | write) ;;
+          |  *)
+          |    echo "$labeller added the label ${p.label} to PR #$pr last, and has '$access' permission, not write, maintain or admin."
+          |    echo "Not merging: the label opts in only from someone who may merge. Someone who may can remove it, add it again, and re-run CI."
+          |    exit 0
+          |    ;;
+          |esac
+        }
+        if r.key == "trigger-runs-green" {
+          |for wf in $TRIGGERS; do
+          |  if ! gh api "repos/$GH_REPO/actions/workflows/$wf/runs?head_sha=$SHA&per_page=100" \
+          |    --jq '.workflow_runs[] | select(.event != "schedule") | "\(.status) \(.conclusion)"' >"$runs_dir/$wf"; then
+          |    echo "::error::could not read the runs of $wf for $SHA: no verdict, so no merge." >&2
+          |    exit 1
+          |  fi
+          |  if grep '^completed ' "$runs_dir/$wf" | grep -qvx 'completed success'; then
+          |    echo "A run of $wf for $SHA completed without success; not merging PR #$pr."
+          |    echo "Re-run that run (a re-run replaces its conclusion) or push a new commit."
+          |    exit 0
+          |  fi
+          |  if grep -qv '^completed ' "$runs_dir/$wf"; then
+          |    echo "A run of $wf for $SHA is still running; not merging PR #$pr."
+          |    echo "This is reconsidered when it completes: $wf is a trigger of this workflow."
+          |    exit 0
+          |  fi
+          |done
+        }
+        if r.key == "ci-run-exists" {
+          |if [ ! -s "$runs_dir/$CI_WORKFLOW" ]; then
+          |  echo "No run of $CI_WORKFLOW for $SHA (schedule runs aside); not merging PR #$pr."
+          |  echo "It merges when that run completes green: $CI_WORKFLOW is a trigger of this workflow."
+          |  exit 0
+          |fi
+        }
+        if r.key == "derived-gate-ran" {
+          |for wf in $derived_gates; do
+          |  if [ ! -s "$runs_dir/$wf" ]; then
+          |    echo "No run of the gate workflow $wf for $SHA (schedule runs aside); not merging PR #$pr."
+          |    echo "No gate looked at this commit; a stacked parent's head moves that way when its child merges into it."
+          |    echo "Push to '$BRANCH', or run the gate: gh workflow run $wf --ref $BRANCH"
+          |    exit 0
+          |  fi
+          |done
+        }
+        if r.key == "gate-label-needs-run" {
+          |if [ -n "$gates" ]; then
+          |  labels=$(gh pr view "$pr" --json labels --jq '.labels[].name')
+          |  while read -r file label; do
+          |    [ -n "$file" ] || continue
+          |    if printf '%s\n' "$labels" | grep -qxF -- "$label" && [ ! -s "$runs_dir/$file" ]; then
+          |      echo "PR #$pr carries $label and no run of $file exists for $SHA; not merging."
+          |      echo "Run it: gh workflow run $file --ref $BRANCH"
+          |      exit 0
+          |    fi
+          |  done < <(printf '%s\n' "$gates")
+          |fi
+        }
+        if r.key == "squash-merge" {
+          |echo "Every run for $SHA is green: merging PR #$pr into '$base' (${p.method}) and deleting '$BRANCH'."
+          |gh pr merge "$pr" --${p.method} --delete-branch --match-head-commit "$SHA"
+        }
+        if r.key == "dispatch-ci-on-base" {
+          |echo "Dispatching $CI_WORKFLOW on '$base' so the merged tree gets a verdict."
+          |if ! gh workflow run "$CI_WORKFLOW" --ref "$base"; then
+          |  echo "::error::PR #$pr MERGED into '$base', but dispatching $CI_WORKFLOW on it failed." >&2
+          |  echo "::error::'$base' now carries an UNVERIFIED commit. Run: gh workflow run $CI_WORKFLOW --ref $base" >&2
+          |  exit 1
+          |fi
+        }
+        if r.key != "token-scope" and r.key != "labelled-pr" and r.key != "head-is-sha" and r.key != "cross-repository" and r.key != "labeller-can-merge" and r.key != "trigger-runs-green" and r.key != "ci-run-exists" and r.key != "derived-gate-ran" and r.key != "gate-label-needs-run" and r.key != "squash-merge" and r.key != "dispatch-ci-on-base" {
+          |echo "::error::the rule ${r.key} has no block in automerge.firnt: the policy cannot be applied." >&2
+          |exit 1
+        }
+      }
+      |"""
+    }
+  }
+}

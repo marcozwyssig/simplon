@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 337 | nothing - the declaration had no working meaning |
+| diagnosis | 340 | nothing - the declaration had no working meaning |
 | expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **390** | |
+| **all load-time refusals** | **393** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -108,6 +108,14 @@ neither `paths:` nor `label:`, which no event could start, and on an aggregate a
 gated job of one member; the way out is `depends_on: [<leaf>]`. It binds the kernel's catalogue too. What it
 costs: zero: #860's 2026-11-23 measurement found no `ci:` on any command in the reachable manifests, and `gate:`
 is new in #861. It reopens when a product asks to gate a single leaf without wrapping it.
+
+si#874 added the top-level `merge: auto`. **Diagnoses:** a value other than `auto` (a bare `merge:` too), and,
+once derived, a product with no CI workflow (nothing would gate the merge) or whose CI workflow has no
+`workflow_dispatch` (the merge could not dispatch it on the base). Each names the way out; nothing it refuses
+could have worked. **Not counted, by ruling:** the refusals of a hand-written trigger workflow read from its
+file (no file, a file outside the root, not a workflow, no `name:`) are decided by a file on disk, like
+`--check`'s foreign-file refusal. **Expression rule:** none; the policy is fixed, so there is no parameter to
+refuse.
 
 Since `support github workflows` derives ci.yml for a product with no `workflows: ci:`, the derivation's own
 refusals are reached from the manifest and counted, all of them diagnoses: a consumer whose producer the CI

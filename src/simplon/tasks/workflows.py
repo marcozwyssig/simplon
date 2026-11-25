@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from simplon.manifest import artifactsection, context
 from simplon.kernel import log
-from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import automerge, cipipeline, workflowgen
 
 
 def generate(check: bool = False) -> int:
@@ -60,7 +60,10 @@ def generate(check: bool = False) -> int:
     source = ctx.manifest_path.name
     manifest = ctx.manifest()
     # si#858: the declared workflows, and ci.yml derived from the CI leaves where no entry declares it.
-    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name)
+    # si#874: a hand-written trigger workflow of the auto-merge workflow is read from its file under the root.
+    workflows = cipipeline.workflows(manifest, ctx.manifest_data(), product=ctx.name,
+                                     read=lambda workflow, role: automerge.read_handwritten(workflow, role,
+                                                                                             root=ctx.root))
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,
