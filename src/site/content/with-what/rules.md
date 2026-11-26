@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 360 | nothing - the declaration had no working meaning |
+| diagnosis | 361 | nothing - the declaration had no working meaning |
 | expression rule | 54 | something it could otherwise have said |
-| **all load-time refusals** | **414** | |
+| **all load-time refusals** | **415** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -242,6 +242,10 @@ without `by:` or `by:` without `pages:`, a `by:` that is not `<group> <name>`, t
 derived, a `by:` command with a leaf that may not run with nobody watching or with no `docs:site` leaf in its
 plan, a declared release job named `docs` or `pages`, an `after:` that is no list of job keys or names a job
 not declared beside the release, and a `website:` that is no mapping.
+The derived ci.yml keeping each `path:` artifact release.yml consumes for #789 added one diagnosis: such an
+artifact that ci.yml also hands from its main job to a cell job, because the hand-off already holds that name in
+the run and the upload that keeps it would be red. One produced only in a cell, a gate file or a cadence file is
+not refused: ci.yml's note names it as not kept.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an

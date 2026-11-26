@@ -494,7 +494,9 @@ def test_simplon_without_its_ci_entry_derives_every_leaf_report_last():
     by_leaf = {words_of(step["run"]): step for step in job["steps"] if step.get("run", "").startswith(launcher)}
     prepared = [step["id"] for step in job["steps"] if step.get("id", "").startswith("prepare_")]
     gate = "${{ " + " && ".join(["!cancelled()", *(f"steps.{i}.outcome == 'success'" for i in prepared)]) + " }}"
-    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
+    # The report's upload; the others keep what release.yml consumes (si#862, #789, test_cipipeline holds them).
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")
+                 and step["with"]["name"] == workflowgen.RELEASE_ARCHIVE]
 
     assert expected != ["test report"]
     assert leaves == expected

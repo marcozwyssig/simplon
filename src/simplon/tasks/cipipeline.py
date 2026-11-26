@@ -476,6 +476,8 @@ DOCKER_PREFLIGHT = "docker-preflight"
 DISK_PREFLIGHT = "disk-preflight"
 INSTALL = "install"
 REPORT_UPLOAD = "report-upload"
+#: si#862, #789: the upload of a `path:` artifact release.yml consumes, kept for the release to promote.
+PROMOTE_UPLOAD = "promote-upload"
 DISK_CLEANUP = "disk-cleanup"
 #: si#860: the registration of every platform the job's leaves name in `ci: emulates:`, the last preparation step.
 EMULATION = "emulation"
@@ -646,6 +648,88 @@ def _refuse_cell_producers(cells: Sequence[Leaf], selection: Selection, artifact
                         f"produces nothing another consumes, or give '{artifact}' a `registry:` it is fetched from")
 
 
+#: si#862, #789 (Marco, 2026-11-25): how long a promoted artifact is kept, the report upload's precedent; the
+#: hand-off's one day would leave nothing for a release cut days after the merge.
+PROMOTE_RETENTION_DAYS = 90
+#: Only a run on the repository's own history is one a release may promote: a pull request's run is not.
+_NOT_A_PULL_REQUEST = "github.event_name != 'pull_request'"
+
+PROMOTE_NOTE = """si#862, #789: what release.yml consumes, kept from push and dispatch runs (never a pull
+request's) for {days} days under the manifest's artifact names, so a release can promote what this run
+built for its commit. Each upload waits for its producer's success."""
+
+PROMOTE_UNKEPT = "si#862, #789: release.yml consumes these, and this run keeps none of them for it to promote:"
+
+
+class Promotion(NamedTuple):
+    """si#862, #789: the `path:` artifacts release.yml consumes (`releasepipeline.consumed`), seen from ci.yml's
+    push run. `kept` maps each one a leaf of the main job produces to those leaves' words; `unkept` maps each other
+    one to every `(producer words, why it is not in the main job)`, `()` where no command produces it."""
+
+    kept: Mapping[str, tuple[str, ...]]
+    unkept: Mapping[str, tuple[tuple[str, str], ...]]
+
+
+def _promotion(manifest: Manifest, data: Mapping[str, object], selection: Selection) -> Promotion:
+    """What ci.yml uploads for #789, and what it cannot: an artifact produced only in a `ci: platforms:` cell
+    (once per cell), only by a gate member or a cadence leaf (another file's run), or by no leaf ci.yml runs at
+    all (skipped, attended, or a release member) is not uploaded and is named in the job's note (plan decision 4):
+    CI still verifies what it runs, so it is not refused."""
+    from simplon.tasks import releasepipeline  # it imports this module
+    wanted = releasepipeline.consumed(manifest, data)
+    if not wanted:
+        return Promotion({}, {})
+    main = [*_runs(selection), *(leaf for leaf in selection.leaves if leaf.spec.after_all and not leaf.spec.ci.platforms)]
+    chosen = {leaf.words for leaf in selection.leaves}
+    skipped = dict(selection.skipped)
+    kept: dict[str, tuple[str, ...]] = {}
+    unkept: dict[str, tuple[tuple[str, str], ...]] = {}
+    for artifact in wanted:
+        makers = tuple(leaf.words for leaf in main if artifact in handoff._bound(leaf.spec.produces))
+        if makers:
+            kept[artifact] = makers
+            continue
+        why: list[tuple[str, str]] = []
+        for group, members in manifest.commands.items():
+            for name, spec in members.items():
+                if not isinstance(spec, TaskCommand) or artifact not in handoff._bound(spec.produces):
+                    continue
+                words = _words(group, name)
+                if words in chosen:
+                    why.append((words, "ci.yml runs it only in its `ci: platforms:` cells, once per cell, and one "
+                                       "run uploads an artifact once"))
+                elif words in skipped:
+                    why.append((words, f"ci.yml leaves it out: {skipped[words]}"))
+                else:
+                    why.append((words, f"it is not a CI leaf (it is in the '{group}' group)"))
+        unkept[artifact] = tuple(why)
+    return Promotion(kept, unkept)
+
+
+def _cell_key(leaf: Leaf) -> str:
+    return f"{leaf.words.replace(' ', '-')}-{'platforms' if leaf.spec.ci.platforms else 'python'}"
+
+
+def _refuse_promoted_crossings(promotion: Promotion, cells: Sequence[Leaf],
+                               artifacts: "Mapping[str, Declared]") -> None:
+    """si#862, #789: an artifact release.yml consumes that also crosses a job boundary inside ci.yml - the main job
+    produces it and a cell job consumes it - is refused. A DIAGNOSIS: the hand-off upload already holds that name
+    in the run, for a day, and upload-artifact refuses a second artifact of one name, so the promotion upload
+    would be red on every push run. An artifact with a `registry:` crosses no boundary (its consumer fetches it)."""
+    for artifact, makers in promotion.kept.items():
+        declared = artifacts.get(artifact)
+        if declared is not None and declared.registry:
+            continue
+        for cell in cells:
+            if artifact in handoff._bound(cell.spec.consumes):
+                raise ValueError(
+                    f"derived CI: release.yml consumes '{artifact}', which '{makers[-1]}' produces in job '{JOB}', "
+                    f"and '{cell.words}' consumes it in job '{_cell_key(cell)}', so ci.yml hands it over between "
+                    f"the two under that name - one run holds one artifact of a name, so it cannot also be kept "
+                    f"under it for the release to promote (#789). Consume '{artifact}' in a leaf without "
+                    f"`ci: python:` or `ci: platforms:`, or give it a `registry:` it is fetched from")
+
+
 def _reports(data: Mapping[str, object]) -> str:
     """The directory the report upload archives, with testrun's refusal saying who asked for it."""
     try:
@@ -663,8 +747,9 @@ def derive(manifest: Manifest, data: Mapping[str, object]) -> Derivation:
     One job on the product's machine (`runner:`), its steps in this order: the docker probe and the disk
     preflight where the machine's disk persists and the product placed them; `support install` where the
     product declares `toolchains:`; the leaves `select` chose, in its order; the `after_all` leaves (the
-    report), in their own order, so a verdict over the run comes after the run; the report's upload; the
-    disk cleanup. A job with no leaf to run is refused (Review Focus 2): its file would be a green tick over
+    report), in their own order, so a verdict over the run comes after the run; an upload of each `path:`
+    artifact release.yml consumes that a leaf of the job produces (si#862, #789, `_promotion`); the report's
+    upload; the disk cleanup. A job with no leaf to run is refused (Review Focus 2): its file would be a green tick over
     nothing. The conditions of the steps are not here: they are GitHub's spelling of the order, and
     `to_workflow` writes them.
     """
@@ -969,11 +1054,15 @@ def _derive(manifest: Manifest, data: Mapping[str, object], cadences: tuple[str,
         condition = _SCHEDULE_GATE.format(cron=cadence) if scheduled else ""
         cells = _cells(selection)
         _refuse_cell_producers(cells, selection, artifacts)
+        # si#862, #789: only the push run keeps what release.yml consumes; a cadence or gate run is not one a
+        # release looks for.
+        promoted = _promotion(manifest, data, selection) if path == PATH else Promotion({}, {})
+        _refuse_promoted_crossings(promoted, cells, artifacts)
         # si#860: a run whose every leaf runs in platform cells (cleon's dispatched matrix) is the cell jobs
         # alone; with no cells either, `_job` refuses the empty run as before.
         if _runs(selection) or not cells:
             jobs.append(_job(manifest, data, f"{JOB}-{at}" if scheduled else JOB, selection, runner, labels, kernel,
-                             path, condition=condition))
+                             path, condition=condition, promoted=tuple(promoted.kept)))
         jobs += [_cell_job(manifest, data, leaf, condition=condition) for leaf in cells]
     if path == PATH:
         events = [workflowschema.Trigger(event=event) for event in ("pull_request", "push_main", "dispatch")]
@@ -994,9 +1083,10 @@ def _merged(selections: Sequence[Selection]) -> Selection:
 
 
 def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Selection, runner: runners.Runner,
-         labels: tuple[str, ...], kernel: Mapping[str, object], path: str, *, condition: str = "") -> workflowschema.Job:
-    """One derived job over `selection`'s leaves: the preparation, the leaves in order, the `after_all` leaves and
-    the report upload, the cleanup (see `derive`)."""
+         labels: tuple[str, ...], kernel: Mapping[str, object], path: str, *, condition: str = "",
+         promoted: Sequence[str] = ()) -> workflowschema.Job:
+    """One derived job over `selection`'s leaves: the preparation, the leaves in order, the `after_all` leaves, an
+    upload per `promoted` artifact (si#862, #789) and the report upload, the cleanup (see `derive`)."""
     runs = _runs(selection)
     last = [leaf for leaf in selection.leaves if leaf.spec.after_all and not leaf.spec.ci.platforms]
     if not runs:
@@ -1009,6 +1099,7 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
     # si#860 decision 4: in a job other leaves share, the limit is the leaf's own step's.
     steps += [workflowschema.Step(command=leaf.spec, timeout_minutes=leaf.spec.ci.timeout_minutes,
                                   params=_params_of(leaf)) for leaf in (*runs, *last)]
+    steps += [workflowschema.Step(kernel_step=PROMOTE_UPLOAD, artifact=artifact) for artifact in promoted]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
         _reports(data)  # refused here, at the decision, rather than when the step is written
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
@@ -1111,7 +1202,7 @@ def _cell_job(manifest: Manifest, data: Mapping[str, object], leaf: Leaf, *, con
     if platforms:
         labels = tuple(workflowschema.PLATFORMS[cell].label for cell in platforms)
     return workflowschema.Job(
-        key=f"{leaf.words.replace(' ', '-')}-{'platforms' if platforms else 'python'}", step=tuple(steps),
+        key=_cell_key(leaf), step=tuple(steps),
         condition=condition, matrix=workflowschema.Matrix(platform=platforms, python=python),
         # si#860 decision 4: a leaf's own job carries its limit as the job's, the same for every cell.
         timeout_minutes=leaf.spec.ci.timeout_minutes,
@@ -1256,7 +1347,9 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     also waits for that producer's success (the producer carries an id for it): a consumer whose producer went
     red is skipped rather than red on the missing file, so one cause shows as one red step. An `after_all` leaf
     and the upload run `always()`, so the report still says what it found; the cleanup keeps `_disk_steps`'s
-    `always()` and `continue-on-error`. `on:` is the model's triggers, written through `_TRIGGERS`.
+    `always()` and `continue-on-error`. An upload that keeps a release's artifact (si#862, #789) runs
+    `!cancelled()`, after its producers' success, and not on a pull request. `on:` is the model's triggers,
+    written through `_TRIGGERS`.
 
     si#860: every job of the model is written the same way (`_to_job`); a cadence workflow also gets a
     `concurrency:` that queues the next run behind one in progress rather than cancelling it. `product` names
@@ -1351,8 +1444,12 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     producers = _producers(leaves)
     # si#861 decision 6, in a gated job only: the loader's `Deploy` is the command of an env-first group.
     deploys = {leaf.words for leaf in leaves if job.needs and isinstance(leaf.spec, Deploy) and not leaf.spec.after_all}
+    # si#862, #789: each promotion upload waits for the leaves of this job that produce its artifact.
+    promoted = {step.artifact: [leaf.words for leaf in leaves if step.artifact in handoff._bound(leaf.spec.produces)]
+                for step in job.step if step.kernel_step == PROMOTE_UPLOAD}
     leaf_ids = _leaf_ids(list(dict.fromkeys([*(leaf.words for leaf in leaves if leaf.words in deploys),
-                                             *(maker for makers in producers.values() for maker in makers)])))
+                                             *(maker for makers in producers.values() for maker in makers),
+                                             *(maker for makers in promoted.values() for maker in makers)])))
 
     def gate(line: str) -> str:
         waits = [*ids, *(leaf_ids[maker] for maker in producers.get(line, ()))]
@@ -1362,6 +1459,7 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
     emulates = _emulates([by_spec[id(step.command)] for step in job.step if step.command is not None])
     steps: list[workflowgen.Step] = []
     first = True
+    noted = False
     for step in job.step:
         if step.kernel_step == EMULATION:
             # si#860: the release's emulation step (si#570), with the id the later leaves' gate reads.
@@ -1375,6 +1473,17 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             # artifact of one name in a run, so a job other than `ci` names its report after itself (si#860).
             named = workflowgen.RELEASE_ARCHIVE if job.key == JOB else f"{workflowgen.RELEASE_ARCHIVE}-{job.key}"
             steps.append(workflowgen.report_upload(_reports(data), named))
+        elif step.kernel_step == PROMOTE_UPLOAD:
+            waits = " && ".join(["!cancelled()", *(f"steps.{leaf_ids[maker]}.outcome == 'success'"
+                                                   for maker in promoted[step.artifact]), _NOT_A_PULL_REQUEST])
+            # The note once, above the first upload: it says what every one of them is.
+            steps.append(workflowgen.Step(
+                note="" if noted else textwrap.fill(PROMOTE_NOTE.format(days=PROMOTE_RETENTION_DAYS).replace(
+                    "\n", " "), width=95),
+                verbatim={"uses": workflowgen.UPLOAD_ACTION, "if": "${{ " + waits + " }}",
+                          "with": {"name": step.artifact, "path": artifactsection.declared(data)[step.artifact].path,
+                                   "if-no-files-found": "error", "retention-days": PROMOTE_RETENTION_DAYS}}))
+            noted = True
         elif step.kernel_step == ARCH_CHECK:
             steps.append(workflowgen.Step(note=ARCH_CHECK_NOTE, verbatim={
                 "name": ARCH_CHECK_NAME, "shell": "bash",
@@ -1454,10 +1563,24 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
         said += _left_out(selection, "")
     else:
         said = _derived_note(selection, next(leaf.spec.ci.cadence for leaf in leaves if not leaf.spec.after_all))
-    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap, said) if part)
+    unkept = _unkept_note(_promotion(manifest, data, selection)) if key == KEY and run is None else ""
+    note = "\n\n".join(part for part in (workflowgen._note_of({}, runner), *unplaced, gap, said, unkept) if part)
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            note=note, runner=runner, prepared=True,
                            extras=workflowgen._with_runner_env(runner, gated, where))
+
+
+def _unkept_note(promotion: Promotion) -> str:
+    """The paragraph naming every artifact release.yml consumes that ci.yml does not keep, with each producer and
+    why it is not in the main job (si#862, #789, plan decision 4); "" when it keeps every one."""
+    if not promotion.unkept:
+        return ""
+    lines = [PROMOTE_UNKEPT]
+    for artifact, makers in promotion.unkept.items():
+        said = "; ".join(f"`{words}` produces it, and {why}" for words, why in makers) or "no command produces it"
+        lines.append(textwrap.fill(f"`{artifact}` - {said}", width=95, subsequent_indent="  ",
+                                   break_on_hyphens=False))
+    return "\n".join(lines)
 
 
 # --- the switch (si#858 task 7) ----------------------------------------------------------------------------

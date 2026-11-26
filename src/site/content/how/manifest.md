@@ -1565,6 +1565,19 @@ archiving `suites: reports:`, which a product with a `test:report` leaf therefor
 `after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
 consumer.
 
+**ci.yml keeps what the release consumes** (si#862, #789). Every artifact with a `path:` that a leaf of
+the derived release.yml consumes (the release aggregate's plan, a command step of a job declared under
+`workflows: release:`, the `website: by:` command) and a leaf of ci.yml's main job produces is uploaded
+after the last leaf, before the report's upload, under its manifest name and from its declared path. It
+is kept for 90 days, so a release cut days after the merge still finds the run of its commit. Only push
+and dispatch runs upload it: a pull request's run is not one a release promotes. Each upload waits for
+its producer's success and fails on a missing file. An artifact with no `path:` (an image) is not
+uploaded: it goes to its registry. One that ci.yml cannot keep once is named in the job's note with the
+reason, not refused, because CI still verifies it: produced only in `ci: platforms:` cells, by a gate
+member or a `cadence:` leaf (another file's run), or by no leaf ci.yml runs (a skipped one, or a release
+member such as `release notes`). One that ci.yml also hands from its main job to a cell job is refused:
+the hand-off already holds that name in the run. Without a derived release.yml nothing is kept.
+
 **The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
 it is `github-ubuntu`:
 

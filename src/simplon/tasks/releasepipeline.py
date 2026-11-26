@@ -327,6 +327,33 @@ def derive(manifest: Manifest, data: Mapping[str, object],
                                    permission=_permissions(workflow_scopes))
 
 
+def consumed(manifest: Manifest, data: Mapping[str, object]) -> tuple[str, ...]:
+    """si#862, #789: the artifacts with a `path:` that a leaf release.yml runs consumes, in the manifest's
+    `artifacts:` order; () where no release.yml is derived (no ReleaseCommand, or a `handwritten:` release).
+
+    The leaves are every one release.yml runs: the ReleaseCommand's plan, every command step of the jobs declared
+    under `workflows: release:`, and the `website: by:` plan of the derived `docs` job. An artifact with no `path:`
+    (an image, a tag) has no file to keep. Whether release.yml also produces one itself before consuming it is not
+    asked: until #789 the release rebuilds, and these are what it will take from CI instead."""
+    found = release_commands(manifest)
+    if not found:
+        return ()
+    entry = next((w for w in workflowgen.parse(data) if w.key == workflowgen.RELEASE_KEY), None)
+    if entry is not None and not entry.generated:
+        return ()
+    words, _ = found[0]
+    steps = [workflowgen.Step(command=words), *(step for job in (entry.jobs if entry is not None else ())
+                                                for step in job.steps)]
+    pages = site.pages(data)
+    if pages is not None:
+        steps.append(workflowgen.Step(command=pages.by))
+    wanted = {artifact for step in steps
+              for _, leaf in workflowgen._leaves(manifest, step, f"workflow '{workflowgen.RELEASE_KEY}'")
+              for names in leaf.consumes.values() for artifact in names}
+    return tuple(name for name, declared in artifactsection.declared(data).items()
+                 if name in wanted and declared.path)
+
+
 def refuse_pages_nobody_derives(data: Mapping[str, object], why: str) -> None:
     """si#862: `website: { pages: release }` where no release.yml is derived - no ReleaseCommand, or a
     `handwritten:` release. The switch would deploy nothing. A DIAGNOSIS, as `refuse_ci_where_handwritten` is for
