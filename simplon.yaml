@@ -582,6 +582,19 @@ website:
   base_url: "https://marcozwyssig.github.io/simplon/"
   source: "src/site"
   theme: "github.com/imfing/hextra@v0.12.3"
+  # DEPLOYED BY THE RELEASE (si#862), in the derived `docs` and `pages` jobs of release.yml with si#851's job
+  # boundary between the upload and the deploy. Every release republishes the site, whether or not it changed
+  # a page (no `paths:` filter).
+  #
+  # `by:` is the aggregate a person types, not `build site`: `build docs` writes the reference and acceptance
+  # pages into the content tree before Hugo runs, and the release must build the site no other way.
+  #
+  # `after: [publish]` and nothing more (si#638): the site waits for the wheel, so it never documents a version
+  # PyPI does not serve, and a red `homebrew-tap` or `image` cannot hold it back - a missing App secret skipped
+  # the site while the tap still sat in `publish` (run 42514180931, v0.43.0).
+  pages: release
+  by: build docs
+  after: [publish]
 
 # The container image simplon builds of itself (si#200), read by `build:image` / `release:image`.
 #
@@ -876,8 +889,10 @@ workflows:
 
   # GENERATED SINCE si#491, which retired the hand-written file. The release is the BUTTON: Actions ->
   # release -> Run workflow, with the version and `dry_run` (default true). The kernel derives the
-  # trigger, the permissions, the concurrency and the `release` job from `release all` (si#490); the three
-  # jobs below are this product's, and each one runs after the tag exists.
+  # trigger, the permissions, the concurrency and the `release` job from `release all` (si#490, si#862), and
+  # the `docs` and `pages` jobs from `website: pages:` (si#862); the three jobs below are ADDED by this
+  # product, and each one runs after the tag exists. They are D12 exceptions that wait on #789 (build once,
+  # release promotes); #864 makes each a counted `exception:`.
   release:
     name: release
     note: |
@@ -885,20 +900,22 @@ workflows:
       derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
       notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
       publishes: the wheel to PyPI, then the site and the image, each of which describes the version
-      PyPI now serves.
+      PyPI now serves. The release job, `docs` and `pages` are derived; `publish`, `homebrew-tap` and
+      `image` are added by this entry.
 
       A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
       route - a hotfix merges first. The release job archives the test report of the run that gated it
       (si#509), green or red.
     # The `release` job is derived from `ci release all` (si#862), its machine and emulation under that
-    # aggregate's `ci:`; the jobs below land beside it in release.yml.
+    # aggregate's `ci:`; `docs` and `pages` from `website:`; the jobs below land beside them in release.yml.
     jobs:
       publish:
         note: |
           The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
           token, no API token in the repository. PyPI's publisher is bound to this file's name and the
           `pypi` environment, which is why neither moves.
+          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
         needs: release
         runs-on: ubuntu-latest
         python: "3.12"
@@ -992,6 +1009,7 @@ workflows:
           steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
           still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
           written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
+          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
         runs-on: ubuntu-latest
         python: "3.12"
         permissions:
@@ -999,87 +1017,13 @@ workflows:
         steps:
           - command: release homebrew-tap
             if: ${{ !inputs.dry_run }}
-      docs:
-        note: |
-          The website, built by the one command a person types (`build docs`) and uploaded into the run
-          by the action that exists only inside a runner. No `paths:` filter: every release republishes
-          the site. After `publish`, so it never documents a version nobody can install. The upload is
-          the LAST step (si#851): no step after it can turn this job red with the artifact already made,
-          so a rerun of this job never meets an upload of its own. It reads the checkout and writes nothing
-          outside the run; the Pages rights are the `pages` job's.
-        needs: publish
-        runs-on: ubuntu-latest
-        python: "3.12"
-        env: { RELEASE_VERSION: "${{ inputs.version }}" }
-        permissions:
-          contents: read
-        steps:
-          - name: Cut the tag in this checkout
-            note: |
-              si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
-              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
-              the check below would go red, and the jobs after this one would never rehearse.
-            if: ${{ inputs.dry_run }}
-            run: |
-              there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
-              if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
-                echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
-                exit 1
-              fi
-              git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
-              git tag "$RELEASE_VERSION"
-          - name: The tag is on origin at this commit
-            note: |
-              On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
-              the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
-              would otherwise be re-created locally and publish a version origin does not carry - the
-              final review of si#491 (Important 2).
-            if: ${{ !inputs.dry_run }}
-            run: |
-              tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
-              if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
-                echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
-                exit 1
-              fi
-          - command: build docs
-          - uses: actions/upload-pages-artifact@v3
-            with:
-              path: build/site
-      pages:
-        note: |
-          The deploy of what `docs` uploaded, in a job of its own (si#851). In one job with the upload,
-          `deploy-pages` listed the run's artifacts one second after the upload, found no `github-pages`
-          and failed (runs 44901604309, 44938156739); "Re-run failed jobs" then re-ran the upload too, and
-          the deploy refused the two `github-pages` artifacts that left. Here the job boundary stands
-          between the upload and the listing, and a red deploy is rerun alone: GitHub reruns the failed
-          jobs and the jobs that need them, not `docs`, which succeeded, so the rerun finds the one
-          artifact the run holds. No checkout: nothing here reads the repository. `pages: write` and
-          `id-token: write` are this job's alone (si#719), and so are the environment and the queue.
-        needs: docs
-        runs-on: ubuntu-latest
-        checkout: false
-        environment:
-          name: github-pages
-          url: ${{ steps.deployment.outputs.page_url }}
-        permissions:
-          pages: write
-          id-token: write
-        concurrency:
-          group: pages
-          cancel-in-progress: false
-        steps:
-          - uses: actions/configure-pages@v5
-            with:
-              enablement: true
-          - id: deployment
-            uses: actions/deploy-pages@v4
-            if: ${{ !inputs.dry_run }}
       image:
         note: |
           The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
           run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
           merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
           (si#365). After `publish`, so the image carries the version PyPI serves.
+          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
         needs: publish
         runs-on: ubuntu-latest
         python: "3.12"

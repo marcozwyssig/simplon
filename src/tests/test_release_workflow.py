@@ -100,35 +100,51 @@ def _runs(node):
     return [str(value) for key, value in _walk(node) if key == "run"]
 
 
-#: si#862: the commit whose release.yml the old path (`workflowgen._release`) wrote, read through git so the pin
-#: holds while later tasks regenerate the file.
-OLD_PATH_COMMIT = "a985296"
+#: si#862 task 5: the last commit whose release.yml carried simplon's hand-written `docs` and `pages` jobs, read
+#: through git so the pin holds while the file is regenerated.
+HANDWRITTEN_SITE_COMMIT = "884605c"
+#: si#862: the jobs that must not move when the site's two jobs become derived - the kernel's release job and the
+#: three D12 exceptions that wait on #789.
+UNMOVED_JOBS = ("release", "publish", "homebrew-tap", "image")
+REAP_STEP = "Remove the containers a cancelled job left running"
 
 
-#: si#862 task 3: the one line the move of `emulates:` onto the ReleaseCommand changes - the note names where it lives.
-EMULATION_NOTE_MOVED = ("# si#570: the workflow's `emulates:`, registered before anything in the job runs.",
-                        "# si#570: the release aggregate's `ci: emulates:`, registered before anything in the job runs.")
+def _old_release_jobs() -> dict:
+    text = subprocess.run(["git", "show", f"{HANDWRITTEN_SITE_COMMIT}:.github/workflows/release.yml"], cwd=ROOT,
+                          capture_output=True, text=True, check=True).stdout
+    return yaml.safe_load(text)["jobs"]
 
 
-def test_release_yml_renders_byte_identical_from_the_model():
-    """si#862: the release derived through the firn workflow model writes the bytes the old path wrote, but for the
-    emulation step's note, which names the key's new place (task 3 moved `emulates:` and the machine from
-    `workflows: release:` onto the ReleaseCommand's `ci:`)."""
+def test_simplons_release_yml_is_derived():
+    """si#862: simplon declares no `release:` under `workflows: release:` and no `docs` or `pages` job there; the
+    release job and the three declared jobs render as they did with the site hand-written, and the derived `docs`
+    and `pages` differ from the hand-written pair by exactly what the kernel's derivation changes: `docs` needs
+    `release` beside `website: after:`'s `publish` and sets up no python of its own, and `pages`, which starts no
+    container, carries no reap step."""
     # arrange
-    committed = subprocess.run(["git", "show", f"{OLD_PATH_COMMIT}:.github/workflows/release.yml"], cwd=ROOT,
-                               capture_output=True, text=True, check=True).stdout
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     loaded = manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
     (release,) = [w for w in workflows.assemble(loaded, data, product="simplon", root=ROOT)
                   if w.path == ".github/workflows/release.yml"]
+    old = _old_release_jobs()
+    expected_docs = dict(old["docs"], needs=["release", "publish"],
+                         steps=[s for s in old["docs"]["steps"]
+                                if not str(s.get("uses", "")).startswith("actions/setup-python")])
+    expected_pages = dict(old["pages"], steps=[s for s in old["pages"]["steps"] if s.get("name") != REAP_STEP])
 
     # act
     text = workflowgen.render(release, manifest=loaded, product="simplon", source=MANIFEST.name,
                               artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
+    jobs = yaml.safe_load(text)["jobs"]
 
     # assert
-    assert committed.count(EMULATION_NOTE_MOVED[0]) == 1
-    assert committed and text == committed.replace(*EMULATION_NOTE_MOVED)
+    entry = data["workflows"]["release"]
+    assert "release" not in entry and not {"docs", "pages"} & set(entry["jobs"])
+    assert {name: jobs[name] for name in UNMOVED_JOBS} == {name: old[name] for name in UNMOVED_JOBS}
+    assert len(expected_docs["steps"]) == len(old["docs"]["steps"]) - 1
+    assert len(expected_pages["steps"]) == len(old["pages"]["steps"]) - 1
+    assert jobs["docs"] == expected_docs
+    assert jobs["pages"] == expected_pages
 
 
 # --- the trigger, and the acceptance that hangs off it ---------------------------------------------------
@@ -156,10 +172,16 @@ def test_a_release_that_changes_no_documentation_still_rebuilds_the_site(workflo
     """
     # Arrange / Act
     keys = [key for key, _ in _walk(workflow)]
+    docs = workflow["jobs"][DOCS_JOB]
 
     # Assert
     assert "paths" not in keys
     assert "paths-ignore" not in keys
+    # si#862: the site the release rebuilds is the derived `docs` job's, after the release and the wheel, built by
+    # the one command and uploaded from the build directory as its last step
+    assert docs["needs"] == ["release", "publish"]
+    assert THE_ONE_COMMAND in _runs(docs)
+    assert docs["steps"][-1] == {"uses": "actions/upload-pages-artifact@v3", "with": {"path": "build/site"}}
 
 
 def test_nothing_in_the_workflow_asks_which_files_changed(workflow):
@@ -241,8 +263,9 @@ def test_the_command_the_workflow_runs_is_a_real_command_that_plans_the_whole_bu
 def test_the_site_goes_up_only_after_the_wheel_did(workflow, docs_job):
     """Why the trigger is a tag at all: the page describes the version it was cut from, so it must not
     appear before that version can be installed."""
-    # Arrange / Act / Assert
-    assert docs_job["needs"] == "publish"
+    # Arrange / Act / Assert: si#862 - the derived job needs `release` and the `website: after:` jobs, and only
+    # `publish` of those (si#638: a red tap or image must not hold the site back)
+    assert docs_job["needs"] == ["release", "publish"]
     assert "publish" in workflow["jobs"]
 
 
