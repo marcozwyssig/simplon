@@ -144,8 +144,8 @@ release plan resolves its aggregate's words against the command tree (`_leaves`)
 the tree, so they always resolve; the same walk reached from `website: by:` refuses a line that names no
 group and command, or one the manifest does not declare.
 A release aggregate's `ci:` holds `emulates`, `timeout_minutes` and `runner`, the emulation, time limit and
-machine of the one job the derived release runs in; any other key there (`gate:`, which a release aggregate
-used to drop silently, among them) is a diagnosis, since it would shape nothing in that job.
+machine of the one job the derived release runs in; any other key there is a diagnosis, since it would shape
+nothing in that job.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 
