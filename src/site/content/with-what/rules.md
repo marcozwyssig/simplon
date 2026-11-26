@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 361 | nothing - the declaration had no working meaning |
+| diagnosis | 362 | nothing - the declaration had no working meaning |
 | expression rule | 54 | something it could otherwise have said |
-| **all load-time refusals** | **415** | |
+| **all load-time refusals** | **416** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -138,9 +138,14 @@ Since si#887 a leaf whose catalogue task cannot run without a parameter that nei
 `ci: { params: }` binds is a diagnosis too, in the main, cadence and gate files alike.
 Since si#862 the release job is derived by the same verb, through the workflow model, so its refusals are
 reached and counted too; none is new, they were raised at rendering before, where no seam reaches. All are
-diagnoses: a `release:` that names no release aggregate (or no command at all), an aggregate that passes no
-`tag` or passes anything else, a member that may not run with nobody watching, and an `env: pass:` name
-starting with `GITHUB_`, which GitHub refuses to store as a secret.
+diagnoses: an aggregate that passes no `tag` or passes anything else, a member that may not run with nobody
+watching, and an `env: pass:` name starting with `GITHUB_`, which GitHub refuses to store as a secret. The
+release plan resolves its aggregate's words against the command tree (`_leaves`), and those words come from
+the tree, so they always resolve; the same walk reached from `website: by:` refuses a line that names no
+group and command, or one the manifest does not declare.
+A release aggregate's `ci:` holds `emulates`, `timeout_minutes` and `runner`, the emulation, time limit and
+machine of the one job the derived release runs in; any other key there (`gate:`, which a release aggregate
+used to drop silently, among them) is a diagnosis, since it would shape nothing in that job.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 

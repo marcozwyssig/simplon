@@ -23,7 +23,6 @@ everything that would make such a run do the wrong thing quietly.
 """
 import itertools
 import re
-import subprocess
 import tomllib
 
 import pytest
@@ -100,9 +99,9 @@ def _runs(node):
     return [str(value) for key, value in _walk(node) if key == "run"]
 
 
-#: si#862 task 5: the last commit whose release.yml carried simplon's hand-written `docs` and `pages` jobs, read
-#: through git so the pin holds while the file is regenerated.
-HANDWRITTEN_SITE_COMMIT = "884605c"
+#: si#862 task 5: simplon's release.yml as it stood with the hand-written `docs` and `pages` jobs, stored as a
+#: fixture so the pin holds while the file is regenerated, after a squash and in a shallow clone alike.
+HANDWRITTEN_SITE = ROOT / "src" / "tests" / "fixtures" / "workflows" / "release-handwritten-site.yml"
 #: si#862: the jobs that must not move when the site's two jobs become derived - the kernel's release job and the
 #: three D12 exceptions that wait on #789.
 UNMOVED_JOBS = ("release", "publish", "homebrew-tap", "image")
@@ -110,17 +109,15 @@ REAP_STEP = "Remove the containers a cancelled job left running"
 
 
 def _old_release_jobs() -> dict:
-    text = subprocess.run(["git", "show", f"{HANDWRITTEN_SITE_COMMIT}:.github/workflows/release.yml"], cwd=ROOT,
-                          capture_output=True, text=True, check=True).stdout
-    return yaml.safe_load(text)["jobs"]
+    return yaml.safe_load(HANDWRITTEN_SITE.read_text(encoding="utf-8"))["jobs"]
 
 
 def test_simplons_release_yml_is_derived():
     """si#862: simplon declares no `release:` under `workflows: release:` and no `docs` or `pages` job there; the
     release job and the three declared jobs render as they did with the site hand-written, and the derived `docs`
     and `pages` differ from the hand-written pair by exactly what the kernel's derivation changes: `docs` needs
-    `release` beside `website: after:`'s `publish` and sets up no python of its own, and `pages`, which starts no
-    container, carries no reap step."""
+    `release` beside `website: after:`'s `publish`, sets up no python of its own and carries the release job's
+    `timeout-minutes`, and `pages`, which starts no container, carries no reap step."""
     # arrange
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     loaded = manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
@@ -128,6 +125,7 @@ def test_simplons_release_yml_is_derived():
                   if w.path == ".github/workflows/release.yml"]
     old = _old_release_jobs()
     expected_docs = dict(old["docs"], needs=["release", "publish"],
+                         **{"timeout-minutes": old["release"]["timeout-minutes"]},
                          steps=[s for s in old["docs"]["steps"]
                                 if not str(s.get("uses", "")).startswith("actions/setup-python")])
     expected_pages = dict(old["pages"], steps=[s for s in old["pages"]["steps"] if s.get("name") != REAP_STEP])

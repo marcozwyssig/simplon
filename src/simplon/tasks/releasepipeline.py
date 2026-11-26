@@ -415,6 +415,8 @@ def _website(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.
                 f"{workflowgen.RELEASE_KEY}: jobs:`, or take it out of `after:`")
     docs = workflowschema.Job(
         key=DOCS_JOB, runner=release.runner, needs=(release,), needs_declared=pages.after,
+        # Bounded like the release job on the same machine: a docs build that hangs is no verdict.
+        timeout_minutes=release.timeout_minutes,
         permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,),
         step=(workflowschema.Step(kernel_step=RELEASE_CUT, condition=_DRY_RUN),
               workflowschema.Step(kernel_step=RELEASE_ON_ORIGIN, condition=_NOT_DRY_RUN),
@@ -467,23 +469,23 @@ def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mappin
     workflow-level keys and its note. The website's `docs` and `pages` (si#862) follow the entry's jobs, which `docs`
     waits for. `release` is set, because `workflowgen.render` inserts the app-secrets check
     (si#574) into the job of that name; `derived` is set, because the job is."""
-    words, _ = _the_release(manifest)
+    words, spec = _the_release(manifest)
     base = entry if entry is not None else workflowgen.Workflow(key=workflowgen.RELEASE_KEY, path=model.path,
                                                                sources=sources.declared(data))
     own = {key: value for key, value in base.extras.items() if key != "permissions"}
     extras = {"permissions": {p.scope: p.access for p in model.permission}, "concurrency": dict(_RELEASE_CONCURRENCY),
               **own}
-    release, *website = (_to_job(job, manifest, data, product=product) for job in model.job)
+    release, *website = (_to_job(job, manifest, data, spec, product=product) for job in model.job)
     return replace(base, name=model.title, path=model.path, on=cipipeline._on(model.trigger), extras=extras,
                    jobs=(release, *base.jobs, *website), release=words, derived=True)
 
 
-def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, object], *,
+def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, object], spec: ReleaseCommand, *,
             product: str) -> workflowgen.Job:
     """One model job as the renderer's job. The kernel steps are written here, and the command steps carry the
     model's `if:`, `env:` and `id:` in the order GitHub's own documentation writes them. The machine is the
-    model's runner: its labels, and the kind's own `env:` beside the job's."""
-    _, spec = _the_release(manifest)
+    model's runner: its labels, and the kind's own `env:` beside the job's. `spec` is the release aggregate
+    `to_workflow` derived from, whose `ci: emulates:` the emulation step registers."""
     reporting = any(step.kernel_step == REPORT for step in job.step)
     # The test archive is the release job's alone (si#509); `docs` and `pages` ask nothing of it.
     archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)

@@ -726,6 +726,7 @@ jobs:
       - publish
     permissions:
       contents: read
+    timeout-minutes: 120
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:

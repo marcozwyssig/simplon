@@ -1353,6 +1353,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#862, #789: an artifact release.yml consumes that the hand-off already uploads under its name inside ci.yml
     # (main job to a cell job); one run holds one artifact of a name, so the promotion upload would be red.
     ("cipipeline", "_refuse_promoted_crossings", "so it cannot also be kept"): DIAGNOSIS,
+    # si#862, #789: a kept artifact named like the report upload; both uploads run in the main job.
+    ("cipipeline", "_refuse_promoted_report_name", "the name the report upload after"): DIAGNOSIS,
     # si#861: a gate member runs in its gate's file with nobody watching, so one that may not, one that opts out
     # of a main job it is not in, or one whose cadence or cells its gate's file already decides would not run as
     # written; and artifacts do not cross workflow files, so a hand-off between a gate and another run would
@@ -1429,8 +1431,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("releasepipeline", "_website", "which is no job declared beside the release"): DIAGNOSIS,
     ("site", "pages", "`after:` is a list of job keys"): DIAGNOSIS,
     ("site", "pages", "must be a mapping (the pinned hugo image"): DIAGNOSIS,
-    # si#862: the release names its aggregate as `<group> <name>`, resolved against the command tree like a step's
-    # `command:` - the same walk, so the same three refusals.
+    # si#862: `website: by:` names the command that builds the site as `<group> <name>`, resolved against the
+    # command tree like a step's `command:` - the same walk, so the same three refusals. The release plan's
+    # `_leaves` walks it too, but with its aggregate's words, which come from the tree and always resolve.
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "which this manifest does not declare"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "names no command in group"): DIAGNOSIS,
@@ -1463,14 +1466,16 @@ REACH: dict[tuple[str, str, str], str] = {
     # the kernel's own CI job every time the workflows are generated.
     ("workflowgen", "_machine", "declares both"): REACH_MERGED,
     ("workflowgen", "_with_runner_env", "already sets"): REACH_MERGED,
-    # si#490, moved by si#862. MERGED, and a placement: this kernel's own `ci release all` derives its release.yml
-    # and its own `workflows: release:` goes through exactly these two rules every time the workflows are generated.
+    # si#490, moved by si#862. MERGED as a claim about the parser: every manifest's `workflows: release:` goes
+    # through these two rules beside its ReleaseCommand, this kernel's own manifest included (its `ci release all`
+    # derives its release.yml). The catalogue declares no ReleaseCommand, so it is not a placement.
     ("releasepipeline", "_refuse_beside_the_release", "and the trigger is derived from the release aggregate"):
         REACH_MERGED,
     ("releasepipeline", "_refuse_beside_the_release", "is derived from the release aggregate '{words}' - one release"):
         REACH_MERGED,
-    # si#862. MERGED: `_the_release` is handed the loaded manifest, the catalogue's placements with the product's,
-    # and this kernel's own `ci release all` is counted with them.
+    # si#862. MERGED as a claim about the parser: `_the_release` is handed the loaded manifest, the catalogue's
+    # placements with the product's, so a ReleaseCommand the catalogue declared would be counted with the
+    # product's. The catalogue declares none, so it is not a placement.
     ("releasepipeline", "_the_release", "more than one release aggregate"): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     # si#781, the same claim about the same parser: a `runner:` under a carrier of simplon's own would be

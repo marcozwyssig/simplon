@@ -462,6 +462,37 @@ def test_only_the_release_job_computes_the_test_archive(monkeypatch):
     assert len(asked) == 1
 
 
+@pytest.mark.parametrize("ci, limit", [(None, workflowgen.RELEASE_TIMEOUT_MINUTES), ("{ timeout_minutes: 45 }", 45)])
+def test_the_docs_job_carries_the_releases_time_limit(ci, limit):
+    """The docs job builds on the release's machine, so it is bounded like the release job: the release
+    aggregate's `ci: timeout_minutes:`, or the release's own limit when unwritten. A run that hangs is no
+    verdict."""
+    # act
+    jobs = _rendered(WEB if ci is None else _with_ci(WEB, ci))["jobs"]
+
+    # assert
+    assert jobs["docs"]["timeout-minutes"] == jobs["release"]["timeout-minutes"] == limit
+
+
+def test_the_release_aggregate_is_looked_up_once_per_workflow(monkeypatch):
+    """The jobs are converted with the spec `to_workflow` already holds, not by a lookup per job."""
+    # arrange
+    asked = []
+    real = releasepipeline._the_release
+    monkeypatch.setattr(releasepipeline, "_the_release", lambda *a, **k: asked.append(a) or real(*a, **k))
+    text = WEB
+    loaded = manifest_mod.load(text, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = yaml.safe_load(text)
+    model = releasepipeline.derive(loaded, data, None)
+    asked.clear()
+
+    # act
+    releasepipeline.to_workflow(model, loaded, data, None, product="app")
+
+    # assert
+    assert len(asked) == 1
+
+
 def test_the_docs_job_runs_on_the_release_machine_and_pages_on_github_hosted():
     """Plan decision 2: `pages` takes no checkout and starts no container, so it needs none of a self-hosted kind's
     steps and gets no si#756 reap step beside `pages: write`; `docs` runs where the release ran."""
