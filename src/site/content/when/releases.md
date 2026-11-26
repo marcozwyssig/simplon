@@ -23,6 +23,145 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.51.0
+
+**What a product has to do:** regenerate its workflows (`./simplon.sh support github workflows`, the
+catalogue's `support:workflows`), or `test generated` reports drift: the GENERATED header of every
+generated workflow names the new command words (si#867). A product that renders its CLAUDE.md with
+`support claude md` re-renders it for the same reason. Beyond that, check these where a product relies
+on the old behaviour:
+
+- **Three support commands moved into subgroups** (si#867). `support claude-md`, `support
+  claude-plugins` and `support workflows` are now `support claude md`, `support claude plugins` and
+  `support github workflows`; the old words fail loudly (`No such command 'claude-md'`). Their
+  coordinates (`support:claude-md`, `support:claude-plugins`, `support:workflows`) are unchanged. A
+  product that places one of those coordinates itself at the old word keeps that word alive as a second
+  path, because a coordinate at a second path loads without refusal: biz-cockpit, firn and swi place
+  `support:claude-plugins` and `support:workflows` that way. Delete those placements to take the
+  catalogue's words, or keep them knowingly. `support:workflows` is now placed for every product.
+- **`workflows: release:` no longer names the release** (si#862). `release:`, `emulates:` and
+  `timeout_minutes:` under it are refused at generation, and so are `runs-on:`, `runs_on:` and
+  `runner:` beside `release:` with no `flow:`; one message names every retired key and the place that
+  now says it. The release job is derived from the ReleaseCommand (the aggregate under `ci release`
+  that `produces: { release: <artifact> }`); its machine, emulation and time limit are
+  `ci: { runner, emulates, timeout_minutes }` on that aggregate, and `workflows: release:` only adds
+  jobs beside it. firn is the one reachable product that writes these keys (`release:`,
+  `timeout_minutes:`, `runs-on:`); its move is written up on #893. A product without a ReleaseCommand
+  derives no release.yml and sees no change here.
+- **A product with no `workflows: ci:` entry now gets a derived `ci.yml`** when it runs `support github
+  workflows` (si#858). A file already at `ci.yml` without the generated header is refused, not
+  overwritten, and the message names both ways out (declare it under `workflows: ci:` as
+  `handwritten: "<why>"`, or delete the file so the kernel derives it). A
+  leaf under `ci build` or `ci test` that does not declare `unattended:` is refused there too. A product
+  that declares `workflows: ci:` sees no change: the declared key switches the derivation off.
+- **A declared `workflows:` key switches off only the derived workflow of that key** (si#860, si#861).
+  Keeping a hand-written cadence or gate file is `workflows: ci-nightly: { handwritten: ... }` (or the
+  gate file's stem), the remedy the generator names.
+- **The new keys come with their refusals.** `ci:` on a command no derived workflow selects, a bare
+  `ci: true` / `ci: false`, a `ci: skip:` without a reason, a bare `merge:`, and malformed `sources:` and
+  `ci: gate:` sections each say what is wrong and the form to write; the census on `with-what/rules.md`
+  carries each with its kind. All of these keys are new in this release, so a manifest that loaded under 0.50.0
+  and writes none of them is not affected.
+
+### Derived CI (si#788, si#448, si#857, si#858, si#860, si#863, si#722, si#886, si#887)
+
+- **si#788:** the design for workflows the kernel derives instead of a product writing them
+  (`docs/superpowers/specs/2026-11-22-derived-workflows-design.md`, decisions D1 to D14). Every ticket
+  below is a step of it. #788 stays open as the milestone's design ticket.
+- **si#448:** the spec amended after measurement: an order from port edges alone is measured out, so
+  the derived CI runs in manifest order with "a consumer after its producer" as the only extra
+  precedence. #448 stays open for the plan order of aggregates, `parallel:` and the TUI.
+- **si#857:** the workflow vocabulary is a firn model (`workflow.firn`: runner kinds, triggers,
+  matrix, step, job, workflow) and generates `src/simplon/model/workflowschema.py`. The hand-typed
+  runner table is gone; the generated workflows did not change.
+- **si#858:** without a `workflows: ci:` entry, `support github workflows` derives `ci.yml` from every
+  unattended leaf under `ci build` and `ci test`, nested groups included. New on a command:
+  `ci: { skip: "<reason>" }`, and every skipped or attended leaf is named in the job's note with its
+  reason. New top-level `runner:` names the machine (`github-ubuntu` when absent). Preparation steps
+  gate the leaves, a consumer waits for its producer, `test:report` runs last with `if: always()`
+  (catalogue `after_all`), and the workflow carries `permissions: contents: read`.
+- **si#860:** variant keys on a `ci build` / `ci test` leaf: `ci: { cadence: nightly | manual |
+  "<cron>" }` moves it to `ci-nightly.yml`, `ci-manual.yml` or `ci-scheduled.yml`; `ci: { platforms:
+  [...] }` runs it in a matrix of hosted cells (Windows runs `<product>.cmd`); `ci: { python: [...] }`
+  adds a `setup-python` cell; `ci: { timeout_minutes: N }` and `ci: { emulates: [linux/arm64] }`.
+  `platforms:` beside `python:` or `emulates:` is refused. Hosted macOS and Windows cells are not yet
+  measured on a real run; the first product that writes `platforms:` is that measurement.
+- **si#863:** simplon's own `ci.yml` is derived; its `workflows: ci:` entry is gone. New on the way:
+  runner kind `self-hosted-container`, and `ci: { params: }`, which binds a command parameter where the
+  kernel derives the leaf (simplon builds and tests its image amd64-only in CI this way, si#368; the
+  release still builds both platforms). simplon's homebrew leaves leave CI with `ci: { skip: }`: on
+  every untagged commit the formula refuses a wheel with a local version (si#543, measured on ghr-8),
+  and the release still checks the formula. The si#8 type-gate rule is owed per interpreter a workflow runs the suite on, and an
+  empty matrix is refused rather than counted as gated.
+- **si#722:** `emulates:` on a runner kind that cannot register emulation (an LXC runner, kind
+  `self-hosted-container`): a derived CI job names the gap in its note, and a release `ci: { emulates: }`
+  on that kind is refused at generation, naming the ways out.
+- **si#886:** where a derived run holds a `test:generated` leaf (matched by task), every leaf that is
+  the `by:` of a `generated:` entry is left out and named with the reason, because run first in the
+  same checkout it made the staleness gate compare the regenerated tree with itself. In a gate, a
+  member that consumes an artifact from a left-out member is refused. It hits simplon and
+  biz-cockpit (`build export-spec` before `check-contract`); biz-cockpit gets it when it migrates (#895).
+- **si#887:** a derived leaf whose task has a required parameter that neither the command's `with:`
+  nor `ci: { params: }` binds is refused at generation, naming the command, the parameter and the ways
+  out. Measured over the reachable manifests it refuses nothing today. A product's own task with a
+  parameter without a default is not checked yet.
+
+### Gates, sources and auto-merge (si#861, si#873, si#874)
+
+- **si#861:** an aggregate under `ci build` or `ci test` may say `ci: { gate: { paths, label, env } }`,
+  with `cadence:` and `timeout_minutes:` beside it. `support github workflows` derives
+  `ci-<aggregate words>.yml`: a decide job reads the pull request's changed paths and labels, and a
+  gated job runs the members once per head SHA, never cancelled. Members leave `ci.yml`. `gate:` on
+  anything but an aggregate is refused (an expression rule with zero cost, since the key is new);
+  `paths:` take only the `*` / `**` subset of GitHub's filter syntax. No product carries a gate yet, so
+  no real runner has run one.
+- **si#873:** `sources: [{ submodule: <path>, secret: <NAME> }]` checks a private submodule out at its
+  pinned commit with a token, through the new catalogue task `support:sources` (`support sources`).
+  Every job the kernel writes runs it right after the checkout. The token reaches git by environment
+  only, never on an argv, and is masked and redacted (si#833). An empty secret under Actions is refused
+  before git runs. A product that adds `sources:` with a secret re-renders its launchers
+  (`simplon init --dir . --launchers-only`); a product without `sources:` renders byte-identical
+  launchers and workflows.
+- **si#874:** `merge: auto` derives `.github/workflows/auto-merge.yml`, which squash-merges a pull
+  request labelled `auto-merge` once every gate for its head commit is green, with netctl's measured
+  rules (no fork PR, the labeller needs write access, every derived gate ran, `--match-head-commit`).
+  The policy is a firn instance and documented on `with-what/auto-merge.md`. A hand-written
+  `auto-merge.yml` is refused until it is deleted. Whether `GITHUB_TOKEN` may read a collaborator's
+  permission is measured by the first adopting repository; if it may not, the run is red and nothing
+  merges.
+
+### Derived release and pages (si#862)
+
+- **si#862:** `release.yml` is derived from the ReleaseCommand through the firn workflow model, the
+  way `ci.yml` is. Two ReleaseCommands are refused, and the si#487 check-first rule holds for every
+  ReleaseCommand. New `website: { pages: release, by: <command>, after: [<job>] }` derives the `docs`
+  and `pages` jobs with si#851's boundary; `docs` waits for `release` and what `after:` names, and
+  carries the release's time limit. `ci.yml` keeps every `path:` artifact a release consumes for 90
+  days, from `push` and `workflow_dispatch` runs only; one whose producer runs in CI with
+  `ci: { params: }` is not kept and is named with that reason, and a kept artifact named like the
+  report upload is refused. simplon's `publish`, `homebrew-tap` and `image` jobs stay hand-written
+  under `workflows: release:`. Not yet measured: the promotion uploads on a real CI run, and the
+  `docs` job without `setup-python` on a real release.
+
+### Support and test tasks (si#867, si#859)
+
+- **si#867:** catalogue subgroups `support claude` (`plugins`, `md`) and `support github`
+  (`workflows`); see above for what a product does about the old words.
+- **si#859:** new catalogue task `test:unit` runs a product's own pytest suite in a kernel-provisioned
+  venv under `build/venvs/unit/`, rebuilt when the requirements file or one it includes changes.
+  Parameters `paths` and `requirements` (required), `config` (passed as `-c`) and `timeout` (default
+  1800 s). An empty collection is red, each root is collected on its own, and paths outside the product
+  root are refused. pytest is installed only when the requirements do not bring it, and the run says
+  so. `test:report` picks it up only when the product wires allure itself. uv/pyproject projects and
+  unittest suites keep their product tasks.
+
+### Also in this release
+
+- **#855** pins `deploy/image/image.pin` to the v0.50.0 kernel image.
+- The pull requests are #855, #856 (si#788), #868 (si#867), #869 (si#857), #870 (si#448), #871
+  (si#858), #872 (si#860), #875 (si#861), #884 (si#873), #885 (si#874), #890 (si#863, si#722), #901
+  (si#859), #902 (si#886, si#887) and #904 (si#862).
+
 ## 0.50.0
 
 **What a product has to do:** regenerate its workflows (`./simplon.sh support workflows`) if its
