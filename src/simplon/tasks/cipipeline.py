@@ -651,13 +651,16 @@ def _refuse_cell_producers(cells: Sequence[Leaf], selection: Selection, artifact
 #: si#862, #789 (Marco, 2026-11-25): how long a promoted artifact is kept, the report upload's precedent; the
 #: hand-off's one day would leave nothing for a release cut days after the merge.
 PROMOTE_RETENTION_DAYS = 90
-#: Only a run on the repository's own history is one a release may promote: a pull request's run is not.
-_NOT_A_PULL_REQUEST = "github.event_name != 'pull_request'"
+#: The runs a release may promote, named rather than excluded (si#862 decision): a push to the repository's own
+#: history and a dispatch. A pull request's run is not one, nor any event ci.yml might later be started by.
+_PROMOTED_EVENTS = "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
 
 PROMOTE_NOTE = """si#862, #789: what release.yml consumes, kept from push and dispatch runs (never a pull
 request's) for {days} days under the manifest's artifact names, so a release can promote what this run
 built for its commit. Each upload waits for its producer's success."""
 
+#: Why a main-job producer with `ci: params:` keeps nothing for the release (`_promotion`).
+_NARROWER = "CI runs it with `ci: params:`, narrower than the release"
 PROMOTE_UNKEPT = "si#862, #789: release.yml consumes these, and this run keeps none of them for it to promote:"
 
 
@@ -674,7 +677,9 @@ def _promotion(manifest: Manifest, data: Mapping[str, object], selection: Select
     """What ci.yml uploads for #789, and what it cannot: an artifact produced only in a `ci: platforms:` cell
     (once per cell), only by a gate member or a cadence leaf (another file's run), or by no leaf ci.yml runs at
     all (skipped, attended, or a release member) is not uploaded and is named in the job's note (plan decision 4):
-    CI still verifies what it runs, so it is not refused."""
+    CI still verifies what it runs, so it is not refused. So is one a main-job leaf with `ci: params:` produces:
+    CI pins what the release does not (simplon's `test image` on linux/amd64 alone), so what this run holds is
+    narrower than what the release consumes it as evidence for."""
     from simplon.tasks import releasepipeline  # it imports this module
     wanted = releasepipeline.consumed(manifest, data)
     if not wanted:
@@ -685,9 +690,13 @@ def _promotion(manifest: Manifest, data: Mapping[str, object], selection: Select
     kept: dict[str, tuple[str, ...]] = {}
     unkept: dict[str, tuple[tuple[str, str], ...]] = {}
     for artifact in wanted:
-        makers = tuple(leaf.words for leaf in main if artifact in handoff._bound(leaf.spec.produces))
-        if makers:
-            kept[artifact] = makers
+        producing = [leaf for leaf in main if artifact in handoff._bound(leaf.spec.produces)]
+        narrower = [leaf.words for leaf in producing if leaf.spec.ci.params]
+        if producing and not narrower:
+            kept[artifact] = tuple(leaf.words for leaf in producing)
+            continue
+        if narrower:
+            unkept[artifact] = tuple((words, _NARROWER) for words in narrower)
             continue
         why: list[tuple[str, str]] = []
         for group, members in manifest.commands.items():
@@ -728,6 +737,17 @@ def _refuse_promoted_crossings(promotion: Promotion, cells: Sequence[Leaf],
                     f"the two under that name - one run holds one artifact of a name, so it cannot also be kept "
                     f"under it for the release to promote (#789). Consume '{artifact}' in a leaf without "
                     f"`ci: python:` or `ci: platforms:`, or give it a `registry:` it is fetched from")
+
+
+def _refuse_promoted_report_name(promoted: Sequence[str], key: str) -> None:
+    """si#862, #789: a kept artifact named like the report upload is refused. A DIAGNOSIS: both uploads run in the
+    main job under that name, and upload-artifact refuses a second artifact of one name in a run, so one of the
+    two would be red on every push run."""
+    if workflowgen.RELEASE_ARCHIVE in promoted:
+        raise ValueError(
+            f"derived CI: release.yml consumes '{workflowgen.RELEASE_ARCHIVE}', the name the report upload after "
+            f"`{workflowgen.REPORT_TASK}` already holds in job '{key}' - one run holds one artifact of a name, so "
+            f"it cannot also be kept under it for the release to promote (#789). Rename the artifact")
 
 
 def _reports(data: Mapping[str, object]) -> str:
@@ -1102,6 +1122,7 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
     steps += [workflowschema.Step(kernel_step=PROMOTE_UPLOAD, artifact=artifact) for artifact in promoted]
     if any(leaf.spec.task == workflowgen.REPORT_TASK for leaf in last):
         _reports(data)  # refused here, at the decision, rather than when the step is written
+        _refuse_promoted_report_name(promoted, key)
         steps.append(workflowschema.Step(kernel_step=REPORT_UPLOAD))
     if DISK_CLEANUP in kernel:
         steps.append(workflowschema.Step(kernel_step=DISK_CLEANUP))
@@ -1475,7 +1496,7 @@ def _to_job(job: workflowschema.Job, selection: Selection, manifest: Manifest, d
             steps.append(workflowgen.report_upload(_reports(data), named))
         elif step.kernel_step == PROMOTE_UPLOAD:
             waits = " && ".join(["!cancelled()", *(f"steps.{leaf_ids[maker]}.outcome == 'success'"
-                                                   for maker in promoted[step.artifact]), _NOT_A_PULL_REQUEST])
+                                                   for maker in promoted[step.artifact]), _PROMOTED_EVENTS])
             # The note once, above the first upload: it says what every one of them is.
             steps.append(workflowgen.Step(
                 note="" if noted else textwrap.fill(PROMOTE_NOTE.format(days=PROMOTE_RETENTION_DAYS).replace(

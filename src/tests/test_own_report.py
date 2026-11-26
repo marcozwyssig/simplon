@@ -45,7 +45,7 @@ def _uploads_the_report(step: dict) -> bool:
     artifact the release consumes (si#862, #789), which waits for its producer and never archives a report."""
     return (ARTIFACT_ACTION in str(step.get("uses", ""))
             and not str((step.get("with") or {}).get("path", "")).startswith(HANDOFF_PREFIX)
-            and cipipeline._NOT_A_PULL_REQUEST not in str(step.get("if", "")))
+            and cipipeline._PROMOTED_EVENTS not in str(step.get("if", "")))
 
 
 def _manifest() -> dict:

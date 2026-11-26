@@ -1919,7 +1919,7 @@ def test_a_path_artifact_the_release_consumes_is_kept_after_the_last_leaf():
                             "retention-days": 90}
     producer = _step(doc, "test t")["id"]
     assert kept["if"] == (f"${{{{ !cancelled() && steps.{producer}.outcome == 'success' && "
-                          f"github.event_name != 'pull_request' }}}}")
+                          f"(github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}}}")
 
 
 def test_an_artifact_no_release_step_consumes_is_not_kept():
@@ -1959,19 +1959,23 @@ def test_an_image_the_release_consumes_is_not_kept():
     assert [step["with"]["name"] for step in _kept(doc)] == ["doc-checked", "img-checked"]
 
 
-@pytest.mark.parametrize("event, kept", [("pull_request", False), ("push", True), ("workflow_dispatch", True)])
-def test_a_pull_request_run_keeps_nothing(event, kept):
-    """(d) The upload's `if:` excludes a pull request's run and no other: the event clause, evaluated per event,
-    with ci.yml started by all three."""
+@pytest.mark.parametrize("event, kept", [("pull_request", False), ("pull_request_target", False),
+                                         ("schedule", False), ("push", True), ("workflow_dispatch", True)])
+def test_only_a_push_or_dispatch_run_keeps(event, kept):
+    """(d) The upload's `if:` names the runs a release may promote, push and dispatch, and no other: the whole
+    condition, every clause after the producer's, evaluated per event, with ci.yml started by all three."""
     # act
     doc, _ = _promoting()
 
     # assert
     assert {"pull_request", "push", "workflow_dispatch"} <= set(doc[True])
     (step,) = _kept(doc)
-    clause = re.search(r"github\.event_name != '([a-z_]+)'", step["if"])
-    assert clause is not None
-    assert (event != clause.group(1)) is kept
+    producer = _step(doc, "test t")["id"]
+    head = f"${{{{ !cancelled() && steps.{producer}.outcome == 'success' && "
+    assert step["if"].startswith(head) and step["if"].endswith(" }}")
+    events = step["if"].removeprefix(head).removesuffix(" }}")
+    assert events == "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    assert (event in re.findall(r"github\.event_name == '([a-z_]+)'", events)) is kept
 
 
 def test_an_artifact_produced_only_in_platform_cells_is_named_not_kept():
@@ -2009,6 +2013,36 @@ def test_an_artifact_produced_only_in_a_cadence_file_is_named_not_kept():
     assert "`doc-checked` - `test t` produces it, and ci.yml leaves it out: it has `cadence: nightly`, so it runs in ci-nightly.yml" in _comments(text)
 
 
+def test_an_artifact_whose_producer_runs_with_ci_params_is_named_not_kept():
+    """A producer with `ci: params:` runs narrower in CI than the release reads its result (simplon's
+    `kernel-checked`: `test image` on linux/amd64 alone, evidence for a two-platform push), so its artifact is
+    not kept and the note says why; CI still verifies it."""
+    # arrange
+    ci = _PROMOTE_CI + """      img-test:
+        task: "test:image"
+        consumes: { image: img }
+        produces: { test-result: img-checked }
+        with: { argv: "app --help", expect: "usage" }
+        ci: { params: { platform: linux/amd64 } }
+"""
+    ci = ci.replace("      x: {", "      img: { task: \"build:image\", unattended: true, produces: { image: img } }\n      x: {")
+    release = "      push-img: { task: \"release:image\", consumes: { image: img, evidence: [img-checked] } }\n"
+    text = _PROMOTE_HEAD + ci + _PROMOTE_RELEASE.replace("      all:\n", release + "      all:\n").replace(
+        "depends_on: [check, use, notes, tag]", "depends_on: [check, use, notes, push-img, tag]")
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+
+    # act
+    out = workflowgen.render(
+        cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo"), manifest=loaded,
+        product="demo", source="demo.yaml", artifacts=artifactsection.declared(data), reports="tests/reports")
+
+    # assert
+    assert [step["with"]["name"] for step in _kept(yaml.safe_load(out))] == ["doc-checked"]
+    assert ("`img-checked` - `test img-test` produces it, and CI runs it with `ci: params:`, narrower than "
+            "the release") in " ".join(_comments(out).split())
+
+
 def test_an_artifact_that_also_crosses_a_job_inside_ci_yml_is_refused():
     """(f) `test t` produces `doc-checked` in the main job and `test u` consumes it in its Python cells, so the
     hand-off already uploads it under that name in the run: the promotion upload would be red on every push."""
@@ -2020,6 +2054,21 @@ def test_an_artifact_that_also_crosses_a_job_inside_ci_yml_is_refused():
     with pytest.raises(ValueError, match=r"release\.yml consumes 'doc-checked', which 'test t' produces in job "
                                          r"'ci', and 'test u' consumes it in job 'test-u-python'"):
         _promoting(ci)
+
+
+def test_a_kept_artifact_named_like_the_report_upload_is_refused():
+    """The report upload holds `allure-report` in the main job, and one run holds one artifact of a name: a kept
+    artifact of that name would turn one of the two uploads red on every push run, so generation refuses it."""
+    # arrange
+    text = (_PROMOTE_HEAD + _PROMOTE_CI + "      report: { task: \"test:report\" }\n" + _PROMOTE_RELEASE
+            + _SUITES).replace("doc-checked", workflowgen.RELEASE_ARCHIVE)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+
+    # act / assert
+    with pytest.raises(ValueError, match=rf"release\.yml consumes '{workflowgen.RELEASE_ARCHIVE}', the name the "
+                                         rf"report upload"):
+        cipipeline.derive(loaded, data)
 
 
 def test_no_release_keeps_nothing():
@@ -2058,3 +2107,5 @@ def test_simplon_keeps_what_its_release_consumes():
     assert sorted([*promotion.kept, *promotion.unkept]) == sorted(consumed)
     for artifact in promotion.unkept:
         assert f"`{artifact}` - " in ci.note
+    # `test image` runs amd64 alone in CI (`ci: params:`), and the release pushes both platforms on its evidence
+    assert promotion.unkept["kernel-checked"] == (("test image", cipipeline._NARROWER),)
