@@ -1150,6 +1150,21 @@ def test_pages_release_with_by_is_read():
     assert pages == site_task.Pages(on="release", by="build docs")
 
 
+def test_after_names_the_release_jobs_docs_waits_for():
+    # act
+    pages = site_task.pages({"website": {**_SITE, "pages": "release", "by": "build docs", "after": ["publish"]}})
+
+    # assert
+    assert pages == site_task.Pages(on="release", by="build docs", after=("publish",))
+
+
+def test_a_website_that_is_no_mapping_is_refused_not_read_as_switched_off():
+    """Review of si#862 task 4: `website: 5` is a declaration with no reading, not the absence of `pages:`."""
+    # act / assert
+    with pytest.raises(ValueError, match="'website' must be a mapping"):
+        site_task.pages({"website": "build docs"})
+
+
 @pytest.mark.parametrize("data", [{}, {"website": dict(_SITE)}, {"website": None}],
                          ids=["no-website", "website-without-pages", "bare-website"])
 def test_without_pages_nothing_is_switched_on(data):
@@ -1165,7 +1180,11 @@ def test_without_pages_nothing_is_switched_on(data):
     ({"by": "build docs"}, "no `pages:` says when it is deployed"),
     ({"pages": "release", "by": "docs"}, "`by: docs` must name a group and a command"),
     ({"pages": "release", "by": ["build", "docs"]}, "must name a group and a command"),
-], ids=["push", "push-trigger", "no-by", "no-pages", "one-word", "not-a-string"])
+    ({"pages": "release", "by": "build docs", "after": "publish"}, "`after:` is a list of job keys"),
+    ({"pages": "release", "by": "build docs", "after": [3]}, "`after:` is a list of job keys"),
+    ({"after": ["publish"]}, "no `pages:` says when it is deployed"),
+], ids=["push", "push-trigger", "no-by", "no-pages", "one-word", "not-a-string", "after-string", "after-number",
+        "after-alone"])
 def test_a_pages_switch_with_no_reading_is_refused(keys, said):
     # act / assert
     with pytest.raises(ValueError) as refused:

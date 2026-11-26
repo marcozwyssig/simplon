@@ -1420,6 +1420,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("releasepipeline", "_website", "cannot run in the docs job unattended"): DIAGNOSIS,
     ("releasepipeline", "_website", "so the docs job would upload a directory nothing built"): DIAGNOSIS,
     ("releasepipeline", "_website", "derives a job named '{name}' - rename yours"): DIAGNOSIS,
+    # si#862 review: `website: after:` (Marco, 2026-11-26) names the declared release jobs the docs job waits for. A
+    # name that is no declared job would be a `needs:` GitHub refuses, and a value that is no list of keys has no
+    # reading; a `website:` that is no mapping is a section with no reading, not the absence of `pages:`.
+    ("releasepipeline", "_website", "which is no job declared beside the release"): DIAGNOSIS,
+    ("site", "pages", "`after:` is a list of job keys"): DIAGNOSIS,
+    ("site", "pages", "must be a mapping (the pinned hugo image"): DIAGNOSIS,
     # si#862: the release names its aggregate as `<group> <name>`, resolved against the command tree like a step's
     # `command:` - the same walk, so the same three refusals.
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,

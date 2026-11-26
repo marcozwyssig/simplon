@@ -28,6 +28,7 @@ with no Pages, and biz-cockpit's, served from another repository.
 from __future__ import annotations
 
 import shlex
+import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
@@ -57,6 +58,8 @@ PAGES_DEPLOY = "pages-deploy"
 DOCS_JOB = "docs"
 PAGES_JOB = "pages"
 PAGES_ENVIRONMENT = "github-pages"
+#: One deploy at a time per repository, never cancelled: Pages has one site, whatever workflow deploys it.
+PAGES_CONCURRENCY = "pages"
 DEPLOYMENT_ID = "deployment"
 #: The upload's one parameter: the directory `site.declared` builds the site into.
 PATH_PARAM = "path"
@@ -97,11 +100,14 @@ PASS_SECRETS_CHECK_NAME = "Check the secrets every `env: pass:` step needs"
 
 #: si#862: the derived jobs' own prose, written above each in release.yml.
 DOCS_NOTE = """The website, built by `{by}` (`website: by:`) and uploaded into the run for the `pages`
-job. It waits for `release` and for every job declared beside it, so the site never documents a version
-nobody can install (D12, until #789 leaves the release nothing to publish but the promotion). The upload
-is the LAST step (si#851): no step after it can turn this job red with the artifact already made, so a
+job. {waits} The upload is the LAST step (si#851): no step after it can turn this job red with the artifact already made, so a
 rerun of this job never meets an upload of its own. It reads the checkout and writes nothing outside the
 run; the Pages rights are the `pages` job's."""
+#: The docs job's order, said in its note: after the jobs `website: after:` names, or after the release alone.
+DOCS_AFTER = ("It waits for `release` and for {jobs} (`website: after:`), so the site never documents a version "
+              "they have not published.")
+DOCS_ALONE = ("It waits for `release` alone (`website: after:` names none), so a job declared beside it that fails "
+              "for its own reason does not skip the site.")
 
 PAGES_NOTE = """The deploy of what `docs` uploaded, in a job of its own (si#851). In one job with the
 upload, `deploy-pages` listed the run's artifacts one second after the upload, found no `github-pages`
@@ -337,14 +343,16 @@ def _website(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.
              release: workflowschema.Job) -> tuple[workflowschema.Job, ...]:
     """si#862: the `docs` and `pages` jobs `website: { pages: release, by: }` switches on, or none.
 
-    `docs` runs on the release job's machine and needs `release` and every job the entry declares, in declared
-    order (D12: those publish, and the site must not document a version nobody can install). The declared jobs are
-    the entry's, not the model's, so each is named here by a model job carrying only its key and the release's
-    machine; `to_workflow` reads nothing of them but the key. `pages` runs on GitHub-hosted Ubuntu whatever the
+    `docs` runs on the release job's machine and needs `release` and the jobs `website: after:` names, in its order
+    (Marco, 2026-11-26): a product says which declared job the site must not get ahead of (simplon: `publish`, so
+    it never documents a version nobody can install), and a job it does not name cannot skip the site by failing
+    for its own reason (si#638's missing tap secret). The declared jobs are the entry's, not the model's, so they
+    are named by key in `needs_declared`. `pages` runs on GitHub-hosted Ubuntu whatever the
     release's machine (plan decision 2): it takes no checkout and starts no container, so it needs none of a
     self-hosted kind's steps and gets no reap step beside its `pages: write`.
 
-    Every refusal is a DIAGNOSIS: `by:` naming nothing (`workflowgen.resolve_command`), a leaf of it that would
+    Every refusal is a DIAGNOSIS: an `after:` name that is no declared job (GitHub refuses a `needs:` naming no
+    job in the file), `by:` naming nothing (`workflowgen.resolve_command`), a leaf of it that would
     stop or be skipped with nobody watching, a plan with no `docs:site` leaf (the upload would publish a directory
     nothing built), and a declared job named `docs` or `pages` (the derived job's name, as for `release`)."""
     pages = site.pages(data)
@@ -371,9 +379,15 @@ def _website(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.
             f"directory nothing built - name the command that builds the site (a `{DocsSite.KEY}` leaf, "
             f"or an aggregate that plans one)")
     output = site.declared(data).output
-    declared = tuple(workflowschema.Job(key=job.name, runner=release.runner) for job in (entry.jobs if entry else ()))
+    declared = [job.name for job in entry.jobs] if entry is not None else []
+    for after in pages.after:
+        if after not in declared:
+            raise ValueError(
+                f"'{site.SECTION}: after:' names '{after}', which is no job declared beside the release - declared: "
+                f"{', '.join(declared) or '(none)'}; name a job under `{workflowgen.SECTION}: "
+                f"{workflowgen.RELEASE_KEY}: jobs:`, or take it out of `after:`")
     docs = workflowschema.Job(
-        key=DOCS_JOB, runner=release.runner, needs=(release, *declared),
+        key=DOCS_JOB, runner=release.runner, needs=(release,), needs_declared=pages.after,
         permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,),
         step=(workflowschema.Step(kernel_step=RELEASE_CUT, condition=_DRY_RUN),
               workflowschema.Step(kernel_step=RELEASE_ON_ORIGIN, condition=_NOT_DRY_RUN),
@@ -383,7 +397,7 @@ def _website(manifest: Manifest, data: Mapping[str, object], entry: workflowgen.
     deploy = workflowschema.Job(
         key=PAGES_JOB, runner=workflowschema.Runner(kind=workflowschema.RUNNER_KINDS["github-ubuntu"],
                                                     labels=tuple(runners.TABLE["github-ubuntu"].labels)),
-        needs=(docs,), no_checkout=True, starts_no_container=True, concurrency=PAGES_JOB,
+        needs=(docs,), no_checkout=True, starts_no_container=True, concurrency=PAGES_CONCURRENCY,
         permission=_permissions({"pages": "write", "id-token": "write"}),
         environment=workflowschema.DeployEnvironment(environment_name=PAGES_ENVIRONMENT,
                                                      url=f"${{{{ steps.{DEPLOYMENT_ID}.outputs.page_url }}}}"),
@@ -444,7 +458,9 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     model's runner: its labels, and the kind's own `env:` beside the job's."""
     _, spec = _the_release(manifest)
     reporting = any(step.kernel_step == REPORT for step in job.step)
-    archive, unarchived = workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)
+    # The test archive is the release job's alone (si#509); `docs` and `pages` ask nothing of it.
+    archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)
+                           if job.key == workflowgen.RELEASE_JOB else ((), ""))
     needed: dict[str, list[str]] = {}
     for step in job.step:
         if step.command is not None:
@@ -507,8 +523,8 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     runner = runners.TABLE[kind]
     labels = job.runner.labels
     extras: dict[str, object] = {}
-    if job.needs:
-        needs = [need.key for need in job.needs]
+    if job.needs or job.needs_declared:
+        needs = [*(need.key for need in job.needs), *job.needs_declared]
         extras["needs"] = needs[0] if len(needs) == 1 else needs
     if job.environment is not None:
         extras["environment"] = ({"name": job.environment.environment_name, "url": job.environment.url}
@@ -523,15 +539,19 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     job_env = {**{env.env_name: env.env_value for env in job.env}, **runner.env}
     if job_env:
         extras["env"] = job_env
-    note = {workflowgen.RELEASE_JOB: unarchived, DOCS_JOB: DOCS_NOTE.format(by=_by(job)), PAGES_JOB: PAGES_NOTE}
+    note = {workflowgen.RELEASE_JOB: unarchived, DOCS_JOB: _docs_note(job), PAGES_JOB: PAGES_NOTE}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            runner=runner, note=note.get(job.key, ""), checkout=not job.no_checkout, extras=extras,
                            reap=not job.starts_no_container)
 
 
-def _by(job: workflowschema.Job) -> str:
-    """The command words of the job's one command step: the docs job's `website: by:`."""
-    return next((step.command_words for step in job.step if step.command is not None), "")
+def _docs_note(job: workflowschema.Job) -> str:
+    """The docs job's note: the command its one command step runs (`website: by:`) and what it waits for."""
+    by = next((step.command_words for step in job.step if step.command is not None), "")
+    jobs = ", ".join(f"`{name}`" for name in job.needs_declared)
+    waits = DOCS_AFTER.format(jobs=jobs) if jobs else DOCS_ALONE
+    return "\n".join(textwrap.wrap(DOCS_NOTE.format(by=by, waits=waits).replace("\n", " "), 104,
+                                   break_on_hyphens=False))
 
 
 def _pass_secrets_check(needed: Mapping[str, Sequence[str]]) -> workflowgen.Step:

@@ -381,11 +381,15 @@ def _uses(job) -> list[str]:
     return [str(step.get("uses", "")) for step in job["steps"]]
 
 
-def test_pages_release_derives_docs_after_every_declared_job_and_pages_after_docs():
-    """(a) `docs` waits for `release` and every declared release job, in declared order, and uploads the
+#: `website: after:` names the declared release jobs `docs` waits for (Marco, 2026-11-26).
+AFTER = WEB.replace('by: "build docs" }', 'by: "build docs", after: [publish, image] }')
+
+
+def test_pages_release_derives_docs_after_the_named_jobs_and_pages_after_docs():
+    """(a) `docs` waits for `release` and the declared release jobs `after:` names, in its order, and uploads the
     declared output LAST; `pages` deploys it alone."""
     # act
-    doc = _rendered(WEB, DECLARED)
+    doc = _rendered(AFTER, DECLARED)
 
     # assert
     jobs = doc["jobs"]
@@ -400,7 +404,7 @@ def test_pages_release_derives_docs_after_every_declared_job_and_pages_after_doc
     assert pages["runs-on"] == "ubuntu-latest" and pages["needs"] == "docs"
     assert pages["permissions"] == {"pages": "write", "id-token": "write"}
     assert pages["environment"] == {"name": "github-pages", "url": "${{ steps.deployment.outputs.page_url }}"}
-    assert pages["concurrency"] == {"group": "pages", "cancel-in-progress": False}
+    assert pages["concurrency"] == {"group": releasepipeline.PAGES_CONCURRENCY, "cancel-in-progress": False}
     assert pages["steps"] == [
         {"uses": workflowgen.CONFIGURE_PAGES_ACTION, "with": {"enablement": True}},
         {"id": "deployment", "uses": workflowgen.DEPLOY_PAGES_ACTION, "if": "${{ !inputs.dry_run }}"}]
@@ -414,6 +418,48 @@ def test_without_declared_jobs_docs_needs_the_release_only():
     # assert
     assert list(doc["jobs"]) == ["release", "docs", "pages"]
     assert doc["jobs"]["docs"]["needs"] == "release"
+
+
+def test_without_after_docs_needs_the_release_only_beside_declared_jobs():
+    """Marco, 2026-11-26: a declared job `after:` does not name is not waited for, so a red homebrew-tap (si#638's
+    missing secret) does not skip the site."""
+    # act
+    doc = _rendered(WEB, DECLARED)
+
+    # assert
+    assert doc["jobs"]["docs"]["needs"] == "release"
+
+
+def test_the_declared_jobs_docs_waits_for_are_named_not_stood_in_for():
+    """Review of si#862 task 4: a declared job is no model job (a model job has a step), so `docs` names it in
+    `needs_declared` beside the model jobs it needs."""
+    # arrange
+    text = AFTER + DECLARED
+    loaded = manifest_mod.load(text, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = yaml.safe_load(text)
+    entry = next(w for w in workflowgen.parse(data) if w.key == workflowgen.RELEASE_KEY)
+
+    # act
+    model = releasepipeline.derive(loaded, data, entry)
+
+    # assert
+    docs = next(job for job in model.job if job.key == releasepipeline.DOCS_JOB)
+    assert [need.key for need in docs.needs] == ["release"]
+    assert docs.needs_declared == ("publish", "image")
+    assert all(job.step for job in model.job)
+
+
+def test_only_the_release_job_computes_the_test_archive(monkeypatch):
+    # arrange
+    asked = []
+    real = workflowgen._release_archive
+    monkeypatch.setattr(workflowgen, "_release_archive", lambda *a, **k: asked.append(a) or real(*a, **k))
+
+    # act
+    _workflows(WEB)
+
+    # assert
+    assert len(asked) == 1
 
 
 def test_the_docs_job_runs_on_the_release_machine_and_pages_on_github_hosted():
@@ -526,8 +572,12 @@ def test_the_notes_carry_si851s_lessons():
     (WEB.replace('by: "build docs"', 'by: "build reference"'), "", "plans no `docs:site` leaf"),
     (WEB, DECLARED.replace("      image:", "      docs:"), "declares a job 'docs'"),
     (WEB, DECLARED.replace("      image:", "      pages:"), "declares a job 'pages'"),
+    (WEB.replace('by: "build docs" }', 'by: "build docs", after: [publsh] }'), DECLARED,
+     "names 'publsh', which is no job declared beside the release - declared: publish, image"),
+    (WEB.replace('by: "build docs" }', 'by: "build docs", after: [publish] }'), "",
+     "names 'publish', which is no job declared beside the release - declared: (none)"),
 ], ids=["no-release-command", "handwritten", "no-such-command", "no-such-group", "unattended-unsaid",
-        "attended", "no-site-leaf", "job-docs", "job-pages"])
+        "attended", "no-site-leaf", "job-docs", "job-pages", "after-misspelt", "after-without-jobs"])
 def test_a_pages_switch_the_release_cannot_derive_is_refused(product, extra, said):
     """(e) Each is a DIAGNOSIS: a switch that would derive nothing, or a docs job that would publish a site nobody
     built, never run, or collide with a job of the product's."""

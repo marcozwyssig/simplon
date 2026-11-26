@@ -330,11 +330,13 @@ PAGES_RELEASE = "release"
 
 
 class Pages(NamedTuple):
-    """si#862: `website: { pages:, by: }` - WHEN the site goes to this repository's GitHub Pages (`on`, only
-    `release` so far) and the command that builds it (`by`, `<group> <name>` as a person types it)."""
+    """si#862: `website: { pages:, by:, after: }` - WHEN the site goes to this repository's GitHub Pages (`on`, only
+    `release` so far), the command that builds it (`by`, `<group> <name>` as a person types it), and the jobs
+    declared beside the release that the build waits for (`after`, their keys; Marco, 2026-11-26)."""
 
     on: str
     by: str
+    after: tuple[str, ...] = ()
 
 
 def pages(data: Mapping[str, object]) -> Pages | None:
@@ -345,20 +347,29 @@ def pages(data: Mapping[str, object]) -> Pages | None:
     manifests, firn declares a website and has no Pages, and biz-cockpit's is served from another repository, so
     reading the section alone would have deployed both (and `configure-pages` would have turned Pages on).
 
-    Every refusal is a DIAGNOSIS: a value the derivation has no reading for, or half of the pair that is useless
-    alone. `pages: push` is the value cleon's per-push deploy would need; it is the trigger that reopens the one
+    `after:` names the jobs declared beside the release that the build waits for (Marco, 2026-11-26); without it
+    the build waits for the release alone, so a job that fails for its own reason (si#638's missing tap secret)
+    does not skip the site. Whether each name is a declared job is decided at generation, where the entry is.
+
+    Every refusal is a DIAGNOSIS: a section or value the derivation has no reading for, or a key that is useless
+    without `pages:`. `pages: push` is the value cleon's per-push deploy would need; it is the trigger that reopens the one
     value, not a rule against it."""
-    section, blame, _ = context.section(data, SECTION)
+    section, blame, value = context.section(data, SECTION)
+    where = f"'{SECTION}'"
+    if blame and value is not None:
+        raise ValueError(
+            f"{where} must be a mapping (the pinned hugo image, where the site is built to, and `pages:` and `by:` "
+            f"when it is deployed to GitHub Pages), got {value!r}")
     if blame:
         return None
-    on, by = section.get("pages"), section.get("by")
-    where = f"'{SECTION}'"
-    if on is None and by is None:
+    on, by, after = section.get("pages"), section.get("by"), section.get("after")
+    if on is None and by is None and after is None:
         return None
     if on is None:
+        said = " and ".join(f"`{key}:`" for key, value in (("by", by), ("after", after)) if value is not None)
         raise ValueError(
-            f"{where}: `by: {by}` names the command that builds the site for GitHub Pages, and no `pages:` says "
-            f"when it is deployed - add `pages: {PAGES_RELEASE}`, or take `by:` out")
+            f"{where}: {said} shape the site's deploy to GitHub Pages, and no `pages:` says when it is deployed - "
+            f"add `pages: {PAGES_RELEASE}`, or take {said} out")
     if on != PAGES_RELEASE:
         raise ValueError(
             f"{where}: `pages: {on}` - the one value is `{PAGES_RELEASE}`: the site is built and deployed to this "
@@ -372,7 +383,11 @@ def pages(data: Mapping[str, object]) -> Pages | None:
     if not isinstance(by, str) or len(by.split()) < 2:
         raise ValueError(
             f"{where}: `by: {by}` must name a group and a command (`build docs`), as `generated: by:` does")
-    return Pages(on=PAGES_RELEASE, by=" ".join(by.split()))
+    if after is not None and (not isinstance(after, list) or not all(isinstance(k, str) and k for k in after)):
+        raise ValueError(
+            f"{where}: `after:` is a list of job keys declared beside the release under `workflows: release:` "
+            f"(`after: [publish]`), the jobs the site's build waits for; got {after!r}")
+    return Pages(on=PAGES_RELEASE, by=" ".join(by.split()), after=tuple(after or ()))
 
 
 def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
