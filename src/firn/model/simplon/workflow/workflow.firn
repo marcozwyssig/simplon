@@ -93,7 +93,7 @@ Runner typeOf firn.core.Class extends firn.core.NamedResource {
 
 // What starts a workflow. `event` is one of `pull_request`, `push_main`, `dispatch`, `schedule` or `workflow_run`;
 // a string, not an enum, so the template needs no enum case. `cron` belongs to `schedule`,
-// `input` to `dispatch`, `workflows` to `workflow_run`.
+// `dispatch_input` to `dispatch`, `workflows` to `workflow_run`.
 Trigger typeOf firn.core.Class extends firn.core.NamedResource {
   property event typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
@@ -103,9 +103,13 @@ Trigger typeOf firn.core.Class extends firn.core.NamedResource {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
   }
-  property input typeOf firn.core.Attribute {
-    range = firn.core.StringLiteral
+  // The inputs a `dispatch` asks for, in the order the button shows them (si#862: the release's `version` and
+  // `dry_run`; `cipipeline._on` writes them under `workflow_dispatch: inputs:`). It replaces a bare list of input
+  // names that nothing read, which could say neither a type nor a default.
+  property dispatch_input typeOf firn.core.Composition {
+    range = simplon.workflow.DispatchInput
     subjectCardinality = 0..N
+    objectCardinality = 0..1
   }
   // The workflows a `workflow_run` listens to, by their `name:` (GitHub matches names, not files) (si#874).
   property workflows typeOf firn.core.Attribute {
@@ -116,6 +120,45 @@ Trigger typeOf firn.core.Class extends firn.core.NamedResource {
   property types typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..N
+  }
+}
+
+// One input of a `dispatch` trigger (si#862), as GitHub's `workflow_dispatch: inputs:` spells it: `input_type` is
+// GitHub's `type:` (`string`, `boolean`), and `default_value` is GitHub's `default:` as text, which `cipipeline._on`
+// writes as a boolean for a `boolean` input. Read by `cipipeline._on`.
+DispatchInput typeOf firn.core.Class extends firn.core.NamedResource {
+  property input_name typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property description typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property input_type typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property required typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 1..1
+  }
+  property default_value typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+// The GitHub environment a job deploys to (si#862): its name, and the URL the run links to, an expression a step
+// of the job sets (`pages`' `steps.deployment.outputs.page_url`). Read by `releasepipeline.to_workflow`.
+DeployEnvironment typeOf firn.core.Class extends firn.core.NamedResource {
+  property environment_name typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property url typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
   }
 }
 
@@ -170,6 +213,37 @@ Step typeOf firn.core.Class extends firn.core.NamedResource {
     range = simplon.workflow.StepParam
     subjectCardinality = 0..N
     objectCardinality = 0..1
+  }
+  // GitHub's `if:` on the step (si#862): the release skips a `publishes:` leaf on a dry run and runs its dry-run
+  // tail only on one. Read by `releasepipeline.to_workflow`; `cipipeline` writes its own conditions (`to_workflow`).
+  property condition typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  // The step's own `env:` (si#862): a `token: github` leaf's GITHUB_TOKEN and an `env: pass:` leaf's secrets, each
+  // an expression held as the value. Read by `releasepipeline.to_workflow`.
+  property env typeOf firn.core.Composition {
+    range = simplon.workflow.RunnerEnv
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  // GitHub's `id:` on the step, for a later expression that reads its outputs (si#862). Read by
+  // `releasepipeline.to_workflow`.
+  property step_id typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  // The `<group> <name>` the step's `command` runs as (si#862), set where the plan is walked and read by
+  // `releasepipeline.to_workflow`, so the converter needs no second lookup of the command.
+  property command_words typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  // The manifest artifact a kernel step acts on (si#862, #789): ci.yml's promotion upload names the `path:`
+  // artifact a release consumes, uploaded under that name. Read by `cipipeline.to_workflow`.
+  property artifact typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
   }
 }
 
@@ -312,6 +386,33 @@ Job typeOf firn.core.Class extends firn.core.NamedResource {
   property starts_no_container typeOf firn.core.Attribute {
     range = firn.core.BooleanLiteral
     subjectCardinality = 0..1
+  }
+  // The job's own token scopes (si#719), which replace the workflow's for this job: the release job's
+  // `contents: write` and `packages: write` (si#862). Read by `releasepipeline.to_workflow`.
+  property permission typeOf firn.core.Composition {
+    range = simplon.workflow.Permission
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  // The GitHub environment the job deploys to (si#862: `github-pages`, `pypi`). Read by
+  // `releasepipeline.to_workflow`.
+  property environment typeOf firn.core.Composition {
+    range = simplon.workflow.DeployEnvironment
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  // The job takes no checkout (si#862: a deploy job that only hands on an artifact). Read by
+  // `releasepipeline.to_workflow`.
+  property no_checkout typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
+  // The jobs this one needs that are not model jobs: a job of the product's `workflows:` entry, by its key (si#862:
+  // the derived `docs` waits for the release jobs `website: after:` names). Rendered after `needs`'s keys. Read by
+  // `releasepipeline.to_workflow`.
+  property needs_declared typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
   }
 }
 

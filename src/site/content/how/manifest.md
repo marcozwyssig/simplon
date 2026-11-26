@@ -251,7 +251,7 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
 and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](#passes-what-an-aggregate-hands-its-leaves)
 it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to every member that
 takes one. simplon's own `release.yml` is the first workflow derived from such an aggregate (si#491):
-`release: release all` makes it the dispatch release, whose job runs the test leaves, the notes and the
+`release all` is its release aggregate, so its job runs the test leaves, the notes and the
 tag in this order, so a red test leaves no tag behind. Typed in a checkout, `release all` still ends by
 pushing the tag - and for simplon nothing then publishes it, because only the button does; if `main`
 moves before the button is pressed, that version is refused there as taken. PyPI, the site and the image publish in product
@@ -457,6 +457,34 @@ convention without having had to read this page. Simplon itself is the first con
 leaves `source:` out, so the default is exercised by every `build docs` in the kernel's own repository
 rather than only by a test.
 
+**Deploying the site to GitHub Pages is a switch, not a consequence of the section** (si#862). A product
+whose release workflow the kernel derives says when and with which command:
+
+```yaml
+website:
+  image: "hugomods/hugo:exts-0.148.2"
+  pages: release      # deploy to this repository's GitHub Pages after each release
+  by: "build docs"    # the command that builds the whole site, as you type it
+  after: [publish]    # optional: the jobs declared beside the release the build waits for
+```
+
+`support github workflows` then adds the jobs `docs` and `pages` to release.yml. `docs` runs on the release job's machine, waits
+for `release` and for the jobs `after:` names (keys of jobs declared under `workflows: release: jobs:`; name
+the one that publishes what the site documents, so it never documents a version nobody can install), cuts the tag on a dry run or requires the pushed one on a real run, runs `by:`,
+and uploads `output` as its last step. `pages` deploys that upload in a job of its own on GitHub-hosted
+Ubuntu, with `pages: write` and `id-token: write`, and skips only the deploy on a dry run. The split is
+si#851's: in one job `deploy-pages` listed the artifacts a second after the upload and found none, and
+"Re-run failed jobs" now reruns the deploy alone. A full rerun of the run needs its `github-pages` artifacts
+deleted first, or the deploy finds two.
+
+Without `after:` the build waits for `release` alone, so a declared job that fails for a reason of its own (a
+missing secret, si#638) does not skip the site. A name in `after:` that is no declared job is refused.
+
+`pages:` takes one value, `release`; a deploy on every push is not derived. `by:` must plan a `docs:site`
+leaf (an aggregate that also writes generated pages first is the usual answer) and every leaf in it must be
+`unattended: true`. A `website:` without `pages:` derives nothing: a product that serves its site from
+another repository, or not at all, says nothing more.
+
 {{< callout type="warning" >}}
 **`docs:site` writes into your working tree, on purpose.** A theme declared as a Hugo module means the
 build runs `hugo mod get <module>@<version>` before it builds, and that rewrites `go.mod` and refreshes
@@ -520,7 +548,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `toolchains:` | `support:claude-plugins`, `support:install`, `support:toolchain` | the toolchains this product uses: `python`, `java`, `cpp`, `dotnet`, `firn`, `claude`, `gh`, `brew` (si#525, si#526). `support toolchain <name>` adds one; for `firn` that is `test model`, `build model` and `test manifest-model`, which validates this manifest, exported fresh, against the firn M2 simplon ships (si#522). `claude` turns on the Claude Code plugins (eight base plugins, plus one LSP plugin per language listed here). `gh` and `brew` make `support install` provision the GitHub CLI and Homebrew: brew first, then gh through brew, winget or GitHub's signed apt repository (with sudo where needed). Each says present, installed, skipped (container, CI, a platform Homebrew does not run on), no way to install it here, or failed; the last two fail the command. An unknown name is refused, and an absent list turns everything here off |
-| `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
+| `website:` | `docs:site`, the derived release workflow (si#862) | the pinned Hugo image, where the sources live, where the site is built to; `pages: release`, `by:` and `after:` deploy it to this repository's GitHub Pages after each release |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
 A key that is **mistyped** is therefore not the silent no-op it looks like. Most of the sections a
@@ -1146,15 +1174,39 @@ itself (`GITHUB_*`, `RUNNER_*`, `CI`). A name set nowhere would expand to nothin
 run as if no value were given, so generation refuses it. A `params:` value that is neither a scalar
 nor `{ env: NAME }` is refused too: it used to reach the command as its Python text.
 
-**`release:` on a workflow derives the whole dispatch release from a release aggregate** (si#490). The
-product names the aggregate and the machine:
+**A release aggregate derives `.github/workflows/release.yml`, the whole dispatch release** (si#490,
+si#862). The aggregate under `ci: release:` that `produces: { release: <artifact> }` (a ReleaseCommand) is
+all it takes: no `workflows:` entry names it. Its `ci:` holds three keys, as on a CI leaf:
 
 ```yaml
-workflows:
+ci:
   release:
-    release: release all
-    runner: { kind: self-hosted-debian, labels: ghr-8 }
+    commands:
+      all:
+        depends_on: [check, notes, tag]
+        passes: [tag]
+        produces: { release: app-release }
+        stop_on_failure: true
+        ci: { runner: github-ubuntu, emulates: [linux/arm64], timeout_minutes: 60 }
 ```
+
+- **`runner:`** the release job's machine, a kind with its labels as the top-level `runner:` takes it.
+  Without it the job runs on the product's top-level `runner:`.
+- **`emulates:`** and **`timeout_minutes:`**, below.
+
+**`workflows: release:` adds jobs** to the derived release.yml, beside the `release` job (they can `needs:
+release` and read `inputs.version` and `inputs.dry_run`), with the workflow's `permissions:`, `env:`, `name:`
+and `note:`; an entry with only those and no `jobs:` is fine, so `permissions: { id-token: write }` alone
+reaches the `release` job. It is the one key the [switch rule](#a-product-with-no-workflows-ci) reads differently: declaring
+it does not switch the derived file off, because PyPI's Trusted Publishing is bound to the file name
+release.yml and a publish job has to live in it. **`handwritten:`** under `release` does switch it off, and
+a `ci:` key on the release aggregate is then refused, because nothing would read it. Without a release
+aggregate, `workflows: release:` is an ordinary declared workflow. Two release aggregates are refused (an
+expression rule): each would derive release.yml.
+
+**Retired by si#862**, each refused naming its new place: `release:`, `emulates:` and `timeout_minutes:`
+under any `workflows:` key, and a workflow-level `runs-on:`, `runs_on:` or `runner:` under `release`
+(beside no `flow:`). They now live on the release aggregate's `ci:`.
 
 What the kernel writes:
 
@@ -1162,7 +1214,7 @@ What the kernel writes:
   There is no tag trigger: a release is started by a person who types the version.
 - **`permissions:`** `contents: write` and `packages: write` on the `release` job's own block, and only
   there (si#719). The workflow-level `permissions:` is the default of every other job without its own
-  block: the product's `permissions:` beside `release:` as written, or `contents: read` when it declares
+  block: the product's `permissions:` under `workflows: release:` as written, or `contents: read` when it declares
   none. A scope the product declares there, such as `id-token: write`, also reaches the `release` job,
   whose block replaces the workflow's.
 - **`concurrency:`** One release per version, never cancelled in progress.
@@ -1171,22 +1223,20 @@ What the kernel writes:
   The order is what rule 8 already checked at load, so the workflow orders nothing itself. Its first
   launcher step is `<launcher> help`, with no token in its environment (si#718): the launcher's first run
   builds its venv from PyPI, and that install no longer runs beside the token a `token: github` step gets.
-- **Emulation, when you ask for it.** `emulates: [linux/arm64]` beside `release:` makes the job's first
+- **Emulation, when you ask for it.** `ci: { emulates: [linux/arm64] }` on the release aggregate makes the job's first
   step register those platforms (buildx's `<os>/<arch>[/<variant>]` spelling) through
   `docker/setup-qemu-action`, pinned by commit, with the kernel's own binfmt image (si#570). The job is
   derived and takes no step of yours, so this is how a suite that runs a foreign-platform file, as a
   `test:file` e2e does, gets an emulator on a hosted runner. A job you write yourself registers it with
-  its own step; `emulates:` anywhere but beside `release:` is refused. **On an LXC runner**
-  (`runner: { kind: self-hosted-container }`) it is refused too (#722): the registration is refused there
-  with `permission denied`, so the job would fail in its first step. Register the emulator once on the LXC
-  runner itself with the `support:ci-arm64` task, as si#358 describes, and drop `emulates:`, or run the
-  release on a kind that can. A release job named by `runs-on:` alone, with no `runner:`, carries no kind
-  and is not checked.
+  its own step. **On an LXC runner** (`runner: { kind: self-hosted-container }`, the release job's or the
+  product's) it is refused at generation (#722): the registration is refused there with `permission denied`,
+  so the job would fail in its first step. Register the emulator once on the LXC runner itself with the
+  `support:ci-arm64` task, as si#358 describes, and drop `emulates:`, or name a kind that can with
+  `ci: { runner: }` on the release aggregate, as simplon does with `github-ubuntu`.
 - **A time limit** (si#720). The job carries `timeout-minutes`, by default the kernel's
   `RELEASE_TIMEOUT_MINUTES` (the source of its value is named where it is set, in `workflowgen.py`), so a
-  hung release does not hold its runner for GitHub's default of 360 minutes. `timeout_minutes: <n>` beside
-  `release:` sets another; a value that is not a positive whole number, or the key beside no `release:`,
-  is refused at load.
+  hung release does not hold its runner for GitHub's default of 360 minutes. `ci: { timeout_minutes: <n> }`
+  on the release aggregate sets another; a value that is not a positive whole number is refused at load.
 
 The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`, exactly as
 `release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest. They are
@@ -1224,12 +1274,12 @@ declared on the task, so a catalogue task brings its own and a task of your own 
   a digit or with `GITHUB_`), a step whose `env:` is not a mapping or sets `GH_APP_TOKEN` itself, and an
   aggregate step whose plan holds such a
   leaf among others, because one `run:` line would hand the token to all of them. Run the leaf as its own
-  step. In a `release:` workflow the derived `release` job checks, before the cut and on a dry run too,
+  step. In release.yml the derived `release` job checks, before the cut and on a dry run too,
   that every such secret of the workflow's `token: app` leaves is set, reading `secrets.X != ''` and never
   the value (si#574). A leaf in a job that names an `environment:` is not checked, because the release job
   cannot see that environment's secrets; the generated file says so above the `release` job.
 
-Refused beside `release:`:
+Refused in `workflows: release:` beside the derived release:
 
 - an `on:` (a second trigger would start a release with no version) and a `concurrency:`;
 - `flow:` (each derives its own trigger);
@@ -1239,6 +1289,7 @@ Refused beside `release:`:
 Refused at generation:
 
 - an aggregate that passes no `tag`, or passes a second parameter a dispatch cannot fill;
+- `ci: { emulates: }` on a runner kind that cannot register emulation;
 - a leaf that is not `unattended: true`.
 
 Your own jobs may stand beside it and `needs: release`.
@@ -1431,6 +1482,8 @@ miss as an answer.
 under `workflows:` is keyed `ci` (si#858). Declaring `workflows: ci:` is the switch, and the only one: a
 product that declares its CI keeps exactly the file it renders today, and every other product gets the
 derived one beside whatever else it declares. A product with no `workflows:` section at all gets it too.
+`workflows: release:` is the one key read differently (si#862): beside a release aggregate it adds jobs to
+the derived release.yml, and only its `handwritten:` switches that file off.
 The same rule holds for [the cadence files](#variant-keys-how-a-leaf-runs) (si#860): a declared key
 switches off the derived workflow of that key and no other, so `workflows: ci:` keeps `ci-nightly.yml`,
 and `workflows: ci-nightly:` keeps ci.yml. With `workflows: ci:` declared, a variant key on a leaf that
@@ -1511,6 +1564,19 @@ so the report is written over every verdict, red ones included. Its upload follo
 archiving `suites: reports:`, which a product with a `test:report` leaf therefore has to declare. An
 `after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
 consumer.
+
+**ci.yml keeps what the release consumes** (si#862, #789). Every artifact with a `path:` that a leaf of
+the derived release.yml consumes (the release aggregate's plan, a command step of a job declared under
+`workflows: release:`, the `website: by:` command) and a leaf of ci.yml's main job produces is uploaded
+after the last leaf, before the report's upload, under its manifest name and from its declared path. It
+is kept for 90 days, so a release cut days after the merge still finds the run of its commit. Only push
+and dispatch runs upload it: a pull request's run is not one a release promotes. Each upload waits for
+its producer's success and fails on a missing file. An artifact with no `path:` (an image) is not
+uploaded: it goes to its registry. One that ci.yml cannot keep once is named in the job's note with the
+reason, not refused, because CI still verifies it: produced only in `ci: platforms:` cells, by a gate
+member or a `cadence:` leaf (another file's run), or by no leaf ci.yml runs (a skipped one, or a release
+member such as `release notes`). One that ci.yml also hands from its main job to a cell job is refused:
+the hand-off already holds that name in the run. Without a derived release.yml nothing is kept.
 
 **The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
 it is `github-ubuntu`:
@@ -1944,7 +2010,7 @@ an aggregate is refused at load, because it would reach nothing - put it on the 
 **Each name crosses by name, never as a value.** The value is on no command line and in no log. A name
 your shell does not export stays unset on the far side: it is not forwarded as an empty string.
 
-**In a `release:` workflow the derived job fills the names from the repository's Actions secrets**
+**In release.yml the derived job fills the names from the repository's Actions secrets**
 (si#836): the step of a command that declares `env: pass:` gets each name as `${{ secrets.<NAME> }}` in its
 own `env:`, and the job checks before the cut that each is set. The rules are with `token:` under the
 release workflow above.

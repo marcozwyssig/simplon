@@ -646,10 +646,10 @@ def test_the_generator_carries_no_list_of_workflow_kinds():
     source = (ROOT / "src" / "simplon" / "tasks" / "workflowgen.py").read_text(encoding="utf-8")
 
     # Act: the code, without the prose that legitimately discusses those words
-    # si#490: `RELEASE_KEY = "release"` and `RELEASE_JOB = "release"` name a KEY inside a workflow's body
-    # and the job it derives - the sibling of `FLOW_KEY = "flow"` - and not a workflow kind: a workflow
-    # declaring `release:` may be called anything (the tests below call it `rel`). Those two definitions
-    # are the only lines exempted, so a comparison against a workflow NAME would still be caught.
+    # si#490, si#862: `RELEASE_KEY = "release"` and `RELEASE_JOB = "release"` name the `workflows:` key whose
+    # entry adds jobs to the derived release.yml (its retired keys are refused there) and the job the release
+    # derives. Those two definitions are the only lines exempted, so every other comparison against a workflow
+    # NAME goes through the constant, where a reader finds it, and a literal one would still be caught.
     code = "\n".join(line for line in source.splitlines()
                      if not line.lstrip().startswith("#")
                      and line not in ('RELEASE_KEY = "release"', 'RELEASE_JOB = "release"'))
@@ -2469,23 +2469,17 @@ def test_a_value_that_is_not_a_scalar_or_a_set_variable_is_refused(kernel_manife
             job_env=_JOB_ENV))
 
 
-# --- si#490: `release:` - the dispatch release, derived from a release aggregate ------------------------
+# --- si#490, si#862: the dispatch release, derived from the ReleaseCommand ----------------------------------
 
-_RELEASE = """
-workflows:
-  rel:
-    release: release all
-    runner: { kind: self-hosted-debian, labels: ghr-8 }
-"""
-
-
-def _release_parsed(extra: str = "") -> "workflowgen.Workflow":
-    return workflowgen.parse(_section(_RELEASE + textwrap.indent(textwrap.dedent(extra), "    ")))[0]
+def _release_derived(extra: str = "") -> "workflowgen.Workflow":
+    """si#862: the release workflow as `cipipeline.workflows` hands it to the renderer, derived through the model,
+    with `extra` written into the `workflows: release:` entry."""
+    return _release_workflow(workflows=_RELEASE_WORKFLOWS + textwrap.indent(textwrap.dedent(extra), "    "))
 
 
 def test_release_derives_the_dispatch_trigger():
     """D2 (si#463): a release is started by dispatch only, with the version typed and a dry run by default."""
-    assert _release_parsed().on == {"workflow_dispatch": {"inputs": {
+    assert _release_derived().on == {"workflow_dispatch": {"inputs": {
         "version": {"description": "The version to release, exactly as its tag will be: vX.Y.Z",
                     "required": True, "type": "string"},
         "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
@@ -2494,7 +2488,7 @@ def test_release_derives_the_dispatch_trigger():
 
 def test_release_derives_permissions_and_concurrency():
     """si#719: the workflow default the kernel derives is `contents: read`; the write scopes are the job's."""
-    parsed = _release_parsed()
+    parsed = _release_derived()
     assert list(parsed.extras)[:2] == ["permissions", "concurrency"]
     assert parsed.extras["permissions"] == {"contents": "read"}
     assert parsed.extras["concurrency"] == {"group": "${{ github.workflow }}-${{ inputs.version }}",
@@ -2504,20 +2498,19 @@ def test_release_derives_permissions_and_concurrency():
 
 def test_a_product_permission_beside_release_is_the_workflow_default():
     """si#719: the product's `permissions:` is the default of every job without its own block, as written."""
-    parsed = _release_parsed("permissions: { id-token: write }\n")
+    parsed = _release_derived("permissions: { id-token: write }\n")
     assert parsed.extras["permissions"] == {"id-token": "write"}
 
 
 @pytest.mark.parametrize("scope", ["contents", "packages"])
 def test_a_workflow_default_below_what_the_release_needs_is_no_longer_refused(scope):
     """si#719: the refusal guarded the workflow-level grant; the release job now carries its own."""
-    parsed = _release_parsed(f"permissions: {{ {scope}: read }}\n")
+    parsed = _release_derived(f"permissions: {{ {scope}: read }}\n")
     assert parsed.extras["permissions"] == {scope: "read"}
 
 
 def _with_workflow_permissions(permissions: str) -> str:
-    return _RELEASE_WORKFLOWS.replace("    release: release all\n",
-                                      f"    release: release all\n    permissions: {permissions}\n")
+    return _RELEASE_WORKFLOWS.replace("  release:\n", f"  release:\n    permissions: {permissions}\n", 1)
 
 
 def test_write_scopes_sit_on_the_release_job_only():
@@ -2536,7 +2529,7 @@ def test_a_lower_workflow_default_leaves_the_release_job_its_write_scopes():
 
 
 def test_a_scope_the_product_adds_reaches_the_release_job_too():
-    """si#490 Task 2's case, kept: a scope a product declares beside `release:` (simplon's PyPI publish
+    """si#490 Task 2's case, kept: a scope a product declares on the release entry (simplon's PyPI publish
     once needed `id-token: write` there) still reaches the release job, whose own block replaces the
     workflow's."""
     doc = yaml.safe_load(_release_text(workflows=_with_workflow_permissions("{ id-token: write }")))
@@ -2544,70 +2537,29 @@ def test_a_scope_the_product_adds_reaches_the_release_job_too():
                                                      "packages": "write"}
 
 
-@pytest.mark.parametrize("extra, complaint", [
-    ("on: [push]\n", "the trigger is derived from `release:`"),
-    ("concurrency: { group: x }\n", "`concurrency:` is derived from `release:`"),
-    ("flow: [{ to: prod }]\n", "a rollout or a release, not both"),
-    ("jobs: { release: { runs-on: x, steps: [{ run: y }] } }\n", "the derived job is named 'release'"),
-    ("env: { RELEASE_VERSION: x }\n", "RELEASE_VERSION is the dispatch input's"),
-])
-def test_what_release_derives_may_not_be_declared_beside_it(extra, complaint):
-    with pytest.raises(ValueError, match=re.escape(complaint)):
-        _release_parsed(extra)
-
-
-@pytest.mark.parametrize("value", ["", "all", 3])
-def test_release_names_an_aggregate_by_group_and_name(value):
-    with pytest.raises(ValueError, match="names a release aggregate as <group> <name>"):
-        workflowgen.parse({"workflows": {"rel": {"release": value,
-                                                 "runner": {"kind": "self-hosted-debian", "labels": "ghr-8"}}}})
-
-
 def test_the_derived_release_job_has_the_default_time_limit_not_githubs():
-    """si#720: with no `timeout_minutes:` the derived job carries the kernel's default, not GitHub's 360."""
+    """si#720: with no `ci: { timeout_minutes: }` the derived job carries the kernel's default, not GitHub's 360."""
     job = yaml.safe_load(_release_text())["jobs"]["release"]
     assert job["timeout-minutes"] == workflowgen.RELEASE_TIMEOUT_MINUTES
     assert 0 < workflowgen.RELEASE_TIMEOUT_MINUTES < 360
 
 
-def test_timeout_minutes_beside_release_renders_onto_the_derived_job():
-    """si#720: the key is the product's; it reaches the derived job and not the workflow."""
-    doc = yaml.safe_load(_release_text(workflows=_RELEASE_WORKFLOWS.replace(
-        "    release: release all\n", "    release: release all\n    timeout_minutes: 45\n")))
+def test_timeout_minutes_on_the_release_aggregate_renders_onto_the_derived_job():
+    """si#720, si#862: the key is the product's, on the ReleaseCommand; it reaches the derived job and not the
+    workflow."""
+    doc = yaml.safe_load(_release_text(_release_ci("{ timeout_minutes: 45 }")))
     assert doc["jobs"]["release"]["timeout-minutes"] == 45
     assert "timeout_minutes" not in doc and "timeout-minutes" not in doc
 
 
-@pytest.mark.parametrize("value", ["0", "-5", "'60'", "1.5", "true"])
-def test_a_timeout_that_is_not_a_positive_integer_is_refused_at_load(value):
-    with pytest.raises(ValueError, match="`timeout_minutes:` is the derived release job's time limit"):
-        _release_parsed(f"timeout_minutes: {value}\n")
-
-
-def test_timeout_minutes_without_release_is_refused():
-    with pytest.raises(ValueError, match="`timeout_minutes:` is read only beside `release:`"):
-        workflowgen.parse(_section("""
-        workflows:
-          ci:
-            on: [push]
-            timeout_minutes: 30
-            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
-        """))
-
-
-def test_a_hand_written_workflow_may_not_declare_a_release():
-    with pytest.raises(ValueError, match="cannot also declare release"):
-        workflowgen.parse({"workflows": {"rel": {"handwritten": "ours", "release": "release all"}}})
-
-
 def test_a_product_job_may_stand_beside_the_release():
-    parsed = _release_parsed("jobs: { announce: { runs-on: x, needs: release, steps: [{ run: y }] } }\n")
-    assert [job.name for job in parsed.jobs] == ["announce"]
+    parsed = _release_derived()
+    assert [job.name for job in parsed.jobs] == ["release", "announce"]
 
 
 def test_a_workflow_without_release_is_not_given_the_release_trigger():
     """si#787 gave a jobs-only workflow without `on:` a trigger; it is not the release's dispatch with a
-    version, which only `release:` derives."""
+    version, which only the ReleaseCommand derives."""
     # Arrange / Act
     parsed = workflowgen.parse(_section("""
         workflows:
@@ -2616,7 +2568,7 @@ def test_a_workflow_without_release_is_not_given_the_release_trigger():
         """))[0]
 
     # Assert
-    assert parsed.on != workflowgen._RELEASE_TRIGGER
+    assert parsed.on != _release_derived().on
 
 
 # --- si#490 Task 3: the derived release job ---------------------------------------------------------------
@@ -2655,11 +2607,10 @@ ci:
         help: "The release."
 """
 
+#: si#862: the release entry adds a job beside the derived one; it names no aggregate and no machine.
 _RELEASE_WORKFLOWS = """
 workflows:
-  rel:
-    release: release all
-    runner: { kind: github-ubuntu }
+  release:
     jobs:
       announce:
         runs-on: ubuntu-latest
@@ -2668,12 +2619,26 @@ workflows:
 """
 
 
-def _release_text(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> str:
+def _release_ci(ci: str, product: str = _RELEASE_PRODUCT) -> str:
+    """The fixture product with `ci:` on its release aggregate (si#862: machine, emulation, time limit)."""
+    return product.replace("        stop_on_failure: true\n", f"        stop_on_failure: true\n        ci: {ci}\n", 1)
+
+
+def _release_workflow(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> "workflowgen.Workflow":
+    """si#862: the release workflow derived through the model, as `cipipeline.workflows` derives it."""
+    from simplon.tasks import releasepipeline
     loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **_section(workflows)}
+    entry = next((w for w in workflowgen.parse(data) if w.key == workflowgen.RELEASE_KEY), None)
+    return releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
+
+
+def _release_text(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> str:
     from simplon.manifest import artifactsection
-    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
-                              artifacts=artifactsection.declared(data))
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = {**yaml.safe_load(product), **_section(workflows)}
+    return workflowgen.render(_release_workflow(product, workflows), manifest=loaded, product="app",
+                              source="app.yaml", artifacts=artifactsection.declared(data))
 
 
 def _release_steps(text: str) -> list[dict]:
@@ -2718,7 +2683,7 @@ def test_release_workflow_passes_actionlint(tmp_path):
     import subprocess
     if shutil.which("actionlint") is None:
         pytest.skip("actionlint is not on PATH")
-    target = tmp_path / ".github" / "workflows" / "rel.yml"
+    target = tmp_path / ".github" / "workflows" / "release.yml"
     target.parent.mkdir(parents=True)
     target.write_text(_release_text(), encoding="utf-8")
     done = subprocess.run(["actionlint", str(target)], capture_output=True, text=True)
@@ -2803,15 +2768,6 @@ def test_without_a_notes_leaf_the_tail_prints_only_its_line():
     assert "cat" not in tail and "nothing published" in tail
 
 
-@pytest.mark.parametrize("change, complaint", [
-    (("release: release all", "release: release nothing"), "release nothing"),
-    (("release: release all", "release: release notes"), "names 'release notes', which is not a release aggregate"),
-])
-def test_a_release_names_an_aggregate_the_manifest_has(change, complaint):
-    with pytest.raises(ValueError, match=re.escape(complaint)):
-        _release_text(workflows=_RELEASE_WORKFLOWS.replace(*change))
-
-
 def test_a_release_aggregate_that_passes_no_tag_is_refused():
     with pytest.raises(ValueError, match="the version would reach no command"):
         _release_text(_RELEASE_PRODUCT.replace("        passes: [tag]\n", ""))
@@ -2838,10 +2794,13 @@ def test_the_check_runs_before_the_cut():
     assert steps[check]["run"] == 'exec ./app.sh release check -- "$RELEASE_VERSION"'
 
 
-def test_without_the_check_first_the_cut_still_comes_first():
-    """The lift is of `release:check` only, not of whatever member happens to come first. Rendered without
-    the load (the `workflows:` section is not handed to it here), so the rule does not run."""
+def test_without_the_check_first_the_cut_still_comes_first(monkeypatch):
+    """The lift is of `release:check` only, not of whatever member happens to come first. Since si#862 the load
+    holds every ReleaseCommand to start with the check (`ports._check_release_first`), so the rule is switched
+    off here to reach the derivation's own branch."""
     # arrange
+    from simplon.manifest import ports
+    monkeypatch.setattr(ports, "_check_release_first", lambda *_: None)
     product = (_RELEASE_PRODUCT.replace('      check: { task: "release:check" }\n', "")
                .replace("depends_on: [check, unpublished,", "depends_on: [unpublished,"))
 
@@ -2930,8 +2889,7 @@ def test_a_leaf_whose_body_takes_tag_gets_the_version_as_the_cli_hands_it():
 def test_a_release_job_on_a_self_hosted_runner_keeps_the_runners_disk_steps():
     """Final review of si#490, Important 4: the release job builds images, which is si#327's case, and the
     runner's disk preflight - or the comment saying why it is not placed - must not be dropped."""
-    text = _release_text(workflows=_RELEASE_WORKFLOWS.replace("runner: { kind: github-ubuntu }",
-                                                             "runner: { kind: self-hosted-debian, labels: ghr-8 }"))
+    text = _release_text(_release_ci("{ runner: { kind: self-hosted-debian, labels: ghr-8 } }"))
     job = text[text.index("\n  release:"):text.index("\n  announce:")]
     assert "si#327" in job
 
@@ -2956,8 +2914,7 @@ def test_the_first_launcher_step_of_the_release_job_holds_no_token(runner, produ
     beside the run's GITHUB_TOKEN. On github-ubuntu that call used to be `release check`, a `token: github`
     step."""
     # act
-    steps = _release_steps(_release_text(product=product, workflows=_RELEASE_WORKFLOWS.replace(
-        "runner: { kind: github-ubuntu }", f"runner: {runner}")))
+    steps = _release_steps(_release_text(product=_release_ci(f"{{ runner: {runner} }}", product)))
 
     # assert
     launching = [s for s in steps if "./app.sh" in str(s.get("run", ""))]
@@ -2967,15 +2924,14 @@ def test_the_first_launcher_step_of_the_release_job_holds_no_token(runner, produ
     assert any("token" in str(s.get("env", "")).lower() for s in steps[steps.index(first) + 1:])
 
 
-# --- si#570: `emulates:` - the derived release job registers emulation before anything runs ------------
+# --- si#570: `ci: emulates:` - the derived release job registers emulation before anything runs ---------
 
 def test_a_release_that_emulates_registers_those_platforms_first():
     """The v0.37.0 dry run went red on a linux/arm64 e2e in the derived job's `test suite`: "Exec format
     error" on ubuntu-latest, and the derived job took no product step that could register an emulator."""
     from simplon.adapters.labhost import BINFMT_IMAGE
 
-    steps = _release_steps(_release_text(workflows=_RELEASE_WORKFLOWS.replace(
-        "    release: release all\n", "    release: release all\n    emulates: [linux/arm64, linux/arm/v7]\n")))
+    steps = _release_steps(_release_text(_release_ci("{ emulates: [linux/arm64, linux/arm/v7] }")))
     first = next(i for i, step in enumerate(steps) if "uses" in step or "run" in step
                  if not str(step.get("uses", "")).startswith("actions/checkout@"))
     step = steps[first]
@@ -2990,29 +2946,17 @@ def test_a_release_that_emulates_nothing_registers_nothing():
     assert not [s for s in steps if str(s.get("uses", "")).startswith("docker/setup-qemu-action@")]
 
 
-def test_emulates_without_a_release_is_refused():
-    """Diagnosis: a job the product writes carries the step itself, and GitHub would refuse the key."""
-    with pytest.raises(ValueError, match=re.escape("`emulates:` is read only beside `release:`")):
-        workflowgen.parse(_section("""
-        workflows:
-          ci:
-            on: [push]
-            emulates: [linux/arm64]
-            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
-        """))
-
-
 def test_emulates_on_a_kind_that_cannot_register_is_refused_naming_the_way_out():
     """#722, si#863: on an LXC runner `tonistiigi/binfmt --install` is refused with `permission denied`
     (si#358), so the release job would fail in its first step. Diagnosis at generation, not at run time."""
-    section = _section(_RELEASE.replace("self-hosted-debian", "self-hosted-container")
-                       + "    emulates: [linux/arm64]\n")
+    product = _release_ci("{ emulates: [linux/arm64] }",
+                          _RELEASE_PRODUCT + "runner: { kind: self-hosted-container, labels: ghr-8 }\n")
 
     with pytest.raises(ValueError) as refused:
-        workflowgen.parse(section)
+        _release_workflow(product)
 
     said = str(refused.value)
-    assert "workflow 'rel'" in said and "self-hosted-container" in said and "#722" in said, said
+    assert "release aggregate 'release all'" in said and "self-hosted-container" in said and "#722" in said, said
     assert "runner kind `self-hosted-container` cannot register emulation" in said, said
     assert "register it once on the machine itself" in said and "si#358" in said, said
     assert "`support:ci-arm64`" in said and "drop `emulates:`" in said, said
@@ -3021,18 +2965,11 @@ def test_emulates_on_a_kind_that_cannot_register_is_refused_naming_the_way_out()
 
 def test_a_release_on_a_kind_that_cannot_emulate_and_emulates_nothing_is_not_refused():
     """The refusal is about `emulates:`, not the machine: a release on an LXC runner that registers
-    nothing parses as before."""
-    section = _section(_RELEASE.replace("self-hosted-debian", "self-hosted-container"))
+    nothing derives as before."""
+    release = _release_workflow(_RELEASE_PRODUCT + "runner: { kind: self-hosted-container, labels: ghr-8 }\n")
 
-    (parsed,) = workflowgen.parse(section)
-
-    assert parsed.rollout_runner.kind == "self-hosted-container" and parsed.emulates == ()
-
-
-@pytest.mark.parametrize("value", ["linux/arm64", "[]", "[arm64]", "[linux/]", "[3]"])
-def test_emulates_is_a_list_of_platforms(value):
-    with pytest.raises(ValueError, match=re.escape("`emulates:` is a non-empty list of platforms")):
-        _release_parsed(f"emulates: {value}\n")
+    (job,) = [job for job in release.jobs if job.name == "release"]
+    assert job.runner.kind == "self-hosted-container" and job.runs_on == "ghr-8"
 
 
 def test_an_aggregate_step_lists_a_leaf_its_plan_names_by_its_group_path():

@@ -39,7 +39,7 @@ from simplon.manifest import artifactsection, launcherenv, merge, ports, runners
 # `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
 from simplon.model import command as command_model
 from simplon.model import task, workflowschema
-from simplon.model.command import (AggregateCommand, CiGate, CiVariant, Command, Deploy, EnvValue, ParamPresentation,
+from simplon.model.command import (AggregateCommand, CiGate, CiRelease, CiVariant, Command, Deploy, EnvValue, ParamPresentation,
                                     ReleaseCommand, TaskCommand)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
@@ -1022,23 +1022,25 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                       generate=generate, areas=areas, sources=declared_sources)
     ports.check(loaded, artifactsection.declared(data),
                 getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
-                _release_workflows(data))
+                _release_commands(loaded))
     return loaded
 
 
-def _release_workflows(data: Mapping[str, object]) -> dict[str, str]:
-    """Each workflow that releases through an aggregate -> the command words its `release:` names (si#487).
-
-    Only well-formed entries: a malformed `workflows:` section is `workflowgen.parse`'s to diagnose, with its
-    own message, and refusing it here as well would give one mistake two voices."""
-    section = data.get("workflows")
-    if not isinstance(section, Mapping):
-        return {}
-    return {str(key): body["release"] for key, body in section.items()
-            if isinstance(body, Mapping) and isinstance(body.get("release"), str)}
+def release_commands(manifest: Manifest) -> tuple[tuple[str, ReleaseCommand], ...]:
+    """si#862: every ReleaseCommand of the manifest, as `(<command words>, spec)`, in manifest order. The one walk
+    the load (`_release_commands`) and the release derivation (`releasepipeline`) both read."""
+    return tuple((f"{group.replace('.', ' ')} {name}", spec) for group, members in manifest.commands.items()
+                 for name, spec in members.items() if isinstance(spec, ReleaseCommand))
 
 
-def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
+def _release_commands(manifest: Manifest) -> dict[str, str]:
+    """Each release aggregate (a ReleaseCommand) as its command words -> the bundle it `produces:` (si#487, si#862).
+
+    Every one, not only one a workflow names: since si#862 a ReleaseCommand derives release.yml by itself."""
+    return {words: spec.release for words, spec in release_commands(manifest)}
+
+
+def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool, release: bool = False) -> str:
     """The reason a command opts out of the derived CI (si#858), "" when it does not.
 
     `ci: { skip: "<reason>" }` is the opt-out; the other keys are the variant keys `_ci_variant` reads
@@ -1059,6 +1061,23 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
     if raw is None:
         return ""
     written = str(next(iter(raw), "skip")) if isinstance(raw, Mapping) else "skip"
+    if release:
+        # si#862: a release aggregate's `ci:` shapes the one job a derived release runs in: its machine, the
+        # emulators it registers and its time limit. Any other key would shape nothing there.
+        held = ("emulates", "timeout_minutes", "runner")
+        offending = [str(key) for key in raw if key not in held] if isinstance(raw, Mapping) else [written]
+        if not isinstance(raw, Mapping):
+            said = f"`ci: {json.dumps(raw, default=str)}`"
+        elif not raw:
+            said = "`ci: {}`"
+        else:
+            said = f"`ci: {offending[0] if offending else written}:`"
+        if offending or not raw:
+            raise ValueError(
+                f"release aggregate '{where}' declares {said}, and a release aggregate's `ci:` holds "
+                f"`emulates:`, `timeout_minutes:` and `runner:`, the machine, emulation and time limit of the "
+                f"one job a derived release runs in - any other key would shape nothing there")
+        return ""
     if spec.depends_on:
         # si#861: an aggregate's `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it; every
         # other key shapes a leaf, and a derived CI runs leaves.
@@ -1074,7 +1093,8 @@ def _ci_skip(spec: "_CommandSpecModel", where: str, ci_leaf: bool) -> str:
             raise ValueError(
                 f"aggregate '{where}' declares {said}, and an aggregate's `ci:` holds `gate:`, and "
                 f"`cadence:`/`timeout_minutes:` beside it - a derived CI runs leaves, so declare any other key on "
-                f"the member commands it is meant for")
+                f"the member commands it is meant for; `runner:` and `emulates:` belong on the release "
+                f"aggregate under `ci release`")
     if not ci_leaf:
         said = (f"`ci: {json.dumps(raw, default=str)}`" if not isinstance(raw, Mapping)
                 else "`ci: {}`" if not raw else f"`ci: {written}:`")
@@ -1158,6 +1178,23 @@ def _ci_variant(spec: "_CommandSpecModel", where: str) -> CiVariant:
     return CiVariant(cadence=_ci_cadence(raw.get("cadence"), where), platforms=platforms, python=python,
                      timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), emulates=emulates,
                      params=_ci_params(raw.get("params"), where))
+
+
+def _ci_release(spec: "_CommandSpecModel", where: str) -> CiRelease:
+    """si#862: the machine, emulation and time limit of the job a derived release runs in, from the `ci:` keys
+    `_ci_skip` has let stand on a release aggregate. Each value is read by the reader a leaf's or a workflow's
+    own uses (`_ci_emulates`, `_ci_timeout`, `runners.resolve`), so a value has one message wherever it is
+    written. `runner_kind` and `runner_labels` are "" and () when the aggregate writes no `runner:`.
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on.
+    """
+    raw = spec.ci
+    if not isinstance(raw, Mapping):
+        return CiRelease()
+    kind, labels = ("", ()) if "runner" not in raw else (lambda r: (r[0].kind, r[1]))(
+        runners.resolve(raw["runner"], f"'{where}' ci:"))
+    return CiRelease(emulates=_ci_emulates(raw.get("emulates"), where),
+                     timeout_minutes=_ci_timeout(raw.get("timeout_minutes"), where), runner_kind=kind, runner_labels=labels)
 
 
 def _ci_gate(spec: "_CommandSpecModel", where: str) -> CiGate | None:
@@ -1328,7 +1365,7 @@ def _ci_timeout(value: object, where: str) -> int | None:
 
 def _ci_emulates(value: object, where: str) -> tuple[str, ...]:
     """si#860: the platforms a job registers an emulator for before this leaf, () when unwritten. The spelling
-    is `runners.spelt_for_buildx`, the one a workflow's `emulates:` takes (si#570)."""
+    is `runners.spelt_for_buildx`, the one a workflow's `emulates:` took (si#570) until si#862 moved it here."""
     if value is None:
         return ()
     if not runners.spelt_for_buildx(value):
@@ -1375,8 +1412,9 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
     env_pass = launcherenv.of_command(spec.env, f"{group.replace('.', ' ')} {name}")
     top = group.split(".", 1)[0]
     ci_leaf = areas.get(top) == "ci" and top in ("build", "test") and not taxonomy.group_requires_env(group)
-    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}", ci_leaf)
-    ci = _ci_variant(spec, f"{group.replace('.', ' ')} {name}")
+    release = bool(spec.depends_on and spec.produces)
+    ci_skip = _ci_skip(spec, f"{group.replace('.', ' ')} {name}", ci_leaf, release)
+    ci = CiVariant() if release else _ci_variant(spec, f"{group.replace('.', ' ')} {name}")
     if spec.depends_on:
         aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
                                      "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
@@ -1395,7 +1433,8 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
             raise ValueError(
                 f"aggregate '{group} {name}' names {', '.join(spec.produces)}: a release "
                 f"aggregate names exactly one output, `produces: {{ release: <artifact> }}`")
-        return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
+        return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0],
+                              ci=_ci_release(spec, f"{group.replace('.', ' ')} {name}"))
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
                 publishes=spec.publishes, after_all=spec.after_all, token=spec.token, env_pass=env_pass,

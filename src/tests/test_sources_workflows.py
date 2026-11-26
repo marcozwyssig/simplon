@@ -205,7 +205,7 @@ def test_sources_without_placement_is_said(tmp_path, monkeypatch):
 
 
 def test_the_release_job_gets_the_sources_step_after_its_checkout():
-    """The release job `render` builds itself is a job that checks out, so it gets the step there too; a later
+    """The release job (derived through the model since si#862) is a job that checks out, so it gets the step there too; a later
     `checkout=False` on it turns this red."""
     from simplon.manifest import artifactsection, catalogue
     from simplon.manifest import load as manifest_mod
@@ -214,7 +214,10 @@ def test_the_release_job_gets_the_sources_step_after_its_checkout():
     product = _RELEASE_PRODUCT + _SOURCES
     loaded = manifest_mod.load(product, catalogue=catalogue.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **_section(_RELEASE_WORKFLOWS)}
-    text = workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+    from simplon.tasks import releasepipeline
+    entry = workflowgen.parse(data)[0]
+    release = releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
+    text = workflowgen.render(release, manifest=loaded, product="app", source="app.yaml",
                               artifacts=artifactsection.declared(data))
     steps = _steps(yaml.safe_load(text), workflowgen.RELEASE_JOB)
     assert steps[0]["uses"] == workflowgen.CHECKOUT_ACTION

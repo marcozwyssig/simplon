@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import textwrap
 
 import pytest
@@ -9,7 +10,7 @@ import yaml
 
 from simplon.manifest import artifactsection, catalogue, context, load as manifest_mod
 from simplon.model import workflowschema
-from simplon.tasks import cipipeline, workflowgen
+from simplon.tasks import cipipeline, releasepipeline, workflowgen
 from simplon.tasks import workflows as workflows_task
 
 
@@ -1836,3 +1837,275 @@ def test_the_model_step_carries_the_params():
     (step,) = [step for step in job.step if step.command is not None]
     assert step.params == (workflowschema.StepParam(param_name="mode", param_value="slow"),
                            workflowschema.StepParam(param_name="target", param_env="GITHUB_SHA"))
+
+
+# --- si#862, #789: ci.yml keeps what release.yml consumes ---------------------------------------------------
+
+_PROMOTE_HEAD = """
+tasks:
+  ship: { impl: "simplon.test_impls:nullary", help: "Ship." }
+artifacts:
+  doc: { kind: file, path: build/doc.txt }
+  other: { kind: file, path: build/other.txt }
+  doc-checked: { kind: test-result, path: build/test/doc.json }
+  img: { kind: image, dockerfile: Dockerfile, context: ., registry: ghcr.io/o, repository: img }
+  img-checked: { kind: test-result, path: build/test/img.json }
+  app-notes: { kind: release-notes, path: build/release/notes.md }
+  app-tag: { kind: tag }
+  app-release: { kind: release }
+"""
+
+#: The release: its `use` member consumes `doc-checked` (a test result needs no evidence of its own), and
+#: `release notes` writes the notes `release tag` consumes, which no CI leaf produces.
+_PROMOTE_RELEASE = """
+  release:
+    commands:
+      check: { task: "release:check" }
+      use: { task: "toolchain:run", unattended: true, consumes: { source: doc-checked } }
+      notes: { task: "release:notes", produces: { release-notes: app-notes } }
+      tag: { task: "release:tag", consumes: { release-notes: app-notes }, produces: { tag: app-tag } }
+      all:
+        depends_on: [check, use, notes, tag]
+        passes: [tag]
+        produces: { release: app-release }
+        stop_on_failure: true
+        help: "The release."
+"""
+
+_PROMOTE_CI = """
+ci:
+  build:
+    commands:
+      x: { task: "toolchain:run", unattended: true, produces: { out: doc } }
+      y: { task: "toolchain:run", unattended: true, produces: { out: other } }
+  test:
+    commands:
+      t: { task: "test:file", unattended: true, consumes: { file: doc }, produces: { test-result: doc-checked } }
+      one: { task: ship, unattended: true }
+"""
+
+
+def _promoting(ci: str = _PROMOTE_CI, extra: str = "") -> tuple[dict, str]:
+    """ci.yml for a product whose release consumes `doc-checked`, rendered and read back."""
+    text = _PROMOTE_HEAD + ci + _PROMOTE_RELEASE + extra
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
+    out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
+                             artifacts=artifactsection.declared(data), reports="tests/reports")
+    return yaml.safe_load(out), out
+
+
+def _kept(doc: dict, job: str = "ci") -> list[dict]:
+    return [step for step in doc["jobs"][job]["steps"] if step.get("uses") == workflowgen.UPLOAD_ACTION
+            and step["with"].get("retention-days") == cipipeline.PROMOTE_RETENTION_DAYS
+            and step["with"]["name"] != workflowgen.RELEASE_ARCHIVE]
+
+
+def test_a_path_artifact_the_release_consumes_is_kept_after_the_last_leaf():
+    """(a) `test t` produces `doc-checked`, `release use` consumes it: the main job uploads it after the last leaf
+    and before the report's upload, under its manifest name, from its declared path, for 90 days, once `test t`
+    succeeded and never on a pull request."""
+    # act
+    doc, _ = _promoting(_PROMOTE_CI + "      report: { task: \"test:report\" }\n", _SUITES)
+
+    # assert
+    steps = _steps(doc)
+    (kept,) = _kept(doc)
+    at = steps.index(kept)
+    assert steps[at - 1]["run"] == "exec ./demo.sh test report"
+    assert steps[at + 1]["with"]["name"] == workflowgen.RELEASE_ARCHIVE
+    assert kept["with"] == {"name": "doc-checked", "path": "build/test/doc.json", "if-no-files-found": "error",
+                            "retention-days": 90}
+    producer = _step(doc, "test t")["id"]
+    assert kept["if"] == (f"${{{{ !cancelled() && steps.{producer}.outcome == 'success' && "
+                          f"(github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}}}")
+
+
+def test_an_artifact_no_release_step_consumes_is_not_kept():
+    """(b) `build y` produces `other` with a `path:`, and nothing in release.yml consumes it."""
+    # act
+    doc, _ = _promoting()
+
+    # assert
+    assert [step["with"]["name"] for step in _kept(doc)] == ["doc-checked"]
+
+
+def test_an_image_the_release_consumes_is_not_kept():
+    """(c) `release push` consumes the image `img` and its evidence: the evidence has a `path:` and is kept, the
+    image has none (it goes to the registry by sha, #789's step) and is not."""
+    # arrange
+    ci = _PROMOTE_CI + """      img-test:
+        task: "test:image"
+        consumes: { image: img }
+        produces: { test-result: img-checked }
+        with: { argv: "app --help", expect: "usage" }
+"""
+    ci = ci.replace("      x: {", "      img: { task: \"build:image\", unattended: true, produces: { image: img } }\n      x: {")
+    release = "      push-img: { task: \"release:image\", consumes: { image: img, evidence: [img-checked] } }\n"
+    text = _PROMOTE_HEAD + ci + _PROMOTE_RELEASE.replace("      all:\n", release + "      all:\n").replace(
+        "depends_on: [check, use, notes, tag]", "depends_on: [check, use, notes, push-img, tag]")
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+
+    # act
+    consumed = releasepipeline.consumed(loaded, data)
+    doc = yaml.safe_load(workflowgen.render(
+        cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo"), manifest=loaded,
+        product="demo", source="demo.yaml", artifacts=artifactsection.declared(data), reports="tests/reports"))
+
+    # assert
+    assert "img" not in consumed and "img-checked" in consumed
+    assert [step["with"]["name"] for step in _kept(doc)] == ["doc-checked", "img-checked"]
+
+
+@pytest.mark.parametrize("event, kept", [("pull_request", False), ("pull_request_target", False),
+                                         ("schedule", False), ("push", True), ("workflow_dispatch", True)])
+def test_only_a_push_or_dispatch_run_keeps(event, kept):
+    """(d) The upload's `if:` names the runs a release may promote, push and dispatch, and no other: the whole
+    condition, every clause after the producer's, evaluated per event, with ci.yml started by all three."""
+    # act
+    doc, _ = _promoting()
+
+    # assert
+    assert {"pull_request", "push", "workflow_dispatch"} <= set(doc[True])
+    (step,) = _kept(doc)
+    producer = _step(doc, "test t")["id"]
+    head = f"${{{{ !cancelled() && steps.{producer}.outcome == 'success' && "
+    assert step["if"].startswith(head) and step["if"].endswith(" }}")
+    events = step["if"].removeprefix(head).removesuffix(" }}")
+    assert events == "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    assert (event in re.findall(r"github\.event_name == '([a-z_]+)'", events)) is kept
+
+
+def test_an_artifact_produced_only_in_platform_cells_is_named_not_kept():
+    """(e) Plan decision 4: `test t` runs once per platform cell, so one run cannot keep `doc-checked` once. Not
+    refused - CI still verifies it - and named in the main job's note with the reason; so is `app-notes`, which
+    only the release produces."""
+    # arrange
+    ci = _PROMOTE_CI.replace("produces: { test-result: doc-checked } }",
+                             "produces: { test-result: doc-checked }, ci: { platforms: [linux-x64] } }")
+
+    # act
+    doc, text = _promoting(ci)
+
+    # assert
+    assert _kept(doc) == []
+    assert not any(_kept(doc, job) for job in doc["jobs"] if job != "ci")
+    note = _comments(text)
+    assert "release.yml consumes these, and this run keeps none of them for it to promote:" in note
+    assert "`doc-checked` - `test t` produces it, and ci.yml runs it only in its `ci: platforms:` cells" in note
+    assert "`app-notes` - `release notes` produces it, and it is not a CI leaf" in note
+
+
+def test_an_artifact_produced_only_in_a_cadence_file_is_named_not_kept():
+    """Plan decision 4 for a cadence leaf: its run is ci-nightly.yml's, not the push run a release promotes."""
+    # arrange
+    ci = _PROMOTE_CI.replace("produces: { test-result: doc-checked } }",
+                             "produces: { test-result: doc-checked }, ci: { cadence: nightly } }")
+    ci = ci.replace("produces: { out: doc } }", "produces: { out: doc }, ci: { cadence: nightly } }")
+
+    # act
+    doc, text = _promoting(ci)
+
+    # assert
+    assert _kept(doc) == []
+    assert "`doc-checked` - `test t` produces it, and ci.yml leaves it out: it has `cadence: nightly`, so it runs in ci-nightly.yml" in _comments(text)
+
+
+def test_an_artifact_whose_producer_runs_with_ci_params_is_named_not_kept():
+    """A producer with `ci: params:` runs narrower in CI than the release reads its result (simplon's
+    `kernel-checked`: `test image` on linux/amd64 alone, evidence for a two-platform push), so its artifact is
+    not kept and the note says why; CI still verifies it."""
+    # arrange
+    ci = _PROMOTE_CI + """      img-test:
+        task: "test:image"
+        consumes: { image: img }
+        produces: { test-result: img-checked }
+        with: { argv: "app --help", expect: "usage" }
+        ci: { params: { platform: linux/amd64 } }
+"""
+    ci = ci.replace("      x: {", "      img: { task: \"build:image\", unattended: true, produces: { image: img } }\n      x: {")
+    release = "      push-img: { task: \"release:image\", consumes: { image: img, evidence: [img-checked] } }\n"
+    text = _PROMOTE_HEAD + ci + _PROMOTE_RELEASE.replace("      all:\n", release + "      all:\n").replace(
+        "depends_on: [check, use, notes, tag]", "depends_on: [check, use, notes, push-img, tag]")
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+
+    # act
+    out = workflowgen.render(
+        cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo"), manifest=loaded,
+        product="demo", source="demo.yaml", artifacts=artifactsection.declared(data), reports="tests/reports")
+
+    # assert
+    assert [step["with"]["name"] for step in _kept(yaml.safe_load(out))] == ["doc-checked"]
+    assert ("`img-checked` - `test img-test` produces it, and CI runs it with `ci: params:`, narrower than "
+            "the release") in " ".join(_comments(out).split())
+
+
+def test_an_artifact_that_also_crosses_a_job_inside_ci_yml_is_refused():
+    """(f) `test t` produces `doc-checked` in the main job and `test u` consumes it in its Python cells, so the
+    hand-off already uploads it under that name in the run: the promotion upload would be red on every push."""
+    # arrange
+    ci = _PROMOTE_CI + ("      u: { task: \"toolchain:run\", unattended: true, consumes: { source: doc-checked }, "
+                        "ci: { python: [\"3.12\"] } }\n")
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"release\.yml consumes 'doc-checked', which 'test t' produces in job "
+                                         r"'ci', and 'test u' consumes it in job 'test-u-python'"):
+        _promoting(ci)
+
+
+def test_a_kept_artifact_named_like_the_report_upload_is_refused():
+    """The report upload holds `allure-report` in the main job, and one run holds one artifact of a name: a kept
+    artifact of that name would turn one of the two uploads red on every push run, so generation refuses it."""
+    # arrange
+    text = (_PROMOTE_HEAD + _PROMOTE_CI + "      report: { task: \"test:report\" }\n" + _PROMOTE_RELEASE
+            + _SUITES).replace("doc-checked", workflowgen.RELEASE_ARCHIVE)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+
+    # act / assert
+    with pytest.raises(ValueError, match=rf"release\.yml consumes '{workflowgen.RELEASE_ARCHIVE}', the name the "
+                                         rf"report upload"):
+        cipipeline.derive(loaded, data)
+
+
+def test_no_release_keeps_nothing():
+    """Without a ReleaseCommand there is no release.yml to promote into: nothing is kept, nothing is noted."""
+    # act
+    loaded = _load(_PORTS)
+    doc, text = _rendered(_PORTS)
+
+    # assert
+    assert releasepipeline.consumed(loaded, {}) == ()
+    assert _kept(doc) == []
+    assert "keeps none of them" not in _comments(text)
+
+
+def test_simplon_keeps_what_its_release_consumes():
+    """(g) simplon's own: every artifact `releasepipeline.consumed` returns is either uploaded by ci.yml or named in
+    its note as not kept, and only those are uploaded - computed from the manifest, not typed here."""
+    # arrange
+    from conftest import ROOT
+    text = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
+    loaded = manifest_mod.load(text, catalogue=catalogue.load())
+    data = yaml.safe_load(text)
+
+    # act
+    consumed = releasepipeline.consumed(loaded, data)
+    derivation = cipipeline.derive(loaded, data)
+    promotion = cipipeline._promotion(loaded, data, derivation.selection)
+    workflow = cipipeline.to_workflow(derivation, loaded, data, product="simplon")
+    ci = next(job for job in workflow.jobs if job.name == "ci")
+    uploaded = [step.verbatim["with"]["name"] for step in ci.steps
+                if (step.verbatim or {}).get("with", {}).get("retention-days") == cipipeline.PROMOTE_RETENTION_DAYS
+                and step.verbatim["with"]["name"] != workflowgen.RELEASE_ARCHIVE]
+
+    # assert
+    assert uploaded == list(promotion.kept)
+    assert sorted([*promotion.kept, *promotion.unkept]) == sorted(consumed)
+    for artifact in promotion.unkept:
+        assert f"`{artifact}` - " in ci.note
+    # `test image` runs amd64 alone in CI (`ci: params:`), and the release pushes both platforms on its evidence
+    assert promotion.unkept["kernel-checked"] == (("test image", cipipeline._NARROWER),)

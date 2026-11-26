@@ -306,6 +306,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_cipipeline typeOf simplon.architecture.Module {
     path = "tasks.cipipeline"
   }
+  module m_tasks_releasepipeline typeOf simplon.architecture.Module {
+    path = "tasks.releasepipeline"
+  }
   module m_tasks_ciprivileges typeOf simplon.architecture.Module {
     path = "tasks.ciprivileges"
   }

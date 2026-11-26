@@ -29,8 +29,9 @@ import pytest
 import yaml
 
 from simplon.tasks import site as site_task
-from simplon.tasks import workflowgen
+from simplon.tasks import workflowgen, workflows
 
+from simplon.manifest import artifactsection
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
 
@@ -98,6 +99,52 @@ def _runs(node):
     return [str(value) for key, value in _walk(node) if key == "run"]
 
 
+#: si#862 task 5: simplon's release.yml as it stood with the hand-written `docs` and `pages` jobs, stored as a
+#: fixture so the pin holds while the file is regenerated, after a squash and in a shallow clone alike.
+HANDWRITTEN_SITE = ROOT / "src" / "tests" / "fixtures" / "workflows" / "release-handwritten-site.yml"
+#: si#862: the jobs that must not move when the site's two jobs become derived - the kernel's release job and the
+#: three D12 exceptions that wait on #789.
+UNMOVED_JOBS = ("release", "publish", "homebrew-tap", "image")
+REAP_STEP = "Remove the containers a cancelled job left running"
+
+
+def _old_release_jobs() -> dict:
+    return yaml.safe_load(HANDWRITTEN_SITE.read_text(encoding="utf-8"))["jobs"]
+
+
+def test_simplons_release_yml_is_derived():
+    """si#862: simplon declares no `release:` under `workflows: release:` and no `docs` or `pages` job there; the
+    release job and the three declared jobs render as they did with the site hand-written, and the derived `docs`
+    and `pages` differ from the hand-written pair by exactly what the kernel's derivation changes: `docs` needs
+    `release` beside `website: after:`'s `publish`, sets up no python of its own and carries the release job's
+    `timeout-minutes`, and `pages`, which starts no container, carries no reap step."""
+    # arrange
+    data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    loaded = manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
+    (release,) = [w for w in workflows.assemble(loaded, data, product="simplon", root=ROOT)
+                  if w.path == ".github/workflows/release.yml"]
+    old = _old_release_jobs()
+    expected_docs = dict(old["docs"], needs=["release", "publish"],
+                         **{"timeout-minutes": old["release"]["timeout-minutes"]},
+                         steps=[s for s in old["docs"]["steps"]
+                                if not str(s.get("uses", "")).startswith("actions/setup-python")])
+    expected_pages = dict(old["pages"], steps=[s for s in old["pages"]["steps"] if s.get("name") != REAP_STEP])
+
+    # act
+    text = workflowgen.render(release, manifest=loaded, product="simplon", source=MANIFEST.name,
+                              artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
+    jobs = yaml.safe_load(text)["jobs"]
+
+    # assert
+    entry = data["workflows"]["release"]
+    assert "release" not in entry and not {"docs", "pages"} & set(entry["jobs"])
+    assert {name: jobs[name] for name in UNMOVED_JOBS} == {name: old[name] for name in UNMOVED_JOBS}
+    assert len(expected_docs["steps"]) == len(old["docs"]["steps"]) - 1
+    assert len(expected_pages["steps"]) == len(old["pages"]["steps"]) - 1
+    assert jobs["docs"] == expected_docs
+    assert jobs["pages"] == expected_pages
+
+
 # --- the trigger, and the acceptance that hangs off it ---------------------------------------------------
 
 
@@ -123,10 +170,16 @@ def test_a_release_that_changes_no_documentation_still_rebuilds_the_site(workflo
     """
     # Arrange / Act
     keys = [key for key, _ in _walk(workflow)]
+    docs = workflow["jobs"][DOCS_JOB]
 
     # Assert
     assert "paths" not in keys
     assert "paths-ignore" not in keys
+    # si#862: the site the release rebuilds is the derived `docs` job's, after the release and the wheel, built by
+    # the one command and uploaded from the build directory as its last step
+    assert docs["needs"] == ["release", "publish"]
+    assert THE_ONE_COMMAND in _runs(docs)
+    assert docs["steps"][-1] == {"uses": "actions/upload-pages-artifact@v3", "with": {"path": "build/site"}}
 
 
 def test_nothing_in_the_workflow_asks_which_files_changed(workflow):
@@ -208,8 +261,9 @@ def test_the_command_the_workflow_runs_is_a_real_command_that_plans_the_whole_bu
 def test_the_site_goes_up_only_after_the_wheel_did(workflow, docs_job):
     """Why the trigger is a tag at all: the page describes the version it was cut from, so it must not
     appear before that version can be installed."""
-    # Arrange / Act / Assert
-    assert docs_job["needs"] == "publish"
+    # Arrange / Act / Assert: si#862 - the derived job needs `release` and the `website: after:` jobs, and only
+    # `publish` of those (si#638: a red tap or image must not hold the site back)
+    assert docs_job["needs"] == ["release", "publish"]
     assert "publish" in workflow["jobs"]
 
 

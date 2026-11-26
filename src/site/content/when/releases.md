@@ -348,7 +348,8 @@ Beyond that, check these where a product relies on the old behaviour:
   `release:` is no longer refused; the rule that refused it had nothing left to guard and is struck.
 - **si#720:** `timeout_minutes:` beside `release:` renders as the derived job's `timeout-minutes`.
   Without it the job carries 120 minutes, not GitHub's 360. A value that is not a positive whole
-  number, or the key with no `release:` beside it, is a diagnosis at load.
+  number, or the key with no `release:` beside it, is a diagnosis at load. Since si#862 the key is
+  retired there: it is `ci: { timeout_minutes: }` on the ReleaseCommand.
 - **si#718:** the job's first step is a plain `<launcher> help` with no token in its environment, so
   the launcher's venv is built before any step holds `GITHUB_TOKEN`. Hash-locked requirements, the
   ticket's second half, are not in this release.
@@ -858,7 +859,8 @@ the bump:
    declares the dispatch release without it is refused at load, naming the workflow and the member that
    comes first instead. Measured over every reachable manifest, only simplon's declares `workflows:
    release:`, and simplon adopts the check in this release. The way out: add
-   `check: { task: "release:check" }` and put it first in the aggregate's `depends_on`.
+   `check: { task: "release:check" }` and put it first in the aggregate's `depends_on`. Since si#862 the
+   rule holds every ReleaseCommand, and `workflows: release:` names no aggregate.
 
 A product also gains seven catalogue tasks and one token issuer, and uses them only by naming them.
 `asset_name` on `kind: file` is optional and `release-assets` is a new kind, so no existing manifest goes
@@ -899,7 +901,8 @@ red on either.
   The first 0.37.0 dry run went red on that arm64 run: the release job is derived, runs on a hosted
   runner with no emulator, and took no step of the product's. `emulates: [linux/arm64]` makes its first
   step `docker/setup-qemu-action`, pinned by commit, with the kernel's binfmt image; simplon's own release
-  declares it. Anywhere but beside `release:` the key is refused.
+  declares it. Anywhere but beside `release:` the key is refused. Since si#862 the key is retired there: it
+  is `ci: { emulates: }` on the ReleaseCommand.
 
 ### `test:image` is bounded and takes an environment (si#554)
 
@@ -961,7 +964,7 @@ red on either.
   unfinished release and passes. It asks GitHub nothing: whether a release is published stays
   `release:github-unpublished`'s question.
 - **The load holds it first** in the aggregate a `workflows: release:` names (an expression rule, binding
-  the kernel's own release too), and the derived job runs it before the cut and the stamp, so a malformed
+  the kernel's own release too; since si#862 in every ReleaseCommand), and the derived job runs it before the cut and the stamp, so a malformed
   version is refused with the check's message rather than the shell's.
 - **simplon's own `release version` command is gone.** It stood in for the check since si#491, checking
   the spelling only; `release all` now starts with `check`.
@@ -1261,7 +1264,8 @@ together, the one in `requirements.txt` and the one in `deploy/image/image.pin`.
   per-version concurrency group, and one `release` job with the aggregate's plan as steps, the cut,
   firn's stamp check, and every `publishes: true` leaf skipped on a dry run. Two new task fields feed it:
   `publishes:` and `token: github`, which alone gets the run's `GITHUB_TOKEN`. The [manifest
-  page](../../how/manifest/) has the key.
+  page](../../how/manifest/) has the key. Since si#862 the key is retired: the ReleaseCommand derives
+  release.yml by itself, and `workflows: release:` only adds jobs beside it.
 - **simplon releases itself that way (si#491).** `.github/workflows/release.yml` is generated now.
   0.34.0 is the first release cut from the button: the version's spelling, the suite, the type gate, the
   staleness gate and this guard run before the tag, so a red test leaves no tag behind. Typing `release

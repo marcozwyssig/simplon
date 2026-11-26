@@ -266,6 +266,10 @@ BORROWS_A_READER = {
                      "report and on files, never on the manifest",
     "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
                    "itself and is the module the census accounts for; this module raises nothing",
+    "tasks.releasepipeline": "`_to_job` hands `workflowgen._release_archive` the `suites: reports:` directory it "
+                             "reads off the data it is handed (`workflowgen.report_dir`), so the archive never falls "
+                             "back to the registered context; this module rules on the release aggregate, never on "
+                             "what the archive reads (si#862)",
     "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "
                   "missing `tracker:` section is reported by tracker itself with `log.error` and a None, "
                   "and none of this module's raises decides on the destination (si#206)",
@@ -742,6 +746,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#861: an aggregate's `ci:` holds `gate:`, with `cadence:` and `timeout_minutes:` beside it. Any other key
     # (a leaf's variant key, `skip:`) or a `cadence:` with no `gate:` shapes nothing on an aggregate: diagnoses.
     ("load", "_ci_skip", "a derived CI runs leaves, so declare any other key"): DIAGNOSIS,
+    ("load", "_ci_skip", "a release aggregate's `ci:` holds"): DIAGNOSIS,
     ("load", "_ci_skip", "without `gate:`, and an aggregate's `ci:` holds"): DIAGNOSIS,
     ("load", "_ci_skip", "a derived CI runs only the leaves under `ci build` and"): DIAGNOSIS,
     # si#860: the variant keys beside `skip:`. A value of the wrong shape has no reading (a cadence that is
@@ -958,7 +963,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # `release:check`. A dispatch release without it would run - unchecked - so a product loses a way to say
     # something that worked: EXPRESSION. Measured before it shipped: of the eight reachable product manifests
     # plus smcctl's, only simplon's declares `workflows: release:`, and simplon adopts the check in the same
-    # change; firn meets it at firn#1040, whose migration writes the member anyway.
+    # change; firn meets it at firn#1040, whose migration writes the member anyway. si#862 widened it to every
+    # ReleaseCommand (that key is retired, and each derives release.yml); re-measured 2026-11-25 over the reachable
+    # manifests: simplon's and firn's declare one, both start with the check, the rest declare none.
     ("ports", "_check_release_first", "a dispatch release is checked before anything is cut"): EXPRESSION,
     # `manifest.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
@@ -1259,30 +1266,19 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_workflow", "declares no `on:` trigger"): DIAGNOSIS,
     ("workflowgen", "_workflow", "`jobs:` must be a non-empty mapping"): DIAGNOSIS,
     ("workflowgen", "_workflow", "so it cannot also declare"): DIAGNOSIS,
-    # si#490: `release:` derives the trigger, the concurrency and the job. Two refusals cost a statement a
-    # product could have made and that would have run - a second trigger, its own concurrency - and are
-    # expression rules (decision 1 of 2026-10-17, and the concurrency ruled with it). The rest name a
-    # declaration with no working reading: a release with no aggregate, a job name already taken, a version
-    # the job would shadow, a rollout and a release deriving two triggers, scopes the release needs lowered.
-    ("workflowgen", "_release_key", "and the trigger is derived from"): EXPRESSION,
-    ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): EXPRESSION,
-    ("workflowgen", "_release_key", "names a release aggregate as <group> <name>"): DIAGNOSIS,
-    ("workflowgen", "_release_key", "and the derived job is named"): DIAGNOSIS,
-    ("workflowgen", "_release_key", "is the dispatch input's"): DIAGNOSIS,
-    ("workflowgen", "_release_key", "one workflow is a rollout or a release"): DIAGNOSIS,
-    # si#570: beside no `release:` the key reaches GitHub, which refuses the workflow; a value that is not
-    # a list of platforms reaches setup-qemu-action and fails there or registers nothing.
-    ("workflowgen", "_emulates", "is read only beside"): DIAGNOSIS,
-    ("workflowgen", "_emulates", "is a non-empty list of platforms"): DIAGNOSIS,
+    # si#862 retired `release:`, `emulates:` and `timeout_minutes:` under `workflows:`, and a workflow-level machine
+    # beside the release: the release is derived from the ReleaseCommand, whose `ci:` holds the three. Nothing reads
+    # the keys any more, so each would be ignored silently and the release would run elsewhere, without an emulator
+    # or under another limit than the one written. One refusal names every retired key the entry writes.
+    ("workflowgen", "_refuse_retired_keys", "si#862 retired these keys"): DIAGNOSIS,
+    # si#490's `_release_key`, `_emulates`, `_release_timeout` and `_release_extras` are gone with the keys they
+    # read (si#862); what they refused beside the release is `releasepipeline._refuse_beside_the_release` now, and
+    # the value checks of `ci: emulates:` and `ci: timeout_minutes:` are the loader's (`_ci_emulates`,
+    # `_ci_timeout`), as on a CI leaf.
     # #722, si#863: on a runner kind with `can_emulate = false` (an LXC runner) the registration is refused with
     # `permission denied`, so the release job would fail in its first step; the message names both ways out.
     ("workflowgen", "_refuse_emulates_where_it_cannot_register", "asks the release job to register emulation"):
         DIAGNOSIS,
-    # si#720, the same two reasons: beside no `release:` the key reaches GitHub as a workflow key, which it
-    # refuses; a value that is not a positive whole number is refused by GitHub, or as 0 ends the job.
-    ("workflowgen", "_release_timeout", "is read only beside"): DIAGNOSIS,
-    ("workflowgen", "_release_timeout", "is the derived release job's time limit"): DIAGNOSIS,
-    ("workflowgen", "_release_extras", "is a mapping of scope -> level"): DIAGNOSIS,
     # si#719 struck the EXPRESSION rule that stood here (`permissions:` beside `release:` lowering
     # `contents`/`packages`): the write scopes are the derived job's own block now, so a lower workflow
     # default takes nothing from the release and there is nothing left to guard.
@@ -1354,6 +1350,11 @@ CENSUS: dict[tuple[str, str, str], str] = {
         DIAGNOSIS,
     # si#860 final review: a cell leaf would produce its artifact once per cell, and a run hands it over once.
     ("cipipeline", "_refuse_cell_producers", "so it runs once per cell and would"): DIAGNOSIS,
+    # si#862, #789: an artifact release.yml consumes that the hand-off already uploads under its name inside ci.yml
+    # (main job to a cell job); one run holds one artifact of a name, so the promotion upload would be red.
+    ("cipipeline", "_refuse_promoted_crossings", "so it cannot also be kept"): DIAGNOSIS,
+    # si#862, #789: a kept artifact named like the report upload; both uploads run in the main job.
+    ("cipipeline", "_refuse_promoted_report_name", "the name the report upload after"): DIAGNOSIS,
     # si#861: a gate member runs in its gate's file with nobody watching, so one that may not, one that opts out
     # of a main job it is not in, or one whose cadence or cells its gate's file already decides would not run as
     # written; and artifacts do not cross workflow files, so a hand-off between a gate and another run would
@@ -1377,6 +1378,65 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # docstring, beside `_refuse_foreign_files`).
     ("automerge", "derive", "so nothing gates the merge"): DIAGNOSIS,
     ("automerge", "derive", "has no `workflow_dispatch` trigger"): DIAGNOSIS,
+    # si#862: the release job is derived through the model by `releasepipeline.derive`, which
+    # `cipipeline.workflows` calls, so the walk reaches these now. They are not new rules: `workflowgen._release`
+    # raised the same text from `render`, which neither seam reaches, so they stood outside the census until
+    # then. Every one is a diagnosis: the release it refuses would reach no command with its version, hand a leaf
+    # a wrong value, release past a member nobody ran, or check a secret GitHub refuses to store.
+    ("releasepipeline", "derive", "passes no `tag`, so the version would reach no command"): DIAGNOSIS,
+    ("releasepipeline", "derive", "and a dispatch carries only the version"): DIAGNOSIS,
+    ("releasepipeline", "derive", "cannot run in the release job unattended"): DIAGNOSIS,
+    ("releasepipeline", "_passed_secrets", "GitHub refuses a secret named GITHUB_*"): DIAGNOSIS,
+    # si#862: what `workflows: release:` may not say beside the derived release, moved here from si#490's
+    # `workflowgen._release_key` because only the manifest knows whether a ReleaseCommand derives one. Two cost a
+    # statement a product could have made and that would have run - a second trigger, its own concurrency - and
+    # are expression rules (decision 1 of 2026-10-17, and the concurrency ruled with it). The rest name a
+    # declaration with no working reading: a rollout and a release deriving two triggers into one file, a job name
+    # already taken, a version the job would shadow, a `permissions:` that is no default for any job.
+    ("releasepipeline", "_refuse_beside_the_release", "and the trigger is derived from the release aggregate"):
+        EXPRESSION,
+    ("releasepipeline", "_refuse_beside_the_release", "is derived from the release aggregate '{words}' - one release"):
+        EXPRESSION,
+    ("releasepipeline", "_refuse_beside_the_release", "one workflow is a rollout or a release"): DIAGNOSIS,
+    ("releasepipeline", "_refuse_beside_the_release", "and the derived job is named"): DIAGNOSIS,
+    ("releasepipeline", "_refuse_beside_the_release", "is the dispatch input's"): DIAGNOSIS,
+    ("releasepipeline", "_refuse_beside_the_release", "is a mapping of scope -> level"): DIAGNOSIS,
+    # si#862, plan decision 3: two ReleaseCommands would each derive release.yml. A product could declare two
+    # release aggregates before (only a `workflows:` entry named one), and both loaded and ran from a terminal:
+    # EXPRESSION. Measured before it shipped over the reachable manifests: none declares two (simplon and firn one
+    # each, the rest none). Reopens when a product needs two dispatch releases.
+    ("releasepipeline", "_the_release", "more than one release aggregate"): EXPRESSION,
+    # si#862: with `workflows: release: { handwritten: }` no release.yml is derived, so a ReleaseCommand's `ci:` key
+    # would shape nothing - `cipipeline._refuse_variants_nobody_derives`'s diagnosis, for the release.
+    ("releasepipeline", "refuse_ci_where_handwritten", "so the kernel derives no release.yml"): DIAGNOSIS,
+    # si#862 review: `_workflow` lets a `release` entry with no job stand (beside a ReleaseCommand its `permissions:`
+    # shape the derived release); without one it is a workflow with no job, which GitHub refuses.
+    ("releasepipeline", "refuse_an_empty_entry", "and this manifest declares none"): DIAGNOSIS,
+    # si#862 task 4: `website: { pages: release, by: }` switches on the derived `docs` and `pages` jobs (si#851's
+    # boundary). Every one is a diagnosis: a switch value the derivation has no reading for (`pages: push` is the
+    # reopening trigger, cleon's per-push deploy, not a rule against it), half of a pair that is useless alone, a
+    # `by:` that is no command line, a switch where no release.yml is derived, a leaf that would stop or be skipped
+    # with nobody watching, a plan that builds no site for the upload, a job name the derivation already takes.
+    ("site", "pages", "the one value is `{PAGES_RELEASE}`"): DIAGNOSIS,
+    ("site", "pages", "and no `pages:` says when it is deployed"): DIAGNOSIS,
+    ("site", "pages", "needs `by:`, the command that builds the site"): DIAGNOSIS,
+    ("site", "pages", "must name a group and a command (`build docs`)"): DIAGNOSIS,
+    ("releasepipeline", "refuse_pages_nobody_derives", "so nothing would deploy it"): DIAGNOSIS,
+    ("releasepipeline", "_website", "cannot run in the docs job unattended"): DIAGNOSIS,
+    ("releasepipeline", "_website", "so the docs job would upload a directory nothing built"): DIAGNOSIS,
+    ("releasepipeline", "_website", "derives a job named '{name}' - rename yours"): DIAGNOSIS,
+    # si#862 review: `website: after:` (Marco, 2026-11-26) names the declared release jobs the docs job waits for. A
+    # name that is no declared job would be a `needs:` GitHub refuses, and a value that is no list of keys has no
+    # reading; a `website:` that is no mapping is a section with no reading, not the absence of `pages:`.
+    ("releasepipeline", "_website", "which is no job declared beside the release"): DIAGNOSIS,
+    ("site", "pages", "`after:` is a list of job keys"): DIAGNOSIS,
+    ("site", "pages", "must be a mapping (the pinned hugo image"): DIAGNOSIS,
+    # si#862: `website: by:` names the command that builds the site as `<group> <name>`, resolved against the
+    # command tree like a step's `command:` - the same walk, so the same three refusals. The release plan's
+    # `_leaves` walks it too, but with its aggregate's words, which come from the tree and always resolve.
+    ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,
+    ("workflowgen", "resolve_command", "which this manifest does not declare"): DIAGNOSIS,
+    ("workflowgen", "resolve_command", "names no command in group"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
@@ -1406,10 +1466,17 @@ REACH: dict[tuple[str, str, str], str] = {
     # the kernel's own CI job every time the workflows are generated.
     ("workflowgen", "_machine", "declares both"): REACH_MERGED,
     ("workflowgen", "_with_runner_env", "already sets"): REACH_MERGED,
-    # si#490. MERGED as a claim about the parser, like si#5's: this kernel's own release is `handwritten:`
-    # until si#491, and then its own `release:` workflow goes through exactly these two rules.
-    ("workflowgen", "_release_key", "and the trigger is derived from"): REACH_MERGED,
-    ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): REACH_MERGED,
+    # si#490, moved by si#862. MERGED as a claim about the parser: every manifest's `workflows: release:` goes
+    # through these two rules beside its ReleaseCommand, this kernel's own manifest included (its `ci release all`
+    # derives its release.yml). The catalogue declares no ReleaseCommand, so it is not a placement.
+    ("releasepipeline", "_refuse_beside_the_release", "and the trigger is derived from the release aggregate"):
+        REACH_MERGED,
+    ("releasepipeline", "_refuse_beside_the_release", "is derived from the release aggregate '{words}' - one release"):
+        REACH_MERGED,
+    # si#862. MERGED as a claim about the parser: `_the_release` is handed the loaded manifest, the catalogue's
+    # placements with the product's, so a ReleaseCommand the catalogue declared would be counted with the
+    # product's. The catalogue declares none, so it is not a placement.
+    ("releasepipeline", "_the_release", "more than one release aggregate"): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     # si#781, the same claim about the same parser: a `runner:` under a carrier of simplon's own would be
     # refused the same way. simplon declares no carrier, so it is a claim about the parser, not a placement.

@@ -4,7 +4,7 @@
 # a command that is renamed or removed breaks generation instead of leaving a workflow calling
 # something that is gone. `--check` reports drift and returns 1.
 
-name: rel
+name: release
 on:
   workflow_dispatch:
     inputs:

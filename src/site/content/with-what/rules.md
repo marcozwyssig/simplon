@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 343 | nothing - the declaration had no working meaning |
-| expression rule | 53 | something it could otherwise have said |
-| **all load-time refusals** | **396** | |
+| diagnosis | 362 | nothing - the declaration had no working meaning |
+| expression rule | 54 | something it could otherwise have said |
+| **all load-time refusals** | **416** | |
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -136,6 +136,16 @@ decides when and where it runs), and an artifact handed between a gate member an
 either direction, unless it has a `registry:`: artifacts do not cross workflow files.
 Since si#887 a leaf whose catalogue task cannot run without a parameter that neither `with:` nor
 `ci: { params: }` binds is a diagnosis too, in the main, cadence and gate files alike.
+Since si#862 the release job is derived by the same verb, through the workflow model, so its refusals are
+reached and counted too; none is new, they were raised at rendering before, where no seam reaches. All are
+diagnoses: an aggregate that passes no `tag` or passes anything else, a member that may not run with nobody
+watching, and an `env: pass:` name starting with `GITHUB_`, which GitHub refuses to store as a secret. The
+release plan resolves its aggregate's words against the command tree (`_leaves`), and those words come from
+the tree, so they always resolve; the same walk reached from `website: by:` refuses a line that names no
+group and command, or one the manifest does not declare.
+A release aggregate's `ci:` holds `emulates`, `timeout_minutes` and `runner`, the emulation, time limit and
+machine of the one job the derived release runs in; any other key there is a diagnosis, since it would shape
+nothing in that job.
 The refusal to overwrite a file at a derived path that the kernel did not generate is not counted here:
 it is decided by the file on disk, not by the manifest.
 
@@ -214,11 +224,33 @@ aggregate makes its bundle**: no member may produce the artifact the aggregate n
 plan would run, and only the model export broke on it. Measured first, it reaches nothing: of the eight
 reachable manifests only simplon's declares a release aggregate, and no member produces its bundle.
 
-si#487 added one expression rule: the aggregate a `workflows: release:` names plans `release:check` first.
-A dispatch release without it would run, unchecked, so a product loses a way to say something that worked.
-Measured first, it reaches only simplon's own manifest, the one reachable manifest that declares the
-dispatch flow, and simplon adopts the check in the same change. It binds the kernel's release as it binds a
-product's.
+si#487 added one expression rule: a release aggregate plans `release:check` first. A dispatch release
+without it would run, unchecked, so a product loses a way to say something that worked. Measured first, it
+reached only simplon's own manifest, the one reachable manifest that then declared the dispatch flow, and
+simplon adopted the check in the same change. It binds the kernel's release as it binds a product's. It used to
+hold only the aggregate a `workflows: <key>: release:` named; since si#862 that key is retired and every
+ReleaseCommand derives release.yml by itself, so the rule holds every one. Re-measured over the reachable
+manifests before the change: simplon's and firn's declare one, and both start with the check.
+
+si#862 derives release.yml from the ReleaseCommand, and added one expression rule: **two release aggregates are
+refused**, because each would derive release.yml. Both used to load and run from a terminal. Measured first,
+no reachable manifest declares two; it reopens when a product needs two dispatch releases. It binds the
+kernel's own `ci release all` with the product's. The two si#490 expression rules beside the release, a second
+`on:` and its own `concurrency:`, moved with the release to the ReleaseCommand and are unchanged. **Diagnoses:**
+the retired `workflows:` keys `release:`, `emulates:` and `timeout_minutes:`, and a workflow-level machine
+beside the release, each named with its new place on the ReleaseCommand's `ci:`, since nothing reads them any
+more; a ReleaseCommand `ci:` key where `workflows: release:` is `handwritten:`, which would shape nothing; a
+`workflows: release:` with no `jobs:` and no ReleaseCommand, a workflow with no job.
+Its `website: { pages: release, by: }` switch, which derives the `docs` and `pages` jobs, added diagnoses only:
+a `pages:` value other than `release` (cleon's per-push deploy is the trigger that would add a second), `pages:`
+without `by:` or `by:` without `pages:`, a `by:` that is not `<group> <name>`, the switch where no release.yml is
+derived, a `by:` command with a leaf that may not run with nobody watching or with no `docs:site` leaf in its
+plan, a declared release job named `docs` or `pages`, an `after:` that is no list of job keys or names a job
+not declared beside the release, and a `website:` that is no mapping.
+The derived ci.yml keeping each `path:` artifact release.yml consumes for #789 added one diagnosis: such an
+artifact that ci.yml also hands from its main job to a cell job, because the hand-off already holds that name in
+the run and the upload that keeps it would be red. One produced only in a cell, a gate file or a cadence file is
+not refused: ci.yml's note names it as not kept.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
@@ -272,7 +304,7 @@ si#719 struck an expression rule: a `permissions:` beside `release:` that set `c
 below `write` was refused, because the workflow-level block was where the release got its write scopes,
 so every other job inherited them. The derived release job now carries those scopes in its own block, a
 lower workflow default takes nothing from it, and the rule had nothing left to guard. si#720 added two
-diagnoses for `timeout_minutes:` beside `release:`.
+diagnoses for `timeout_minutes:` beside `release:`; si#862 retired that key, and they went with it.
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
@@ -312,7 +344,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 46 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 47 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

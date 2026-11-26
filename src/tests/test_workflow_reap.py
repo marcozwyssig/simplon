@@ -24,7 +24,7 @@ import yaml
 from simplon.adapters import docker
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
-from simplon.tasks import dockerpreflight, workflowgen
+from simplon.tasks import dockerpreflight, releasepipeline, workflowgen
 
 from conftest import ROOT, docker_is_usable
 
@@ -118,16 +118,22 @@ def test_the_step_selects_by_the_kernels_own_label_and_the_product(manifest):
 
 
 def test_simplons_own_workflows_reap_first_in_every_job():
+    """Every job reaps first, but the derived `pages` job of release.yml (si#862): it checks nothing out and starts
+    no container, so it gets no reap step - held here by what makes that safe, only `uses:` steps and no checkout."""
     # arrange: the committed, generated files, derived release jobs included
     files = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    jobs = {(path.name, name): job
+            for path in files for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items()}
+    pages = jobs.pop(("release.yml", releasepipeline.PAGES_JOB))
 
     # act
-    firsts = {(path.name, name): job["steps"][0].get("name")
-              for path in files for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items()}
+    firsts = {key: job["steps"][0].get("name") for key, job in jobs.items()}
 
     # assert
     assert firsts
     assert set(firsts.values()) == {workflowgen.REAP_NAME}, firsts
+    assert all("uses" in step and "run" not in step for step in pages["steps"]), pages["steps"]
+    assert not [step for step in pages["steps"] if str(step["uses"]).startswith("actions/checkout")]
 
 
 # --- the script, against the real daemon --------------------------------------------------------------------------

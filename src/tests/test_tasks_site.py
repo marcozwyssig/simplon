@@ -1137,3 +1137,56 @@ def test_an_interrupted_site_container_is_removed_by_the_name_it_was_given(monke
 
     # assert
     assert removals == [lifecycle_name(seen[0], "sample")]
+
+
+# --- si#862: `website: { pages:, by: }`, the switch for the derived docs and pages jobs ------------------------
+
+
+def test_pages_release_with_by_is_read():
+    # act
+    pages = site_task.pages({"website": {**_SITE, "pages": "release", "by": "build  docs"}})
+
+    # assert
+    assert pages == site_task.Pages(on="release", by="build docs")
+
+
+def test_after_names_the_release_jobs_docs_waits_for():
+    # act
+    pages = site_task.pages({"website": {**_SITE, "pages": "release", "by": "build docs", "after": ["publish"]}})
+
+    # assert
+    assert pages == site_task.Pages(on="release", by="build docs", after=("publish",))
+
+
+def test_a_website_that_is_no_mapping_is_refused_not_read_as_switched_off():
+    """Review of si#862 task 4: `website: 5` is a declaration with no reading, not the absence of `pages:`."""
+    # act / assert
+    with pytest.raises(ValueError, match="'website' must be a mapping"):
+        site_task.pages({"website": "build docs"})
+
+
+@pytest.mark.parametrize("data", [{}, {"website": dict(_SITE)}, {"website": None}],
+                         ids=["no-website", "website-without-pages", "bare-website"])
+def test_without_pages_nothing_is_switched_on(data):
+    """firn's and biz-cockpit's shape: a website, and no Pages deploy of this repository."""
+    # act / assert
+    assert site_task.pages(data) is None
+
+
+@pytest.mark.parametrize("keys, said", [
+    ({"pages": "push", "by": "build docs"}, "`pages: push` - the one value is `release`"),
+    ({"pages": "push", "by": "build docs"}, "cleon's pages.yml"),
+    ({"pages": "release"}, "`pages: release` needs `by:`"),
+    ({"by": "build docs"}, "no `pages:` says when it is deployed"),
+    ({"pages": "release", "by": "docs"}, "`by: docs` must name a group and a command"),
+    ({"pages": "release", "by": ["build", "docs"]}, "must name a group and a command"),
+    ({"pages": "release", "by": "build docs", "after": "publish"}, "`after:` is a list of job keys"),
+    ({"pages": "release", "by": "build docs", "after": [3]}, "`after:` is a list of job keys"),
+    ({"after": ["publish"]}, "no `pages:` says when it is deployed"),
+], ids=["push", "push-trigger", "no-by", "no-pages", "one-word", "not-a-string", "after-string", "after-number",
+        "after-alone"])
+def test_a_pages_switch_with_no_reading_is_refused(keys, said):
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        site_task.pages({"website": {**_SITE, **keys}})
+    assert said in str(refused.value)

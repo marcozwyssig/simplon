@@ -48,6 +48,7 @@ import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from simplon.manifest import context, outputs
 from simplon.adapters import docker, hostpath
@@ -321,6 +322,72 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
                 output=_inside_the_product(out, "output", where),
                 base_url=_str(section, "base_url", where),
                 theme=_pinned_theme(theme, where) if theme else "")
+
+
+#: si#862: the one value `website: pages:` takes. The site is deployed to this repository's GitHub Pages by the
+#: derived release.yml, after the release (Marco, 2026-11-25, Q3 of si#862's decision).
+PAGES_RELEASE = "release"
+
+
+class Pages(NamedTuple):
+    """si#862: `website: { pages:, by:, after: }` - WHEN the site goes to this repository's GitHub Pages (`on`, only
+    `release` so far), the command that builds it (`by`, `<group> <name>` as a person types it), and the jobs
+    declared beside the release that the build waits for (`after`, their keys; Marco, 2026-11-26)."""
+
+    on: str
+    by: str
+    after: tuple[str, ...] = ()
+
+
+def pages(data: Mapping[str, object]) -> Pages | None:
+    """si#862: the switch for the derived `docs` and `pages` jobs of release.yml, or None when `website:` or its
+    `pages:` is absent - firn's and biz-cockpit's shape, a website deployed elsewhere or not at all.
+
+    An EXPLICIT switch rather than the presence of `website:` (Marco, 2026-11-25): measured over the reachable
+    manifests, firn declares a website and has no Pages, and biz-cockpit's is served from another repository, so
+    reading the section alone would have deployed both (and `configure-pages` would have turned Pages on).
+
+    `after:` names the jobs declared beside the release that the build waits for (Marco, 2026-11-26); without it
+    the build waits for the release alone, so a job that fails for its own reason (si#638's missing tap secret)
+    does not skip the site. Whether each name is a declared job is decided at generation, where the entry is.
+
+    Every refusal is a DIAGNOSIS: a section or value the derivation has no reading for, or a key that is useless
+    without `pages:`. `pages: push` is the value cleon's per-push deploy would need; it is the trigger that reopens the one
+    value, not a rule against it."""
+    section, blame, value = context.section(data, SECTION)
+    where = f"'{SECTION}'"
+    if blame and value is not None:
+        raise ValueError(
+            f"{where} must be a mapping (the pinned hugo image, where the site is built to, and `pages:` and `by:` "
+            f"when it is deployed to GitHub Pages), got {value!r}")
+    if blame:
+        return None
+    on, by, after = section.get("pages"), section.get("by"), section.get("after")
+    if on is None and by is None and after is None:
+        return None
+    if on is None:
+        said = " and ".join(f"`{key}:`" for key, value in (("by", by), ("after", after)) if value is not None)
+        raise ValueError(
+            f"{where}: {said} shape the site's deploy to GitHub Pages, and no `pages:` says when it is deployed - "
+            f"add `pages: {PAGES_RELEASE}`, or take {said} out")
+    if on != PAGES_RELEASE:
+        raise ValueError(
+            f"{where}: `pages: {on}` - the one value is `{PAGES_RELEASE}`: the site is built and deployed to this "
+            f"repository's GitHub Pages by the release workflow, after the release. A deploy on every push (cleon's "
+            f"pages.yml) is not derived yet; that product's move is what would add a second value")
+    if by is None:
+        raise ValueError(
+            f"{where}: `pages: {PAGES_RELEASE}` needs `by:`, the command that builds the site as a person types it "
+            f"(`by: \"build docs\"`) - the kernel does not guess which of the commands that plan `docs:site` "
+            f"writes the whole site")
+    if not isinstance(by, str) or len(by.split()) < 2:
+        raise ValueError(
+            f"{where}: `by: {by}` must name a group and a command (`build docs`), as `generated: by:` does")
+    if after is not None and (not isinstance(after, list) or not all(isinstance(k, str) and k for k in after)):
+        raise ValueError(
+            f"{where}: `after:` is a list of job keys declared beside the release under `workflows: release:` "
+            f"(`after: [publish]`), the jobs the site's build waits for; got {after!r}")
+    return Pages(on=PAGES_RELEASE, by=" ".join(by.split()), after=tuple(after or ()))
 
 
 def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:

@@ -15,7 +15,7 @@ import yaml
 from simplon.manifest import artifactsection
 from simplon.manifest import catalogue as catalogue_mod
 from simplon.manifest import load as manifest_mod
-from simplon.tasks import workflowgen
+from simplon.tasks import releasepipeline, workflowgen
 
 from test_workflowgen import _RELEASE_PRODUCT, _RELEASE_WORKFLOWS
 
@@ -100,7 +100,7 @@ def test_the_derived_release_job_gets_the_token_step_too():
                .replace("tag, gh-publish]", "tag, gh-publish, tap]"))
     loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **yaml.safe_load(_RELEASE_WORKFLOWS)}
-    text = workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+    text = workflowgen.render(_released(loaded, data), manifest=loaded, product="app", source="app.yaml",
                               artifacts=artifactsection.declared(data))
 
     token, leaf = _token_and_leaf(_steps(text, "release"), "./app.sh release tap")
@@ -227,8 +227,14 @@ def _release_with_tap(*, in_release: bool, job: str = "") -> str:
 def _render_release(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> str:
     loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
     data = {**yaml.safe_load(product), **yaml.safe_load(workflows)}
-    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+    return workflowgen.render(_released(loaded, data), manifest=loaded, product="app", source="app.yaml",
                               artifacts=artifactsection.declared(data))
+
+
+def _released(loaded, data) -> "workflowgen.Workflow":
+    """si#862: the release entry as `cipipeline.workflows` hands it to the renderer, derived through the model."""
+    entry = workflowgen.parse(data)[0]
+    return releasepipeline.to_workflow(releasepipeline.derive(loaded, data, entry), loaded, data, entry, product="app")
 
 
 def _check(text: str) -> "tuple[int, dict] | None":

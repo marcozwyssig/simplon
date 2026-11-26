@@ -168,8 +168,8 @@ def _labels(declared: object, where: str) -> tuple[str, ...]:
 def spelt_for_buildx(value: object) -> TypeGuard[list[str]]:
     """True iff `value` is a non-empty list of platforms in buildx's `<os>/<arch>[/<variant>]` spelling.
 
-    One source for the spelling two keys take: a workflow's `emulates:` beside `release:` (si#570) and a
-    command's `ci: { emulates: }` (si#860). It sits here because both readers can import this module, and
-    `manifest.load` cannot import `workflowgen`, which imports it."""
+    The spelling of a command's `ci: { emulates: }` (si#860), on a CI leaf and, since si#862, on a release
+    aggregate, where a workflow's `emulates:` beside `release:` (si#570) used to say it. It sits here because
+    `manifest.load` cannot import `workflowgen`, which imports this module."""
     return (isinstance(value, list) and bool(value)
             and all(isinstance(p, str) and len(p.split("/")) in (2, 3) and all(p.split("/")) for p in value))

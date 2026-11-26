@@ -1,0 +1,931 @@
+# FIXTURE (si#862): simplon's release.yml as it stood with the hand-written `docs` and `pages` jobs,
+# before the site's two jobs became derived. src/tests/test_release_workflow.py compares the derived file
+# against it. Stored, not read through git, so the pin holds after a squash or in a shallow clone.
+#
+# GENERATED from simplon.yaml by `simplon support github workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against simplon.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+# The release, started from the button with the version and a rehearsal switch (si#491). The
+# derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
+# notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
+# publishes: the wheel to PyPI, then the site and the image, each of which describes the version
+# PyPI now serves.
+#
+# A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
+# second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
+# route - a hotfix merges first. The release job archives the test report of the run that gated it
+# (si#509), green or red.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to release, exactly as its tag will be: vX.Y.Z'
+        required: true
+        type: string
+      dry_run:
+        description: 'Rehearse: build and check everything, publish nothing'
+        required: true
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    timeout-minutes: 120
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      # si#574: 'release homebrew-tap' mints a GitHub App token from these secrets. A dry run skips that step, so
+      # without this check it is green with a secret missing, and the real run stops at the token step - after the
+      # steps before it have published what cannot be taken back (v0.37.0: tag and PyPI, then no formula). The
+      # expression `secrets.X != ''` hands this step true or false, never the value; it runs on a dry run too.
+      - name: 'Check the secrets every `token: app` step needs'
+        env:
+          SET_HOMEBREW_TAP_CLIENT_ID: ${{ secrets.HOMEBREW_TAP_CLIENT_ID != '' }}
+          SET_HOMEBREW_TAP_APP_KEY: ${{ secrets.HOMEBREW_TAP_APP_KEY != '' }}
+        run: |
+          missing=""
+          [ "$SET_HOMEBREW_TAP_CLIENT_ID" = true ] || missing="$missing HOMEBREW_TAP_CLIENT_ID"
+          [ "$SET_HOMEBREW_TAP_APP_KEY" = true ] || missing="$missing HOMEBREW_TAP_APP_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not set in this repository's Actions secrets:$missing - a \`token: app\` step mints its GitHub App token from them (si#574); store them before releasing"
+            exit 1
+          fi
+          echo "set: HOMEBREW_TAP_CLIENT_ID HOMEBREW_TAP_APP_KEY"
+      # si#570: the release aggregate's `ci: emulates:`, registered before anything in the job runs.
+      - name: Register emulation for linux/arm64
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3
+          platforms: linux/arm64
+      # si#718: the launcher's first run in a fresh checkout builds its venv - a pip install of the
+      # kernel and its dependencies from PyPI. Here it happens in a step with no token in its environment, so
+      # nothing that install runs sits beside the GITHUB_TOKEN a `token: github` step gets. `help` loads the
+      # manifest and prints the command list; a launcher that cannot provision is red here, before the cut.
+      - name: Provision the launcher before any step holds a token
+        run: ./simplon.sh help
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: exec ./simplon.sh release check -- "$RELEASE_VERSION"
+      - name: Cut the tag in this checkout
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      - name: The build will be stamped with the version
+        run: |
+          described="$(git describe --tags --always --dirty)"
+          [ "$described" = "$RELEASE_VERSION" ] || {
+            echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
+            exit 1
+          }
+      - run: exec ./simplon.sh test suite
+      - run: exec ./simplon.sh test typecheck-python
+      - run: exec ./simplon.sh test generated
+      - run: exec ./simplon.sh test release-notes
+      - run: exec ./simplon.sh release notes --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: exec ./simplon.sh release tag -- "$RELEASE_VERSION"
+      - name: What a release would have published (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"
+          cat build/release/notes.md
+      # si#509 (si#248): the test results of THIS run, the one that gated the release, archived
+      # whether it went green or red. Kernel-owned: every derived release job ends with these two steps.
+      - if: always()
+        run: exec ./simplon.sh test report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report
+          path: tests/reports/*.html
+          if-no-files-found: error
+          retention-days: 90
+
+  # The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
+  # token, no API token in the repository. PyPI's publisher is bound to this file's name and the
+  # `pypi` environment, which is why neither moves.
+  publish:
+    runs-on: ubuntu-latest
+    needs: release
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+      # holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+      # the check below would go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
+        if: ${{ inputs.dry_run }}
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      # On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+      # the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+      # would otherwise be re-created locally and publish a version origin does not carry - the
+      # final review of si#491 (Important 2).
+      - name: The tag is on origin at this commit
+        if: ${{ !inputs.dry_run }}
+        run: |
+          tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+            exit 1
+          fi
+      - run: exec ./simplon.sh build wheel
+      # si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
+      # be a tautology. What is not tautological is whether the derivation saw the inputs it needs:
+      # a shallow clone, an unclean tree (a `+local` segment) or a tag that is not where the build
+      # stands all show in ONE place - the filename of the wheel actually built - so that is what
+      # is read. It cannot catch a mistyped version: one number cannot falsify itself.
+      - name: The wheel that was built must be the tag
+        run: |
+          version="${RELEASE_VERSION#v}"
+          built="$(ls dist/simplon-*.whl | sed -E 's|.*/simplon-([^-]+)-.*|\1|')"
+          test "$built" = "$version" || {
+            echo "tag ${RELEASE_VERSION} was built as ${built}, not ${version}."
+            echo "The version is derived from git by setuptools-scm, so a mismatch means the derivation"
+            echo "saw something other than a clean checkout standing exactly on the tag: a shallow"
+            echo "clone (fetch-depth), an unclean working tree (a '+local' segment), or a tag that does"
+            echo "not point at this commit."
+            exit 1
+          }
+      # `skip-existing` (si#537): "rerun the failed job, never a second tag" must reach the formula
+      # steps below, and without it a rerun stops here on the file the first attempt uploaded. A
+      # rerun rebuilds byte-identical bytes only with the same build toolchain (`build wheel` sets
+      # SOURCE_DATE_EPOCH to HEAD's commit time, but pyproject.toml's build requirements are
+      # unpinned and the wheel's WHEEL file names the setuptools version). With it, this step passes
+      # the upload it already made; without it, different bytes under an existing name are still
+      # refused: `build homebrew-formula --source pypi` refuses unless PyPI's sha256 equals the
+      # local wheel's, before the tap. The way out by hand is in how/releasing.md.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        if: ${{ !inputs.dry_run }}
+        with:
+          skip-existing: true
+      - if: ${{ inputs.dry_run }}
+        run: exec ./simplon.sh build homebrew-formula --source local
+      - if: ${{ !inputs.dry_run }}
+        run: exec ./simplon.sh build homebrew-formula --source pypi
+      # si#344 C.4: 'simplon-formula' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-simplon-formula.tar" build/homebrew/simplon.rb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplon-formula
+          path: ${{ runner.temp }}/simplon-handoff-simplon-formula.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - if: ${{ inputs.dry_run }}
+        run: exec ./simplon.sh test homebrew-formula --online false
+      - if: ${{ !inputs.dry_run }}
+        run: exec ./simplon.sh test homebrew-formula --online true
+      # si#344 C.4: 'simplon-formula-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar" build/test/homebrew-formula.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simplon-formula-checked
+          path: ${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # The tap commit, in a job of its own after `publish` (si#638). It needs the formula and its
+  # test result, which `publish` renders and checks after the PyPI upload and the kernel hands over
+  # (si#344 C.4), and the App token it mints from two secrets. Nothing else in this run needs the tap:
+  # while it sat in `publish`, a missing App secret (si#574) turned `publish` red after PyPI and
+  # skipped `docs` and `image` with it (run 42514180931, v0.43.0). Here it fails red and alone. No tag
+  # steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
+  # still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
+  # written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
+  homebrew-tap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: publish
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # si#344 C.4: 'simplon-formula' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: simplon-formula
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-simplon-formula.tar"
+      # si#344 C.4: 'simplon-formula-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: simplon-formula-checked
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-simplon-formula-checked.tar"
+      # v3.2.0: si#534 - 'release homebrew-tap' declares `token: app`, so this step mints a GitHub App
+      # token for marcozwyssig/homebrew-tap and nothing else, with contents: write, from the secrets HOMEBREW_TAP_CLIENT_ID
+      # and HOMEBREW_TAP_APP_KEY. The leaf below reads it as $GH_APP_TOKEN from its own `env:`; no `run:` line
+      # carries the token or a secret.
+      # This step carries the leaf's `if:`, so a run that skips the leaf mints nothing and needs
+      # neither secret.
+      - id: app-token-0
+        if: ${{ !inputs.dry_run }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.HOMEBREW_TAP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_KEY }}
+          owner: marcozwyssig
+          repositories: homebrew-tap
+          permission-contents: write
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token-0.outputs.token }}
+        run: exec ./simplon.sh release homebrew-tap
+
+  # The website, built by the one command a person types (`build docs`) and uploaded into the run
+  # by the action that exists only inside a runner. No `paths:` filter: every release republishes
+  # the site. After `publish`, so it never documents a version nobody can install. The upload is
+  # the LAST step (si#851): no step after it can turn this job red with the artifact already made,
+  # so a rerun of this job never meets an upload of its own. It reads the checkout and writes nothing
+  # outside the run; the Pages rights are the `pages` job's.
+  docs:
+    runs-on: ubuntu-latest
+    needs: publish
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    permissions:
+      contents: read
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+      # holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+      # the check below would go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
+        if: ${{ inputs.dry_run }}
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      # On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+      # the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+      # would otherwise be re-created locally and publish a version origin does not carry - the
+      # final review of si#491 (Important 2).
+      - name: The tag is on origin at this commit
+        if: ${{ !inputs.dry_run }}
+        run: |
+          tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+            exit 1
+          fi
+      - run: exec ./simplon.sh build docs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/site
+
+  # The deploy of what `docs` uploaded, in a job of its own (si#851). In one job with the upload,
+  # `deploy-pages` listed the run's artifacts one second after the upload, found no `github-pages`
+  # and failed (runs 44901604309, 44938156739); "Re-run failed jobs" then re-ran the upload too, and
+  # the deploy refused the two `github-pages` artifacts that left. Here the job boundary stands
+  # between the upload and the listing, and a red deploy is rerun alone: GitHub reruns the failed
+  # jobs and the jobs that need them, not `docs`, which succeeded, so the rerun finds the one
+  # artifact the run holds. No checkout: nothing here reads the repository. `pages: write` and
+  # `id-token: write` are this job's alone (si#719), and so are the environment and the queue.
+  pages:
+    runs-on: ubuntu-latest
+    needs: docs
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        if: ${{ !inputs.dry_run }}
+
+  # The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
+  # run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
+  # merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
+  # (si#365). After `publish`, so the image carries the version PyPI serves.
+  image:
+    runs-on: ubuntu-latest
+    needs: publish
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+      actions: write
+    steps:
+      # si#756 (si#409, si#676): a cancelled job does not stop every container it started. The kernel stops
+      # its containers on SIGINT and SIGTERM, but the runner's SIGKILL a few seconds into a cancel is seen by no
+      # handler, and on a machine that outlives the job the container runs on - into the next job's checkout,
+      # which actions/checkout is about to clean. So this runs FIRST, before the checkout.
+      #
+      # It removes a container only when BOTH hold: it carries `simplon.run=simplon`, the label the kernel puts on
+      # every container it starts for this product, and one of its bind mounts lies in this job's workspace. The
+      # runner runs one job at a time and this step runs before this job has started anything, so such a
+      # container is an orphan by definition; a container of another checkout or of a developer's gate on the
+      # same daemon mounts something else and is left alone. A mount given through a symlink is not matched.
+      #
+      # Three outcomes, kept apart: removed (each one named), nothing to remove (green, says 0), and could not
+      # look - no docker client yet, or a daemon `docker ps` cannot reach - which is a warning, because the job's
+      # own first docker step meets the same daemon and says why. An orphan that is still there after
+      # `rm --force` fails the step: it would be writing into this job's checkout.
+      - name: Remove the containers a cancelled job left running
+        if: runner.environment != 'github-hosted' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          ws="${GITHUB_WORKSPACE:?}"
+          if command -v docker >/dev/null 2>&1; then
+            d=docker
+          elif [ -x "$ws/build/tools/bin/docker" ]; then
+            d="$ws/build/tools/bin/docker"
+          else
+            echo "::warning::orphaned containers were NOT looked for: no docker on PATH and none at $ws/build/tools/bin/docker"
+            exit 0
+          fi
+          err="$(mktemp "${RUNNER_TEMP:-/tmp}/simplon-reap.XXXXXX")"
+          if ! ids="$("$d" ps --all --quiet --no-trunc --filter label=simplon.run=simplon 2>"$err")"; then
+            echo "::warning::orphaned containers were NOT looked for: '$d ps' failed: $(tr -s '[:space:]' ' ' < "$err")"
+            rm -f "$err"
+            exit 0
+          fi
+          rm -f "$err"
+          # Gone only when docker SAYS so: a `ps` that fails is not an empty answer.
+          gone() { out="$("$d" ps --all --quiet --no-trunc --filter "id=$1" 2>/dev/null)" && [ -z "$out" ]; }
+          removed=0
+          left=0
+          for id in $ids; do
+            if ! sources="$("$d" inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' "$id" 2>/dev/null)"; then
+              gone "$id" && continue
+              echo "::error::could not read the mounts of container $id, so it was neither kept nor removed knowingly"
+              left=$((left + 1))
+              continue
+            fi
+            printf '%s' "$sources" | awk -v ws="$ws" '$0 == ws || index($0, ws "/") == 1 { hit = 1 } END { exit !hit }' || continue
+            echo "orphan: $("$d" inspect --format '{{.Name}} {{.Config.Image}} started {{.State.StartedAt}}' "$id" 2>/dev/null || echo "$id")"
+            "$d" rm --force "$id" >/dev/null 2>&1 || true
+            waited=0
+            until gone "$id" || [ "$waited" -ge 10 ]; do sleep 1; waited=$((waited + 1)); done
+            if gone "$id"; then
+              echo "  removed"
+              removed=$((removed + 1))
+            else
+              echo "::error::orphan $id is still there 10 s after docker rm --force"
+              left=$((left + 1))
+            fi
+          done
+          echo "$removed orphaned container(s) removed"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left orphaned container(s) could not be removed; they would write into this job's checkout"
+            exit 1
+          fi
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # si#622: the job's token is not left in .git/config for every step, build and tests
+          # included, to read. A `token: github` step gets it in its own `env:` and hands it to git itself.
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
+      # holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
+      # the check below would go red, and the jobs after this one would never rehearse.
+      - name: Cut the tag in this checkout
+        if: ${{ inputs.dry_run }}
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      # On a REAL run nothing is cut here: the tag must be the one the release job pushed, fetched by
+      # the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
+      # would otherwise be re-created locally and publish a version origin does not carry - the
+      # final review of si#491 (Important 2).
+      - name: The tag is on origin at this commit
+        if: ${{ !inputs.dry_run }}
+        run: |
+          tagged="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ "$tagged" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
+            exit 1
+          fi
+      # The image declares linux/arm64 too (si#368); this runner is amd64.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3
+          platforms: arm64
+      - run: exec ./simplon.sh build image --tag "$RELEASE_VERSION"
+      - run: exec ./simplon.sh test image --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: exec ./simplon.sh release push-image --tag "$RELEASE_VERSION"
+      # The pin moves in three steps since si#622, because the push between them is a command: no
+      # generated checkout keeps the job's token in .git/config, so `release push-pin` hands git this
+      # step's GITHUB_TOKEN for that one push. This step needs none: the fetch reads a public repository.
+      # What the steps after it need is handed on through $GITHUB_ENV, and PIN_BRANCH only when there
+      # is a commit to push.
+      - name: Commit the pin of the published image on its own branch
+        if: ${{ !inputs.dry_run }}
+        run: |
+          ref="ghcr.io/marcozwyssig/simplon:${RELEASE_VERSION}"
+          # The digest of the INDEX the tag names (si#368: one manifest list for two platforms), read from
+          # the registry rather than from a local image, which holds one platform at most.
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' \
+                    | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          test -n "$digest" || { echo "::error::$ref was published but its digest could not be read"; exit 1; }
+          branch="pin/kernel-image-${RELEASE_VERSION}"
+          git fetch --quiet origin main
+          git switch --quiet -c "$branch" origin/main
+          rc=0; deploy/image/repin.sh "$ref" "$digest" || rc=$?
+          if [ "$rc" = 3 ]; then
+            echo "- **image**: \`$ref\` published; \`main\` already pins it, so no pull request." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$rc" = 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -am "chore: pin the kernel image to ${RELEASE_VERSION}" \
+              -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
+          { echo "PIN_BRANCH=$branch"; echo "PIN_REF=$ref"; echo "PIN_DIGEST=$digest"; } >> "$GITHUB_ENV"
+      - if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: exec ./simplon.sh release push-pin --tag "$RELEASE_VERSION"
+      - name: Open the pull request that pins the published image
+        if: ${{ !inputs.dry_run && env.PIN_BRANCH != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A push or pull request made with this run's GITHUB_TOKEN starts no workflow (GitHub's rule
+          # against one run triggering another without end), so the pin would reach its pull request
+          # with no test result at all - green-looking and unexamined (si#365). `workflow_dispatch` is
+          # the documented exception, and a check belongs to the COMMIT, so the run shows on the PR.
+          gh workflow run ci.yml --ref "$PIN_BRANCH" || {
+            echo "::error::branch $PIN_BRANCH is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
+            exit 1
+          }
+          if ! gh pr create --base main --head "$PIN_BRANCH" --title "Pin the kernel image to ${RELEASE_VERSION}" \
+                 --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${PIN_REF}@${PIN_DIGEST}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
+            echo "::error::$PIN_REF is published and branch $PIN_BRANCH is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${PIN_BRANCH}"
+            echo "- **image**: \`$PIN_REF\` published; pin branch \`$PIN_BRANCH\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "- **image**: \`$PIN_REF@${PIN_DIGEST}\` published; pin pull request opened from \`$PIN_BRANCH\`, ci.yml dispatched on it." >> "$GITHUB_STEP_SUMMARY"

@@ -163,7 +163,7 @@ def _artifacts(where: str, key: str, port: Port, value: object) -> tuple[str, ..
 
 
 def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
-          kinds: Mapping[str, str], release_workflows: Mapping[str, str] | None = None) -> None:
+          kinds: Mapping[str, str], release_commands: Mapping[str, str] | None = None) -> None:
     """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest, all four diagnosis; then
     the test-result rules (si#344 C.3, `_check_results`)."""
     producers: dict[str, list[str]] = {}
@@ -212,7 +212,7 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
             if isinstance(spec, AggregateCommand):
                 _check_plan(manifest, f"{group} {name}", manifest.plan_tree_for(name, group=group))
     _check_bundles(manifest, declared, kinds)
-    _check_release_first(manifest, release_workflows or {})
+    _check_release_first(manifest, release_commands or {})
     about = _check_results(manifest, declared, kinds)
     _check_release(manifest, declared, kinds, about)
 
@@ -299,28 +299,25 @@ def _first_leaf_task(manifest: "Manifest", group: str, name: str) -> str | None:
     return first.task if isinstance(first, TaskCommand) else None
 
 
-def _check_release_first(manifest: "Manifest", release_workflows: Mapping[str, str]) -> None:
-    """A dispatch release is checked before anything is cut (si#487, si#463 D3): the aggregate a
-    `workflows: <name>: release:` names starts its plan with `release:check`.
+def _check_release_first(manifest: "Manifest", release_commands: Mapping[str, str]) -> None:
+    """A dispatch release is checked before anything is cut (si#487, si#463 D3): every release aggregate (a
+    ReleaseCommand, `release_commands` maps its words to its bundle) starts its plan with `release:check`.
 
     An EXPRESSION rule, of merged reach: it binds simplon's own release as it binds a product's. It forbids
     a dispatch release with no check, or with the check after a member that could already have acted on a
-    version nobody validated. Only a manifest that declares the dispatch flow meets it (measured 2026-11-03:
-    simplon's own, of the reachable manifests).
-
-    A name that resolves to no command is skipped, not refused: `workflowgen.resolve_command` diagnoses it
-    when the workflow is rendered, with the group's real members listed."""
-    for key, words in release_workflows.items():
+    version nobody validated. Since si#862 every ReleaseCommand derives release.yml, so the rule holds every
+    one rather than the aggregate a `workflows: <name>: release:` named (that key is retired). Measured
+    2026-11-25 over the reachable manifests: simplon's and firn's declare a ReleaseCommand, and both start
+    with the check."""
+    for words, bundle in release_commands.items():
         tokens = words.split()
-        group, name = ".".join(tokens[:-1]), tokens[-1] if tokens else ""
-        if name not in manifest.commands.get(group, {}):
-            continue
+        group, name = ".".join(tokens[:-1]), tokens[-1]
         first = _first_leaf_task(manifest, group, name)
         if first != "release:check":
             plan = manifest.plan_for(name, group=group)
             raise ValueError(
-                f"workflow '{key}' releases through '{words}', whose plan starts with "
-                f"'{plan[0] if plan else '(nothing)'}' - a dispatch release is checked before anything is cut; "
+                f"the release aggregate '{words}' (it produces '{bundle}' and derives release.yml) starts its plan "
+                f"with '{plan[0] if plan else '(nothing)'}' - a dispatch release is checked before anything is cut; "
                 f'add `check: {{ task: "release:check" }}` and put it first in `depends_on`')
 
 

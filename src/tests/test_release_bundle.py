@@ -7,7 +7,8 @@ from pathlib import Path
 from simplon.model.command import ReleaseCommand
 import pytest
 
-from simplon.manifest import catalogue, load as manifest
+from simplon.manifest import catalogue, load as manifest, runners
+from simplon.tasks import releasepipeline
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,6 +29,7 @@ ci:
       image: { task: "test:image", consumes: { image: app }, produces: { test-result: app-checked } }
   release:
     commands:
+      check: { task: "release:check" }
       notes: { task: "release:notes", produces: { release-notes: app-notes } }
       publish:  { task: "release:image", consumes: { image: app, evidence: [app-checked] } }
       tag:   { task: "release:tag", consumes: { release-notes: app-notes }, produces: { tag: app-tag } }
@@ -36,7 +38,10 @@ ci:
 # `image` is also `build image` and `test image` here, while `support git push` owns `push`.
 
 
-def _all(deps, extra, stop="stop_on_failure: true, "):
+def _all(deps, extra, stop="stop_on_failure: true, ", check=True):
+    # si#862: every release aggregate starts with the dispatch-release check (si#487), so `check` leads the plan
+    # unless a test is about that rule.
+    deps = f"check, {deps}" if check else deps
     return HEAD + f"      all: {{ depends_on: [{deps}], help: 'h', {stop}{extra} }}\n"
 
 
@@ -227,7 +232,7 @@ def test_a_github_release_produced_by_a_leaf_is_in_the_model_export():
 
 def test_an_aggregate_may_name_a_github_release_as_its_bundle():
     # act
-    loaded = _load(GH + "      all: { depends_on: [notes, publish, tag], help: 'h', stop_on_failure: true, "
+    loaded = _load(GH + "      all: { depends_on: [check, notes, publish, tag], help: 'h', stop_on_failure: true, "
                         "produces: { release: app-gh } }\n")
 
     # assert
@@ -235,7 +240,7 @@ def test_an_aggregate_may_name_a_github_release_as_its_bundle():
     assert isinstance(spec, ReleaseCommand) and spec.release == "app-gh"
 
 
-BOTH = GH + ("      all: { depends_on: [notes, publish, tag, gh-publish], help: 'h', stop_on_failure: true, "
+BOTH = GH + ("      all: { depends_on: [check, notes, publish, tag, gh-publish], help: 'h', stop_on_failure: true, "
              "produces: { release: app-gh } }\n")
 
 
@@ -250,7 +255,7 @@ def test_an_aggregate_whose_bundle_its_publish_leaf_produces_is_refused():
 # --- si#489: with a draft release, the PUBLISHED release is the public statement ---------------------------
 
 def _gh_all(deps: str) -> str:
-    return GH + (f"      all: {{ depends_on: [{deps}], help: 'h', stop_on_failure: true, "
+    return GH + (f"      all: {{ depends_on: [check, {deps}], help: 'h', stop_on_failure: true, "
                  f"produces: {{ release: app-release }} }}\n")
 
 
@@ -278,32 +283,29 @@ def test_without_a_github_publish_the_tag_still_follows_every_publish():
 
 
 # --- si#487: a dispatch release starts with `release:check` ----------------------------------------------
-
-CHECK = '      check: { task: "release:check" }\n'
-RELEASE_WORKFLOW = "workflows:\n  rel:\n    release: release all\n"
-
-
-def _dispatched(deps, *, check=True, workflow=RELEASE_WORKFLOW):
-    text = _all(deps, "produces: { release: app-release }")
-    if check:
-        text = text.replace("      all:", CHECK + "      all:", 1)
-    return text + workflow
+# Since si#862 the rule holds every release aggregate: each derives release.yml by itself, so no workflow has to
+# name it first.
 
 
-def test_a_release_workflow_whose_aggregate_does_not_start_with_the_check_is_refused():
+def _dispatched(deps):
+    return _all(deps, "produces: { release: app-release }", check=False)
+
+
+def test_a_release_aggregate_that_does_not_start_with_the_check_is_refused():
     # arrange
-    text = _dispatched("notes, publish, tag", check=False)
+    text = _dispatched("notes, publish, tag")
 
     # act / assert
     with pytest.raises(ValueError) as refused:
         _load(text)
     message = str(refused.value)
     assert "release:check" in message and "first" in message
+    assert "the release aggregate 'release all'" in message
     assert 'check: { task: "release:check" }' in message
 
 
 def test_the_check_second_is_refused_too():
-    with pytest.raises(ValueError, match="starts with 'notes'"):
+    with pytest.raises(ValueError, match="starts its plan with 'notes'"):
         _load(_dispatched("notes, check, publish, tag"))
 
 
@@ -313,8 +315,11 @@ def test_the_check_first_is_accepted():
     assert loaded.plan_for("all", group="release")[0] == "check"
 
 
-def test_an_aggregate_no_workflow_names_needs_no_check():
-    _load(_dispatched("notes, publish, tag", check=False, workflow=""))
+def test_a_release_aggregate_no_workflow_names_is_held_to_the_check_too():
+    """si#862: the rule used to bind only the aggregate a `workflows: <key>: release:` named; that key is retired,
+    and a ReleaseCommand derives release.yml with no entry at all."""
+    with pytest.raises(ValueError, match="a dispatch release is checked before anything is cut"):
+        _load(_dispatched("notes, publish, tag"))
 
 
 def test_a_nested_aggregate_whose_first_leaf_is_the_check_is_accepted():
@@ -324,3 +329,46 @@ def test_a_nested_aggregate_whose_first_leaf_is_the_check_is_accepted():
 
     # act / assert
     _load(text)
+
+
+# si#862: a release aggregate's `ci:` holds the machine, emulation and time limit of the release job.
+
+def _release_ci(written):
+    return _load(_all("notes, publish, tag", f"produces: {{ release: app-release }}, ci: {written}"))
+
+
+def test_a_release_aggregate_reads_emulates_timeout_and_runner():
+    ci = _release_ci("{ emulates: [linux/arm64], timeout_minutes: 90, runner: github-ubuntu }"
+                     ).spec_for("release", "all").ci
+    assert (ci.emulates, ci.timeout_minutes, ci.runner_kind) == (("linux/arm64",), 90, "github-ubuntu")
+    assert ci.runner_kind == "github-ubuntu" and ci.runner_labels == runners.TABLE["github-ubuntu"].labels
+
+
+def test_a_release_aggregate_runner_names_kind_and_labels():
+    ci = _release_ci("{ runner: { kind: self-hosted-container, labels: ghr-8 } }").spec_for("release", "all").ci
+    assert (ci.runner_kind, ci.runner_labels) == ("self-hosted-container", ("ghr-8",))
+    runner, labels = releasepipeline.runner_of(ci)
+    assert (runner, labels) == (runners.TABLE["self-hosted-container"], ("ghr-8",))
+
+
+def test_a_release_aggregate_without_ci_holds_nothing():
+    ci = _load(_all("notes, publish, tag", "produces: { release: app-release }")).spec_for("release", "all").ci
+    assert (ci.emulates, ci.timeout_minutes, ci.runner_kind, ci.runner_labels) == ((), None, "", ())
+    assert releasepipeline.runner_of(ci) is None
+
+
+@pytest.mark.parametrize("written", ['{ skip: "x" }', "{ gate: { label: x } }", "{}", "nope", "{ cadence: nightly }"])
+def test_a_release_aggregate_ci_names_the_three_keys_it_holds(written):
+    with pytest.raises(ValueError, match="release aggregate 'release all'.*`emulates:`, `timeout_minutes:` "
+                                         "and `runner:`"):
+        _release_ci(written)
+
+
+@pytest.mark.parametrize("written, message", [
+    ("{ emulates: nope }", "`ci: emulates: \"nope\"`"),
+    ("{ timeout_minutes: 0 }", "`ci: timeout_minutes: 0`.*positive whole number"),
+    ("{ runner: nope }", "'nope' is not a runner kind"),
+])
+def test_a_bad_release_ci_value_gets_the_existing_readers_message(written, message):
+    with pytest.raises(ValueError, match=message):
+        _release_ci(written)
