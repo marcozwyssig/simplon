@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 
+from simplon.adapters import github
 from simplon.manifest import context
 from simplon.kernel import log
 from simplon.tasks import gitops
@@ -53,12 +54,17 @@ from simplon.tasks import gitops
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
+#: The seam to GitHub's API for main's CI (si#789); tests replace it.
+_ci_verdict = github.main_ci_verdict
+
+
 def check(tag: str) -> int:
     """Refuse a dispatch release before anything is cut (si#487): 0 when every check is green, 1 at the first red one.
 
     In order, because a later check's message would be about a state an earlier one already condemned:
     the `vX.Y.Z` spelling; origin fetched, and its default branch asked of it; the run started from that branch
-    (`GITHUB_REF`, skipped and said so when it is not set); origin's default branch carrying HEAD; no OTHER version tag at HEAD, which
+    (`GITHUB_REF`, skipped and said so when it is not set); origin's default branch carrying HEAD; a green `ci.yml` push run on that branch for HEAD (si#789: a
+    commit without one gets no public tag; a failed look is a refusal, not a pass); no OTHER version tag at HEAD, which
     `git describe` would stamp the build with; and the tag on origin free, or at this very commit.
 
     THE QUESTION TO ORIGIN IS NOT THE PRE-FLIGHT #32 FORBIDS. That one would decide whether a free number may
@@ -100,6 +106,24 @@ def check(tag: str) -> int:
     if not gitops.ref_exists(f"origin/{branch}") or not gitops.carried_by(head, f"origin/{branch}"):
         log.error(f"origin/{branch} does not carry this commit ({gitops.describe(head)}), so it would be released "
                   f"from outside {branch} - merge it first and release what {branch} then carries")
+        return 1
+    try:
+        verdict = _ci_verdict(head, branch, origin=gitops.origin_url())
+    except github.Unanswered as unanswered:
+        log.error(f"could not look up the CI of {gitops.describe(head)} on {branch}, and that is not read as green: "
+                  f"{unanswered}. Nothing was cut; start the release again once GitHub can be asked")
+        return 1
+    if verdict.state == "none":
+        log.error(f"no ci.yml push run exists on {branch} for {head}, so nothing says this commit is green. "
+                  f"Let CI run on {branch} for it, then start the release again")
+        return 1
+    if verdict.state == "running":
+        log.error(f"the ci.yml run on {branch} for {head} is not finished yet: {verdict.url}. "
+                  f"Start the release again once it is green")
+        return 1
+    if verdict.state == "red":
+        log.error(f"the ci.yml run on {branch} for {head} ended in {verdict.conclusion}: {verdict.url}. "
+                  f"Fix it or re-run it until it is green, then start the release again")
         return 1
     here = gitops.tags_at(head)
     if here is None:

@@ -49,7 +49,7 @@ def test_the_release_is_a_model_instance():
     assert (inputs["dry_run"].input_type, inputs["dry_run"].required,
             inputs["dry_run"].default_value) == ("boolean", True, "true")
     (job,) = [job for job in model.job if job.key == "release"]
-    assert {p.scope: p.access for p in job.permission} == {"contents": "write", "packages": "write"}
+    assert {p.scope: p.access for p in job.permission} == {"contents": "write", "packages": "write", "actions": "read"}
     assert job.timeout_minutes == workflowgen.RELEASE_TIMEOUT_MINUTES
 
 
@@ -159,7 +159,7 @@ def test_a_declared_release_entry_adds_its_jobs_after_the_derived_one():
     # assert
     assert list(doc["jobs"]) == ["release", "extra"]
     assert doc["permissions"] == {"contents": "read", "id-token": "write"}
-    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "id-token": "write", "packages": "write"}
+    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "id-token": "write", "packages": "write", "actions": "read"}
     assert list(doc[True]) == ["workflow_dispatch"]
 
 
@@ -317,8 +317,8 @@ def test_a_release_command_whose_plan_does_not_start_with_the_check_is_refused_a
 
 
 @pytest.mark.parametrize("entry, expected", [
-    ("    permissions: { id-token: write }\n", {"id-token": "write", "contents": "write", "packages": "write"}),
-    ("    note: the release\n", {"contents": "write", "packages": "write"}),
+    ("    permissions: { id-token: write }\n", {"id-token": "write", "contents": "write", "packages": "write", "actions": "read"}),
+    ("    note: the release\n", {"contents": "write", "packages": "write", "actions": "read"}),
 ], ids=["permissions", "note"])
 def test_a_release_entry_without_jobs_shapes_the_derived_release(entry, expected):
     """Review of si#862 task 3: an entry that adds no job but a scope (PyPI's Trusted Publishing needs

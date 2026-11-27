@@ -83,8 +83,9 @@ TRIGGER = workflowschema.Trigger(event="dispatch", dispatch_input=(
                                  "nothing", input_type="boolean", required=True, default_value="true")))
 
 #: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
-#: to push an image. They are the derived release job's own (si#719), never the workflow's.
-_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+#: to push an image, `actions` (read) for `release:check` to read main's CI runs (si#789). They are the
+#: derived release job's own (si#719), never the workflow's.
+_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write", "actions": "read"}
 #: One release per version, never cancelled in progress. The converter's, as `cipipeline.to_workflow` decides a
 #: cadence file's: the renderer decides concurrency per kind of file (workflow.firn, `Workflow`).
 _RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",

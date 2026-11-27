@@ -2518,14 +2518,14 @@ def test_write_scopes_sit_on_the_release_job_only():
     its own block gets the workflow default, which is read."""
     doc = yaml.safe_load(_release_text())
     assert doc["permissions"] == {"contents": "read"}
-    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write"}
+    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write", "actions": "read"}
     assert "permissions" not in doc["jobs"]["announce"]
 
 
 def test_a_lower_workflow_default_leaves_the_release_job_its_write_scopes():
     doc = yaml.safe_load(_release_text(workflows=_with_workflow_permissions("{ contents: read }")))
     assert doc["permissions"] == {"contents": "read"}
-    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write"}
+    assert doc["jobs"]["release"]["permissions"] == {"contents": "write", "packages": "write", "actions": "read"}
 
 
 def test_a_scope_the_product_adds_reaches_the_release_job_too():
@@ -2534,7 +2534,7 @@ def test_a_scope_the_product_adds_reaches_the_release_job_too():
     workflow's."""
     doc = yaml.safe_load(_release_text(workflows=_with_workflow_permissions("{ id-token: write }")))
     assert doc["jobs"]["release"]["permissions"] == {"id-token": "write", "contents": "write",
-                                                     "packages": "write"}
+                                                     "packages": "write", "actions": "read"}
 
 
 def test_the_derived_release_job_has_the_default_time_limit_not_githubs():

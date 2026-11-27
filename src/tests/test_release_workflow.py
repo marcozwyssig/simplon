@@ -138,6 +138,8 @@ def test_simplons_release_yml_is_derived():
     # assert
     entry = data["workflows"]["release"]
     assert "release" not in entry and not {"docs", "pages"} & set(entry["jobs"])
+    # si#789: the derived release job also reads main's CI runs, so it alone gains `actions: read`
+    old["release"]["permissions"] = {**old["release"]["permissions"], "actions": "read"}
     assert {name: jobs[name] for name in UNMOVED_JOBS} == {name: old[name] for name in UNMOVED_JOBS}
     assert len(expected_docs["steps"]) == len(old["docs"]["steps"]) - 1
     assert len(expected_pages["steps"]) == len(old["pages"]["steps"]) - 1
