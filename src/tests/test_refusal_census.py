@@ -1417,6 +1417,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
         EXPRESSION,
     ("releasepipeline", "_refuse_beside_the_release", "one workflow is a rollout or a release"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "and the derived job is named"): DIAGNOSIS,
+    # si#789: the derived `artifacts` job's name, as `release`'s above; none of the eight reachable manifests
+    # declares a release job by that name (measured 2026-11-27).
+    ("releasepipeline", "_refuse_beside_the_release", "the name of the derived job that runs the release's producers"):
+        DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is the dispatch input's"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is a mapping of scope -> level"): DIAGNOSIS,
     # si#862, plan decision 3: two ReleaseCommands would each derive release.yml. A product could declare two

@@ -819,3 +819,23 @@ def test_the_producer_of_what_a_selected_test_consumes_is_selected_and_the_evide
                if str(s.get("uses", "")).startswith("actions/upload-artifact"))
     assert any(s.get("with", {}).get("name") == "app-checked" for s in jobs["ship"]["steps"]
                if str(s.get("uses", "")).startswith("actions/download-artifact"))
+
+
+@pytest.mark.parametrize("product", [PRODUCT, CLOSURE.split("workflows:\n")[0]], ids=["nothing-selected", "selected"])
+def test_a_declared_release_job_named_artifacts_is_refused(product):
+    """A DIAGNOSIS, as for `release`, `docs` and `pages`: two jobs under one key, one would silently replace the
+    other. Refused whether or not `producers_on_tag` selects anything, so the rule does not hide behind it."""
+    # arrange
+    extra = """workflows:
+  release:
+    jobs:
+      artifacts: { needs: release, runs-on: ubuntu-latest, steps: [{ run: echo mine }] }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _workflows(product, extra)
+    message = str(refused.value)
+    assert "declares a job 'artifacts', the name of the derived job that runs the release's producers" in message, \
+        message
+    assert "rename yours" in message

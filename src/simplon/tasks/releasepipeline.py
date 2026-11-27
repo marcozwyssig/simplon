@@ -185,8 +185,8 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
 
     Two are EXPRESSION rules (si#490 decision 1, kept by si#862): a second trigger would start a release with no
     `version`, and its own concurrency would let two runs of one version cancel each other mid-release. The rest
-    are DIAGNOSES: a rollout and a release would derive two triggers into one file, a job named `release` is the
-    derived job's name, a `RELEASE_VERSION` in `env:` would be shadowed by the dispatch input's, and a
+    are DIAGNOSES: a rollout and a release would derive two triggers into one file, a job named `release` or
+    `artifacts` (si#789) is a derived job's name, a `RELEASE_VERSION` in `env:` would be shadowed by the dispatch input's, and a
     `permissions:` that is not a mapping is no default for any job."""
     where = f"workflow '{entry.key}'"
     if entry.declared_on and not entry.flow:
@@ -206,6 +206,11 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
         raise ValueError(
             f"{where}: declares a job '{workflowgen.RELEASE_JOB}', and the derived job is named "
             f"'{workflowgen.RELEASE_JOB}' - rename yours; it can still `needs: {workflowgen.RELEASE_JOB}`")
+    if any(job.name == ARTIFACTS_JOB for job in entry.jobs):
+        # si#789: refused whether or not `producers_on_tag` selects anything, so the rule does not depend on it.
+        raise ValueError(
+            f"{where}: declares a job '{ARTIFACTS_JOB}', the name of the derived job that runs the release's "
+            f"producers on the tag (si#789) - rename yours; it can still `needs: {ARTIFACTS_JOB}`")
     env = entry.extras.get("env")
     if isinstance(env, Mapping) and workflowgen.RELEASE_ENV in env:
         raise ValueError(
