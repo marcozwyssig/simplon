@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from simplon.manifest import catalogue, context
+from simplon.manifest.context import TaskRefused
 from simplon.manifest import load as manifest
 from simplon.tasks import homebrewclosure, homebrewformula
 from simplon.tasks.homebrewclosure import Dist
@@ -180,7 +181,7 @@ def test_a_formula_path_not_named_for_the_wheel_is_refused_before_the_closure(pr
     measured: list = []
     monkeypatch.setattr(homebrewclosure, "measure", lambda *a: measured.append(a) or CLOSURE)
 
-    with pytest.raises(ValueError, match=r"named 'tool'.*simplon\.rb"):
+    with pytest.raises(TaskRefused, match=r"named 'tool'.*simplon\.rb"):
         _build(source="local")
     assert measured == []
 
@@ -197,16 +198,46 @@ def test_a_wheel_with_a_local_version_is_refused_before_the_closure(product, pyp
     measured: list = []
     monkeypatch.setattr(homebrewclosure, "measure", lambda *a: measured.append(a) or CLOSURE)
 
-    with pytest.raises(ValueError, match=r"0\.36\.1\.dev3\+g1234abc.*local.*tagged commit"):
+    with pytest.raises(TaskRefused, match=r"0\.36\.1\.dev3\+g1234abc.*local.*tagged commit"):
         _build(source=source)
     assert measured == []
     assert not (root / "build" / "homebrew" / "simplon.rb").exists()
 
 
+def test_a_local_version_reaches_the_terminal_as_its_message_alone(product, pypi, capsys, monkeypatch):
+    """si#891: measured on PR #890 (run 45623592376), the local-version refusal reached the log as a
+    multi-screen traceback with the diagnosis at its foot. Through `run_app`, the launcher's own top, it is
+    the message alone with rc 1."""
+    # arrange
+    import typer
+
+    from simplon import cli
+    root, _ = product
+    for old in (root / "dist").iterdir():
+        old.unlink()
+    make_wheel(root / "dist", version="0.36.1.dev3+g1234abc")
+    monkeypatch.setattr("sys.argv", ["demo"])
+    app = typer.Typer()
+
+    @app.command()
+    def body() -> None:
+        raise SystemExit(_build(source="local"))
+
+    # act
+    with pytest.raises(SystemExit) as exited:
+        cli.run_app(app, prog_name="demo")
+    said = capsys.readouterr()
+
+    # assert
+    assert exited.value.code == 1
+    assert said.err.startswith("simplon-0.36.1.dev3+g1234abc-py3-none-any.whl carries the local version")
+    assert "tagged commit" in said.err
+    assert "Traceback" not in said.err + said.out
+
+
 @pytest.mark.parametrize("source", ["", "pip", "PyPI"])
 def test_an_empty_source_is_refused(product, pypi, source):
     # a TaskRefused, so the launcher prints it as its message alone (si#544)
-    from simplon.manifest.context import TaskRefused
     with pytest.raises(TaskRefused, match="source"):
         _build(source=source)
 

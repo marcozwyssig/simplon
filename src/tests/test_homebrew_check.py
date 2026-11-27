@@ -15,6 +15,7 @@ import pytest
 
 from simplon.kernel.run import Result
 from simplon.manifest import context
+from simplon.manifest.context import TaskRefused
 from simplon.tasks import homebrewformula as hf
 from simplon.tasks import homebrewtap
 from test_homebrew_build import _release, pypi  # noqa: F401 - `pypi` is a fixture
@@ -91,7 +92,7 @@ def test_online_none_is_refused(product, pypi, online):  # noqa: F811
     # with exactly two values and no default
     root, _, calls = product
     _seed(root)
-    with pytest.raises(ValueError, match="online must be 'true'.*or 'false'"):
+    with pytest.raises(TaskRefused, match="online must be 'true'.*or 'false'"):
         _check(online=online)
     assert calls == []
     assert not (root / "build" / "results" / "homebrew.json").exists()
@@ -202,9 +203,9 @@ def test_an_audit_that_reached_no_verdict_writes_no_record_and_removes_the_old_o
     assert _record(root)["verdict"] == 0
 
     def broken(text, name, online):
-        raise ValueError("the audit run printed no result line")
+        raise TaskRefused("the audit run printed no result line")
     monkeypatch.setattr(homebrewtap, "audit", broken)
-    with pytest.raises(ValueError, match="no result line"):
+    with pytest.raises(TaskRefused, match="no result line"):
         _check()
     assert not (root / "build" / "results" / "homebrew.json").exists()
 
@@ -212,7 +213,7 @@ def test_an_audit_that_reached_no_verdict_writes_no_record_and_removes_the_old_o
 def test_the_audit_rc_lines_are_read_and_their_absence_is_no_verdict():
     out = "noise\n--- simplon audit rc=1 ---\nstyle says\n--- simplon style rc=0 ---\n"
     assert homebrewtap.parse(out, "") == (1, 0)
-    with pytest.raises(ValueError, match="style"):
+    with pytest.raises(TaskRefused, match="style"):
         homebrewtap.parse("--- simplon audit rc=0 ---\n", "boom")
 
 
@@ -243,7 +244,7 @@ def test_an_index_that_answers_500_is_no_verdict(product, failing_index, online)
     # a failed probe is not a result: PyPI not answering says nothing about the formula
     root, _, calls = product
     _seed(root)
-    with pytest.raises(ValueError, match="500"):
+    with pytest.raises(TaskRefused, match="500"):
         _check(online=online)
     assert calls == []
     assert not (root / "build" / "results" / "homebrew.json").exists()
@@ -253,7 +254,7 @@ def test_an_unreachable_index_is_no_verdict(product, monkeypatch):
     root, _, calls = product
     monkeypatch.setattr(hf, "PYPI_INDEX", "http://127.0.0.1:1")
     _seed(root)
-    with pytest.raises(ValueError, match="pyyaml-6.0.2.tar.gz"):
+    with pytest.raises(TaskRefused, match="pyyaml-6.0.2.tar.gz"):
         _check()
     assert calls == []
     assert not (root / "build" / "results" / "homebrew.json").exists()
@@ -267,7 +268,7 @@ def test_a_formula_file_not_named_for_the_wheel_is_refused(product, pypi):  # no
     (root / "sample.yaml").write_text(MANIFEST.replace("simplon.rb", "formula.rb"), encoding="utf-8")
     (root / "build" / "homebrew" / "simplon.rb").rename(root / "build" / "homebrew" / "formula.rb")
     _seed(root)
-    with pytest.raises(ValueError, match="'formula'.*'simplon'"):
+    with pytest.raises(TaskRefused, match="'formula'.*'simplon'"):
         _check()
     assert calls == []
     assert not (root / "build" / "results" / "homebrew.json").exists()
@@ -299,13 +300,13 @@ def test_a_red_audit_shows_the_containers_stderr(product, monkeypatch, capsys):
 def test_a_tapped_file_that_is_not_the_bytes_sent_is_no_verdict(product, monkeypatch):
     text = "class Simplon < Formula\nend\n"
     _container(monkeypatch, _tapped(text + "x") + "--- simplon audit rc=0 ---\n--- simplon style rc=0 ---\n")
-    with pytest.raises(ValueError, match="sha256"):
+    with pytest.raises(TaskRefused, match="sha256"):
         AUDIT(text, "simplon", False)
 
 
 def test_a_run_that_reports_no_tapped_digest_is_no_verdict(product, monkeypatch):
     _container(monkeypatch, "--- simplon audit rc=0 ---\n--- simplon style rc=0 ---\n")
-    with pytest.raises(ValueError, match="tapped"):
+    with pytest.raises(TaskRefused, match="tapped"):
         AUDIT("class Simplon < Formula\nend\n", "simplon", False)
 
 

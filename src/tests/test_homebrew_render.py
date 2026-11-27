@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from simplon.manifest.context import TaskRefused
 from simplon.tasks import homebrewformula as hf
 
 SHA = "a" * 64
@@ -39,12 +40,12 @@ def test_wheel_meta_reads_the_wheel(tmp_path):
     ("Name", "Name"), ("Version", "Version"), ("Summary", "Summary"), ("Project-URL", "Homepage"),
     ("License-Expression", "License-Expression"), ("entry_points", "console_scripts")])
 def test_a_missing_metadata_field_is_named(tmp_path, drop, field):
-    with pytest.raises(ValueError, match=field):
+    with pytest.raises(TaskRefused, match=field):
         hf.wheel_meta(make_wheel(tmp_path, drop=(drop,)))
 
 
 def test_the_legacy_license_field_is_not_a_license_expression(tmp_path):
-    with pytest.raises(ValueError, match="License-Expression"):
+    with pytest.raises(TaskRefused, match="License-Expression"):
         hf.wheel_meta(make_wheel(tmp_path, legacy_license=True))
 
 
@@ -54,11 +55,11 @@ def test_the_wheel_finds_the_one(tmp_path):
 
 
 def test_the_wheel_needs_exactly_one(tmp_path):
-    with pytest.raises(ValueError, match="no .whl"):
+    with pytest.raises(TaskRefused, match="no .whl"):
         hf.the_wheel(tmp_path)
     make_wheel(tmp_path)
     make_wheel(tmp_path, name="other")
-    with pytest.raises(ValueError, match="other-0.36.0.*simplon-0.36.0|simplon-0.36.0.*other-0.36.0"):
+    with pytest.raises(TaskRefused, match="other-0.36.0.*simplon-0.36.0|simplon-0.36.0.*other-0.36.0"):
         hf.the_wheel(tmp_path)
 
 
@@ -149,20 +150,20 @@ def test_shape_of_builds_the_shape():
 
 
 def test_shape_binary_is_refused_as_part_f():
-    with pytest.raises(ValueError, match=r"built with firn's part F \(si#449\)"):
+    with pytest.raises(TaskRefused, match=r"built with firn's part F \(si#449\)"):
         hf.shape_of(**shape_args(shape="binary"))
 
 
 @pytest.mark.parametrize("value", ["", "ruby", None])
 def test_an_unknown_shape_is_refused(value):
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(TaskRefused) as e:
         hf.shape_of(**shape_args(shape=value))
     assert "python" in str(e.value) and "binary" in str(e.value)
 
 
 @pytest.mark.parametrize("value", ["python", "python@3", "python@3.x", "node@20", "", "python@3.14.1"])
 def test_python_must_be_a_python_formula(value):
-    with pytest.raises(ValueError, match="python@3"):
+    with pytest.raises(TaskRefused, match="python@3"):
         hf.shape_of(**shape_args(python=value))
 
 
@@ -171,7 +172,7 @@ def test_python_must_be_a_python_formula(value):
     {"test": {"args": ["--help"]}}, {"test": {"args": "--help", "expect": "x"}},
     {"test": {"args": ["--help"], "expect": ""}}, {"test": {"args": [], "expect": "x", "extra": 1}}, {"test": None}])
 def test_malformed_with_values_are_refused(over):
-    with pytest.raises(ValueError):
+    with pytest.raises(TaskRefused):
         hf.shape_of(**shape_args(**over))
 
 
@@ -194,17 +195,17 @@ def test_the_command_is_escaped():
 
 
 def test_a_version_missing_from_the_filename_is_refused():
-    with pytest.raises(ValueError, match=r"simplon-0.36.0-py3-none-any.whl.*0.37.0"):
+    with pytest.raises(TaskRefused, match=r"simplon-0.36.0-py3-none-any.whl.*0.37.0"):
         hf.render(META._replace(version="0.37.0"), "u", "e" * 64, [], SHAPE)
 
 
 def test_a_missing_directory_is_not_an_empty_one(tmp_path):
-    with pytest.raises(ValueError, match="does not exist"):
+    with pytest.raises(TaskRefused, match="does not exist"):
         hf.the_wheel(tmp_path / "nope")
 
 
 def test_a_file_that_is_not_a_zip_is_named(tmp_path):
     bad = tmp_path / "x-1-py3-none-any.whl"
     bad.write_text("nope")
-    with pytest.raises(ValueError, match="x-1-py3-none-any.whl.*not a zip"):
+    with pytest.raises(TaskRefused, match="x-1-py3-none-any.whl.*not a zip"):
         hf.wheel_meta(bad)

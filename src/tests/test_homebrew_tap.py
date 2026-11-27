@@ -10,6 +10,7 @@ import pytest
 
 import githubstandin
 from simplon.manifest import context, results
+from simplon.manifest.context import TaskRefused
 from simplon.tasks import homebrewformula as hf
 from simplon.tasks import homebrewtap
 from test_homebrew_build import _release, pypi  # noqa: F401 - `pypi` is a fixture
@@ -170,7 +171,7 @@ def test_a_formula_with_no_evidence_bound_is_refused(product, capsys):
 
 
 def test_an_unbound_repository_is_refused_by_name(product):
-    with pytest.raises(ValueError, match="repository"):
+    with pytest.raises(TaskRefused, match="repository"):
         results.guarded(("checked",), lambda: homebrewtap.tap(formula="formula", repository="", branch="main"))
     assert product["requests"] == []
 
@@ -180,7 +181,7 @@ def test_a_formula_url_that_names_no_wheel_is_refused(product, tmp_path):
     _formula(tmp_path, TEXT.replace(WHEEL, "simplon.tar.gz"))
 
     # act / assert
-    with pytest.raises(ValueError, match="wheel"):
+    with pytest.raises(TaskRefused, match="wheel"):
         _tap()
     assert product["requests"] == []
 
@@ -278,6 +279,6 @@ def test_an_audit_past_its_limit_is_a_refusal_and_its_container_is_removed(monke
     monkeypatch.setattr(homebrewtap, "run", lambda argv, **kw: Result(-9, "", "", timed_out=True))
 
     # act / assert
-    with pytest.raises(ValueError, match="AUDIT_TIMEOUT_S"):
+    with pytest.raises(TaskRefused, match="AUDIT_TIMEOUT_S"):
         homebrewtap.audit("class Simplon < Formula\nend\n", "simplon", False)
     assert len(removals) == 1

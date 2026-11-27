@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from simplon.manifest.context import TaskRefused
 from simplon.tasks import homebrewclosure as hc
 from simplon.tasks.homebrewclosure import Dist
 
@@ -26,7 +27,7 @@ def test_parse_of_an_empty_document_is_an_empty_closure_not_a_failure():
 
 def test_parse_without_marker_is_a_failure_with_the_tail():
     out = "\n".join(f"line {i}" for i in range(30)) + "\n"
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(TaskRefused) as e:
         hc.parse(out)
     assert hc.MARKER in str(e.value)
     assert "line 29" in str(e.value) and "line 10" in str(e.value)
@@ -34,9 +35,9 @@ def test_parse_without_marker_is_a_failure_with_the_tail():
 
 
 def test_parse_of_a_broken_document_is_a_failure_not_an_empty_closure():
-    with pytest.raises(ValueError, match="not the closure"):
+    with pytest.raises(TaskRefused, match="not the closure"):
         hc.parse(hc.MARKER + "\n[{\"name\": \"x\"}]\n")
-    with pytest.raises(ValueError, match="not the closure"):
+    with pytest.raises(TaskRefused, match="not the closure"):
         hc.parse(hc.MARKER + "\n")
 
 
@@ -77,7 +78,7 @@ def test_a_differing_marker_of_a_formula_dist_is_not_the_closures():
 
 
 def test_a_document_without_differs_is_not_the_closure():
-    with pytest.raises(ValueError, match="not the closure"):
+    with pytest.raises(TaskRefused, match="not the closure"):
         hc.parse(_doc_with_differs([{"name": "x", "version": "1", "requires": [], "in_venv": True}]))
 
 
@@ -134,11 +135,11 @@ def test_an_unreadable_wheel_directory_is_refused_before_docker(tmp_path, monkey
     wheel = tmp_path / "x-1.0-py3-none-any.whl"
     wheel.write_bytes(b"")
     tmp_path.chmod(0o700)
-    with pytest.raises(ValueError, match=r"has mode 700.*uid 1000"):
+    with pytest.raises(TaskRefused, match=r"has mode 700.*uid 1000"):
         hc.measure(wheel, ["cryptography"], "python@3.14")
     tmp_path.chmod(0o755)
     wheel.chmod(0o600)
-    with pytest.raises(ValueError, match=r"x-1.0-py3-none-any.whl has mode 600"):
+    with pytest.raises(TaskRefused, match=r"x-1.0-py3-none-any.whl has mode 600"):
         hc.measure(wheel, ["cryptography"], "python@3.14")
 
 
@@ -157,7 +158,7 @@ def _wheel(tmp_path, name="x-1.0-py3-none-any.whl"):
 @pytest.mark.parametrize("dists", [(), (Dist("x", "1.0", (), False), Dist("PyYAML", "6.0.3", (), True))])
 def test_a_successful_run_whose_venv_shows_no_product_is_refused(tmp_path, monkeypatch, dists):
     _answering(monkeypatch, hc.MARKER + "\n" + _doc(*dists) + "\n")
-    with pytest.raises(ValueError, match="the venv shows no x; the measurement did not see pip's install"):
+    with pytest.raises(TaskRefused, match="the venv shows no x; the measurement did not see pip's install"):
         hc.measure(_wheel(tmp_path), ["cryptography"], "python@3.14")
 
 
@@ -168,7 +169,7 @@ def test_the_product_is_found_by_its_normalised_name(tmp_path, monkeypatch):
 
 def test_a_python_without_a_version_is_refused_by_its_form(tmp_path, monkeypatch):
     monkeypatch.setattr(hc, "run", lambda argv, **kw: pytest.fail("docker ran"))
-    with pytest.raises(ValueError, match=r"python@3\.N.*'python'"):
+    with pytest.raises(TaskRefused, match=r"python@3\.N.*'python'"):
         hc.measure(_wheel(tmp_path), ["cryptography"], "python")
 
 
@@ -176,14 +177,14 @@ def test_a_missing_wheel_is_refused_by_its_path(tmp_path, monkeypatch):
     monkeypatch.setattr(hc, "run", lambda argv, **kw: pytest.fail("docker ran"))
     tmp_path.chmod(0o755)
     missing = tmp_path / "x-1.0-py3-none-any.whl"
-    with pytest.raises(ValueError, match=f"{missing} does not exist"):
+    with pytest.raises(TaskRefused, match=f"{missing} does not exist"):
         hc.measure(missing, ["cryptography"], "python@3.14")
 
 
 def test_a_failed_run_joins_stderr_and_stdout_on_a_line_boundary(tmp_path, monkeypatch):
     from simplon.kernel.run import Result
     monkeypatch.setattr(hc, "run", lambda argv, **kw: Result(1, "out line", "err line"))
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(TaskRefused) as e:
         hc.measure(_wheel(tmp_path), ["cryptography"], "python@3.14")
     assert "err line\nout line" in str(e.value)
 
@@ -200,7 +201,7 @@ def test_a_timeout_is_a_refusal_naming_the_limit(tmp_path, monkeypatch, removals
     wheel = tmp_path / "x-1.0-py3-none-any.whl"
     wheel.write_bytes(b"")
     tmp_path.chmod(0o755)
-    with pytest.raises(ValueError, match="CLOSURE_TIMEOUT_S"):
+    with pytest.raises(TaskRefused, match="CLOSURE_TIMEOUT_S"):
         hc.measure(wheel, ["cryptography"], "python@3.14")
     assert len(removals) == 1, "the container a timed-out client left running was not removed"
 
@@ -212,7 +213,7 @@ def test_a_failed_run_is_a_failure_with_the_tail(tmp_path, monkeypatch):
     wheel = tmp_path / "x-1.0-py3-none-any.whl"
     wheel.write_bytes(b"")
     tmp_path.chmod(0o755)
-    with pytest.raises(ValueError, match="Download failed: bottle 404"):
+    with pytest.raises(TaskRefused, match="Download failed: bottle 404"):
         hc.measure(wheel, ["cryptography"], "python@3.14")
 
 
