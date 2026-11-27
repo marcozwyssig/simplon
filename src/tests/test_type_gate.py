@@ -347,7 +347,10 @@ def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
 
     gated = {file for file, _, runs in _jobs() if gate in _reached(runs)}
 
-    assert {"ci.yml", "release.yml"} <= gated
+    # si#789: release.yml left the set. Its job runs no test leaf and takes its verdict from the green
+    # `ci.yml` run on `main` (`release check`), so the gate is reached by the file that runs it.
+    assert {"ci.yml"} <= gated
+    assert "release.yml" not in gated
 
 
 def test_theLocalGateAggregateReachesTheGate() -> None:
@@ -385,8 +388,8 @@ def test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn
     # question: each pipeline must still SAY it verified this tree, in a spelling VERIFIES knows.
     verifying = {file for file, _, runs in _jobs() if any(cmd in runs for cmd in VERIFIES)}
 
-    assert {"ci.yml", "release.yml"} <= verifying, (
-        f"these pipelines match no VERIFIES spelling: {{'ci.yml', 'release.yml'}} - {verifying}; the rule "
+    assert {"ci.yml"} <= verifying and "release.yml" not in verifying, (
+        f"these pipelines match no VERIFIES spelling: {{'ci.yml'}} - {verifying}; the rule "
         f"above is now vacuous for them, so add the new spelling to VERIFIES rather than leaving it")
 
 

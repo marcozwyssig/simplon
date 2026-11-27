@@ -446,14 +446,17 @@ ci:
       # `all` stopped at `notes` with "which release?".
       #
       # THE BUTTON RUNS THIS AGGREGATE (si#491): release.yml's derived `release` job is its plan as steps.
-      # The four test leaves come first, so a red test leaves no tag behind - and so `release all` typed in
-      # a checkout runs the whole suite too, which is the price of one order in both places. `push-image`
+      # It runs NO test leaf (si#789): the green `ci.yml` push run on `main` for this commit stands in for
+      # the tests, and `release check` refuses a commit without it. So a red test leaves no tag behind
+      # because the tag is only cut on a commit CI has already passed, and `release all` typed in a checkout
+      # no longer runs the suite. `push-image`
       # LEFT the aggregate (decision 1): its evidence comes from `build image` and `test image`, which share
       # the name `image` and so cannot be members, and PyPI publishes after the tag in any case. It runs in
       # release.yml's `image` job after `publish`; a failed push is finished by rerunning that job.
-      # FIRST, before the suite spends three minutes (si#487): the kernel's dispatch-release check - the
-      # vX.Y.Z spelling, started from main, origin fetched and carrying HEAD, no other version tag at HEAD,
-      # the tag free or at this commit on origin. The load holds it first, because `all` is the release aggregate.
+      # FIRST (si#487): the kernel's dispatch-release check - the vX.Y.Z spelling, started from main, origin
+      # fetched and carrying HEAD, no other version tag at HEAD, the tag free or at this commit on origin, and
+      # since si#789 a green `ci.yml` push run on main for this commit. The load holds it first, because `all`
+      # is the release aggregate.
       check: { task: "release:check" }
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
@@ -501,15 +504,15 @@ ci:
           evidence: [simplon-formula-checked]
         with: { repository: marcozwyssig/homebrew-tap }
       all:
-        depends_on: [check, suite, typecheck-python, generated, release-notes, notes, tag]
+        depends_on: [check, notes, tag]
         passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
         # si#862: the derived release job's machine and emulation. GitHub-hosted, because ghr-8 is an LXC runner
-        # that cannot register emulation (#722), and the suite's linux/arm64 e2e (si#552) runs a file under QEMU
-        # (si#570).
+        # that cannot register emulation (#722). The job no longer runs the suite (si#789); the line stays
+        # because the producers that follow the tag need the same machine.
         ci: { runner: github-ubuntu, emulates: [linux/arm64] }
-        help: "The release: the release check, the tests, the type gate, the staleness gate and the notes guard, then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders and audits the Homebrew formula and the homebrew-tap job commits it: the tap follows PyPI, so the formula never names a URL that is not live."
+        help: "The release: the release check (which refuses a commit without a green main CI run), then the notes, then the tag. Typed in a checkout it pushes the tag, and nothing publishes it - simplon releases from the button (release.yml). After PyPI, the publish job renders and audits the Homebrew formula and the homebrew-tap job commits it: the tap follows PyPI, so the formula never names a URL that is not live."
 
 support:
   commands:
@@ -897,16 +900,17 @@ workflows:
     name: release
     note: |
       The release, started from the button with the version and a rehearsal switch (si#491). The
-      derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
-      notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
-      publishes: the wheel to PyPI, then the site and the image, each of which describes the version
+      derived `release` job runs `release all`: the release check, which refuses a commit without a
+      green `ci.yml` run on `main`, then the notes, then the tag - so a red test leaves no tag behind.
+      What follows it publishes: the wheel to PyPI, then the site and the image, each of which describes the version
       PyPI now serves. The release job, `docs` and `pages` are derived; `publish`, `homebrew-tap` and
       `image` are added by this entry.
 
       A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
-      route - a hotfix merges first. The release job archives the test report of the run that gated it
-      (si#509), green or red.
+      route - a hotfix merges first. A red run on a tag is rerun, never retagged, and a real defect
+      gets the next patch version. The tests are not rerun here: the release job archives no report,
+      because the green `main` run it relies on holds it.
     # The `release` job is derived from `ci release all` (si#862), its machine and emulation under that
     # aggregate's `ci:`; `docs` and `pages` from `website:`; the jobs below land beside them in release.yml.
     jobs:

@@ -306,8 +306,9 @@ def derive(manifest: Manifest, data: Mapping[str, object],
         steps.insert(0, workflowschema.Step(kernel_step=PASS_SECRETS_CHECK))
     steps.append(workflowschema.Step(kernel_step=DRY_RUN_TAIL, condition=_DRY_RUN, params=(
         (workflowschema.StepParam(param_name=NOTES_PARAM, param_value=notes),) if notes else ())))
-    if any(isinstance(member, TaskCommand) and member.task == workflowgen.REPORT_TASK
-           for members in manifest.commands.values() for member in members.values()):
+    # si#789: the archive follows the tests the PLAN runs. A product that places `test:report` but whose
+    # aggregate runs no test has nothing in this job to report on, and the step would archive an empty report.
+    if any(leaf.task == workflowgen.REPORT_TASK for _, leaf in leaves):
         steps.append(workflowschema.Step(kernel_step=REPORT))
     # si#719: the workflow-level block is the default of every job without its own (`contents: read` when the
     # product declares none); the job's own block replaces it, so a scope the product declared there is carried
@@ -489,7 +490,7 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     `to_workflow` derived from, whose `ci: emulates:` the emulation step registers."""
     reporting = any(step.kernel_step == REPORT for step in job.step)
     # The test archive is the release job's alone (si#509); `docs` and `pages` ask nothing of it.
-    archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)
+    archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else "")
                            if job.key == workflowgen.RELEASE_JOB else ((), ""))
     needed: dict[str, list[str]] = {}
     for step in job.step:

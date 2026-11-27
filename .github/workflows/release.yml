@@ -5,16 +5,17 @@
 # something that is gone. `--check` reports drift and returns 1.
 
 # The release, started from the button with the version and a rehearsal switch (si#491). The
-# derived `release` job runs `release all`: the tests, the type gate, the staleness gate and the
-# notes guard, then the notes, then the tag - so a red test leaves no tag behind. What follows it
-# publishes: the wheel to PyPI, then the site and the image, each of which describes the version
+# derived `release` job runs `release all`: the release check, which refuses a commit without a
+# green `ci.yml` run on `main`, then the notes, then the tag - so a red test leaves no tag behind.
+# What follows it publishes: the wheel to PyPI, then the site and the image, each of which describes the version
 # PyPI now serves. The release job, `docs` and `pages` are derived; `publish`, `homebrew-tap` and
 # `image` are added by this entry.
 #
 # A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
 # second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
-# route - a hotfix merges first. The release job archives the test report of the run that gated it
-# (si#509), green or red.
+# route - a hotfix merges first. A red run on a tag is rerun, never retagged, and a real defect
+# gets the next patch version. The tests are not rerun here: the release job archives no report,
+# because the green `main` run it relies on holds it.
 name: release
 on:
   workflow_dispatch:
@@ -170,10 +171,6 @@ jobs:
             echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
             exit 1
           }
-      - run: exec ./simplon.sh test suite
-      - run: exec ./simplon.sh test typecheck-python
-      - run: exec ./simplon.sh test generated
-      - run: exec ./simplon.sh test release-notes
       - run: exec ./simplon.sh release notes --tag "$RELEASE_VERSION"
       - if: ${{ !inputs.dry_run }}
         env:
@@ -184,17 +181,6 @@ jobs:
         run: |
           echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"
           cat build/release/notes.md
-      # si#509 (si#248): the test results of THIS run, the one that gated the release, archived
-      # whether it went green or red. Kernel-owned: every derived release job ends with these two steps.
-      - if: always()
-        run: exec ./simplon.sh test report
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: allure-report
-          path: tests/reports/*.html
-          if-no-files-found: error
-          retention-days: 90
 
   # The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
   # token, no API token in the repository. PyPI's publisher is bound to this file's name and the

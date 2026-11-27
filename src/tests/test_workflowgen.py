@@ -2725,6 +2725,7 @@ _REPORTING_PRODUCT = (_RELEASE_PRODUCT
                       .replace("                    with: { tag: \"\" } }\n",
                                "                    with: { tag: \"\" } }\n"
                                "      report: { task: \"test:report\" }\n")
+                      .replace("publish, tag, gh-publish]", "publish, tag, gh-publish, report]")
                       + "suites:\n  reports: build/reports\n  gates:\n    - { name: unit, command: test test-image,"
                         " results: clear }\n")
 
@@ -2745,6 +2746,23 @@ def test_every_derived_release_job_ends_with_the_kernels_archive(tmp_path, monke
     assert upload == {"uses": workflowgen.UPLOAD_ACTION, "if": "always()",
                       "with": {"name": "allure-report", "path": "build/reports/*.html",
                                "if-no-files-found": "error", "retention-days": 90}}
+
+
+def test_a_report_leaf_the_aggregate_does_not_run_archives_nothing(tmp_path, monkeypatch):
+    """si#789: the archive follows the plan, not the manifest. `test:report` is placed, but `release all`
+    runs no member that produces a report, so the release job renders no report step and no upload."""
+    # arrange
+    from simplon.manifest import context
+    product = _REPORTING_PRODUCT.replace("publish, tag, gh-publish, report]", "publish, tag, gh-publish]")
+    (tmp_path / "app.yaml").write_text(product, encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext("app", tmp_path, tmp_path / "app.yaml"))
+
+    # act
+    steps = _release_steps(_release_text(product))
+
+    # assert
+    assert not any(step.get("run") == "exec ./app.sh test report" for step in steps)
+    assert not any(step.get("uses") == workflowgen.UPLOAD_ACTION for step in steps)
 
 
 def test_a_product_with_no_report_leaf_is_told_its_release_archives_nothing():

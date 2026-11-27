@@ -505,18 +505,23 @@ def _mints_a_token(step) -> bool:
     return str(step.get("uses", "")).startswith(workflowgen.APP_TOKEN_ACTION.split("@")[0])
 
 
-def test_the_release_job_runs_the_gate_before_the_tag(workflow):
-    """Decision 2: a red test no longer leaves a tag behind, because the tests run before it is cut."""
+def test_the_release_job_runs_no_test_leaf(workflow):
+    """si#789: the green `ci.yml` run on `main` (`release check` looks it up) stands in for the tests, so the
+    release aggregate runs none of them and nothing archives a report: no test step, no report upload, and
+    the order is check, notes, tag."""
     # Arrange
-    runs = [str(step.get("run", "")) for step in workflow["jobs"]["release"]["steps"]]
+    steps = workflow["jobs"]["release"]["steps"]
+    runs = [str(step.get("run", "")) for step in steps]
 
     # Act
-    tag = next(i for i, run in enumerate(runs) if run.startswith("exec ./simplon.sh release tag"))
-    gate = [next(i for i, run in enumerate(runs) if run == f"exec ./simplon.sh test {leaf}")
-            for leaf in ("suite", "typecheck-python", "generated", "release-notes")]
+    tests = [run for run in runs if run.startswith("exec ./simplon.sh test ")]
+    order = [next(i for i, run in enumerate(runs) if run.startswith(f"exec ./simplon.sh release {leaf}"))
+             for leaf in ("check", "notes", "tag")]
 
     # Assert
-    assert gate == sorted(gate) and max(gate) < tag
+    assert tests == []
+    assert order == sorted(order)
+    assert not any(str(step.get("uses", "")).startswith("actions/upload-artifact@") for step in steps)
 
 
 def test_the_release_check_runs_before_anything_is_cut(workflow):
@@ -753,24 +758,6 @@ def test_no_script_reads_an_input_or_the_ref_name(workflow):
     for run in _runs(workflow):
         assert "${{ inputs." not in run
         assert "GITHUB_REF_NAME" not in run
-
-
-def test_the_release_job_archives_the_tests_that_gated_it(workflow):
-    """si#509 turned this around (si#491 decision 6 had stated the loss). The suite runs inside the derived
-    `release` job, and the job now ends with the kernel's archive: `test report` and the upload, both under
-    `if: always()`, so a red release run carries its report too - the archive si#248 asked for, from the
-    run that gated the release rather than from ci.yml's run of the same commit."""
-    # arrange
-    steps = workflow["jobs"]["release"]["steps"]
-
-    # act
-    report, upload = steps[-2:]
-
-    # assert
-    assert report == {"if": "always()", "run": "exec ./simplon.sh test report"}
-    assert upload["uses"].startswith("actions/upload-artifact@") and upload["if"] == "always()"
-    assert upload["with"]["path"] == "tests/reports/*.html"
-    assert upload["with"]["if-no-files-found"] == "error"
 
 
 def test_the_release_tests_the_image_between_building_and_publishing_it():
