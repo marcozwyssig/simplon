@@ -20,12 +20,12 @@ from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
-from simplon.manifest import artifactsection, merge, runners, sources
+from simplon.manifest import artifactsection, merge, runners, signatures, sources
 from simplon.manifest.load import Manifest
 from simplon.model import automerge as merge_policy
 from simplon.model import workflowschema
 from simplon.model.command import AggregateCommand, CiGate, Deploy, EnvValue, TaskCommand
-from simplon.model.task import class_ref, task_class
+from simplon.model.task import body_of, class_ref, task_class
 from simplon.tasks import generated as generated_section
 from simplon.tasks import handoff, workflowgen
 
@@ -1137,17 +1137,22 @@ def _refuse_unbound_required(leaf: Leaf, *, gate: str = "") -> None:
     port's binding (`produces:`/`consumes:`) is in `with:` by now, so it counts. Only a leaf that becomes a step
     reaches this, so one skipped or left out is not asked.
 
-    Only a catalogue coordinate is resolved, to its generated class in the kernel: the model is where `required`
-    is said, and a product task has none, so it is not checked (its body may still need a parameter nothing
-    binds). Resolving a product task would import the product's own body module to learn nothing, and a
-    derivation that imported it would need the product's package on the path (measured: simplon's own
-    `orchestrator.cli:build_wheel` is not importable from the kernel's `src/`).
+    A catalogue coordinate is resolved to its generated class in the kernel: the model is where `required` is
+    said, because a body's signature cannot say it (`test:unit`'s `paths` has an empty default the body
+    refuses). A product task has no model, so its body's signature says it (si#903): a bindable parameter
+    without a default is one the CLI reads as a positional, and the derived step passes none. That imports the
+    product's body at generation, the import `workflowgen._parameters` and `releasepipeline` already make: a
+    body the generator cannot import is one the step could not run either.
 
     `gate` is the words of the gate aggregate `leaf` is a member of, "" for a main or cadence leaf: a member's
     `ci: { skip: }` is refused (`_refuse_member`), so the way out offered there is leaving the gate."""
     task = leaf.spec.task
     # `class_ref(task)`, not `leaf.spec.impl`: a catalogue coordinate always maps to its generated class.
-    required = task_class(class_ref(task), task, where=leaf.words).REQUIRED if ":" in task else ()
+    if ":" in task:
+        required = task_class(class_ref(task), task, where=leaf.words).REQUIRED
+    else:
+        required = tuple(param.name for param in signatures.bindable(body_of(leaf.spec, where=leaf.words))
+                         if param.required)
     bound = {*leaf.spec.with_, *leaf.spec.ci.params}
     missing = [param for param in required if param not in bound]
     if missing:

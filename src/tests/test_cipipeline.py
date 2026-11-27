@@ -675,6 +675,83 @@ def test_a_gate_member_whose_required_parameter_nothing_binds_is_refused():
     assert "take it out of `test all`" in message and "`ci: { params: { paths: ... } }`" in message
 
 
+# --- a product task's parameter without a default (si#903) ---------------------------------------------------
+
+#: `pick` runs `target_and_mode(target, mode="fast")`: the body cannot run without `target`, and `mode` has a
+#: default. A product task has no model to say `required`, so its body's signature says it.
+_PRODUCT_PICK = """
+        ci:
+          test:
+            commands:
+              one: { task: ship, unattended: true }
+              pick: { task: pick, unattended: true%s }
+        """
+
+
+def _rendered_pick(body: str, *extra: str) -> tuple[dict, str]:
+    """`_rendered` over `_PICK`'s head, which declares the product task `pick`."""
+    text = _PICK + textwrap.dedent(body) + "".join(textwrap.dedent(part) for part in extra)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    data = yaml.safe_load(text)
+    workflow = cipipeline.to_workflow(cipipeline.derive(loaded, data), loaded, data, product="demo")
+    out = workflowgen.render(workflow, manifest=loaded, product="demo", source="demo.yaml",
+                             artifacts={}, reports="tests/reports")
+    return yaml.safe_load(out), out
+
+
+def test_a_product_task_whose_parameter_without_a_default_nothing_binds_is_refused():
+    """si#903: the CLI reads `target` as a positional the derived step never passes, so the step is red on every
+    run. The refusal is #887's: the command, the parameter, both ways out; `mode` has a default and is not named."""
+    with pytest.raises(ValueError) as refused:
+        _rendered_pick(_PRODUCT_PICK % "")
+    message = str(refused.value)
+    assert "'test pick'" in message and "`pick`" in message
+    assert "`target`" in message and "`mode`" not in message
+    assert "`ci: { params: { target: ... } }`" in message and "`ci: { skip: <why> }`" in message
+
+
+def test_a_product_task_parameter_bound_by_ci_params_renders():
+    doc, _ = _rendered_pick(_PRODUCT_PICK % ', ci: { params: { target: "a" } }')
+    assert _runs(doc) == ["test one", "test pick -- a"]
+
+
+def test_a_skipped_product_task_is_not_asked_for_its_parameters():
+    doc, _ = _rendered_pick(_PRODUCT_PICK % ', ci: { skip: "picked by hand" }')
+    assert _runs(doc) == ["test one"]
+
+
+def test_a_product_task_whose_parameters_all_have_defaults_renders():
+    """si#903: only a parameter without a default is asked for; `pruner(dry_run=False, remote=False)` runs bare."""
+    text = _HEAD.replace("tasks:\n", 'tasks:\n  prune: { impl: "simplon.test_impls:pruner", help: "Prune." }\n')
+    loaded = manifest_mod.load(text + textwrap.dedent("""
+        ci:
+          test:
+            commands:
+              prune: { task: prune, unattended: true }
+        """), catalogue=catalogue.load(), manifest_path="demo.yaml")
+    selection = cipipeline.derive(loaded, {}).selection
+    assert _words(selection) == ["test prune"]
+
+
+def test_a_gate_member_running_a_product_task_whose_parameter_nothing_binds_is_refused():
+    """si#903: a gate's members run in its own file, and the same step would refuse there."""
+    text = _PICK + textwrap.dedent("""
+        ci:
+          build:
+            commands:
+              one: { task: ship, unattended: true }
+          test:
+            commands:
+              pick: { task: pick, unattended: true }
+              all: { depends_on: [pick], help: "All.", ci: { gate: { label: lab } } }
+        """)
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    (run,) = cipipeline.gates(loaded)
+    with pytest.raises(ValueError, match=r"'test pick'.*`target`") as refused:
+        cipipeline.derive_gate(loaded, {}, run)
+    assert "take it out of `test all`" in str(refused.value)
+
+
 def test_the_job_is_keyed_ci_and_runs_on_the_product_runner():
     doc, _ = _rendered(_THREE, _SELF_HOSTED)
     assert list(doc["jobs"]) == ["ci"]
@@ -1780,11 +1857,12 @@ def test_ci_params_render_as_a_declared_step_s_params_in_every_job_the_leaf_runs
 
 
 def test_a_leaf_without_ci_params_renders_bare():
+    """`target` has no default, so since si#903 something must bind it; `with:` does, and adds nothing to the line."""
     doc, _ = _rendered_with_pick("""
         ci:
           test:
             commands:
-              pick: { task: pick, unattended: true }
+              pick: { task: pick, unattended: true, with: { target: "a" } }
         """)
     assert _runs(doc) == ["test pick"]
 
