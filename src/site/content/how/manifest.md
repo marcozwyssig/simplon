@@ -1361,7 +1361,7 @@ involved, and the artifact where one is the cause:
 | consume an artifact that no job in it produces, and that has no `registry:` | nothing puts it there. A release whose evidence no job writes would be green with no test run |
 | consume, in one job, before the step of that job that produces it | the order is yours; the data only checks it |
 | consume an artifact that is produced in more than one job, or in a matrix job | one run uploads one artifact once |
-| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job - or, as `release:image` does since si#789, consume beside it an artifact with a `path:` that the same step produced (`build:image`'s `archive`): that one crosses and carries it |
+| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job - or, as `release:image` does since si#789, consume beside it an artifact with a `path:` that the same step produced (`build:image`'s `archive`), on a port that verifies it against the evidence ([the kinds page lists them](../../with-what/kinds/#ports)): that one crosses and carries it. On any other port the image is refused |
 | hand over an artifact whose name has anything but letters, digits, `.`, `_` and `-` | the name goes into a shell line and into `upload-artifact`, which rejects `" : < > | * ? \ /` |
 | hand over an artifact whose `path:` is absolute or has a `..` segment | `tar` stores it somewhere else, so the consumer finds nothing where it looks |
 | hand over from a job with an `if:` that the consuming job does not share | a skipped producer skips its consumer, and a skipped job is not red: the run would be green with nothing done |

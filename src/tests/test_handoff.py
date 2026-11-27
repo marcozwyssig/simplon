@@ -198,6 +198,29 @@ def test_an_image_whose_consumer_does_not_take_its_archive_is_still_refused():
         handoff.plan("ci", runs, artifactsection.declared(yaml.safe_load(ARCHIVED)))
 
 
+#: A product task that takes the image and its archive on ports the catalogue does not declare
+#: `verifies_against_evidence`: nothing says its body holds the archive against anything.
+UNVERIFIED = ARCHIVED.replace("tasks:\n", """tasks:
+  inspect:
+    impl: "simplon.test_impls:nullary"
+    help: "Read an image and a directory."
+    input: { image: { accepts: image }, bundle: { accepts: directory } }
+""", 1).replace("  release:\n", "      inspect: { task: \"inspect\", consumes: { image: app, bundle: app-oci } }\n  release:\n", 1)
+
+
+def test_an_image_crosses_with_its_archive_only_into_a_port_that_verifies_against_the_evidence():
+    # arrange: `inspect` binds the image and the archive `build image` wrote beside it, as the push does,
+    # but on ports outside artifactschema.VERIFIED_AGAINST_EVIDENCE - so the image is refused as on main
+    loaded = manifest.load(UNVERIFIED, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    leaf = lambda path: (path, loaded.spec_for(*path.rsplit(" ", 1)))
+    runs = [handoff.Run("build", ((leaf("build image"),),)), handoff.Run("test", ((leaf("test inspect"),),))]
+
+    # act / assert
+    with pytest.raises(ValueError, match="'test inspect' consumes 'app' from job 'build', and 'app' declares "
+                                         "no `path:`, so there is no file to hand over"):
+        handoff.plan("ci", runs, artifactsection.declared(yaml.safe_load(UNVERIFIED)))
+
+
 def test_jobs_that_need_each_other_through_their_artifacts_are_refused():
     # arrange: a seeds `left` and copies `right` back into it; b copies `left` into `right`
     runs = [_run("a", "build left", "build back"), _run("b", "build right")]
