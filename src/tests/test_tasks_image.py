@@ -3308,6 +3308,29 @@ def test_a_dry_run_from_the_archive_checks_it_and_pushes_nothing(cli, oras_login
     assert "nothing was pushed" in capsys.readouterr().out
 
 
+def test_a_dry_run_from_the_archive_provisions_oras_so_the_rehearsal_proves_it(cli, oras_logins, _no_provenance,
+                                                                               _multi, monkeypatch, capsys):
+    """The real run pushes with oras; a rehearsal that never asked for it would pass on a runner where the
+    real run then cannot push. So the dry run provisions it too (no login, no push) and is red without it."""
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    asked: list = []
+
+    def no_oras():
+        asked.append(True)
+        raise githubpackages.PackageError("no oras")
+
+    monkeypatch.setattr(githubpackages, "require_oras", no_oras)
+
+    # act
+    rc = _from_archive(written, dry_run=True)
+
+    # assert
+    assert rc == 1 and asked == [True]
+    assert cli.calls == [] and oras_logins == []
+    assert "no oras" in capsys.readouterr().err
+
+
 def test_a_dry_run_from_the_archive_still_refuses_a_broken_one(cli, oras_logins, _no_provenance, _multi):
     # arrange
     written = _oci_archive(_multi / "build" / "image", tamper=True)

@@ -1906,16 +1906,17 @@ def _release_archive(cfg: Image, name: str, root: Path, tag: str, directory: Pat
     if _untested_in_archive(name, ref, cfg.platforms, children):
         return 1
     index = str(held["index"])
-    if dry_run:
-        log.ok(f"dry run: {tar} holds the index {index} for {', '.join(cfg.platforms)}, as recorded and as "
-               f"tested; nothing was pushed to {ref}")
-        return 0
+    # Before the dry-run return, so a rehearsal proves oras reaches this runner: provisioning only, no login.
     try:
         githubpackages.require_oras()
     except githubpackages.PackageError as failure:
         log.error(f"oras pushes the archive and reads it back, and it could not be provided, so nothing was "
                   f"pushed: {failure}")
         return 1
+    if dry_run:
+        log.ok(f"dry run: {tar} holds the index {index} for {', '.join(cfg.platforms)}, as recorded and as "
+               f"tested, and oras is here to push it; nothing was pushed to {ref}")
+        return 0
     return _credentialed(cfg, ref, githubpackages.login, lambda: _push_archive(cfg, root, ref, tar, index))
 
 
