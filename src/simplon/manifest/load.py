@@ -36,11 +36,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from simplon.manifest import artifactsection, launcherenv, merge, ports, runners, sources, yamlkeys
-# `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
-from simplon.model import command as command_model
 from simplon.model import task, workflowschema
 from simplon.model.command import (AggregateCommand, CiGate, CiRelease, CiVariant, Command, Deploy, EnvValue, ParamPresentation,
-                                    ReleaseCommand, TaskCommand)
+                                    ReleaseCommand, TaskCommand, param_value)
 from simplon.model.artifactschema import Port
 from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.manifest import treeform
@@ -1387,7 +1385,7 @@ def _ci_params(value: object, where: str) -> dict[str, str | EnvValue]:
         raise ValueError(
             f"'{where}' declares `ci: params: {json.dumps(value, default=str)}`. `ci: params:` is a non-empty "
             f"mapping of parameter names to values, e.g. `{{ platform: linux/amd64 }}`")
-    return {str(key): command_model.param_value(item, where=f"'{where}', `ci: params: {key}`")
+    return {str(key): param_value(item, where=f"'{where}', `ci: params: {key}`")
             for key, item in value.items()}
 
 
