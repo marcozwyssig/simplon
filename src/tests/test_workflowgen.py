@@ -2255,6 +2255,55 @@ _RELEASE_TAG = """
 """
 
 
+_FLAG = """
+tasks:
+  aim:
+    impl: "simplon.test_impls:aim_with_a_flag"
+    help: "Aim."
+ci:
+  test:
+    commands:
+      aim: { task: aim }
+"""
+
+
+@pytest.mark.parametrize("value, rendered", [("true", "test aim --dry-run"), ("false", "test aim"),
+                                             ("True", "test aim --dry-run")])
+def test_a_bool_parameter_renders_as_the_flag_the_cli_reads(value, rendered):
+    """si#789: a body's `dry_run: bool` is a FLAG on the command line, so `--dry-run true` would be a usage error
+    on the runner. `true` writes the flag, `false` leaves it out. Checked by feeding the line to the command the
+    CLI itself binds."""
+    import shlex
+
+    import typer
+    from typer.main import get_command
+
+    from simplon import cli
+
+    # arrange
+    loaded = manifest_mod.load(_FLAG, catalogue=catalogue_mod.load())
+    spec = loaded.commands["test"]["aim"]
+    app = typer.Typer(add_completion=False)
+    app.command("leaf")(cli._bound(manifest_mod.resolve_impl(spec), spec, where="argv"))
+
+    # act
+    line = workflowgen._parameters(loaded, "test", "aim", {"dry_run": value}, where="argv")
+    ctx = get_command(app).make_context("leaf", shlex.split(line))
+
+    # assert
+    assert f"test aim{line}" == rendered
+    assert ctx.params["dry_run"] is (value.lower() == "true")
+
+
+def test_a_bool_parameter_given_anything_but_true_or_false_is_refused():
+    # arrange
+    loaded = manifest_mod.load(_FLAG, catalogue=catalogue_mod.load())
+
+    # act / assert
+    with pytest.raises(ValueError, match="reads `dry_run` as a flag: give it true or false, not 'yes'"):
+        workflowgen._parameters(loaded, "test", "aim", {"dry_run": "yes"}, where="argv")
+
+
 def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli_reads(kernel_manifest):
     # act
     text = _render(kernel_manifest, _RELEASE_TAG)
@@ -2336,11 +2385,18 @@ def test_every_catalogue_parameter_renders_the_way_the_cli_reads_it(coordinate, 
     to renders, through the generator, as the form the bound CLI command reads it in."""
     import types
 
+    from simplon.manifest import signatures
+    from simplon.model import task
+
     placed = types.SimpleNamespace(commands={"g": {"leaf": spec}})
     reads = _cli_reads_positionally(spec)
+    # si#789: a bool is a flag, handed `true` rather than a value
+    flags = {p.name for p in signatures.bindable(task.body_of(spec, where="sweep"))
+             if signatures.annotation(p) == "bool"}
     for key in spec.params:
-        rendered = workflowgen._parameters(placed, "g", "leaf", {key: "x"}, where="sweep")
-        assert (rendered == " -- x") is reads[key], \
+        value = "true" if key in flags else "x"
+        rendered = workflowgen._parameters(placed, "g", "leaf", {key: value}, where="sweep")
+        assert (rendered == f" -- {value}") is reads[key], \
             f"{coordinate} `{key}`: the generator wrote {rendered!r}, the CLI reads " \
             f"{'a positional' if reads[key] else 'an option'}"
 

@@ -1023,12 +1023,22 @@ def _parameters(manifest: Manifest, group: str, name: str,
                 f"{where}: `params: {key}` reads ${value.name}, and {value.name} is set by no `env:` of this "
                 f"step, its job or the workflow, nor by GitHub - it would expand to nothing and the command "
                 f"would run as if no value were given. Set it in an `env:`")
-    options = [f"--{key.replace('_', '-')} {_rendered(value)}"
-               for key, value in params.items() if key not in reads_positionally]
+    # si#789: a `bool` the body takes is a FLAG on the command line (Typer reads it so), so `true` writes the flag
+    # and `false` leaves it out; `--dry-run true` would be a usage error on the runner.
+    flags = {key for key in params if key in signature and signatures.annotation(signature[key]) == "bool"}
+    for key in flags:
+        if isinstance(params[key], EnvValue) or str(params[key]).lower() not in ("true", "false"):
+            raise ValueError(
+                f"{where}: `{group.replace('.', ' ')} {name}` reads `{key}` as a flag: give it true or false, not "
+                f"{params[key]!r}")
+    options = [f"--{key.replace('_', '-')}" if key in flags else f"--{key.replace('_', '-')} {_rendered(value)}"
+               for key, value in params.items()
+               if key not in reads_positionally and not (key in flags and str(value).lower() == "false")]
     positionals = [_rendered(params[key]) for key in signature if key in reads_positionally]
     # `--` before the positionals, so a value starting with `-` cannot be read as an option - the
     # convention an aggregate's `passes:` already follows, built by the same function.
-    return " " + " ".join(signatures.command_line(options, positionals))
+    line = " ".join(signatures.command_line(options, positionals))
+    return f" {line}" if line else ""
 
 
 # --- a rollout, written from the environment matrix -----------------------------------------------------
