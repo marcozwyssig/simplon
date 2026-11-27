@@ -1453,6 +1453,15 @@ release_image typeOf simplon.pipeline.CatalogueTask {
     key = "tag"
     help = "the tag to publish under, for a version only known after a build"
   }
+  params p_archive typeOf simplon.pipeline.TaskParam {
+    key = "archive"
+    help = "the directory artifact holding the OCI archive and digests `build:image` wrote; publish it as built instead of from the daemon (normally bound with `consumes:`)"
+  }
+  params p_dry_run typeOf simplon.pipeline.TaskParam {
+    key = "dry_run"
+    help = "Check everything a push needs and push nothing."
+    short = "-n"
+  }
   input image typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.image
     param = "name"
@@ -1460,6 +1469,13 @@ release_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_repository
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
+  }
+  // si#789: the archive `build:image` wrote beside the image, pushed as it is with oras, so the published index
+  // is the one the build recorded and `test:image` ran the children of - no daemon, no second bake.
+  input archive typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.directory
+    param = "archive"
+    needs = simplon.vocabulary.artifact.f_path
   }
   input evidence typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.test_result

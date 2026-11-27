@@ -3086,6 +3086,285 @@ def test_an_archive_naming_no_declared_artifact_is_refused_naming_the_declared_o
         image.build(name="multi", tag="1.0", archive="nope")
 
 
+# --- a release publishes the archive as built (si#789 task 5) ----------------------------------------------
+#
+# The archive is laid out the way buildx writes `type=oci` (measured 2026-11-27 on buildx v0.33.1 here and in the
+# spike's runs): index.json names ONE descriptor, the image index, whose children are the platform manifests and
+# buildx's `unknown/unknown` attestations. The digests below are real sha256s of the blobs, so the offline check
+# hashes what it reads.
+
+def _blob(layout: dict, document: dict) -> str:
+    raw = json.dumps(document, sort_keys=True).encode()
+    digest = "sha256:" + __import__("hashlib").sha256(raw).hexdigest()
+    layout[f"blobs/sha256/{digest.split(':')[1]}"] = raw
+    return digest
+
+
+def _oci_archive(directory: Path, name: str = "multi", platforms=("linux/amd64", "linux/arm64"), *,
+                 roots: int = 1, record: dict | None = None, tamper: bool = False) -> dict:
+    """Write `<directory>/<name>.oci.tar` and, unless `record` is {}, its digests record. Returns what was
+    written: the index digest and each platform's (manifest, config) digests."""
+    import io
+    import tarfile
+    layout: dict[str, bytes] = {"oci-layout": b'{"imageLayoutVersion": "1.0.0"}'}
+    children = {}
+    entries = []
+    for platform in platforms:
+        os_, arch = platform.split("/")[:2]
+        config = _blob(layout, {"architecture": arch, "os": os_, "config": {}})
+        manifest = _blob(layout, {"schemaVersion": 2, "config": {"digest": config}, "layers": []})
+        children[platform] = (manifest, config)
+        entries.append({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": manifest,
+                        "platform": {"architecture": arch, "os": os_}})
+    entries.append({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:7d37",
+                    "platform": {"architecture": "unknown", "os": "unknown"}})
+    index = _blob(layout, {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+                           "manifests": entries})
+    if tamper:
+        layout[f"blobs/sha256/{index.split(':')[1]}"] += b" "
+    layout["index.json"] = json.dumps({"schemaVersion": 2, "manifests": [
+        {"mediaType": "application/vnd.oci.image.index.v1+json", "digest": index}] * roots}).encode()
+    directory.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(directory / f"{name}.oci.tar", "w") as tar:
+        for member, raw in layout.items():
+            info = tarfile.TarInfo(member)
+            info.size = len(raw)
+            tar.addfile(info, io.BytesIO(raw))
+    held = {"index": index, "platforms": {p: m for p, (m, _) in children.items()}} if record is None else record
+    if held:
+        (directory / f"{name}.digests.json").write_text(json.dumps(held), encoding="utf-8")
+    return {"index": index, "children": children}
+
+
+@pytest.fixture
+def oras_logins(monkeypatch):
+    """An oras login that succeeds, recorded."""
+    seen: list = []
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: seen.append(registry))
+    return seen
+
+
+def _descriptor(digest: str) -> str:
+    return json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "digest": digest, "size": 1})
+
+
+def _from_archive(written, *, tested=None, dry_run=False):
+    """`release` bound to the archive, run the way the guard runs it: `tested` defaults to evidence that ran
+    exactly the archive's platform images under the release's tag."""
+    if tested is None:
+        tested = [(f"ghcr.io/owner/demo-multi:1.0-{p.replace('/', '-')}", m)
+                  for p, (m, _) in written["children"].items()]
+    token = results_mod._tested.set(tuple(results_mod.Subject("multi-checked", ref, id_) for ref, id_ in tested))
+    try:
+        return image.release(name="multi", tag="1.0", archive="multi-oci", dry_run=dry_run)
+    finally:
+        results_mod._tested.reset(token)
+
+
+def test_an_archive_release_pushes_the_recorded_index_with_oras_and_reads_it_back(cli, oras_logins, logins,
+                                                                                _no_provenance, _multi):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    cli.outputs[("oras", "manifest", "fetch")] = _descriptor(written["index"])
+
+    # act
+    rc = _from_archive(written)
+
+    # assert: the archive as it is, by its index digest; no daemon, no bake, no docker login
+    assert rc == 0
+    assert cli.argv_starting("oras", "cp") == [[
+        "oras", "cp", "--to-distribution-spec", "v1.1-referrers-api", "--from-oci-layout",
+        f"{_multi / 'build' / 'image' / 'multi.oci.tar'}@{written['index']}", "ghcr.io/owner/demo-multi:1.0"]]
+    assert cli.argv_starting("oras", "manifest", "fetch") == [
+        ["oras", "manifest", "fetch", "--descriptor", "ghcr.io/owner/demo-multi:1.0"]]
+    assert cli.argv_starting("docker") == []
+    assert oras_logins == ["ghcr.io/owner"] and logins == []
+
+
+def test_an_archive_without_its_record_is_refused_by_name(cli, oras_logins, _no_provenance, _multi, capsys):
+    # arrange: a build that failed after the bake leaves the tar and no record
+    written = _oci_archive(_multi / "build" / "image", record={})
+
+    # act
+    rc = _from_archive(written)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("oras") == [] and oras_logins == []
+    err = capsys.readouterr().err
+    assert "multi.digests.json" in err and "never pushed unrecorded" in err
+
+
+def test_a_record_without_its_archive_is_refused_by_name(cli, oras_logins, _no_provenance, _multi, capsys):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    (_multi / "build" / "image" / "multi.oci.tar").unlink()
+
+    # act
+    rc = _from_archive(written)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("oras") == []
+    assert "multi.oci.tar" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("change, said", [
+    ("index", "the archive's index.json names {got}, the record {want}"),
+    ("platforms", "linux/arm64: the archive holds"),
+    ("roots", "names 2 manifests"),
+    ("tamper", "does not hash to it"),
+    ("shape", "is not a record of an index and its platforms"),
+], ids=["index", "platforms", "roots", "tamper", "shape"])
+def test_an_archive_that_is_not_what_its_record_says_pushes_nothing(cli, oras_logins, _no_provenance, _multi,
+                                                                   capsys, change, said):
+    # arrange
+    where = _multi / "build" / "image"
+    written = _oci_archive(where, roots=2 if change == "roots" else 1, tamper=change == "tamper")
+    record = json.loads((where / "multi.digests.json").read_text(encoding="utf-8"))
+    if change == "index":
+        record["index"] = "sha256:other"
+    if change == "platforms":
+        record["platforms"]["linux/arm64"] = "sha256:other"
+    if change == "shape":
+        record = {"index": written["index"]}
+    (where / "multi.digests.json").write_text(json.dumps(record), encoding="utf-8")
+
+    # act
+    rc = _from_archive(written)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("oras") == [] and oras_logins == []
+    assert said.format(got=written["index"], want="sha256:other") in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("store", ["containerd", "classic"])
+def test_evidence_about_the_archives_images_publishes_under_either_daemon_store(cli, oras_logins, _no_provenance,
+                                                                               _multi, store):
+    """The daemon id a run records is the manifest digest on the containerd image store (measured 2026-11-27 on
+    this host) and the config digest on the classic store (docker's documented `Id`; not measured here)."""
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    cli.outputs[("oras", "manifest", "fetch")] = _descriptor(written["index"])
+    at = 0 if store == "containerd" else 1
+    tested = [(f"ghcr.io/owner/demo-multi:1.0-{p.replace('/', '-')}", digests[at])
+              for p, digests in written["children"].items()]
+
+    # act
+    rc = _from_archive(written, tested=tested)
+
+    # assert
+    assert rc == 0
+
+
+@pytest.mark.parametrize("tested, said", [
+    ([("ghcr.io/owner/demo-multi:1.0-linux-amd64", "sha256:aa")], "demo-multi:1.0-linux-arm64 was never tested"),
+    ([("ghcr.io/owner/demo-multi:0.9-linux-amd64", "x"), ("ghcr.io/owner/demo-multi:0.9-linux-arm64", "y")],
+     "demo-multi:1.0-linux-amd64 was never tested"),
+], ids=["a-platform-untested", "another-tag"])
+def test_evidence_that_did_not_run_the_archives_images_publishes_nothing(cli, oras_logins, _no_provenance, _multi,
+                                                                        capsys, tested, said):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+
+    # act
+    rc = _from_archive(written, tested=tested)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("oras") == []
+    assert said in capsys.readouterr().err
+
+
+def test_evidence_about_other_bytes_under_the_same_tag_publishes_nothing(cli, oras_logins, _no_provenance, _multi,
+                                                                         capsys):
+    # arrange: a narrowed rebuild after the full one - the test ran new amd64 bytes the archive does not hold
+    written = _oci_archive(_multi / "build" / "image")
+    tested = [("ghcr.io/owner/demo-multi:1.0-linux-amd64", "sha256:new"),
+              ("ghcr.io/owner/demo-multi:1.0-linux-arm64", written["children"]["linux/arm64"][0])]
+
+    # act
+    rc = _from_archive(written, tested=tested)
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("oras") == []
+    err = capsys.readouterr().err
+    assert "linux-amd64: the test ran sha256:new, and the archive's linux/amd64 image is" in err
+    assert "linux-arm64" not in err
+
+
+def test_a_dry_run_from_the_archive_checks_it_and_pushes_nothing(cli, oras_logins, _no_provenance, _multi, capsys):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+
+    # act
+    rc = _from_archive(written, dry_run=True)
+
+    # assert
+    assert rc == 0
+    assert cli.calls == [] and oras_logins == []
+    assert "nothing was pushed" in capsys.readouterr().out
+
+
+def test_a_dry_run_from_the_archive_still_refuses_a_broken_one(cli, oras_logins, _no_provenance, _multi):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image", tamper=True)
+
+    # act / assert
+    assert _from_archive(written, dry_run=True) == 1
+
+
+def test_a_registry_that_names_another_index_after_the_push_is_red(cli, oras_logins, _no_provenance, _multi,
+                                                                   capsys):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    cli.outputs[("oras", "manifest", "fetch")] = _descriptor("sha256:else")
+
+    # act
+    rc = _from_archive(written)
+
+    # assert
+    assert rc == 1
+    assert f"the registry names the index sha256:else, and the archive's is {written['index']}" in \
+        capsys.readouterr().err
+
+
+def test_a_failed_archive_push_hands_back_its_rc_and_reads_nothing_back(cli, oras_logins, _no_provenance, _multi):
+    # arrange
+    written = _oci_archive(_multi / "build" / "image")
+    cli.verdict[("oras", "cp")] = 3
+
+    # act
+    rc = _from_archive(written)
+
+    # assert
+    assert rc == 3
+    assert cli.argv_starting("oras", "manifest") == []
+
+
+def test_an_archive_bound_to_an_image_without_platforms_publishes_nothing(cli, oras_logins, _no_provenance, _multi,
+                                                                          capsys):
+    # arrange / act
+    rc = image.release(name="app", tag="1.0", archive="multi-oci")
+
+    # assert
+    assert rc == 1
+    assert cli.calls == []
+    assert "declares no `platforms:`" in capsys.readouterr().err
+
+
+def test_a_dry_run_from_the_daemon_checks_and_pushes_nothing(cli, logins, capsys):
+    # arrange / act
+    rc = image.release(name="app", tag="1.0", dry_run=True)
+
+    # assert
+    assert rc == 0
+    assert cli.argv_starting("docker", "push") == [] and logins == []
+    assert "nothing was pushed" in capsys.readouterr().out
+
+
 def test_a_one_platform_build_replaces_its_own_entry_and_keeps_the_others(monkeypatch, _no_provenance,
                                                                          _recorded):
     # arrange

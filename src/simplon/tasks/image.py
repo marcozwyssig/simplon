@@ -105,7 +105,7 @@ import re
 import shlex
 import shutil
 import tomllib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -349,7 +349,7 @@ def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, .
     )
 
 
-def _archive_directory(archive: str, root: Path) -> Path:
+def _archive_directory(archive: str, root: Path, coordinate: str = "build:image") -> Path:
     """The directory the `archive` artifact declares, under the product root (si#789)."""
     ctx = context.current()
     section = ctx.manifest_data().get(SECTION) or {}
@@ -357,7 +357,7 @@ def _archive_directory(archive: str, root: Path) -> Path:
         raise ValueError(f"no artifact '{archive}' in {ctx.manifest_path.name}'s `{SECTION}:` section; "
                          f"declared are: {', '.join(sorted(section)) or '(none)'}")
     entry = artifactsection.entry(section, archive, artifactschema.DirectoryEntry, ctx.manifest_path.name,
-                                  "build:image", param="archive")
+                                  coordinate, param="archive")
     return root / str(entry.path)
 
 
@@ -1046,13 +1046,22 @@ def _indented(result: Result) -> str:
     return "\n".join(f"  {line}" for line in said.splitlines()) if said else "  (it said nothing)"
 
 
-def release(name: str = "", tag: str = "") -> int:
+def release(name: str = "", tag: str = "", archive: str = "", dry_run: bool = False) -> int:
     """Publish the container image `name` declares: log in, push, and CHECK THE REGISTRY HAS IT.
 
     Builds nothing. `build` and `release` are two of the five verbs and stay two commands, so a product
     that builds an image for a smoke test never accidentally publishes it; a product that wants both in
     one step declares an aggregate over them, which is where an ordering belongs.
+
+    `archive` (si#789) names the `directory` artifact an un-narrowed `build:image` wrote the OCI archive of the
+    index and its digests into: the release then publishes that archive as it is (`_release_archive`), with no
+    daemon and no second bake, so it can run in a job of its own on a machine that built nothing.
+
+    `dry_run` runs every check a push needs, and pushes nothing and logs in nowhere.
     """
+    if archive:
+        cfg, root = _declared_for(name, "release:image")
+        return _release_archive(cfg, name, root, tag, _archive_directory(archive, root, "release:image"), dry_run)
     docker.ensure_docker()
     cfg, root = _declared_for(name, "release:image")
     # The same derivation the build used, so the two commands name one reference without the number being
@@ -1091,13 +1100,22 @@ def release(name: str = "", tag: str = "") -> int:
         log.error(f"the push would not be verifiable, so it was not attempted: {failure}")
         return 1
 
+    if dry_run:
+        log.ok(f"dry run: {ref} is built, recorded and tested as a push needs it; nothing was pushed")
+        return 0
+    return _credentialed(cfg, ref, githubpackages.docker_login, lambda: _push(cfg, name, root, ref, derived))
+
+
+def _credentialed(cfg: Image, ref: str, login: Callable[..., None], push: Callable[[], int]) -> int:
+    """`push()` inside the credential the registry takes: for GitHub Packages, `login` with this kernel's token
+    in a config that ends with the push; for any other registry, the credential the operator stored."""
     host = githubpackages.registry_host(cfg.registry)
     if githubpackages.is_github_packages(cfg.registry):
         # si#443: the job's token is logged in to a config that ends with this publish, so no expired
         # credential is left in the runner's own config to deny the next public pull.
         with githubpackages.scoped_credentials():
             try:
-                githubpackages.docker_login(cfg.registry)
+                login(cfg.registry)
             except githubpackages.PackageError as failure:
                 # Caught rather than allowed to propagate: this message is the fix (it names `gh auth
                 # refresh` and the two scopes), and a traceback would bury it under a stack from a wrapper
@@ -1105,7 +1123,7 @@ def release(name: str = "", tag: str = "") -> int:
                 # that sets it.
                 log.error(str(failure))
                 return 1
-            return _push(cfg, name, root, ref, derived)
+            return push()
     else:
         # A GITHUB token goes to GITHUB and nowhere else. `registry:` is a manifest key, so a product
         # writing `registry: registry.example.com/team` would otherwise have this task mint a GitHub PAT
@@ -1132,7 +1150,7 @@ def release(name: str = "", tag: str = "") -> int:
             return 1
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
-    return _push(cfg, name, root, ref, derived)
+    return push()
 
 
 def _untested(name: str, refs: Sequence[str]) -> bool:
@@ -1747,6 +1765,186 @@ def _write_archive_digests(archive: Path, name: str, held: Mapping[str, object])
     except OSError as broken:
         log.error(f"{archive / ARCHIVE.format(name=name)} was written, but its record could not be: {broken}")
         return False
+
+
+def _held_record(record: Path, tar: Path, platforms: Sequence[str]) -> dict | None:
+    """The record beside the archive, or None after saying why it cannot hold a push (si#789).
+
+    The record is REQUIRED, never inferred from the archive: a build that failed after the bake leaves a tar and
+    no record, and an archive nobody recorded is never pushed. Every declared platform must be in it, as
+    `archive_digests` writes it."""
+    if not record.is_file():
+        log.error(f"{tar} has no record beside it ({record.name} is missing), so nothing was pushed: an archive is "
+                  f"never pushed unrecorded. Run `build image` WITHOUT `platform:`, bound to the archive, with the "
+                  f"same --tag")
+        return None
+    if not tar.is_file():
+        log.error(f"{record} names an archive, but {tar.name} is not beside it, so there is nothing to push. Run "
+                  f"`build image` WITHOUT `platform:`, bound to the archive, with the same --tag")
+        return None
+    try:
+        held = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        held = None
+    index = held.get("index") if isinstance(held, dict) else None
+    recorded = held.get("platforms") if isinstance(held, dict) else None
+    if (not isinstance(index, str) or not index or not isinstance(recorded, dict)
+            or set(recorded) != set(platforms) or not all(isinstance(d, str) and d for d in recorded.values())):
+        log.error(f"{record} is not a record of an index and its platforms {', '.join(platforms)}, so nothing "
+                  f"was pushed. Run `build image` WITHOUT `platform:`, bound to the archive, with the same --tag")
+        return None
+    return {"index": index, "platforms": dict(recorded)}
+
+
+def archive_problems(tar: Path, held: Mapping[str, object]) -> tuple[list[str], dict[str, tuple[str, str]]]:
+    """The offline check of an OCI archive against its record (si#789): one line per way it is not the index the
+    record names, and each platform's (manifest digest, config digest) as the archive holds them.
+
+    Read straight out of the tar, nothing extracted: index.json names ONE descriptor, that is the recorded index,
+    its blob hashes to it, and its platform children are exactly the recorded ones (`unknown/unknown`
+    attestations aside, as in `index_manifests`). The config digest is what the classic image store reports as a
+    loaded image's id; the containerd store reports the manifest digest (measured 2026-11-27)."""
+    import hashlib
+    import tarfile
+
+    def blob(archive: "tarfile.TarFile", digest: str) -> bytes | None:
+        try:
+            member = archive.extractfile(f"blobs/{digest.replace(':', '/', 1)}")
+        except KeyError:
+            return None
+        return member.read() if member is not None else None
+
+    try:
+        archive = tarfile.open(tar)
+    except (OSError, tarfile.TarError) as broken:
+        return [f"{tar} cannot be read as a tar: {broken}"], {}
+    with archive:
+        try:
+            member = archive.extractfile("index.json")
+            roots = json.loads(member.read()).get("manifests") if member is not None else None
+        except (KeyError, ValueError, AttributeError):
+            roots = None
+        if not isinstance(roots, list):
+            return [f"{tar} holds no readable index.json, so it is not an OCI layout"], {}
+        if len(roots) != 1:
+            return [f"{tar}'s index.json names {len(roots)} manifests; a release pushes one index"], {}
+        root = str(roots[0].get("digest") or "") if isinstance(roots[0], dict) else ""
+        if root != held["index"]:
+            return [f"the archive's index.json names {root or 'nothing'}, the record {held['index']}"], {}
+        raw = blob(archive, root)
+        if raw is None:
+            return [f"{tar} does not hold the blob of its index {root}"], {}
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != root:
+            return [f"the blob of the index {root} does not hash to it"], {}
+        found = index_manifests(raw.decode("utf-8", errors="replace")) or {}
+        recorded = held["platforms"]
+        assert isinstance(recorded, Mapping)
+        problems = [f"{platform}: the archive holds {found.get(platform) or 'nothing'}, the record "
+                    f"{recorded.get(platform) or 'nothing'}"
+                    for platform in sorted({*found, *recorded}) if found.get(platform) != recorded.get(platform)]
+        children: dict[str, tuple[str, str]] = {}
+        for platform, digest in found.items():
+            try:
+                config = json.loads(blob(archive, digest) or b"{}").get("config") or {}
+            except (ValueError, AttributeError):
+                config = {}
+            children[platform] = (digest, str(config.get("digest") or "") if isinstance(config, dict) else "")
+    return problems, children
+
+
+def _untested_in_archive(name: str, ref: str, platforms: Sequence[str],
+                         children: Mapping[str, tuple[str, str]]) -> bool:
+    """True, after saying which, when the bound evidence did not run the images the archive holds (si#439 for the
+    archive): every platform's reference under this tag, with the daemon id of the archive's image for it."""
+    subjects = results_mod.tested()
+    if subjects is None:
+        return False
+    reasons: list[str] = []
+    for platform in platforms:
+        wanted = platform_reference(ref, platform)
+        ran = [s for s in subjects if s.reference == wanted]
+        held = {digest for digest in children.get(platform, ()) if digest}
+        if not ran:
+            named = ", ".join(sorted({s.reference for s in subjects}))
+            reasons.append(f"{wanted} was never tested: the evidence ran {named}")
+        elif all(s.id not in held for s in ran):
+            manifest, config = children.get(platform, ("", ""))
+            reasons.append(f"{wanted}: the test ran {ran[0].id}, and the archive's {platform} image is {manifest} "
+                           f"(config {config or 'not readable'})")
+    if reasons:
+        log.error(f"nothing was published: {name}'s evidence is green, but not about the archive this release "
+                  f"would push\n  " + "\n  ".join(reasons)
+                  + "\n  run `build image` (without `platform:`) and `test image` with the same --tag, then "
+                    "release again")
+        return True
+    return False
+
+
+def _release_archive(cfg: Image, name: str, root: Path, tag: str, directory: Path, dry_run: bool) -> int:
+    """`release` from the archive `build:image` wrote (si#789, design 4.4): check it offline, then push it as it
+    is with oras and hold the registry's index against the recorded one.
+
+    `oras cp --to-distribution-spec v1.1-referrers-api` because plain `oras cp` leaves one `sha256-<digest>` tag
+    per platform image on ghcr, which has no referrers API, and the flag leaves none (si#789 spike 2, measured on
+    ghcr with oras 1.3.4). The archive is pushed straight from the tar (`--from-oci-layout <tar>@<index>`,
+    measured 2026-11-27 into a local registry:2: the index digest is preserved, no extra tag)."""
+    if not cfg.platforms:
+        log.error(f"`archive` was bound, but image '{name}' declares no `platforms:` - a single-platform build "
+                  f"makes no index to archive, so there is nothing to push from one")
+        return 1
+    derived = provenance(root)
+    ref = reference(cfg, resolve_tag(cfg, tag, {**derived, **cfg.build_args}.get(VERSION_ARG, "")))
+    tar, record = directory / ARCHIVE.format(name=name), directory / DIGESTS.format(name=name)
+    held = _held_record(record, tar, cfg.platforms)
+    if held is None:
+        return 1
+    problems, children = archive_problems(tar, held)
+    if problems:
+        log.error(f"{tar} is not the index its record names, so nothing was pushed:\n  " + "\n  ".join(problems)
+                  + "\n  run `build image` (without `platform:`) with the same --tag, then release again")
+        return 1
+    if _untested_in_archive(name, ref, cfg.platforms, children):
+        return 1
+    index = str(held["index"])
+    if dry_run:
+        log.ok(f"dry run: {tar} holds the index {index} for {', '.join(cfg.platforms)}, as recorded and as "
+               f"tested; nothing was pushed to {ref}")
+        return 0
+    try:
+        githubpackages.require_oras()
+    except githubpackages.PackageError as failure:
+        log.error(f"oras pushes the archive and reads it back, and it could not be provided, so nothing was "
+                  f"pushed: {failure}")
+        return 1
+    return _credentialed(cfg, ref, githubpackages.login, lambda: _push_archive(cfg, root, ref, tar, index))
+
+
+def _push_archive(cfg: Image, root: Path, ref: str, tar: Path, index: str) -> int:
+    log.info(f"pushing {ref} from {tar}, the index {index}")
+    rc = stream(["oras", "cp", "--to-distribution-spec", "v1.1-referrers-api", "--from-oci-layout",
+                 f"{tar}@{index}", ref], cwd=str(root))
+    if rc != 0:
+        advice = ("\nif the registry refused it rather than the network, the usual cause on GHCR is a "
+                  "token without the package scopes:\n" + githubpackages.scope_advice()
+                  if githubpackages.is_github_packages(cfg.registry) else "")
+        log.error(f"oras cp {ref} failed (rc={rc}; see output above)" + advice)
+        return rc
+    fetched = run(["oras", "manifest", "fetch", "--descriptor", ref], timeout=limits.ORAS, terminal=False)
+    try:
+        there = json.loads(fetched.out).get("digest") if fetched.ok else None
+    except (ValueError, AttributeError):
+        there = None
+    if not fetched.ok:
+        log.error(f"oras cp exited 0 but {ref} could not be read back: either the tag was not stored or the "
+                  f"registry could not be asked - both mean the publish is unproven")
+        return 1
+    if there != index:
+        log.error(f"{ref} is published, but the registry names the index {there or 'nothing readable'}, and the "
+                  f"archive's is {index} - the tag does not serve what was built and tested")
+        return 1
+    log.ok(f"published {ref} for {', '.join(cfg.platforms)} as the index {index} the build recorded and the test "
+           f"ran the images of")
+    return 0
 
 
 def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str = "",
