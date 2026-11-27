@@ -658,6 +658,17 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("layout", "declared", "does not take"): EXPRESSION,
     ("layout", "_relative", "is empty, which says nothing"): DIAGNOSIS,
     ("layout", "_relative", "has to be a plain relative path"): DIAGNOSIS,
+    # si#888: `validate_relative_dir`, reached from `outputs.declared` through a bare imported name, which the
+    # walk did not follow until si#888 - so the comment at `outputs.declared` saying these were "counted where
+    # they live" was not true. All four diagnosis, for `_relative`'s reason above and one more: the value is
+    # joined onto the product root and then handed to a clean, so an absolute path or a `..` cleans somewhere
+    # else entirely. Empty says nothing. A `\` is the closest call: on the Linux runner `out\dir` would be ONE
+    # directory with a backslash in its name, never the `out/dir` its writer meant, so the refused value has
+    # no working reading - it is refused rather than translated because which separator was meant is a guess.
+    ("layout", "validate_relative_dir", "is empty;"): DIAGNOSIS,
+    ("layout", "validate_relative_dir", "is the separator here"): DIAGNOSIS,
+    ("layout", "validate_relative_dir", "it must be relative"): DIAGNOSIS,
+    ("layout", "validate_relative_dir", "is not a directory name"): DIAGNOSIS,
 
     # --- environments.py, the chain (si#5) ---------------------------------------------------------
     # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
@@ -850,6 +861,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): EXPRESSION,
     ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         EXPRESSION,
+    # si#888: `clitaxonomy.merge_trees`, which `load` calls as a bare imported name and the walk did not follow
+    # until si#888. An expression rule by its own docstring: a group in both `taxonomy:` blocks is refused
+    # "rather than a precedence rule", and a precedence rule would have worked, merely differently. It sits on
+    # the platform/product seam like the rule above, and it is SHADOWED by it: `load` refuses a product
+    # `taxonomy:` before this merge whenever the catalogue has one, and with no catalogue taxonomy the first
+    # half is empty, so from `load` the clash is not reachable (read from the code, not run).
+    ("clitaxonomy", "merge_trees", "declared in BOTH the catalogue and the product manifest"): EXPRESSION,
     ("load", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
     # si#578. A pinned `with:` value whose type contradicts the body parameter's scalar annotation:
     # `bootstrap: true` for `bootstrap: str` died in `.strip()` as a traceback (cleon-firn, measured on
@@ -1499,6 +1517,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): REACH_SEAM,
     ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         REACH_SEAM,
+    ("clitaxonomy", "merge_trees", "declared in BOTH the catalogue and the product manifest"): REACH_SEAM,
     ("treeform", "merge", "names a group the platform's tree does not declare"): REACH_SEAM,
     ("treeform", "merge", "shape_is_the_platforms"): REACH_SEAM,
     ("treeform", "_merge_commands", "is declared as one kind of command and refined as another"): REACH_MERGED,
@@ -1540,7 +1559,8 @@ REACH: dict[tuple[str, str, str], str] = {
 # A small call-graph walk, and small on purpose. It follows exactly three kinds of edge, each of which is
 # a thing this kernel actually does on the way from a manifest to a decision:
 #
-#   - `helper(...)`            a module-local function
+#   - `helper(...)`            a module-local function, or one bound by `from simplon.x import helper`
+#                              (aliases too), walked where it is defined (si#888)
 #   - `treeform.merge(...)`    a function in another simplon module, resolved through this module's imports
 #   - `_ManifestModel(...)`    a Pydantic model's own validators, which pydantic calls and no call
 #                              expression names - without this edge the loader's own rules are invisible
@@ -1568,6 +1588,7 @@ class _Module:
         self.classes: dict[str, ast.ClassDef] = {}
         self._index(self.tree)
         self.imports = self._imports()
+        self.names = self._names()
 
     def _index(self, node) -> None:
         for child in ast.iter_child_nodes(node):
@@ -1593,6 +1614,21 @@ class _Module:
                         dotted = alias.name[len("simplon."):]
                         if _module_file(dotted):
                             out[alias.asname or alias.name.split(".")[-1]] = dotted
+        return out
+
+    def _names(self) -> dict[str, tuple[str, str]]:
+        """alias -> (simplon-relative module, name), for a name imported bare with `from simplon.x import f`
+        (si#888). Without it a call spelled `f(...)` is not walked where `x.f(...)` is, and the population
+        changes with the spelling."""
+        out: dict[str, tuple[str, str]] = {}
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("simplon."):
+                base = node.module[len("simplon."):]
+                if not _module_file(base):
+                    continue
+                for alias in node.names:
+                    if alias.name != "*" and not _module_file(f"{base}.{alias.name}"):
+                        out[alias.asname or alias.name] = (base, alias.name)
         return out
 
     def is_model(self, name: str) -> bool:
@@ -2040,6 +2076,10 @@ def _closure(entries):
             continue
         seen.add((dotted, name))
         module = _module(dotted)
+        if name not in module.funcs and name in module.names:
+            # a name this module only imports: walk it where it is defined (si#888), through any re-export
+            queue.append(module.names[name])
+            continue
         for function in module.funcs.get(name, []):
             bodies.append((dotted, function))
             for call in ast.walk(function):
@@ -2048,7 +2088,7 @@ def _closure(entries):
                 called = call.func
                 model = None
                 if isinstance(called, ast.Name):
-                    if called.id in module.funcs:
+                    if called.id in module.funcs or called.id in module.names:
                         queue.append((dotted, called.id))
                     if module.is_model(called.id):
                         model = called.id
@@ -2194,6 +2234,26 @@ def test_the_walk_finds_refusals_at_both_seams():
 
     # assert: nothing is counted in no module
     assert sum(per_module.values()) == len(_all_refusals())
+
+
+def test_a_refusal_reached_through_a_bare_imported_name_is_counted():
+    """si#888: the population must not depend on how a call is spelled. si#863 moved `param_value` into
+    `simplon.model.command`; called bare after `from simplon.model.command import param_value`, its two
+    refusals dropped out of the count, and the fix there respelled the call as a module attribute. The
+    loader calls it bare again, so this holds the walk to the bare spelling, not the respelling."""
+    # arrange: the loader really spells the call bare, through a `from ... import`
+    loader = _module("manifest.load")
+    (ci_params,) = loader.funcs["_ci_params"]
+    called = [call.func for call in ast.walk(ci_params) if isinstance(call, ast.Call)]
+    assert any(isinstance(func, ast.Name) and func.id == "param_value" for func in called)
+    assert loader.names["param_value"] == ("model.command", "param_value")
+
+    # act
+    sites = _raise_sites(_closure([("manifest.load", "_ci_params")]))
+
+    # assert: both of `param_value`'s refusals are reached from the loader, and so counted
+    assert len([site for site in sites if site[:2] == ("command", "param_value")]) == 2
+    assert len([site for site in _all_refusals() if site[:2] == ("command", "param_value")]) == 2
 
 
 def test_every_module_that_reads_the_manifest_is_accounted_for():
@@ -2571,8 +2631,9 @@ def test_no_expression_rule_exempts_the_kernel_from_itself():
 # there is nothing there for a rule to be denied.
 
 #: The modules on the merge path, where a manifest has a platform half and a product half (ports since
-#: si#344 C.3: its rules run on the loaded, merged Manifest).
-TREE_MODULES = ("load", "treeform", "ports")
+#: si#344 C.3: its rules run on the loaded, merged Manifest; clitaxonomy since si#888: `load` hands
+#: `merge_trees` the catalogue's taxonomy and the product's, and the walk now follows that bare imported call).
+TREE_MODULES = ("load", "treeform", "ports", "clitaxonomy")
 
 #: The two expression rules pydantic runs, and why they need naming instead of wrapping. Both are
 #: validators on `_ManifestModel` - a field validator and a model validator - so no expression in the

@@ -70,9 +70,7 @@ import yaml
 from simplon.manifest import artifactsection, context, runners, signatures, sources
 from simplon.model import task, workflowschema
 from simplon.adapters import disk, docker, tools
-# `command_model.param_value` as a module attribute, so the refusal census walks into it (si#863).
-from simplon.model import command as command_model
-from simplon.model.command import EnvValue, TaskCommand
+from simplon.model.command import EnvValue, TaskCommand, param_value
 from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
 
@@ -961,7 +959,7 @@ def _step(item: object, where: str) -> Step:
         if not isinstance(raw, Mapping):
             raise ValueError(f"{where}: `params:` must map parameter names to values, not "
                              f"{type(raw).__name__}")
-        params = {str(k): command_model.param_value(v, where=f"{where}, `params: {k}`") for k, v in raw.items()}
+        params = {str(k): param_value(v, where=f"{where}, `params: {k}`") for k, v in raw.items()}
         return Step(command=command, modifiers=rest, note=note, params=params)
     if not rest:
         raise ValueError(f"{where}: declares neither `command:` nor a verbatim GitHub step")
