@@ -403,14 +403,12 @@ def producers_on_tag(manifest: Manifest, data: Mapping[str, object]) -> tuple[ci
     and with it the `evidence:` a release step consumes, which a test produces; then the producers of what a
     selected leaf consumes, so the job never consumes what nothing in this run built.
 
-    What release.yml makes itself is not rebuilt here. That is everything the release aggregate's plan produces,
-    because the `release` job runs it before this job, so it is on the tag already (the notes, the tag, and a
-    product whose aggregate still builds what it publishes); and everything a step of release.yml makes from a
-    leaf ci.yml does not run, such as simplon's formula, which needs a tagged commit and a wheel on PyPI
-    (`ci: skip:`) and is rendered after the upload. A CI leaf a job declared under `workflows: release:` runs
-    again does not count: those jobs come after this one, and until they take what it built (si#789 task 5)
-    they build it a second time. () where no release.yml is derived or nothing it consumes is built by CI;
-    then there is no `artifacts` job.
+    What release.yml makes itself is not rebuilt here (design 4.3): everything any of its steps produces. The
+    release aggregate's plan runs in the `release` job before this one, so what it makes is on the tag already
+    (the notes, the tag, and a product whose aggregate still builds what it publishes); what a job declared under
+    `workflows: release:` makes, such as simplon's formula, rendered after the PyPI upload, is made there and
+    would otherwise be built twice in one run. () where no release.yml is derived or nothing it consumes is built
+    by CI; then there is no `artifacts` job.
 
     A candidate that has not ruled on `unattended:` is refused where it is selected
     (`workflowgen.require_unattended`), because whether it may run on the tag is then unknown."""
@@ -424,11 +422,7 @@ def producers_on_tag(manifest: Manifest, data: Mapping[str, object]) -> tuple[ci
         for name, spec in members.items():
             if isinstance(spec, TaskCommand) and not spec.ci_skip:
                 candidates.append(cipipeline.Leaf(cipipeline._words(group, name), spec))
-    words, _ = _the_release(manifest)
-    planned = workflowgen._leaves(manifest, workflowgen.Step(command=words), f"release aggregate '{words}'")
-    own = {artifact for leaf in (*(spec for _, spec in planned),
-                                 *(leaf for leaf in leaves if not any(c.spec is leaf for c in candidates)))
-           for names in leaf.produces.values() for artifact in names}
+    own = {artifact for leaf in leaves for names in leaf.produces.values() for artifact in names}
     wanted = {artifact for leaf in leaves for names in leaf.consumes.values() for artifact in names} - own
     chosen: list[cipipeline.Leaf] = []
     while True:

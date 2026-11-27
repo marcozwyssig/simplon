@@ -236,7 +236,10 @@ artifacts:
 Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#ports)):
 
 - **Rule 6.** A release command that consumes an artifact must bind every test result about it to `evidence`.
-  A test result is about what its producer consumes, directly. With no such test the load refuses: "... and no
+  A test result is about what its producer consumes, directly - and, when the release consumes both, about what
+  the command that made that artifact made beside it (si#789: `build image`'s OCI archive, which a test of the
+  image covers because `release:image` holds the archive's images against what the test ran). With no such
+  test the load refuses: "... and no
   test produces a result about it - add a command under `ci: test:` ...". With one left unbound it refuses:
   "... so no release goes past a test that ran". The four kinds a release produces about itself
   (`test-result`, `release-notes`, `tag`, `release`) need no evidence.
@@ -1340,7 +1343,8 @@ command in another job of the same workflow `consumes:`, the generated file says
 - the producing job archives the artifact's `path:` with `tar` after its last producing step and uploads it
   under the artifact's name;
 - the consuming job gets `needs:` on the producing job (after any `needs:` you declared), and downloads and
-  unpacks it before its first consuming step.
+  unpacks it before its first step, so a verbatim `run:` or `uses:` step that reads the file finds it too
+  (si#789).
 
 The archive keeps the path and the file modes, which `upload-artifact` alone does not. Producer and consumer
 in one job hand nothing over, and a workflow with no such edge is written exactly as before. The archive is
@@ -1355,7 +1359,7 @@ involved, and the artifact where one is the cause:
 | consume an artifact that no job in it produces, and that has no `registry:` | nothing puts it there. A release whose evidence no job writes would be green with no test run |
 | consume, in one job, before the step of that job that produces it | the order is yours; the data only checks it |
 | consume an artifact that is produced in more than one job, or in a matrix job | one run uploads one artifact once |
-| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job |
+| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job - or, as `release:image` does since si#789, consume beside it an artifact with a `path:` that the same step produced (`build:image`'s `archive`): that one crosses and carries it |
 | hand over an artifact whose name has anything but letters, digits, `.`, `_` and `-` | the name goes into a shell line and into `upload-artifact`, which rejects `" : < > | * ? \ /` |
 | hand over an artifact whose `path:` is absolute or has a `..` segment | `tar` stores it somewhere else, so the consumer finds nothing where it looks |
 | hand over from a job with an `if:` that the consuming job does not share | a skipped producer skips its consumer, and a skipped job is not red: the run would be green with nothing done |

@@ -165,7 +165,8 @@ ci:
         produces:
           image: kernel
           # si#789: a build of both platforms also writes the index as an OCI archive with its digests, which
-          # release.yml's `image` job pushes as built. CI's `platform:` build writes none.
+          # release.yml's `image` job pushes as built (`release push-image` consumes it). CI's `platform:`
+          # build writes none.
           archive: kernel-oci
         # si#368: the image declares arm64 too, and building that here would put an emulated stage on this
         # runner on every push; a release builds both. `ci: params:` (si#863) binds the platform only where
@@ -487,10 +488,14 @@ ci:
       #
       # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
       # Named push-image, not image, since si#344 C.3: an aggregate plans a leaf by a name only one group owns (#519).
+      # si#789: it publishes the OCI archive `build image` wrote beside the image (`archive:`), as it is, so the
+      # published index is the one built and the one `test image` ran the children of; `image:` still names
+      # where it goes. Typed in a checkout it needs a full `build image` and `test image` first.
       push-image:
         task: "release:image"
         consumes:
           image: kernel
+          archive: kernel-oci
           evidence: [kernel-checked]
       # The push of the pin branch the `image` job makes after `push-image` (si#622): that job's checkout
       # keeps no token, so the push hands git the run's own. A person who repins by hand can use it too.
@@ -758,13 +763,13 @@ artifacts:
     # both; CI builds and runs amd64 only (`ci: { params: { platform: linux/amd64 } }` on `build image` and
     # `test image`, si#863), so the runner needs no emulator per push.
     platforms: [linux/amd64, linux/arm64]
-  # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
-  # is derived from what that producer consumes.
   # si#789: the directory `build image` writes kernel.oci.tar and kernel.digests.json into, when it builds
-  # every platform - the crossing from the release's `artifacts` job to its `image` job.
+  # every platform - the crossing from the release's `artifacts` job to its `image` job, which pushes it.
   kernel-oci:
     kind: directory
     path: build/image
+  # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
+  # is derived from what that producer consumes.
   kernel-checked:
     kind: test-result
     path: build/test/kernel-image.json
@@ -902,8 +907,10 @@ workflows:
   # release -> Run workflow, with the version and `dry_run` (default true). The kernel derives the
   # trigger, the permissions, the concurrency and the `release` job from `release all` (si#490, si#862), and
   # the `docs` and `pages` jobs from `website: pages:` (si#862); the three jobs below are ADDED by this
-  # product, and each one runs after the tag exists. They are D12 exceptions that wait on #789 (build once,
-  # release promotes); #864 makes each a counted `exception:`.
+  # product, and each one runs after the tag exists. Since si#789 they promote what the derived `artifacts`
+  # job built (the hand-off brings `dist`, the image's archive and its evidence) instead of building it. They
+  # stay D12 exceptions because promotion is not derived yet (follow-up ticket); #864 makes each a counted
+  # `exception:`.
   release:
     name: release
     note: |
@@ -913,8 +920,10 @@ workflows:
       The derived `artifacts` job then builds on the tag what the release consumes (si#789): the wheel,
       the image and the image's test. What follows publishes: the wheel to PyPI, then the site and the
       image, each of which describes the version PyPI now serves. The release job, `artifacts`, `docs`
-      and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and until
-      si#789 task 5 they still build the wheel and the image themselves.
+      and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and they take
+      what `artifacts` built - the wheel, the image's OCI archive and its test record - by the hand-off,
+      so nothing is built twice and what goes out is what was tested. A missing artifact is a red job
+      that names it, never a second build.
 
       A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
@@ -926,10 +935,10 @@ workflows:
     jobs:
       publish:
         note: |
-          The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
-          token, no API token in the repository. PyPI's publisher is bound to this file's name and the
+          The wheel `artifacts` built from the tagged commit (si#789: handed over as `dist`, not built
+          again), published to PyPI by Trusted Publishing - an OIDC token, no API token in the repository. PyPI's publisher is bound to this file's name and the
           `pypi` environment, which is why neither moves.
-          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
         needs: release
         runs-on: ubuntu-latest
         python: "3.12"
@@ -941,8 +950,9 @@ workflows:
           - name: Cut the tag in this checkout
             note: |
               si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
-              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
-              the check below would go red, and the jobs after this one would never rehearse.
+              holds it equal). A dry run pushes no tag, so the cut puts this checkout where a real run stands:
+              on the version `artifacts` built (si#789: this job builds nothing, so it is no longer about a
+              `.devN` wheel, only about rehearsing at the real version).
             if: ${{ inputs.dry_run }}
             run: |
               there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
@@ -965,7 +975,6 @@ workflows:
                 echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
                 exit 1
               fi
-          - command: build wheel
           - name: The wheel that was built must be the tag
             note: |
               si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
@@ -1023,7 +1032,7 @@ workflows:
           steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
           still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
           written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
-          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
         runs-on: ubuntu-latest
         python: "3.12"
         permissions:
@@ -1036,8 +1045,10 @@ workflows:
           The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
           run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
           merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
-          (si#365). After `publish`, so the image carries the version PyPI serves.
-          D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+          (si#365). After `publish`, so the image carries the version PyPI serves. Since si#789 it builds
+          nothing and needs no emulator: `release push-image` pushes the OCI archive `artifacts` built and
+          tested, handed over with its test record. A rehearsal checks the archive offline and pushes nothing.
+          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
         needs: publish
         runs-on: ubuntu-latest
         python: "3.12"
@@ -1051,8 +1062,9 @@ workflows:
           - name: Cut the tag in this checkout
             note: |
               si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
-              holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
-              the check below would go red, and the jobs after this one would never rehearse.
+              holds it equal). A dry run pushes no tag, so the cut puts this checkout where a real run stands:
+              on the version `artifacts` built (si#789: this job builds nothing, so it is no longer about a
+              `.devN` wheel, only about rehearsing at the real version).
             if: ${{ inputs.dry_run }}
             run: |
               there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
@@ -1075,15 +1087,10 @@ workflows:
                 echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
                 exit 1
               fi
-          - note: The image declares linux/arm64 too (si#368); this runner is amd64.
-            uses: docker/setup-qemu-action@v3
-            with:
-              image: tonistiigi/binfmt:qemu-v10.2.3
-              platforms: arm64
-          - command: build image
-            params: { tag: { env: RELEASE_VERSION } }
-          - command: test image
-            params: { tag: { env: RELEASE_VERSION } }
+          - command: release push-image
+            note: The rehearsal of the push - the archive, its record and the evidence checked, nothing pushed.
+            params: { tag: { env: RELEASE_VERSION }, dry_run: true }
+            if: ${{ inputs.dry_run }}
           - command: release push-image
             params: { tag: { env: RELEASE_VERSION } }
             if: ${{ !inputs.dry_run }}

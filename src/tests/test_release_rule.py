@@ -72,6 +72,35 @@ def test_a_release_with_every_result_about_its_artifact_loads():
     assert loaded.spec_for("release", "image").consumes["evidence"] == ("app-checked",)
 
 
+#: si#789: `build image` writes the image's OCI archive beside the image in one bake, and the release pushes the
+#: archive. A test of the image is about the archive its producer wrote with it, when the release takes both.
+ARCHIVED = CHAIN.replace("artifacts:\n", "artifacts:\n  app-oci: { kind: directory, path: build/image }\n", 1) \
+    .replace("produces: { image: app } }", "produces: { image: app, archive: app-oci } }", 1) \
+    .replace("consumes: { image: app, evidence: [app-checked] } }",
+             "consumes: { image: app, archive: app-oci, evidence: [app-checked] } }", 1)
+
+
+def test_a_test_of_an_image_is_about_the_archive_its_producer_wrote_beside_it():
+    # act
+    loaded = _load(ARCHIVED)
+
+    # assert
+    assert loaded.spec_for("release", "image").consumes["archive"] == ("app-oci",)
+
+
+def test_a_directory_another_command_wrote_is_not_covered_by_the_images_test():
+    # arrange: the same bindings on the release, but the directory comes from a command of its own, so no test
+    # of the image says anything about it
+    text = ARCHIVED.replace("produces: { image: app, archive: app-oci } }", """produces: { image: app } }
+      pack: { task: pack, produces: { out: app-oci } }""", 1) + """tasks:
+  pack: { impl: "simplon.test_impls:nullary", help: pack, output: { out: { accepts: directory } } }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="releases 'app-oci', and no test produces a result about it"):
+        _load(text)
+
+
 def test_an_untested_release_is_refused_naming_the_artifact():
     # arrange: no test consumes `app`
     text = HEAD + """

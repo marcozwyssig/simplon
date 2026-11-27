@@ -48,6 +48,8 @@ jobs:
   #   one job would prove nothing
   #
   # si#862, #789: release.yml consumes these, and this run keeps none of them for it to promote:
+  # `kernel-oci` - `build image` produces it, and CI runs it with `ci: params:`, narrower than the
+  #   release
   # `kernel-checked` - `test image` produces it, and CI runs it with `ci: params:`, narrower than
   #   the release
   # `kernel-notes` - `release notes` produces it, and it is not a CI leaf (it is in the 'release'

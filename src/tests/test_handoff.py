@@ -65,7 +65,7 @@ def test_a_result_made_in_one_job_and_consumed_in_another_is_handed_over():
 
     # assert
     assert out["test"] == handoff.Handoff(uploads={1: ("app-checked",)})
-    assert out["release"] == handoff.Handoff(needs=("test",), downloads={1: ("app-checked",)})
+    assert out["release"] == handoff.Handoff(needs=("test",), downloads={0: ("app-checked",)})
 
 
 def test_producer_and_consumer_in_one_job_hand_nothing_over():
@@ -79,7 +79,7 @@ def test_producer_and_consumer_in_one_job_hand_nothing_over():
     assert out == {"all": handoff.Handoff()}
 
 
-def test_the_upload_follows_the_last_producing_step_and_the_download_precedes_the_first_consumer():
+def test_the_upload_follows_the_last_producing_step_and_the_download_precedes_the_jobs_first_step():
     # arrange: job a writes `left` twice (seed at step 0, back at step 2 - back consumes `right`, which
     # a also makes, at step 1); job b reads `left` at steps 1 and 2
     runs = [handoff.Run("a", ((_leaf("build left"),), (_leaf("build right"),), (_leaf("build back"),))),
@@ -90,7 +90,8 @@ def test_the_upload_follows_the_last_producing_step_and_the_download_precedes_th
 
     # assert
     assert out["a"] == handoff.Handoff(uploads={2: ("left",)})
-    assert out["b"] == handoff.Handoff(needs=("a",), downloads={1: ("left",)})  # b makes `right` itself
+    # b makes `right` itself; `left` arrives before b's first step (si#789), not only before its first consumer
+    assert out["b"] == handoff.Handoff(needs=("a",), downloads={0: ("left",)})
 
 
 def test_a_consumer_whose_producer_runs_in_no_job_of_the_workflow_is_refused():
@@ -163,6 +164,40 @@ def test_an_artifact_without_a_path_across_a_job_boundary_is_refused_whatever_it
         handoff.plan("ci", runs, ARTIFACTS)
 
 
+#: si#789: `build image` writes the image's OCI archive beside the image, and the push takes both - the image for
+#: its declaration, the archive for its bytes.
+ARCHIVED = TEXT.replace("  left: { kind: directory", "  app-oci: { kind: directory, path: build/image }\n  left: { kind: directory", 1) \
+    .replace("produces: { image: app } }", "produces: { image: app, archive: app-oci } }", 1) \
+    .replace("consumes: { image: app, evidence: [app-checked] } }",
+             "consumes: { image: app, archive: app-oci, evidence: [app-checked] } }", 1)
+
+
+def test_an_image_crosses_as_the_archive_its_producer_wrote_beside_it():
+    # arrange
+    loaded = manifest.load(ARCHIVED, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    leaf = lambda path: (path, loaded.spec_for(*path.rsplit(" ", 1)))
+    runs = [handoff.Run("artifacts", ((leaf("build image"),), (leaf("test image"),))),
+            handoff.Run("image", ((leaf("release push-image"),),))]
+
+    # act
+    out = handoff.plan("release", runs, artifactsection.declared(yaml.safe_load(ARCHIVED)))
+
+    # assert: the archive and the evidence cross; the image itself is not handed over
+    assert out["artifacts"] == handoff.Handoff(uploads={0: ("app-oci",), 1: ("app-checked",)})
+    assert out["image"] == handoff.Handoff(needs=("artifacts",), downloads={0: ("app-oci", "app-checked")})
+
+
+def test_an_image_whose_consumer_does_not_take_its_archive_is_still_refused():
+    # arrange: the archive is written, but the test across the boundary binds only the image
+    loaded = manifest.load(ARCHIVED, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    leaf = lambda path: (path, loaded.spec_for(*path.rsplit(" ", 1)))
+    runs = [handoff.Run("build", ((leaf("build image"),),)), handoff.Run("test", ((leaf("test image"),),))]
+
+    # act / assert
+    with pytest.raises(ValueError, match="declares no `path:`, so there is no file to hand over"):
+        handoff.plan("ci", runs, artifactsection.declared(yaml.safe_load(ARCHIVED)))
+
+
 def test_jobs_that_need_each_other_through_their_artifacts_are_refused():
     # arrange: a seeds `left` and copies `right` back into it; b copies `left` into `right`
     runs = [_run("a", "build left", "build back"), _run("b", "build right")]
@@ -190,7 +225,7 @@ def test_a_declared_needs_is_not_repeated_in_the_added_ones():
     out = handoff.plan("ci", runs, ARTIFACTS)
 
     # assert: the hand-off still downloads, and adds no second `test`
-    assert out["release"] == handoff.Handoff(downloads={1: ("app-checked",)})
+    assert out["release"] == handoff.Handoff(downloads={0: ("app-checked",)})
 
 
 def _variant(old, new):

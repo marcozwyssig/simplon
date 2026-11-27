@@ -376,12 +376,12 @@ def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
     # act
     runs = [step.get("run", "") for step in job["steps"]]
 
-    # assert
-    assert job["needs"] == "publish"
+    # assert: after the wheel; since si#789 it builds nothing and pushes what `artifacts` built
+    assert job["needs"] == ["publish", "artifacts"]
     assert job["permissions"]["packages"] == "write"
-    built = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh build image"))
-    published = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh release push-image"))
-    assert built < published
+    assert not any(r.startswith(("exec ./simplon.sh build image", "exec ./simplon.sh test image")) for r in runs)
+    published = next(i for i, r in enumerate(runs)
+                     if r.startswith("exec ./simplon.sh release push-image") and "--dry-run" not in r)
     assert job["steps"][published]["if"] == "${{ !inputs.dry_run }}"  # si#491: a rehearsal pushes nothing
     assert "release push-image" not in ci_steps and "release push-image" not in ci_text
 
@@ -472,21 +472,25 @@ def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
     # arrange
     kernel = _manifest()["artifacts"]["kernel"]
     ci_steps = _ci_steps()
-    steps = _release_jobs()["image"]["steps"]
+    jobs = _release_jobs()
+    steps = jobs["artifacts"]["steps"]
     runs = [step.get("run", "") for step in steps]
+    pinning = [step.get("run", "") for step in jobs["image"]["steps"]]
 
     # act
     ci_build = next(s for s in ci_steps if s.command == "build image")
     emulator = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/setup-qemu-action"))
     built = next(i for i, r in enumerate(runs) if r.startswith("exec ./simplon.sh build image"))
 
-    # assert: both declared; CI stays native; the release registers the emulator before it builds, and
-    # pins the INDEX digest read from the registry, not a local image's (which holds one platform)
+    # assert: both declared; CI stays native; the release's `artifacts` job (si#789) registers the emulator
+    # before it builds, the `image` job needs none, and the pin is the INDEX digest read from the registry,
+    # not a local image's (which holds one platform)
     assert kernel["platforms"] == ["linux/amd64", "linux/arm64"]
     assert ci_build.params == {"platform": "linux/amd64"}
     assert emulator < built
-    assert steps[emulator]["with"] == {"image": image.BINFMT_IMAGE, "platforms": "arm64"}
-    assert "docker buildx imagetools inspect" in next(r for r in runs if "deploy/image/repin.sh" in r)
+    assert steps[emulator]["with"]["image"] == image.BINFMT_IMAGE
+    assert not any("setup-qemu-action" in str(s.get("uses", "")) for s in jobs["image"]["steps"])
+    assert "docker buildx imagetools inspect" in next(r for r in pinning if "deploy/image/repin.sh" in r)
 
 
 def test_buildx_is_in_the_image_because_a_container_route_build_needs_buildkit():

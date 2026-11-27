@@ -135,6 +135,7 @@ simplon typeOf simplon.manifest.Product {
       key = "push-image"
       task = simplon.catalogue.release_image
       consumes = product.simplon.simplon.a_kernel
+      consumes = product.simplon.simplon.a_kernel_oci
       consumes = product.simplon.simplon.a_kernel_checked
     }
     command push_pin typeOf simplon.pipeline.TaskCommand {

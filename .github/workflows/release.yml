@@ -10,8 +10,10 @@
 # The derived `artifacts` job then builds on the tag what the release consumes (si#789): the wheel,
 # the image and the image's test. What follows publishes: the wheel to PyPI, then the site and the
 # image, each of which describes the version PyPI now serves. The release job, `artifacts`, `docs`
-# and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and until
-# si#789 task 5 they still build the wheel and the image themselves.
+# and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and they take
+# what `artifacts` built - the wheel, the image's OCI archive and its test record - by the hand-off,
+# so nothing is built twice and what goes out is what was tested. A missing artifact is a red job
+# that names it, never a second build.
 #
 # A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
 # second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
@@ -317,16 +319,72 @@ jobs:
             exit 1
           }
       - run: exec ./simplon.sh build wheel
+      # si#344 C.4: 'dist' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-dist.tar" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/simplon-handoff-dist.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - run: exec ./simplon.sh build image --tag "$RELEASE_VERSION"
+      # si#344 C.4: 'kernel-oci' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-kernel-oci.tar" build/image
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-oci
+          path: ${{ runner.temp }}/simplon-handoff-kernel-oci.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - run: exec ./simplon.sh test image --tag "$RELEASE_VERSION"
+      # si#344 C.4: 'kernel-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - run: tar -cf "${{ runner.temp }}/simplon-handoff-kernel-checked.tar" build/test/kernel-image.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-checked
+          path: ${{ runner.temp }}/simplon-handoff-kernel-checked.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
-  # The wheel, built from the tagged commit and published to PyPI by Trusted Publishing - an OIDC
-  # token, no API token in the repository. PyPI's publisher is bound to this file's name and the
+  # The wheel `artifacts` built from the tagged commit (si#789: handed over as `dist`, not built
+  # again), published to PyPI by Trusted Publishing - an OIDC token, no API token in the repository. PyPI's publisher is bound to this file's name and the
   # `pypi` environment, which is why neither moves.
-  # D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+  # D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
   publish:
     runs-on: ubuntu-latest
-    needs: release
+    needs:
+      - release
+      - artifacts
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     environment: pypi
@@ -412,9 +470,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # si#344 C.4: 'dist' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-dist.tar"
       # si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
-      # holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
-      # the check below would go red, and the jobs after this one would never rehearse.
+      # holds it equal). A dry run pushes no tag, so the cut puts this checkout where a real run stands:
+      # on the version `artifacts` built (si#789: this job builds nothing, so it is no longer about a
+      # `.devN` wheel, only about rehearsing at the real version).
       - name: Cut the tag in this checkout
         if: ${{ inputs.dry_run }}
         run: |
@@ -437,7 +511,6 @@ jobs:
             echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
             exit 1
           fi
-      - run: exec ./simplon.sh build wheel
       # si#3. The version is derived from git by setuptools-scm, so comparing the tag with it would
       # be a tautology. What is not tautological is whether the derivation saw the inputs it needs:
       # a shallow clone, an unclean tree (a `+local` segment) or a tag that is not where the build
@@ -520,7 +593,7 @@ jobs:
   # steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
   # still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
   # written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
-  # D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+  # D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
   homebrew-tap:
     runs-on: ubuntu-latest
     permissions:
@@ -659,11 +732,15 @@ jobs:
   # The kernel image goes out with every release (Marco, 2026-10-10), for amd64 and arm64, with the
   # run's own GITHUB_TOKEN. PUBLISH FIRST, PIN AFTERWARDS: the pin moves in a pull request a person
   # merges, and CI is dispatched on it because nothing a GITHUB_TOKEN pushes starts a workflow
-  # (si#365). After `publish`, so the image carries the version PyPI serves.
-  # D12: an exception that waits on #789 (build once, release promotes); #864 makes it a counted `exception:`.
+  # (si#365). After `publish`, so the image carries the version PyPI serves. Since si#789 it builds
+  # nothing and needs no emulator: `release push-image` pushes the OCI archive `artifacts` built and
+  # tested, handed over with its test record. A rehearsal checks the archive offline and pushes nothing.
+  # D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
   image:
     runs-on: ubuntu-latest
-    needs: publish
+    needs:
+      - publish
+      - artifacts
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     permissions:
@@ -751,9 +828,40 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # si#344 C.4: 'kernel-oci' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-oci
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-kernel-oci.tar"
+      # si#344 C.4: 'kernel-checked' is produced in one job of this workflow and consumed in another, and every
+      # job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+      # and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+      #
+      # An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+      # tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+      # path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+      #
+      # The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+      # producer is guaranteed, so nothing else writes that name).
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-checked
+          path: ${{ runner.temp }}
+      - run: tar -xf "${{ runner.temp }}/simplon-handoff-kernel-checked.tar"
       # si#491 decision 5, on a REHEARSAL only: the release job's own cut, copied verbatim (a test
-      # holds it equal). A dry run pushes no tag, and without it the wheel would be built as `.devN`,
-      # the check below would go red, and the jobs after this one would never rehearse.
+      # holds it equal). A dry run pushes no tag, so the cut puts this checkout where a real run stands:
+      # on the version `artifacts` built (si#789: this job builds nothing, so it is no longer about a
+      # `.devN` wheel, only about rehearsing at the real version).
       - name: Cut the tag in this checkout
         if: ${{ inputs.dry_run }}
         run: |
@@ -776,13 +884,9 @@ jobs:
             echo "::error::$RELEASE_VERSION is not on origin at this commit (it names ${tagged:-nothing}); the release job pushes it, so rerun the whole run rather than this job alone"
             exit 1
           fi
-      # The image declares linux/arm64 too (si#368); this runner is amd64.
-      - uses: docker/setup-qemu-action@v3
-        with:
-          image: tonistiigi/binfmt:qemu-v10.2.3
-          platforms: arm64
-      - run: exec ./simplon.sh build image --tag "$RELEASE_VERSION"
-      - run: exec ./simplon.sh test image --tag "$RELEASE_VERSION"
+      # The rehearsal of the push - the archive, its record and the evidence checked, nothing pushed.
+      - if: ${{ inputs.dry_run }}
+        run: exec ./simplon.sh release push-image --tag "$RELEASE_VERSION" --dry-run
       - if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

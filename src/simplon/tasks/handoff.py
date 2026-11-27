@@ -4,7 +4,11 @@ A generated workflow runs commands in jobs, and GitHub gives every job a fresh m
 produces is therefore not on the disk of the next job, however the manifest orders the two commands. The
 `produces:`/`consumes:` edges already say which artifact goes from which command to which; this module reads
 them per job and says what has to cross: the consumer's job needs the producer's job, the producer's job uploads
-after its last producing step, the consumer's job downloads before its first consuming step.
+after its last producing step, the consumer's job downloads before its first step (si#789: it had been before its
+first consuming step, but a verbatim step can read a handed-over file too - simplon's `publish` checks the wheel's
+version and uploads it to PyPI in `run:`/`uses:` steps before any command consumes `dist` - and the hand-off cannot
+see what a verbatim step reads. Fetching first costs nothing: the artifact comes from another job, and no step of
+this one produces it, or nothing would be downloaded).
 
 Producer and consumer in one job hand nothing over: the files are already there.
 
@@ -18,7 +22,10 @@ accident.
 - An artifact produced in more than one job, or in a matrix job, and consumed in a job that does not produce
   it: GitHub refuses a second upload under one name in one run, and which one to take would be a guess.
 - An artifact with no `path:` that crosses: there is no file to hand over. An image lives in one job's docker
-  daemon, and the next job's daemon has it only when the runner happens to be shared.
+  daemon, and the next job's daemon has it only when the runner happens to be shared. Unless the consuming step
+  also takes an artifact WITH a path that the same producing step wrote beside it (si#789): that one crosses and
+  carries it - `build image` writes the image's OCI archive in the same bake, and `release push-image` reads the
+  image's declaration and pushes the archive.
 - An artifact whose name cannot be written safely, or whose `path:` tar would store somewhere else.
 - A producer job that runs only under an `if:` its consumer does not share: a skipped job is not red.
 - Jobs that need each other: GitHub refuses the file, far from the cause.
@@ -79,12 +86,14 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
     """Every job's hand-off, or a ValueError naming the workflow, the job and the artifact."""
     first: dict[str, dict[str, tuple[int, str]]] = {}
     last: dict[str, dict[str, int]] = {}
+    beside: dict[tuple[str, int, str], set[str]] = {}
     for run in runs:
         for at, leaves in enumerate(run.steps):
             for path, spec in leaves:
                 for artifact in _bound(spec.produces):
                     first.setdefault(artifact, {}).setdefault(run.job, (at, path))
                     last.setdefault(artifact, {})[run.job] = at
+                    beside.setdefault((run.job, at, path), set()).add(artifact)
     matrix = {run.job: run.matrix for run in runs}
     condition = {run.job: run.condition for run in runs}
     added: dict[str, set[str]] = {run.job: set() for run in runs}
@@ -124,6 +133,10 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                             f"runs once per matrix entry - one run uploads an artifact once, so produce it in a "
                             f"job without `strategy:`, or run '{path}' in '{source}'")
                     if declared is None or not declared.path:
+                        made_at, maker = first[artifact][source]
+                        carried = (beside.get((source, made_at, maker), set()) - {artifact}) & set(_bound(spec.consumes))
+                        if any(artifacts.get(other) is not None and artifacts[other].path for other in carried):
+                            continue
                         raise ValueError(
                             f"{where}: '{path}' consumes '{artifact}' from job '{source}', and '{artifact}' declares "
                             f"no `path:`, so there is no file to hand over - run its producer and '{path}' in one job")
@@ -149,7 +162,7 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                             f"the same `if:`, or run '{path}' in '{source}'")
                     if artifact not in fetched:
                         fetched.add(artifact)
-                        downloads[run.job].setdefault(at, []).append(artifact)
+                        downloads[run.job].setdefault(0, []).append(artifact)
                     if artifact not in uploads[source].get(after, []):
                         uploads[source].setdefault(after, []).append(artifact)
                     if source not in needs[run.job] and source not in run.needs:

@@ -718,16 +718,22 @@ def test_a_release_consuming_nothing_built_gets_no_artifacts_job():
 
 
 def test_an_artifact_the_release_workflow_produces_is_not_rebuilt():
-    """The formula needs a tagged commit and a wheel on PyPI (`ci: skip:`); `publish` renders it after the upload,
-    so the tag's producers do not. A leaf ci.yml does not run is not one of them."""
+    """Design 4.3's rule: whatever a step of release.yml produces is not rebuilt on the tag. `publish` renders the
+    formula and tests it after the upload, so the formula's leaves stay out even where ci.yml WOULD run them: the
+    `ci: skip:` that keeps them out of ci.yml is taken away here, so only the rule can hold them out."""
     # arrange
-    manifest, data, _ = _simplon()
+    text = MANIFEST.read_text(encoding="utf-8")
+    skip = re.compile(r'\n        ci: \{ skip: "needs a tagged commit: the formula[^\n]*')
+    assert len(skip.findall(text)) == 2
+    candidate = skip.sub("", text)
+    manifest = manifest_mod.load(candidate, catalogue=catalogue_mod.load())
 
     # act
-    words = [leaf.words for leaf in releasepipeline.producers_on_tag(manifest, data)]
+    words = [leaf.words for leaf in releasepipeline.producers_on_tag(manifest, yaml.safe_load(candidate))]
 
     # assert
     assert "build homebrew-formula" not in words and "test homebrew-formula" not in words
+    assert words == ["build wheel", "build image", "test image"]
 
 
 def test_the_jobs_stand_in_the_order_release_artifacts_declared_website():
@@ -839,3 +845,34 @@ def test_a_declared_release_job_named_artifacts_is_refused(product):
     assert "declares a job 'artifacts', the name of the derived job that runs the release's producers" in message, \
         message
     assert "rename yours" in message
+
+
+@pytest.mark.parametrize("old, new, named", [
+    # the build leaf may not run unattended, so `producers_on_tag` leaves it out and its file is made nowhere
+    ('make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: true,',
+     'make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: false,', "'app-bin'"),
+    # no leaf produces what the release step consumes at all
+    ("ship: { task: ship, consumes: { evidence: app-checked } }",
+     "ship: { task: ship, consumes: { evidence: app-orphan } }", "'app-orphan'"),
+], ids=["only-producer-not-unattended", "no-producer"])
+def test_a_release_consumed_artifact_nothing_on_the_tag_produces_is_refused_naming_it(old, new, named):
+    """si#789 (4a's silent drop): an artifact a release step consumes that no CI candidate and no release step
+    produces is not dropped quietly - generation refuses, naming the artifact and the step that consumes it. The
+    refusals are the existing ones (the derived CI's, and `handoff.plan`'s "no job in this workflow produces
+    it"); no second rule."""
+    # arrange
+    from simplon.manifest import artifactsection
+    product = CLOSURE.replace(old, new, 1).replace(
+        "artifacts:\n", "artifacts:\n  app-orphan: { kind: test-result, path: build/test/orphan.json }\n", 1)
+    assert product != CLOSURE
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+        release = _workflows(product)["release"]
+        workflowgen.render(release, manifest=loaded, product="app", source="app.yaml",
+                           artifacts=artifactsection.declared(yaml.safe_load(product)))
+
+    # assert
+    message = str(refused.value)
+    assert named in message and ("produces it" in message or "is not run by the CI" in message), message

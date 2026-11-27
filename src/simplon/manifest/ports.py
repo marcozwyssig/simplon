@@ -436,7 +436,19 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
                    kinds: Mapping[str, str], about: Mapping[str, set[str]]) -> None:
     """Rule 6 (spec C.3, C.5): a command under `ci: release:` that consumes an artifact X consumes every test
     result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
-    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes."""
+    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes.
+
+    One widening (si#789): a result about X is also about an artifact Y the command that produced X produced
+    beside it, when the release consumes BOTH - `build image` writes the image's OCI archive in the same bake,
+    `test image` runs the image, and `release push-image` takes the image for its declaration and the archive for
+    its bytes (and holds the archive's children against what the test ran before it pushes). A release that
+    takes Y without X binds nothing that says what was tested, and stays refused."""
+    together: dict[str, set[str]] = {}
+    for members in manifest.commands.values():
+        for spec in members.values():
+            made = {a for names in _bound(spec, "produces").values() for a in names}
+            for artifact in made:
+                together.setdefault(artifact, set()).update(made - {artifact})
     for group, members in manifest.commands.items():
         if not _under(manifest, group, "release"):
             continue
@@ -447,7 +459,9 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
             for subject in consumed:
                 if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):
                     continue
-                wanted = about.get(subject, set())
+                wanted = set(about.get(subject, set()))
+                for sibling in together.get(subject, set()) & set(consumed):
+                    wanted |= about.get(sibling, set())
                 if not wanted:
                     raise ValueError(
                         f"command '{where}' releases '{subject}', and no test produces a result about it - add "
