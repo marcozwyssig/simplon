@@ -81,9 +81,10 @@ def directory(base: Path, product: str, name: str, instance: str) -> Path:
     return base / product / f"{name}-{instance}"
 
 
-def prepare(path: Path, label: str, base: Path) -> str:
-    """Make `path` (`directory(base, ...)`) exist as a directory the caller owns, or say why it cannot be,
-    having run nothing. "" once it is there and the caller's.
+def prepare(path: Path, label: str, base: Path) -> tuple[Path | None, str]:
+    """Make `path` (`directory(base, ...)`) exist as a directory the caller owns: `(resolved path, "")`,
+    or `(None, why not)` having run nothing. The caller MOUNTS THE RESOLVED PATH it is handed - the one
+    that was checked - rather than spelling the lexical one again.
 
     `label` opens every sentence (the command and the entry), so the reader is told which declaration to
     look at.
@@ -96,20 +97,32 @@ def prepare(path: Path, label: str, base: Path) -> str:
     resolved root, the rule `hostpath.mount_source` keeps for tree mounts. The root itself is followed:
     it is the caller's own choice, and a runner's tool cache is often a link. What this kernel creates
     below it is mode 0700, so the next caller's directory is nobody else's to plant in.
+
+    AND NO SWAP BETWEEN THE CHECK AND THE MOUNT (second review). Inside a 0700 product directory nobody
+    else can rename anything; what is left is the ROOT. A principal who can write it could rename
+    `<product>` away after the check and plant a link before `docker run -v`. So the root - followed, with
+    `os.stat`, because it is the caller's choice - must be writable by its owner alone, or sticky, which
+    stops anybody else renaming the caller's entries (the shape of /tmp).
     """
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError as failed:
-        return (f"{label}: {base} could not be made ({failed}). Point {CACHE_ENV} at a directory you can "
-                f"write, and run this again.")
+        return None, (f"{label}: {base} could not be made ({failed}). Point {CACHE_ENV} at a directory you "
+                      f"can write, and run this again.")
+    mode = os.stat(base).st_mode
+    if mode & (stat.S_IWGRP | stat.S_IWOTH) and not mode & stat.S_ISVTX:
+        return None, (f"{label} needs the cache root {base} writable by its owner alone or sticky; it is mode "
+                      f"{stat.S_IMODE(mode):04o}, so another user could swap what is checked here before it "
+                      f"is mounted. Run `chmod g-w,o-w {base}` or `chmod +t {base}`, then run this again.")
     for held in (path.parent, path):
         fault = _held(held, label)
         if fault:
-            return fault
-    if not path.resolve().is_relative_to(base.resolve()):
-        return (f"{label} needs {path} under the cache root {base.resolve()}; it resolves to "
-                f"{path.resolve()}. Remove it (rm -rf {path}) and run this again.")
-    return ""
+            return None, fault
+    resolved = path.resolve()
+    if not resolved.is_relative_to(base.resolve()):
+        return None, (f"{label} needs {path} under the cache root {base.resolve()}; it resolves to "
+                      f"{resolved}. Remove it (rm -rf {path}) and run this again.")
+    return resolved, ""
 
 
 def _held(path: Path, label: str) -> str:

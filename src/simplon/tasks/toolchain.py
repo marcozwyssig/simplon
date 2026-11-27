@@ -129,7 +129,7 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
                 build_root: str = "", home: str = "", name: str = "",
                 passes: tuple[str, ...] = (), entrypoint: str = "",
-                cache_root: Path | None = None) -> list[str]:
+                cache_dirs: Mapping[str, Path] | None = None) -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -161,15 +161,17 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     `entrypoint` (si#568) is the kernel's, never the manifest's: `build:model`/`test:model` with `binary:`
     run a product's own firn in an image whose ENTRYPOINT may be `/firn`. Empty adds nothing.
 
-    A `dir:` cache (si#865) is a BIND mount of `<cache_root>/<product>/<dir>-<instance>`, the same name
-    the volume form gives its volume, through `hostpath.translate` like every other source. `cache_root`
-    is resolved by the caller (`cachedir.root()` when it is None) and the directory must already exist as
-    the caller's: `prepare_caches` makes it, as `prepare_mounts` makes a mount's source.
+    A `dir:` cache (si#865) is a BIND mount of `<root>/<product>/<dir>-<instance>`, the same name the
+    volume form gives its volume, through `hostpath.translate` like every other source. `cache_dirs` is
+    what `prepare_caches` handed back - the RESOLVED path it checked, by `dir:` name - and that path is
+    the one mounted. A name it does not carry falls back to the lexical path under `cachedir.root()`,
+    which is unchecked: a caller that skips `prepare_caches` gets no guarantee about it.
     """
     volumes: list[str] = []
     for cache in cfg.caches:
         if isinstance(cache, CacheDir):
-            held = cachedir.directory(cache_root or cachedir.root(), product, cache.dir, instance)
+            held = (cache_dirs or {}).get(cache.dir) or cachedir.directory(cachedir.root(), product, cache.dir,
+                                                                           instance)
             volumes += ["-v", f"{hostpath.translate(held)}:{cache.path}"]
         else:
             volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
@@ -304,10 +306,11 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     outputs.ensure_home()
     # si#511, for the same reason and in the same place: a mount point docker has to create is created
     # root-owned, so the kernel makes every one first, as the caller - or refuses before making any.
-    cache_root = cachedir.root()
-    fault = (prepare_mounts(cfg, product.root, where)
-             or prepare_caches(cfg, product.name, instance, where, cache_root)
-             or docker.ownership_fault([outputs.root()], product.root))
+    fault = prepare_mounts(cfg, product.root, where)
+    cache_dirs: dict[str, Path] = {}
+    if not fault:
+        cache_dirs, fault = prepare_caches(cfg, product.name, instance, where)
+    fault = fault or docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
         return None
@@ -317,7 +320,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network, name=name,
-                       passes=launcherenv.running(), entrypoint=entrypoint, cache_root=cache_root)
+                       passes=launcherenv.running(), entrypoint=entrypoint, cache_dirs=cache_dirs)
     return line, name
 
 
@@ -393,22 +396,26 @@ def _caches(raw: object, where: str) -> list[Cache | CacheDir]:
 
 
 def prepare_caches(cfg: Toolchain, product: str, instance: str, where: str,
-                   cache_root: Path | None = None) -> str:
-    """Make every `dir:` cache exist as a directory the caller owns, or return why not (si#865).
+                   cache_root: Path | None = None) -> tuple[dict[str, Path], str]:
+    """Make every `dir:` cache exist as a directory the caller owns: `(checked paths by dir name, "")`, or
+    `({}, why not)` (si#865). Hand the paths to `docker_argv` as `cache_dirs`, so the line mounts what was
+    checked.
 
     BEFORE THE LINE, for the reason `prepare_mounts` gives: a source docker has to create is created
     root-owned, and the container run as the caller then cannot write into it. A volume entry is left to
-    docker, as it always was. "" once every directory is there; a product that builds a Toolchain in
-    Python and runs `docker_argv` itself calls this first, as it calls `prepare_mounts`.
+    docker, as it always was. A product that builds a Toolchain in Python and runs `docker_argv` itself
+    calls this first, as it calls `prepare_mounts`.
     """
     base = cache_root or cachedir.root()
+    checked: dict[str, Path] = {}
     for cache in cfg.caches:
         if isinstance(cache, CacheDir):
-            fault = cachedir.prepare(cachedir.directory(base, product, cache.dir, instance),
-                                     f"{where}: cache '{cache.dir}'", base)
-            if fault:
-                return fault
-    return ""
+            held, fault = cachedir.prepare(cachedir.directory(base, product, cache.dir, instance),
+                                           f"{where}: cache '{cache.dir}'", base)
+            if held is None:
+                return {}, fault
+            checked[cache.dir] = held
+    return checked, ""
 
 
 _MOUNT_FORM = "`<path under the tree>:<absolute path in the container>`, optionally followed by `:ro`"

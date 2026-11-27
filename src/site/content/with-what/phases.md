@@ -792,7 +792,11 @@ with:
   `/cache/dirs` and tells the kernel both sides, the way it does for the tree. A cache root that cannot be
   mounted is one warning. A `dir:` cache is then refused by name before its command runs.
 - **From Python.** A product that calls `docker_argv` itself passes `CacheDir(dir, path)` in `caches=` and
-  calls `toolchain.prepare_caches(cfg, product, instance, where)` before the run.
+  calls `toolchain.prepare_caches(cfg, product, instance, where)` before the run. It answers the checked
+  paths and the refusal; pass the paths to `docker_argv` as `cache_dirs=`.
+- **A shared cache root must be sticky or writable by its owner alone.** Otherwise another user could swap
+  a checked directory for a link before the mount, so the run is refused and the message names the
+  `chmod`. Below the root, the kernel makes `<product>` and the entry mode 0700 and refuses a link there.
 
 ## Where to go next
 

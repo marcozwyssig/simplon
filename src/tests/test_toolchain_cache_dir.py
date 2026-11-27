@@ -132,7 +132,7 @@ def test_docker_argv_bind_mounts_the_directory(monkeypatch):
 
     # act
     line = toolchain.docker_argv(cfg, root=Path("/repo"), product="firn", instance="main", extra=[],
-                                 cache_root=Path("/cache-root"))
+                                 cache_dirs={"gradle": Path("/cache-root/firn/gradle-main")})
 
     # assert: an absolute source, so docker binds the directory instead of naming a volume
     assert "/cache-root/firn/gradle-main:/cache/gradle" in line
@@ -238,7 +238,7 @@ def test_a_symlinked_entry_is_refused_and_its_target_is_not_mounted(tmp_path):
     (base / "firn" / "gradle-main").symlink_to(target)
 
     # act
-    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+    _, fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
 
     # assert: refused in words, naming the path and the repair
     entry = base / "firn" / "gradle-main"
@@ -254,7 +254,7 @@ def test_a_symlinked_product_directory_is_refused(tmp_path):
     (base / "firn").symlink_to(target)
 
     # act
-    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+    _, fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
 
     # assert: refused, and nothing was made through the link
     assert fault == (f"firn build compile: cache 'gradle' needs {base / 'firn'} as a real directory; it is a "
@@ -271,7 +271,7 @@ def test_a_product_directory_another_uid_owns_is_refused(tmp_path):
     os.chown(base / "firn", 4242, 4242)
 
     # act
-    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+    _, fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
 
     # assert
     assert fault.startswith(f"firn build compile: cache 'gradle' needs {base / 'firn'} owned by uid 0; it is "
@@ -284,7 +284,7 @@ def test_the_product_directory_is_made_private_to_the_caller(tmp_path):
     base = tmp_path / "caches"
 
     # act
-    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+    _, fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
 
     # assert
     assert fault == ""
@@ -299,11 +299,68 @@ def test_a_symlinked_cache_root_itself_is_followed(tmp_path):
     (tmp_path / "root-link").symlink_to(real)
 
     # act
-    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "b", tmp_path / "root-link")
+    _, fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "b", tmp_path / "root-link")
 
     # assert
     assert fault == ""
     assert (real / "firn" / "gradle-main").is_dir()
+
+
+def _fault_of(result):
+    """The refusal `prepare_caches` answers, whichever shape it answers in."""
+    return result if isinstance(result, str) else result[1]
+
+
+def test_a_world_writable_cache_root_without_the_sticky_bit_is_refused(tmp_path):
+    # arrange: anybody can rename the caller's product directory away and plant a link after the check
+    base = tmp_path / "caches"
+    base.mkdir()
+    os.chmod(base, 0o777)
+
+    # act
+    fault = _fault_of(toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base))
+
+    # assert: refused before anything is made under it, naming the path, the mode and the repair
+    assert fault == (f"firn build compile: cache 'gradle' needs the cache root {base} writable by its owner "
+                     f"alone or sticky; it is mode 0777, so another user could swap what is checked here "
+                     f"before it is mounted. Run `chmod g-w,o-w {base}` or `chmod +t {base}`, then run "
+                     f"this again.")
+    assert not (base / "firn").exists()
+
+
+def test_a_sticky_world_writable_cache_root_is_accepted(tmp_path):
+    # arrange: /tmp's shape - others may write, nobody may rename what the caller made
+    base = tmp_path / "caches"
+    base.mkdir()
+    os.chmod(base, 0o1777)
+
+    # act
+    fault = _fault_of(toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base))
+
+    # assert
+    assert fault == ""
+    assert (base / "firn" / "gradle-main").is_dir()
+
+
+def test_the_line_mounts_the_resolved_path_that_was_checked(monkeypatch, tmp_path):
+    # arrange: a cache root named through a link - the line must carry where the check actually looked
+    (tmp_path / "tree").mkdir()
+    _product(monkeypatch, tmp_path / "tree", name="firn")
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "root-link").symlink_to(real)
+    monkeypatch.setenv("DELIVERY_DIR_CACHE", str(tmp_path / "root-link"))
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    monkeypatch.setattr(toolchain.labinstance, "resolve", lambda *a, **k: "main")
+    seen = _ran(monkeypatch)
+
+    # act
+    toolchain.run_toolchain(_Ctx("firn build compile"), image="img:1", argv=["cmd"],
+                            caches=[{"dir": "gradle", "path": "/cache/gradle"}])
+
+    # assert
+    assert f"{real.resolve()}/firn/gradle-main:/cache/gradle" in seen[0]
+    assert not any(str(tmp_path / "root-link") in arg for arg in seen[0])
 
 
 def test_a_volume_only_command_makes_no_directory(monkeypatch, tmp_path):
