@@ -4,7 +4,11 @@ A generated workflow runs commands in jobs, and GitHub gives every job a fresh m
 produces is therefore not on the disk of the next job, however the manifest orders the two commands. The
 `produces:`/`consumes:` edges already say which artifact goes from which command to which; this module reads
 them per job and says what has to cross: the consumer's job needs the producer's job, the producer's job uploads
-after its last producing step, the consumer's job downloads before its first consuming step.
+after its last producing step, the consumer's job downloads before its first step (si#789: it had been before its
+first consuming step, but a verbatim step can read a handed-over file too - simplon's `publish` checks the wheel's
+version and uploads it to PyPI in `run:`/`uses:` steps before any command consumes `dist` - and the hand-off cannot
+see what a verbatim step reads. Fetching first costs nothing: the artifact comes from another job, and no step of
+this one produces it, or nothing would be downloaded).
 
 Producer and consumer in one job hand nothing over: the files are already there.
 
@@ -18,7 +22,11 @@ accident.
 - An artifact produced in more than one job, or in a matrix job, and consumed in a job that does not produce
   it: GitHub refuses a second upload under one name in one run, and which one to take would be a guess.
 - An artifact with no `path:` that crosses: there is no file to hand over. An image lives in one job's docker
-  daemon, and the next job's daemon has it only when the runner happens to be shared.
+  daemon, and the next job's daemon has it only when the runner happens to be shared. Unless the consuming step
+  also takes an artifact WITH a path that the same producing step wrote beside it, on a port that verifies it
+  against the evidence (`artifactschema.VERIFIED_AGAINST_EVIDENCE`, rule 6's single source) (si#789): that one
+  crosses and carries it - `build image` writes the image's OCI archive in the same bake, and `release push-image`
+  reads the image's declaration and pushes the archive. On any other port the image is refused as before.
 - An artifact whose name cannot be written safely, or whose `path:` tar would store somewhere else.
 - A producer job that runs only under an `if:` its consumer does not share: a skipped job is not red.
 - Jobs that need each other: GitHub refuses the file, far from the cause.
@@ -31,6 +39,8 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
+
+from simplon.model import artifactschema
 
 if TYPE_CHECKING:
     from simplon.manifest.artifactsection import Declared
@@ -63,6 +73,14 @@ def _bound(sides: Mapping[str, tuple[str, ...]]) -> tuple[str, ...]:
     return tuple(artifact for names in sides.values() for artifact in names)
 
 
+def _verified(spec: "TaskCommand") -> set[str]:
+    """The artifacts `spec` consumes on a port whose body holds them against the evidence it consumes
+    (`artifactschema.VERIFIED_AGAINST_EVIDENCE`, the single source rule 6 widens on): only such a port may carry
+    an image across a job boundary (si#789, Marco's rule-6 ruling)."""
+    return {artifact for port, names in spec.consumes.items() for artifact in names
+            if (spec.task, port) in artifactschema.VERIFIED_AGAINST_EVIDENCE}
+
+
 #: What an artifact name that crosses may be made of. The name lands in a shell line and in upload-artifact's
 #: `name:`, which rejects `" : < > | * ? \\ /`.
 _SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
@@ -79,12 +97,14 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
     """Every job's hand-off, or a ValueError naming the workflow, the job and the artifact."""
     first: dict[str, dict[str, tuple[int, str]]] = {}
     last: dict[str, dict[str, int]] = {}
+    beside: dict[tuple[str, int, str], set[str]] = {}
     for run in runs:
         for at, leaves in enumerate(run.steps):
             for path, spec in leaves:
                 for artifact in _bound(spec.produces):
                     first.setdefault(artifact, {}).setdefault(run.job, (at, path))
                     last.setdefault(artifact, {})[run.job] = at
+                    beside.setdefault((run.job, at, path), set()).add(artifact)
     matrix = {run.job: run.matrix for run in runs}
     condition = {run.job: run.condition for run in runs}
     added: dict[str, set[str]] = {run.job: set() for run in runs}
@@ -124,6 +144,10 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                             f"runs once per matrix entry - one run uploads an artifact once, so produce it in a "
                             f"job without `strategy:`, or run '{path}' in '{source}'")
                     if declared is None or not declared.path:
+                        made_at, maker = first[artifact][source]
+                        carried = (beside.get((source, made_at, maker), set()) - {artifact}) & _verified(spec)
+                        if any(artifacts.get(other) is not None and artifacts[other].path for other in carried):
+                            continue
                         raise ValueError(
                             f"{where}: '{path}' consumes '{artifact}' from job '{source}', and '{artifact}' declares "
                             f"no `path:`, so there is no file to hand over - run its producer and '{path}' in one job")
@@ -149,7 +173,7 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                             f"the same `if:`, or run '{path}' in '{source}'")
                     if artifact not in fetched:
                         fetched.add(artifact)
-                        downloads[run.job].setdefault(at, []).append(artifact)
+                        downloads[run.job].setdefault(0, []).append(artifact)
                     if artifact not in uploads[source].get(after, []):
                         uploads[source].setdefault(after, []).append(artifact)
                     if source not in needs[run.job] and source not in run.needs:

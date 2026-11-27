@@ -79,17 +79,21 @@ def test_the_producing_job_archives_and_uploads_after_its_producing_step():
                                  "retention-days": 1, "overwrite": True}}
 
 
-def test_the_consuming_job_needs_the_producer_and_downloads_before_its_consuming_step():
+def test_the_consuming_job_needs_the_producer_and_downloads_before_its_first_step():
+    """si#789: before the job's first step, not its first consuming one - a verbatim step reads a handed-over file
+    too, and the hand-off cannot see which (simplon's `publish` checks and uploads `dist` before any command
+    consumes it)."""
     # act
     doc = yaml.safe_load(_render(SPLIT))
 
-    # assert: checkout, build image, download, untar, push
+    # assert: checkout, download, untar, build image, push
     job = doc["jobs"]["release"]
     assert job["needs"] == "test"
     steps = _steps(doc, "release")
-    assert steps[2] == {"uses": "actions/download-artifact@v4",
+    assert steps[1] == {"uses": "actions/download-artifact@v4",
                         "with": {"name": "app-checked", "path": "${{ runner.temp }}"}}
-    assert steps[3]["run"] == 'tar -xf "${{ runner.temp }}/simplon-handoff-app-checked.tar"'
+    assert steps[2]["run"] == 'tar -xf "${{ runner.temp }}/simplon-handoff-app-checked.tar"'
+    assert steps[3]["run"] == "exec ./demo.sh build image"
     assert steps[4]["run"] == "exec ./demo.sh release push-image"
 
 
@@ -218,16 +222,15 @@ def test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary()
     assert rendered["handoff-canary"].count("actions/upload-artifact@") == 1
     assert rendered["handoff-canary"].count("actions/download-artifact@") == 1
     assert "name: handoff-canary" in rendered["handoff-canary"]
-    # the allure report's, and since si#862 one per artifact release.yml consumes that ci.yml keeps for #789
-    kept = cipipeline._promotion(loaded, data, cipipeline.derive(loaded, data).selection).kept
-    assert rendered["ci"].count("actions/upload-artifact@") == 1 + len(kept)
+    # the allure report's alone: nothing is kept for a release to promote (si#789)
+    assert rendered["ci"].count("actions/upload-artifact@") == 1
     assert rendered["ci"].count("actions/download-artifact@") == 0
 
 
 def _lines(doc):
     """The tar lines the generator wrote, with `${{ runner.temp }}` replaced the way the runner replaces it."""
     pack = _steps(doc, "test")[3]["run"]
-    unpack = _steps(doc, "release")[3]["run"]
+    unpack = _steps(doc, "release")[2]["run"]
     return pack, unpack
 
 

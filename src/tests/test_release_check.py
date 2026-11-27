@@ -14,12 +14,23 @@ from pathlib import Path
 
 import pytest
 
+from types import SimpleNamespace
+
+from simplon.adapters import github
 from simplon.manifest import context
 from simplon.manifest.context import ProductContext
 from simplon.tasks import gitops, release
 
 from conftest import ROOT
 from test_release_tag import Lab, _commit, _git, _sha, lab  # noqa: F401 - `lab` is a fixture
+
+
+@pytest.fixture(autouse=True)
+def main_ci_is_green(monkeypatch):
+    """Every test but the CI ones below is about another check, so `main`'s CI is answered green for it; the
+    seam is the only thing replaced, and the tests of the CI check set their own verdict over this one."""
+    monkeypatch.setattr(release, "_ci_verdict",
+                        lambda sha, branch, origin="": github.CiVerdict("green", "https://example.invalid/run/1", "success"))
 
 
 @pytest.fixture
@@ -296,3 +307,135 @@ def test_a_check_whose_tag_listing_fails_is_red(lab, no_ref, monkeypatch, capsys
     # assert
     assert rc == 1
     assert "could not list the tags" in _out(capsys)
+
+
+# --- main's CI (si#789): a commit without a green `ci.yml` push run on the default branch is not released ---
+
+def _verdict(monkeypatch, state, url="", conclusion=""):
+    monkeypatch.setattr(release, "_ci_verdict", lambda sha, branch, origin="": github.CiVerdict(state, url, conclusion))
+
+
+def test_check_refuses_a_commit_with_no_main_ci_run(lab, no_ref, monkeypatch, capsys):
+    # arrange
+    _verdict(monkeypatch, "none")
+
+    # act
+    rc = release.check("v1.2.3")
+
+    # assert
+    out = _out(capsys)
+    assert rc == 1
+    assert _sha(lab.work) in out and "no ci.yml push run exists on main" in out
+
+
+def test_check_refuses_a_red_main_run_naming_it(lab, no_ref, monkeypatch, capsys):
+    # arrange
+    _verdict(monkeypatch, "red", "https://github.com/o/r/actions/runs/7", "failure")
+
+    # act
+    rc = release.check("v1.2.3")
+
+    # assert
+    out = _out(capsys)
+    assert rc == 1
+    assert "https://github.com/o/r/actions/runs/7" in out and "failure" in out
+
+
+def test_check_refuses_a_main_run_still_running(lab, no_ref, monkeypatch, capsys):
+    # arrange
+    _verdict(monkeypatch, "running", "https://github.com/o/r/actions/runs/8")
+
+    # act
+    rc = release.check("v1.2.3")
+
+    # assert
+    out = _out(capsys)
+    assert rc == 1
+    assert "not finished" in out and "https://github.com/o/r/actions/runs/8" in out
+
+
+def test_check_refuses_when_it_cannot_look(lab, no_ref, monkeypatch, capsys):
+    # arrange
+    def cannot(sha, branch, origin=""):
+        raise github.Unanswered("no token")
+    monkeypatch.setattr(release, "_ci_verdict", cannot)
+
+    # act
+    rc = release.check("v1.2.3")
+
+    # assert
+    out = _out(capsys)
+    assert rc == 1
+    assert "could not look" in out and "no token" in out
+    assert "no " + "ci.yml" not in out
+
+
+def test_check_passes_on_green(lab, no_ref, monkeypatch):
+    # arrange
+    _verdict(monkeypatch, "green", "https://github.com/o/r/actions/runs/9", "success")
+
+    # act / assert
+    assert release.check("v1.2.3") == 0
+
+
+def test_check_asks_for_the_head_commit_on_the_default_branch(lab, no_ref, monkeypatch):
+    # arrange
+    asked = []
+    monkeypatch.setattr(release, "_ci_verdict",
+                        lambda sha, branch, origin="": asked.append((sha, branch)) or github.CiVerdict("green", "", "success"))
+
+    # act
+    release.check("v1.2.3")
+
+    # assert
+    assert asked == [(_sha(lab.work), "main")]
+
+
+def _run(status, conclusion, n):
+    return SimpleNamespace(status=status, conclusion=conclusion, html_url=f"https://github.com/o/r/actions/runs/{n}")
+
+
+def _repo_with(runs, seen=None):
+    def get_runs(**kw):
+        if seen is not None:
+            seen.update(kw)
+        return runs
+    return SimpleNamespace(get_workflow=lambda name: SimpleNamespace(get_runs=get_runs))
+
+
+def test_main_ci_verdict_newest_attempt_decides(monkeypatch):
+    # arrange: the API lists a run once, with the conclusion of its newest attempt
+    seen = {}
+    monkeypatch.setattr(github, "repository", lambda origin="": _repo_with(
+        [_run("completed", "failure", 1), _run("completed", "success", 2)], seen))
+
+    # act
+    verdict = github.main_ci_verdict("abc", "main")
+
+    # assert
+    assert verdict.state == "green" and verdict.url.endswith("/2") and verdict.conclusion == "success"
+    assert seen == {"head_sha": "abc", "branch": "main", "event": "push"}
+
+
+def test_main_ci_verdict_states(monkeypatch):
+    def state(*runs):
+        monkeypatch.setattr(github, "repository", lambda origin="": _repo_with(list(runs)))
+        return github.main_ci_verdict("abc", "main")
+
+    assert state(_run("in_progress", None, 1)).state == "running"
+    assert state(_run("completed", "failure", 1), _run("in_progress", None, 2)).state == "running"
+    red = state(_run("completed", "cancelled", 1))
+    assert red.state == "red" and red.conclusion == "cancelled" and red.url.endswith("/1")
+    assert state().state == "none"
+
+
+def test_main_ci_verdict_a_failed_read_is_unanswered_not_none(monkeypatch):
+    # arrange
+    from github import GithubException
+    def refused(name):
+        raise GithubException(500, {"message": "boom"}, {})
+    monkeypatch.setattr(github, "repository", lambda origin="": SimpleNamespace(get_workflow=refused))
+
+    # act / assert
+    with pytest.raises(github.Unanswered):
+        github.main_ci_verdict("abc", "main")

@@ -138,6 +138,8 @@ def test_simplons_release_yml_is_derived():
     # assert
     entry = data["workflows"]["release"]
     assert "release" not in entry and not {"docs", "pages"} & set(entry["jobs"])
+    # si#789: the derived release job also reads main's CI runs, so it alone gains `actions: read`
+    old["release"]["permissions"] = {**old["release"]["permissions"], "actions": "read"}
     assert {name: jobs[name] for name in UNMOVED_JOBS} == {name: old[name] for name in UNMOVED_JOBS}
     assert len(expected_docs["steps"]) == len(old["docs"]["steps"]) - 1
     assert len(expected_pages["steps"]) == len(old["pages"]["steps"]) - 1
@@ -478,8 +480,8 @@ def _publishing(step) -> bool:
     """A step that reaches PyPI, Pages, the registry or the remote - what a rehearsal must not do."""
     uses, run = str(step.get("uses", "")), str(step.get("run", ""))
     return (uses.startswith(("pypa/gh-action-pypi-publish", "actions/deploy-pages"))
-            or any(word in run for word in ("release push-image", "release homebrew-tap", "git push",
-                                            "release push-pin", "gh pr create")))
+            or ("release push-image" in run and "--dry-run" not in run)
+            or any(word in run for word in ("release homebrew-tap", "git push", "release push-pin", "gh pr create")))
 
 
 #: si#537: what a real run passes the formula steps. They read the version from PyPI, which a dry run never
@@ -503,18 +505,23 @@ def _mints_a_token(step) -> bool:
     return str(step.get("uses", "")).startswith(workflowgen.APP_TOKEN_ACTION.split("@")[0])
 
 
-def test_the_release_job_runs_the_gate_before_the_tag(workflow):
-    """Decision 2: a red test no longer leaves a tag behind, because the tests run before it is cut."""
+def test_the_release_job_runs_no_test_leaf(workflow):
+    """si#789: the green `ci.yml` run on `main` (`release check` looks it up) stands in for the tests, so the
+    release aggregate runs none of them and nothing archives a report: no test step, no report upload, and
+    the order is check, notes, tag."""
     # Arrange
-    runs = [str(step.get("run", "")) for step in workflow["jobs"]["release"]["steps"]]
+    steps = workflow["jobs"]["release"]["steps"]
+    runs = [str(step.get("run", "")) for step in steps]
 
     # Act
-    tag = next(i for i, run in enumerate(runs) if run.startswith("exec ./simplon.sh release tag"))
-    gate = [next(i for i, run in enumerate(runs) if run == f"exec ./simplon.sh test {leaf}")
-            for leaf in ("suite", "typecheck-python", "generated", "release-notes")]
+    tests = [run for run in runs if run.startswith("exec ./simplon.sh test ")]
+    order = [next(i for i, run in enumerate(runs) if run.startswith(f"exec ./simplon.sh release {leaf}"))
+             for leaf in ("check", "notes", "tag")]
 
     # Assert
-    assert gate == sorted(gate) and max(gate) < tag
+    assert tests == []
+    assert order == sorted(order)
+    assert not any(str(step.get("uses", "")).startswith("actions/upload-artifact@") for step in steps)
 
 
 def test_the_release_check_runs_before_anything_is_cut(workflow):
@@ -564,9 +571,11 @@ TAG_REQUIRED = "The tag is on origin at this commit"
 
 
 def _opening(steps):
-    """A product job's steps after si#756's reap, the checkout and the interpreter."""
+    """A product job's steps after si#756's reap, the checkout, the interpreter and the hand-off (si#789)."""
     return [step for step in steps if step.get("name") != workflowgen.REAP_NAME
-            and not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python"))]
+            and not str(step.get("uses", "")).startswith(("actions/checkout", "actions/setup-python",
+                                                           workflowgen.DOWNLOAD_ACTION))
+            and not str(step.get("run", "")).startswith("tar -xf ")]
 
 
 def test_every_product_job_rehearses_with_the_cut_and_requires_the_pushed_tag(workflow):
@@ -753,33 +762,89 @@ def test_no_script_reads_an_input_or_the_ref_name(workflow):
         assert "GITHUB_REF_NAME" not in run
 
 
-def test_the_release_job_archives_the_tests_that_gated_it(workflow):
-    """si#509 turned this around (si#491 decision 6 had stated the loss). The suite runs inside the derived
-    `release` job, and the job now ends with the kernel's archive: `test report` and the upload, both under
-    `if: always()`, so a red release run carries its report too - the archive si#248 asked for, from the
-    run that gated the release rather than from ci.yml's run of the same commit."""
+def _job_runs(workflow, name) -> list[str]:
+    return [str(step.get("run", "")) for step in workflow["jobs"][name]["steps"]]
+
+
+def test_the_release_tests_the_image_between_building_and_publishing_it(workflow):
+    """si#344 C.3, si#789: `artifacts` builds and tests the image on the tag; `image`, which waits for it, pushes
+    what was tested."""
     # arrange
-    steps = workflow["jobs"]["release"]["steps"]
+    built = _job_runs(workflow, "artifacts")
+    pushing = _job_runs(workflow, "image")
 
     # act
-    report, upload = steps[-2:]
+    build = next(i for i, r in enumerate(built) if r.startswith("exec ./simplon.sh build image --tag"))
+    test = next(i for i, r in enumerate(built) if r.startswith("exec ./simplon.sh test image --tag"))
 
     # assert
-    assert report == {"if": "always()", "run": "exec ./simplon.sh test report"}
-    assert upload["uses"].startswith("actions/upload-artifact@") and upload["if"] == "always()"
-    assert upload["with"]["path"] == "tests/reports/*.html"
-    assert upload["with"]["if-no-files-found"] == "error"
+    assert build < test
+    assert any(r.startswith("exec ./simplon.sh release push-image --tag") for r in pushing)
+    assert "artifacts" in _upstream(workflow["jobs"], "image")
 
 
-def test_the_release_tests_the_image_between_building_and_publishing_it():
+#: What the derived `artifacts` job builds and tests (si#789), and so what no promotion job may build again.
+BUILT_ONCE = ("build wheel", "build image", "test image")
+
+
+def test_no_promotion_job_builds_what_artifacts_built(workflow):
+    # act
+    again = {name: [r for r in _job_runs(workflow, name) for leaf in BUILT_ONCE
+                    if r.startswith(f"exec ./simplon.sh {leaf}")]
+             for name in ("publish", "image")}
+
+    # assert
+    assert again == {"publish": [], "image": []}
+    assert all(any(r.startswith(f"exec ./simplon.sh {leaf}") for r in _job_runs(workflow, "artifacts"))
+               for leaf in BUILT_ONCE)
+
+
+def _downloads(workflow, name) -> list[dict]:
+    return [step for step in workflow["jobs"][name]["steps"]
+            if str(step.get("uses", "")) == workflowgen.DOWNLOAD_ACTION]
+
+
+def test_publish_downloads_dist_from_artifacts_before_it_reads_it(workflow):
+    """The tag check and the PyPI upload read `dist/` in verbatim steps, so the wheel `artifacts` built arrives
+    before them, and `publish` does not start when `artifacts` is red."""
     # arrange
-    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    steps = workflow["jobs"][PUBLISH_JOB]["steps"]
 
-    # assert: si#344 C.3 - `release push-image` consumes the verdict record `test image` writes
-    build = text.index("./simplon.sh build image --tag")
-    test = text.index("./simplon.sh test image --tag")
-    release = text.index("./simplon.sh release push-image --tag")
-    assert build < test < release
+    # act
+    fetched = next(i for i, s in enumerate(steps)
+                   if s.get("uses") == workflowgen.DOWNLOAD_ACTION and s["with"]["name"] == "dist")
+    checked = next(i for i, s in enumerate(steps) if s.get("name") == "The wheel that was built must be the tag")
+    uploaded = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("pypa/gh-action-pypi-publish"))
+
+    # assert
+    assert "artifacts" in workflow["jobs"][PUBLISH_JOB]["needs"]
+    assert fetched < checked < uploaded
+
+
+def test_push_image_consumes_the_evidence_the_artifacts_job_produced(workflow):
+    # act
+    names = [step["with"]["name"] for step in _downloads(workflow, "image")]
+
+    # assert: the archive and its test record, from `artifacts`, which `image` waits for
+    assert names == ["kernel-oci", "kernel-checked"]
+    assert "artifacts" in workflow["jobs"]["image"]["needs"]
+
+
+def test_a_missing_artifact_fails_naming_it(workflow):
+    """A promotion job whose artifact is not in the run goes red at the download, which names it
+    (download-artifact@v4: "Artifact not found for name: <name>"), never a fallback build: no download step may
+    carry `continue-on-error`, and no job-level one may mask it."""
+    for name in ("publish", "image"):
+        # arrange
+        job = workflow["jobs"][name]
+
+        # act
+        fetched = _downloads(workflow, name)
+
+        # assert
+        assert fetched, name
+        assert all("continue-on-error" not in step for step in fetched), name
+        assert "continue-on-error" not in job, name
 
 
 def test_the_readme_releases_from_the_button():

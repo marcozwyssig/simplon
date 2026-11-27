@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Literal, NamedTuple
 
 import requests
 from github import Auth, Github, GithubException, UnknownObjectException
@@ -140,6 +141,37 @@ def published(repo: Repository, tag: str) -> GitRelease | None:
         raise Unanswered(f"could not ask whether {tag} is published: {said(refused)}") from None
     except requests.exceptions.RequestException as unreachable:
         raise Unanswered(f"could not ask whether {tag} is published: {unreachable}") from None
+
+
+class CiVerdict(NamedTuple):
+    """What a commit's push runs of one workflow on one branch add up to: `green` (any run succeeded),
+    `running` (none did, one is not finished), `red` (all finished, none succeeded), `none` (no run exists).
+    `url` and `conclusion` belong to the run that decides, empty for `none`."""
+    state: Literal["green", "red", "running", "none"]
+    url: str
+    conclusion: str
+
+
+def main_ci_verdict(sha: str, branch: str, workflow: str = "ci.yml", origin: str = "") -> CiVerdict:
+    """The verdict on `sha` from `workflow`'s push runs on `branch` (si#789). The runs list reports each run
+    with its NEWEST attempt's status and conclusion, so a re-run that went green replaces the red it reran.
+    A read that failed is Unanswered, never `none`: "could not ask" is not "no run"."""
+    repo = repository(origin)
+    try:
+        runs = list(repo.get_workflow(workflow).get_runs(head_sha=sha, branch=branch, event="push"))
+    except GithubException as refused:
+        raise Unanswered(f"could not read the {workflow} runs for {sha}: {said(refused)}") from None
+    except requests.exceptions.RequestException as unreachable:
+        raise Unanswered(f"could not read the {workflow} runs for {sha}: {unreachable}") from None
+    for run in runs:
+        if run.status == "completed" and run.conclusion == "success":
+            return CiVerdict("green", run.html_url, "success")
+    for run in runs:
+        if run.status != "completed":
+            return CiVerdict("running", run.html_url, run.status or "")
+    if runs:
+        return CiVerdict("red", runs[0].html_url, runs[0].conclusion or "")
+    return CiVerdict("none", "", "")
 
 
 def releases_for(repo: Repository, tag: str) -> list[GitRelease]:

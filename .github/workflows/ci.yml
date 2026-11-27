@@ -46,18 +46,6 @@ jobs:
   #   version (si#543), measured on ghr-8 in PR #890; the release checks the formula
   # `test handoff-canary` - runs across a job boundary in handoff-canary.yml (si#639, spec 5.3a);
   #   one job would prove nothing
-  #
-  # si#862, #789: release.yml consumes these, and this run keeps none of them for it to promote:
-  # `kernel-checked` - `test image` produces it, and CI runs it with `ci: params:`, narrower than
-  #   the release
-  # `kernel-notes` - `release notes` produces it, and it is not a CI leaf (it is in the 'release'
-  #   group)
-  # `simplon-formula` - `build homebrew-formula` produces it, and ci.yml leaves it out: needs a
-  #   tagged commit: the formula refuses a wheel with a local version (si#543), measured on ghr-8
-  #   in PR #890; the release checks the formula
-  # `simplon-formula-checked` - `test homebrew-formula` produces it, and ci.yml leaves it out:
-  #   needs a tagged commit: the formula refuses a wheel with a local version (si#543), measured on
-  #   ghr-8 in PR #890; the release checks the formula
   ci:
     runs-on: ghr-8
     env:
@@ -164,8 +152,7 @@ jobs:
       # Every later leaf waits for this step's success: a missing toolchain would otherwise turn every leaf red.
       - id: prepare_install
         run: exec ./simplon.sh support install
-      - id: leaf_build_wheel
-        run: exec ./simplon.sh build wheel
+      - run: exec ./simplon.sh build wheel
       - if: ${{ !cancelled() && steps.prepare_docker.outcome == 'success' && steps.prepare_disk.outcome == 'success'
           && steps.prepare_install.outcome == 'success' }}
         run: exec ./simplon.sh build reference
@@ -202,17 +189,6 @@ jobs:
         run: exec ./simplon.sh test manifest-model
       - if: always()
         run: exec ./simplon.sh test report
-      # si#862, #789: what release.yml consumes, kept from push and dispatch runs (never a pull
-      # request's) for 90 days under the manifest's artifact names, so a release can promote what this
-      # run built for its commit. Each upload waits for its producer's success.
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && steps.leaf_build_wheel.outcome == 'success' && (github.event_name == 'push'
-          || github.event_name == 'workflow_dispatch') }}
-        with:
-          name: dist
-          path: dist
-          if-no-files-found: error
-          retention-days: 90
       - uses: actions/upload-artifact@v4
         if: always()
         with:

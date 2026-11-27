@@ -236,7 +236,11 @@ artifacts:
 Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#ports)):
 
 - **Rule 6.** A release command that consumes an artifact must bind every test result about it to `evidence`.
-  A test result is about what its producer consumes, directly. With no such test the load refuses: "... and no
+  A test result is about what its producer consumes, directly. One widening (si#789): on an input port that
+  declares `verifies_against_evidence`, an artifact is also covered by the tests about what the same command
+  produced beside it, when the release consumes that one too - the port's body holds it against what the
+  evidence ran. The kinds page lists [the ports that declare it](../../with-what/kinds/#ports); on every other
+  port the rule is as strict as without the widening. With no such test the load refuses: "... and no
   test produces a result about it - add a command under `ci: test:` ...". With one left unbound it refuses:
   "... so no release goes past a test that ran". The four kinds a release produces about itself
   (`test-result`, `release-notes`, `tag`, `release`) need no evidence.
@@ -251,8 +255,9 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
 and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](#passes-what-an-aggregate-hands-its-leaves)
 it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to every member that
 takes one. simplon's own `release.yml` is the first workflow derived from such an aggregate (si#491):
-`release all` is its release aggregate, so its job runs the test leaves, the notes and the
-tag in this order, so a red test leaves no tag behind. Typed in a checkout, `release all` still ends by
+`release all` is its release aggregate, so its job runs the release check, the notes and the
+tag in this order, so a commit without green main CI gets no tag (si#789). The image's arm64 test runs on the
+tag after it is pushed: if it goes red, the tag stays and nothing is published. Typed in a checkout, `release all` still ends by
 pushing the tag - and for simplon nothing then publishes it, because only the button does; if `main`
 moves before the button is pressed, that version is refused there as taken. PyPI, the site and the image publish in product
 jobs after it, and a publish that fails there is finished by rerunning that job.
@@ -1340,7 +1345,8 @@ command in another job of the same workflow `consumes:`, the generated file says
 - the producing job archives the artifact's `path:` with `tar` after its last producing step and uploads it
   under the artifact's name;
 - the consuming job gets `needs:` on the producing job (after any `needs:` you declared), and downloads and
-  unpacks it before its first consuming step.
+  unpacks it before its first step, so a verbatim `run:` or `uses:` step that reads the file finds it too
+  (si#789).
 
 The archive keeps the path and the file modes, which `upload-artifact` alone does not. Producer and consumer
 in one job hand nothing over, and a workflow with no such edge is written exactly as before. The archive is
@@ -1355,7 +1361,7 @@ involved, and the artifact where one is the cause:
 | consume an artifact that no job in it produces, and that has no `registry:` | nothing puts it there. A release whose evidence no job writes would be green with no test run |
 | consume, in one job, before the step of that job that produces it | the order is yours; the data only checks it |
 | consume an artifact that is produced in more than one job, or in a matrix job | one run uploads one artifact once |
-| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job |
+| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job - or, as `release:image` does since si#789, consume beside it an artifact with a `path:` that the same step produced (`build:image`'s `archive`), on a port that verifies it against the evidence ([the kinds page lists them](../../with-what/kinds/#ports)): that one crosses and carries it. On any other port the image is refused |
 | hand over an artifact whose name has anything but letters, digits, `.`, `_` and `-` | the name goes into a shell line and into `upload-artifact`, which rejects `" : < > | * ? \ /` |
 | hand over an artifact whose `path:` is absolute or has a `..` segment | `tar` stores it somewhere else, so the consumer finds nothing where it looks |
 | hand over from a job with an `if:` that the consuming job does not share | a skipped producer skips its consumer, and a skipped job is not red: the run would be green with nothing done |
@@ -1536,7 +1542,9 @@ empty default refused by the body counts. A product's own task has no model, so 
 says it (si#903): a parameter without a default is one the command line reads as a positional, and the
 derived step passes none, so it is refused the same way. That reads the body at generation, as the CLI
 does to run it: a body the generator cannot import is one the step could not run either. A leaf that is
-skipped or left out is not asked.
+skipped or left out is not asked. The release's `artifacts` job (si#789), which runs a leaf once more on the
+tag, does not apply `ci: { params: }`: a leaf it selects whose parameter only `ci: { params: }` binds is
+refused there, and the way out is binding it in the command's `with:`.
 
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
@@ -1568,18 +1576,18 @@ archiving `suites: reports:`, which a product with a `test:report` leaf therefor
 `after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
 consumer.
 
-**ci.yml keeps what the release consumes** (si#862, #789). Every artifact with a `path:` that a leaf of
-the derived release.yml consumes (the release aggregate's plan, a command step of a job declared under
-`workflows: release:`, the `website: by:` command) and a leaf of ci.yml's main job produces is uploaded
-after the last leaf, before the report's upload, under its manifest name and from its declared path. It
-is kept for 90 days, so a release cut days after the merge still finds the run of its commit. Only push
-and dispatch runs upload it: a pull request's run is not one a release promotes. Each upload waits for
-its producer's success and fails on a missing file. An artifact with no `path:` (an image) is not
-uploaded: it goes to its registry. One that ci.yml cannot keep once is named in the job's note with the
-reason, not refused, because CI still verifies it: produced only in `ci: platforms:` cells, by a gate
-member or a `cadence:` leaf (another file's run), or by no leaf ci.yml runs (a skipped one, or a release
-member such as `release notes`). One that ci.yml also hands from its main job to a cell job is refused:
-the hand-off already holds that name in the run. Without a derived release.yml nothing is kept.
+**ci.yml keeps nothing for the release** (si#789). A release does not promote what an earlier run of ci.yml
+built: it builds again, on the tag, in its own run. The derived release.yml gets an `artifacts` job after
+`release`, which selects the CI leaves (a build or test command ci.yml would run, unattended, with no
+`ci: { skip: }`) that produce an artifact a leaf of release.yml consumes, and the tests whose `evidence:` a
+release step consumes, then the producers of what those consume. What release.yml makes itself is not rebuilt.
+The job runs on the release job's machine, with its emulation and time limit, and with the release's
+parameters, not a leaf's `ci: params:`, so what is built and tested is what the release publishes. It hands
+each artifact over to the jobs that consume it in the same run. On a real run it requires the tag the
+`release` job pushed to be on origin at this commit; on a dry run, which pushes no tag, it cuts the tag in
+its own checkout, so the build is stamped with the version a real run would release. A product whose CI
+builds nothing the release consumes gets no `artifacts` job. Which commands those are for your manifest is
+shown by `support github workflows`, which writes the job into release.yml.
 
 **The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
 it is `github-ubuntu`:

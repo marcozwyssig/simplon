@@ -32,6 +32,7 @@ simplon typeOf simplon.manifest.Product {
       key = "image"
       task = simplon.catalogue.build_image
       produces = product.simplon.simplon.a_kernel
+      produces = product.simplon.simplon.a_kernel_oci
     }
     command docs typeOf simplon.pipeline.AggregateCommand {
       key = "docs"
@@ -134,6 +135,7 @@ simplon typeOf simplon.manifest.Product {
       key = "push-image"
       task = simplon.catalogue.release_image
       consumes = product.simplon.simplon.a_kernel
+      consumes = product.simplon.simplon.a_kernel_oci
       consumes = product.simplon.simplon.a_kernel_checked
     }
     command push_pin typeOf simplon.pipeline.TaskCommand {
@@ -149,10 +151,6 @@ simplon typeOf simplon.manifest.Product {
     command all typeOf simplon.pipeline.ReleaseCommand {
       key = "all"
       member = product.simplon.simplon.release.check
-      member = product.simplon.simplon.test.suite
-      member = product.simplon.simplon.test.typecheck_python
-      member = product.simplon.simplon.test.generated
-      member = product.simplon.simplon.test.release_notes
       member = product.simplon.simplon.release.notes
       member = product.simplon.simplon.release.tag
       release a_kernel_release typeOf simplon.pipeline.Release {
@@ -319,6 +317,11 @@ simplon typeOf simplon.manifest.Product {
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image
+  }
+  artifacts a_kernel_oci typeOf simplon.pipeline.Artifact {
+    key = "kernel-oci"
+    kind = simplon.vocabulary.directory
+    path = "build/image"
   }
   artifacts a_kernel_checked typeOf simplon.pipeline.TestResult {
     key = "kernel-checked"

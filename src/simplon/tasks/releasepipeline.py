@@ -54,6 +54,9 @@ PAGES_UPLOAD = "pages-upload"
 PAGES_CONFIGURE = "pages-configure"
 PAGES_DEPLOY = "pages-deploy"
 
+#: si#789: the job that runs the release's producers once more, on the tag (design 4.3).
+ARTIFACTS_JOB = "artifacts"
+
 #: si#862: the two jobs `website: { pages: release }` derives, and the deploy's environment and queue.
 DOCS_JOB = "docs"
 PAGES_JOB = "pages"
@@ -83,8 +86,9 @@ TRIGGER = workflowschema.Trigger(event="dispatch", dispatch_input=(
                                  "nothing", input_type="boolean", required=True, default_value="true")))
 
 #: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
-#: to push an image. They are the derived release job's own (si#719), never the workflow's.
-_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+#: to push an image, `actions` (read) for `release:check` to read main's CI runs (si#789). They are the
+#: derived release job's own (si#719), never the workflow's.
+_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write", "actions": "read"}
 #: One release per version, never cancelled in progress. The converter's, as `cipipeline.to_workflow` decides a
 #: cadence file's: the renderer decides concurrency per kind of file (workflow.firn, `Workflow`).
 _RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",
@@ -121,6 +125,20 @@ started, so no reap step sits beside `pages: write` and `id-token: write`, which
 
 CUT_NOTE = """si#491 decision 5, on a REHEARSAL only: the release job's own cut. A dry run pushes no
 tag, and without it the site would be built for a version the checkout does not carry."""
+
+#: si#789: the artifacts job's own wording of the two tag steps, because what it builds is not the site.
+ARTIFACTS_CUT_NOTE = """si#789, on a REHEARSAL only: the release job's own cut. A dry run pushes no tag, and
+without it the producers below would build a `.devN` version, not the one a real run releases."""
+
+ARTIFACTS_ON_ORIGIN_NOTE = """On a REAL run nothing is cut here: the producers build the tag the release job
+pushed, fetched by the checkout, and a tag deleted from origin after a failed publish is not re-created
+here - the rule of the `docs` job (si#491, final review, Important 2)."""
+
+ARTIFACTS_NOTE = """si#789: the release's producers, run once more on the tag after `release` cut it (design 4.3):
+the build and test leaves whose artifact a step of this workflow consumes, and the tests whose evidence
+one consumes. The suite and the other gates do not run again: the green `main` run `release check`
+required is their evidence. With the release's parameters, not `ci: params:`, so what is built and
+tested here is what the release publishes; on the release's machine and emulation."""
 
 ON_ORIGIN_NOTE = """On a REAL run nothing is cut here: the tag must be the one the release job pushed,
 fetched by the checkout. A tag deleted from origin after a failed publish, then "Re-run failed jobs",
@@ -167,8 +185,8 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
 
     Two are EXPRESSION rules (si#490 decision 1, kept by si#862): a second trigger would start a release with no
     `version`, and its own concurrency would let two runs of one version cancel each other mid-release. The rest
-    are DIAGNOSES: a rollout and a release would derive two triggers into one file, a job named `release` is the
-    derived job's name, a `RELEASE_VERSION` in `env:` would be shadowed by the dispatch input's, and a
+    are DIAGNOSES: a rollout and a release would derive two triggers into one file, a job named `release` or
+    `artifacts` (si#789) is a derived job's name, a `RELEASE_VERSION` in `env:` would be shadowed by the dispatch input's, and a
     `permissions:` that is not a mapping is no default for any job."""
     where = f"workflow '{entry.key}'"
     if entry.declared_on and not entry.flow:
@@ -188,6 +206,11 @@ def _refuse_beside_the_release(entry: workflowgen.Workflow, words: str) -> None:
         raise ValueError(
             f"{where}: declares a job '{workflowgen.RELEASE_JOB}', and the derived job is named "
             f"'{workflowgen.RELEASE_JOB}' - rename yours; it can still `needs: {workflowgen.RELEASE_JOB}`")
+    if any(job.name == ARTIFACTS_JOB for job in entry.jobs):
+        # si#789: refused whether or not `producers_on_tag` selects anything, so the rule does not depend on it.
+        raise ValueError(
+            f"{where}: declares a job '{ARTIFACTS_JOB}', the name of the derived job that runs the release's "
+            f"producers on the tag (si#789) - rename yours; it can still `needs: {ARTIFACTS_JOB}`")
     env = entry.extras.get("env")
     if isinstance(env, Mapping) and workflowgen.RELEASE_ENV in env:
         raise ValueError(
@@ -231,8 +254,9 @@ def refuse_ci_where_handwritten(manifest: Manifest, entry: workflowgen.Workflow)
 def derive(manifest: Manifest, data: Mapping[str, object],
            entry: workflowgen.Workflow | None) -> workflowschema.Workflow:
     """The release workflow of the manifest's ReleaseCommand as the model: one dispatch trigger, the workflow's
-    token scopes and the one job, `release`: the cut, the stamp, the aggregate's plan, the dry-run tail and the
-    test archive. `entry` is the declared `workflows: release:` (its jobs are `to_workflow`'s), or None.
+    token scopes and the job `release`: the cut, the stamp, the aggregate's plan, the dry-run tail and the
+    test archive; then `artifacts` (si#789, `producers_on_tag`) and the website's jobs, where they apply. `entry`
+    is the declared `workflows: release:` (its jobs are `to_workflow`'s), or None.
 
     The job's machine is the aggregate's `ci: { runner: }`, or else the product's top-level `runner:`
     (`cipipeline.runner_of`); its emulation and time limit are `ci: { emulates:, timeout_minutes: }`, the limit
@@ -281,19 +305,9 @@ def derive(manifest: Manifest, data: Mapping[str, object],
                 f"{str(leaf.unattended).lower() if leaf.unattended is not None else '(nothing)'}`, and a "
                 f"release member that is skipped would release past it; declare `unattended: true` or "
                 f"take it out of '{words}'")
-        env = [workflowschema.RunnerEnv(env_name=_GITHUB_TOKEN, env_value=_SECRET.format(name=_GITHUB_TOKEN))
-               ] if leaf.token == "github" else []
-        passed = _passed_secrets(leaf, line, where)
-        env += [workflowschema.RunnerEnv(env_name=secret, env_value=value) for secret, value in passed.items()]
-        passes_secrets = passes_secrets or bool(passed)
-        # The takers are read off the body's signature, as `cli.receivers` reads them, so the command line
-        # and the workflow hand the same leaves the version (final review of si#490, Important 3).
-        takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{line}'"))}
-        params = ((workflowschema.StepParam(param_name="tag", param_env=workflowgen.RELEASE_ENV),)
-                  if "tag" in takes and "tag" not in leaf.with_ else ())
-        steps.append(workflowschema.Step(command=leaf, command_words=line,
-                                         condition=_NOT_DRY_RUN if leaf.publishes else "", env=tuple(env),
-                                         params=params))
+        step = _leaf_step(leaf, line, where)
+        passes_secrets = passes_secrets or _passes_secrets(step)
+        steps.append(step)
         if leaf.task == "release:notes" and not notes:
             produced = leaf.produces.get("release-notes", ())
             notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
@@ -305,8 +319,9 @@ def derive(manifest: Manifest, data: Mapping[str, object],
         steps.insert(0, workflowschema.Step(kernel_step=PASS_SECRETS_CHECK))
     steps.append(workflowschema.Step(kernel_step=DRY_RUN_TAIL, condition=_DRY_RUN, params=(
         (workflowschema.StepParam(param_name=NOTES_PARAM, param_value=notes),) if notes else ())))
-    if any(isinstance(member, TaskCommand) and member.task == workflowgen.REPORT_TASK
-           for members in manifest.commands.values() for member in members.values()):
+    # si#789: the archive follows the tests the PLAN runs. A product that places `test:report` but whose
+    # aggregate runs no test has nothing in this job to report on, and the step would archive an empty report.
+    if any(leaf.task == workflowgen.REPORT_TASK for _, leaf in leaves):
         steps.append(workflowschema.Step(kernel_step=REPORT))
     # si#719: the workflow-level block is the default of every job without its own (`contents: read` when the
     # product declares none); the job's own block replaces it, so a scope the product declared there is carried
@@ -323,18 +338,41 @@ def derive(manifest: Manifest, data: Mapping[str, object],
     path = entry.path if entry is not None else f"{workflowgen.DIRECTORY}/{workflowgen.RELEASE_KEY}.yml"
     title = entry.name if entry is not None else workflowgen.RELEASE_KEY
     return workflowschema.Workflow(path=path, title=title, trigger=(TRIGGER,),
-                                   job=(job, *_website(manifest, data, entry, job)),
+                                   job=(job, *_artifacts(manifest, data, spec, job),
+                                        *_website(manifest, data, entry, job)),
                                    permission=_permissions(workflow_scopes))
 
 
-def consumed(manifest: Manifest, data: Mapping[str, object]) -> tuple[str, ...]:
-    """si#862, #789: the artifacts with a `path:` that a leaf release.yml runs consumes, in the manifest's
-    `artifacts:` order; () where no release.yml is derived (no ReleaseCommand, or a `handwritten:` release).
+def _leaf_step(leaf: TaskCommand, line: str, where: str) -> workflowschema.Step:
+    """One release-workflow leaf as a model step, the same in `release` and `artifacts` (si#789):
+    - skipped on a dry run where its task `publishes:` (si#490 decision 5);
+    - the run's GITHUB_TOKEN for a `token: github` leaf, and only that one (decision 4);
+    - its `env: pass:` names from the secrets of the same names, in its own `env:` (si#836, `_passed_secrets`);
+    - a passed `tag` taken unpinned bound to `"$RELEASE_VERSION"`, the CLI's own reading of `passes:` (si#433).
+    No `ci: params:`: those narrow a CI run, and the release builds what it publishes."""
+    env = [workflowschema.RunnerEnv(env_name=_GITHUB_TOKEN, env_value=_SECRET.format(name=_GITHUB_TOKEN))
+           ] if leaf.token == "github" else []
+    passed = _passed_secrets(leaf, line, where)
+    env += [workflowschema.RunnerEnv(env_name=secret, env_value=value) for secret, value in passed.items()]
+    # The takers are read off the body's signature, as `cli.receivers` reads them, so the command line
+    # and the workflow hand the same leaves the version (final review of si#490, Important 3).
+    takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{line}'"))}
+    params = ((workflowschema.StepParam(param_name="tag", param_env=workflowgen.RELEASE_ENV),)
+              if "tag" in takes and "tag" not in leaf.with_ else ())
+    return workflowschema.Step(command=leaf, command_words=line, condition=_NOT_DRY_RUN if leaf.publishes else "",
+                               env=tuple(env), params=params)
 
-    The leaves are every one release.yml runs: the ReleaseCommand's plan, every command step of the jobs declared
-    under `workflows: release:`, and the `website: by:` plan of the derived `docs` job. An artifact with no `path:`
-    (an image, a tag) has no file to keep. Whether release.yml also produces one itself before consuming it is not
-    asked: until #789 the release rebuilds, and these are what it will take from CI instead."""
+
+def _passes_secrets(step: workflowschema.Step) -> bool:
+    """True when the step reads a secret through `env: pass:` (the run's GITHUB_TOKEN is not one)."""
+    return any(env.env_name != _GITHUB_TOKEN and env.env_value == _SECRET.format(name=env.env_name)
+               for env in step.env)
+
+
+def _release_steps(manifest: Manifest, data: Mapping[str, object]) -> tuple[workflowgen.Step, ...]:
+    """The command steps release.yml runs, as `workflowgen.Step`s: the ReleaseCommand, every command step of the
+    jobs declared under `workflows: release:`, and the `website: by:` of the derived `docs` job; () where no
+    release.yml is derived (no ReleaseCommand, or a `handwritten:` release)."""
     found = release_commands(manifest)
     if not found:
         return ()
@@ -347,11 +385,98 @@ def consumed(manifest: Manifest, data: Mapping[str, object]) -> tuple[str, ...]:
     pages = site.pages(data)
     if pages is not None:
         steps.append(workflowgen.Step(command=pages.by))
-    wanted = {artifact for step in steps
-              for _, leaf in workflowgen._leaves(manifest, step, f"workflow '{workflowgen.RELEASE_KEY}'")
-              for names in leaf.consumes.values() for artifact in names}
-    return tuple(name for name, declared in artifactsection.declared(data).items()
-                 if name in wanted and declared.path)
+    return tuple(steps)
+
+
+def _release_leaves(manifest: Manifest, data: Mapping[str, object]) -> tuple[TaskCommand, ...]:
+    """Every leaf `_release_steps` runs, with repeats where two steps run one leaf."""
+    return tuple(leaf for step in _release_steps(manifest, data)
+                 for _, leaf in workflowgen._leaves(manifest, step, f"workflow '{workflowgen.RELEASE_KEY}'"))
+
+
+def producers_on_tag(manifest: Manifest, data: Mapping[str, object]) -> tuple[cipipeline.Leaf, ...]:
+    """si#789 (design 4.3): the CI leaves the release runs once more, on the tag, in `cipipeline.order`.
+
+    A leaf is a candidate when ci.yml would run it: a `TaskCommand` in a `build` or `test` group of the CI area
+    that declares no `ci: { skip: }` and runs unattended. Selected are the candidates that produce an artifact a
+    leaf of release.yml consumes, registry images included,
+    and with it the `evidence:` a release step consumes, which a test produces; then the producers of what a
+    selected leaf consumes, so the job never consumes what nothing in this run built.
+
+    What release.yml makes itself is not rebuilt here (design 4.3): everything any of its steps produces. The
+    release aggregate's plan runs in the `release` job before this one, so what it makes is on the tag already
+    (the notes, the tag, and a product whose aggregate still builds what it publishes); what a job declared under
+    `workflows: release:` makes, such as simplon's formula, rendered after the PyPI upload, is made there and
+    would otherwise be built twice in one run. () where no release.yml is derived or nothing it consumes is built
+    by CI; then there is no `artifacts` job.
+
+    A candidate that has not ruled on `unattended:` is refused where it is selected
+    (`workflowgen.require_unattended`), because whether it may run on the tag is then unknown."""
+    leaves = _release_leaves(manifest, data)
+    if not leaves:
+        return ()
+    candidates: list[cipipeline.Leaf] = []
+    for group, members in manifest.commands.items():
+        if group.split(".", 1)[0] not in cipipeline.CI_PHASES or manifest.area_of(group) != "ci":
+            continue
+        for name, spec in members.items():
+            if isinstance(spec, TaskCommand) and not spec.ci_skip:
+                candidates.append(cipipeline.Leaf(cipipeline._words(group, name), spec))
+    own = {artifact for leaf in leaves for names in leaf.produces.values() for artifact in names}
+    wanted = {artifact for leaf in leaves for names in leaf.consumes.values() for artifact in names} - own
+    chosen: list[cipipeline.Leaf] = []
+    while True:
+        found = [leaf for leaf in candidates if leaf not in chosen
+                 and any(artifact in wanted for names in leaf.spec.produces.values() for artifact in names)]
+        for leaf in found:
+            workflowgen.require_unattended(leaf.spec, leaf.words, f"release job '{ARTIFACTS_JOB}'")
+        found = [leaf for leaf in found if leaf.spec.unattended]
+        if not found:
+            break
+        chosen += found
+        wanted |= {artifact for leaf in found for names in leaf.spec.consumes.values() for artifact in names} - own
+    return cipipeline.order([leaf for leaf in candidates if leaf in chosen])
+
+
+def _artifacts(manifest: Manifest, data: Mapping[str, object], spec: ReleaseCommand,
+               release: workflowschema.Job) -> tuple[workflowschema.Job, ...]:
+    """si#789: the `artifacts` job, or none when `producers_on_tag` selects nothing.
+
+    After `release`, on its machine with its emulation and time limit: the launcher provisioned first, the tag
+    cut on a rehearsal and required on origin on a real run, the build stamped, then each selected leaf as the
+    release job runs its own (`_leaf_step`)."""
+    selected = producers_on_tag(manifest, data)
+    if not selected:
+        return ()
+    where = f"release job '{ARTIFACTS_JOB}'"
+    leaves = [_leaf_step(leaf.spec, leaf.words, where) for leaf in selected]
+    for leaf, step in zip(selected, leaves):
+        _refuse_unbound_on_tag(leaf, step, where)
+    steps = [workflowschema.Step(kernel_step=PROVISION)]
+    if spec.ci.emulates:
+        steps.append(workflowschema.Step(kernel_step=EMULATION))
+    if any(_passes_secrets(step) for step in leaves):
+        steps.insert(0, workflowschema.Step(kernel_step=PASS_SECRETS_CHECK))
+    steps += [workflowschema.Step(kernel_step=RELEASE_CUT, condition=_DRY_RUN),
+              workflowschema.Step(kernel_step=RELEASE_ON_ORIGIN, condition=_NOT_DRY_RUN),
+              workflowschema.Step(kernel_step=RELEASE_STAMP), *leaves]
+    return (workflowschema.Job(key=ARTIFACTS_JOB, runner=release.runner, needs=(release,), step=tuple(steps),
+                               timeout_minutes=release.timeout_minutes,
+                               permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,)),)
+
+
+def _refuse_unbound_on_tag(leaf: cipipeline.Leaf, step: workflowschema.Step, where: str) -> None:
+    """si#903 on the tag (si#789): a selected leaf whose task cannot run without a parameter that neither its
+    `with:` nor the step binds (the step binds only `tag`, from the version) is refused here. ci.yml would apply
+    the leaf's `ci: params:`; the `artifacts` job does not (`_leaf_step`), so a parameter bound only there reaches
+    ci.yml and not this step, which would be red on every release. A DIAGNOSIS."""
+    missing = cipipeline.unbound_required(leaf, {*leaf.spec.with_, *(param.param_name for param in step.params)})
+    if missing:
+        names = ", ".join(f"`{param}`" for param in missing)
+        raise ValueError(
+            f"{where}: '{leaf.words}' runs `{leaf.spec.task}` on the tag, which cannot run without {names}, and its "
+            f"`with:` does not bind it - the job does not apply `ci: {{ params: }}`, which narrows a CI run, so its "
+            f"step would be red on every release. Bind it in the command's `with:`")
 
 
 def refuse_pages_nobody_derives(data: Mapping[str, object], why: str) -> None:
@@ -465,7 +590,8 @@ def _passed_secrets(leaf: TaskCommand, words: str, where: str) -> dict[str, str]
 def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mapping[str, object],
                 entry: workflowgen.Workflow | None, *, product: str) -> workflowgen.Workflow:
     """The model as the `workflowgen.Workflow` the renderer writes: the model's trigger, its token scopes and the
-    release concurrency, and the converted `release` job ahead of the entry's own jobs, with the entry's other
+    release concurrency, and the converted `release` job and `artifacts` (si#789) ahead of the entry's own jobs,
+    which come after the tag and may take what `artifacts` built, with the entry's other
     workflow-level keys and its note. The website's `docs` and `pages` (si#862) follow the entry's jobs, which `docs`
     waits for. `release` is set, because `workflowgen.render` inserts the app-secrets check
     (si#574) into the job of that name; `derived` is set, because the job is."""
@@ -475,9 +601,11 @@ def to_workflow(model: workflowschema.Workflow, manifest: Manifest, data: Mappin
     own = {key: value for key, value in base.extras.items() if key != "permissions"}
     extras = {"permissions": {p.scope: p.access for p in model.permission}, "concurrency": dict(_RELEASE_CONCURRENCY),
               **own}
-    release, *website = (_to_job(job, manifest, data, spec, product=product) for job in model.job)
+    release, *rest = (_to_job(job, manifest, data, spec, product=product) for job in model.job)
+    artifacts = tuple(job for job in rest if job.name == ARTIFACTS_JOB)
+    website = tuple(job for job in rest if job.name != ARTIFACTS_JOB)
     return replace(base, name=model.title, path=model.path, on=cipipeline._on(model.trigger), extras=extras,
-                   jobs=(release, *base.jobs, *website), release=words, derived=True)
+                   jobs=(release, *artifacts, *base.jobs, *website), release=words, derived=True)
 
 
 def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, object], spec: ReleaseCommand, *,
@@ -488,7 +616,7 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     `to_workflow` derived from, whose `ci: emulates:` the emulation step registers."""
     reporting = any(step.kernel_step == REPORT for step in job.step)
     # The test archive is the release job's alone (si#509); `docs` and `pages` ask nothing of it.
-    archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else None)
+    archive, unarchived = (workflowgen._release_archive(manifest, workflowgen.report_dir(data) if reporting else "")
                            if job.key == workflowgen.RELEASE_JOB else ((), ""))
     needed: dict[str, list[str]] = {}
     for step in job.step:
@@ -510,14 +638,16 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
                                           note=PROVISION_NOTE))
         elif step.kernel_step == RELEASE_CUT:
             # The release job cuts on every run; the docs job only on a rehearsal (si#862), with the note.
+            cut_note = ARTIFACTS_CUT_NOTE if job.key == ARTIFACTS_JOB else CUT_NOTE
             steps.append(workflowgen.Step(verbatim={"name": "Cut the tag in this checkout",
                                                     **({"if": step.condition} if step.condition else {}),
                                                     "run": workflowgen.RELEASE_CUT},
-                                          note=CUT_NOTE if step.condition else ""))
+                                          note=cut_note if step.condition else ""))
         elif step.kernel_step == RELEASE_ON_ORIGIN:
             steps.append(workflowgen.Step(verbatim={"name": "The tag is on origin at this commit",
                                                     "if": step.condition, "run": workflowgen.RELEASE_ON_ORIGIN},
-                                          note=ON_ORIGIN_NOTE))
+                                          note=ARTIFACTS_ON_ORIGIN_NOTE if job.key == ARTIFACTS_JOB
+                                          else ON_ORIGIN_NOTE))
         elif step.kernel_step == PAGES_UPLOAD:
             path = next(p.param_value for p in step.params if p.param_name == PATH_PARAM)
             steps.append(workflowgen.Step(verbatim={"uses": workflowgen.UPLOAD_PAGES_ACTION, "with": {"path": path}}))
@@ -568,7 +698,8 @@ def _to_job(job: workflowschema.Job, manifest: Manifest, data: Mapping[str, obje
     job_env = {**{env.env_name: env.env_value for env in job.env}, **runner.env}
     if job_env:
         extras["env"] = job_env
-    note = {workflowgen.RELEASE_JOB: unarchived, DOCS_JOB: _docs_note(job), PAGES_JOB: PAGES_NOTE}
+    note = {workflowgen.RELEASE_JOB: unarchived, ARTIFACTS_JOB: ARTIFACTS_NOTE, DOCS_JOB: _docs_note(job),
+            PAGES_JOB: PAGES_NOTE}
     return workflowgen.Job(name=job.key, runs_on=labels[0] if len(labels) == 1 else labels, steps=tuple(steps),
                            runner=runner, note=note.get(job.key, ""), checkout=not job.no_checkout, extras=extras,
                            reap=not job.starts_no_container)

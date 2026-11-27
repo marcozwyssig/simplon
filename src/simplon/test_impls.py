@@ -90,6 +90,18 @@ def needs_a_value(value):
     return 0
 
 
+def aim_with_a_flag(dry_run: bool = False):
+    """A body whose bool parameter the CLI reads as a FLAG (si#789): a workflow step's `params: { dry_run: true }`
+    must render `--dry-run`, never `--dry-run true`."""
+    return 0
+
+
+def aim_with_a_required_flag(dry_run: bool):
+    """A body whose bool parameter has no default (si#789 review): the refusal says so instead of printing
+    `inspect.Parameter.empty`."""
+    return 0
+
+
 def target_and_mode(target, mode="fast"):
     """A body with one REQUIRED parameter and one with a default (si#471).
 

@@ -319,9 +319,9 @@ So before you type a version whose **minor** changes, read `simplon.cli.surface`
   cost of ending the period is a number rather than a worry.
 * `MOVED_DUE_AFTER` — the release they were promised to survive.
 
-The kernel's own test suite goes red once a version past that pair is built, and `release.yml` runs the
-suite *before* the tag (si#491) — so a minor that still carries tombstones costs a red run, and neither a
-tag number nor a publication. That is the backstop, not the plan: it fires at the last possible moment,
+The kernel's own test suite goes red once a version past that pair is built, and `release check` refuses a
+commit without a green `main` CI run (si#789) — so a minor that still carries tombstones costs a red run
+before the tag, and neither a tag number nor a publication. That is the backstop, not the plan: it fires at the last possible moment,
 because the version cannot know what you are about to type. This heading is the first one.
 
 {{< callout type="info" >}}

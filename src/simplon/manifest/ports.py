@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from simplon.manifest import artifactsection
 
+from simplon.model import artifactschema
 from simplon.model.artifactschema import PORTS, Port
 from simplon.model.command import AggregateCommand, Command, ReleaseCommand, TaskCommand
 from simplon.kernel.plan import PlanNode, parallel_siblings, schedule_of
@@ -436,7 +437,20 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
                    kinds: Mapping[str, str], about: Mapping[str, set[str]]) -> None:
     """Rule 6 (spec C.3, C.5): a command under `ci: release:` that consumes an artifact X consumes every test
     result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
-    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes."""
+    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes.
+
+    One widening (si#789, Marco's ruling): a result about X is also about an artifact Y the command that produced X
+    produced beside it, when the release consumes BOTH and binds Y to a port the catalogue declares
+    `verifies_against_evidence` (`artifactschema.VERIFIED_AGAINST_EVIDENCE`): its body holds Y against what the
+    evidence ran before it publishes. Which ports declare it is the generated table, listed on the kinds page
+    (with-what/kinds.md); simplon's own case is `build image`'s OCI archive beside the image it tests. On any other
+    port, product tasks included, rule 6 is as strict as without the widening."""
+    together: dict[str, set[str]] = {}
+    for members in manifest.commands.values():
+        for spec in members.values():
+            made = {a for names in _bound(spec, "produces").values() for a in names}
+            for artifact in made:
+                together.setdefault(artifact, set()).update(made - {artifact})
     for group, members in manifest.commands.items():
         if not _under(manifest, group, "release"):
             continue
@@ -444,10 +458,15 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
             where = f"{group} {name}"
             consumed = [a for names in _bound(spec, "consumes").values() for a in names]
             evidence = {a for a in consumed if artifactsection.accepts(kinds, "test-result", declared[a].kind)}
+            verified = {a for port, names in _bound(spec, "consumes").items() for a in names
+                        if (getattr(spec, "task", ""), port) in artifactschema.VERIFIED_AGAINST_EVIDENCE}
             for subject in consumed:
                 if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):
                     continue
-                wanted = about.get(subject, set())
+                wanted = set(about.get(subject, set()))
+                if subject in verified:
+                    for sibling in together.get(subject, set()) & set(consumed):
+                        wanted |= about.get(sibling, set())
                 if not wanted:
                     raise ValueError(
                         f"command '{where}' releases '{subject}', and no test produces a result about it - add "

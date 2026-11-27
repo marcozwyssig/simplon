@@ -334,10 +334,10 @@ def test_a_suite_job_on_an_empty_matrix_is_refused_not_counted_as_gated() -> Non
         _rows("x.yml", doc)
 
 
-def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
+def test_theCiPipelineIsCovered_andTheReleaseIsNot_soTheRuleIsNotVacuous() -> None:
     # A rule over a predicate goes green when NOTHING matches the predicate, which is how a rule quietly
-    # stops holding anything. Name the two files that must be in it - if a rename makes this red, the
-    # rename also has to say what now carries the release.
+    # stops holding anything. Name the file that must be in it - if a rename makes this red, the rename
+    # also has to say what now runs the suite.
     #
     # Asked through the plan too (si#163), for one reason: the literal version of this test forbade a
     # workflow from reaching the gate the way the manifest now lets it, by running `test all` alone. It
@@ -347,7 +347,10 @@ def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
 
     gated = {file for file, _, runs in _jobs() if gate in _reached(runs)}
 
-    assert {"ci.yml", "release.yml"} <= gated
+    # si#789: release.yml left the set. Its job runs no test leaf and takes its verdict from the green
+    # `ci.yml` run on `main` (`release check`), so the gate is reached by the file that runs it.
+    assert {"ci.yml"} <= gated
+    assert "release.yml" not in gated
 
 
 def test_theLocalGateAggregateReachesTheGate() -> None:
@@ -358,7 +361,7 @@ def test_theLocalGateAggregateReachesTheGate() -> None:
     `typecheck-python` from this aggregate turns it red TODAY - only because no workflow has a second
     route to the gate. That is a fact about `ci.yml` and `release.yml` this week, not about the aggregate,
     and the day a job names both the rule goes quiet again. This asks the question directly, the way
-    `test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn` does for the
+    `test_theCiPipelineMatchesThePredicateItself_soTheRuleAboveHasSomethingToRuleOn` does for the
     predicate side, and it is also the ONLY
     assertion behind the local gate's own promise: `test all` is what a developer runs, and no workflow
     file has anything to say about that.
@@ -377,17 +380,22 @@ def test_theLocalGateAggregateReachesTheGate() -> None:
         f"`all`, whose help says every test, has stopped running the type gate (si#163)")
 
 
-def test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn() -> None:
+def test_theCiPipelineMatchesThePredicateItself_soTheRuleAboveHasSomethingToRuleOn() -> None:
     # The half the test above does NOT hold, and si#156 is the ticket that found it out: it asks whether
-    # the two files carry the GATE, which stays true no matter what happens to VERIFIES. Rename the
+    # ci.yml carries the GATE, which stays true no matter what happens to VERIFIES. Rename the
     # command a job runs the suite with and the rule stops matching that job - green, covering nothing,
     # and the next workflow written against the new name inherits no gate at all. This asks the other
-    # question: each pipeline must still SAY it verified this tree, in a spelling VERIFIES knows.
+    # question: ci.yml must still SAY it verified this tree, in a spelling VERIFIES knows.
     verifying = {file for file, _, runs in _jobs() if any(cmd in runs for cmd in VERIFIES)}
 
-    assert {"ci.yml", "release.yml"} <= verifying, (
-        f"these pipelines match no VERIFIES spelling: {{'ci.yml', 'release.yml'}} - {verifying}; the rule "
-        f"above is now vacuous for them, so add the new spelling to VERIFIES rather than leaving it")
+    assert "ci.yml" in verifying, (
+        f"ci.yml matches no VERIFIES spelling (verifying: {sorted(verifying)}); the rule above is now vacuous "
+        f"for it, so add the new spelling to VERIFIES rather than leaving it")
+    # si#789: the release runs no test leaf; it takes its verdict from the green `ci.yml` run on `main`.
+    assert "release.yml" not in verifying, (
+        "release.yml runs a VERIFIES command again, but since si#789 its release job runs no test leaf and takes "
+        "its verdict from the green `ci.yml` run on `main` (`release check`) - say what now runs the suite there, "
+        "or take it back out")
 
 
 def test_noWorkflowReachesForTheCheckerItself() -> None:

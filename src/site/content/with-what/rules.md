@@ -81,6 +81,13 @@ followed `module.function(...)`. The count grew without a rule being written: th
 refusal of a group declared in both the catalogue's and the product's `taxonomy:` (an expression rule on
 the platform/product seam, shadowed at load by the refusal of a product `taxonomy:`).
 
+si#789 added two diagnoses. A job declared under `workflows: release: jobs:` named `artifacts`, the name of
+the derived job that runs the release's producers on the tag: beside the derived one under the same key, one
+of the pair would be silently replaced. It is refused whether or not anything is selected for that job. None
+of the reachable manifests declares a release job by that name (measured 2026-11-27). And a producer selected
+for that job whose task cannot run without a parameter that only its `ci: params:` binds: the job does not
+apply them, so its step would be red on every release (si#903's check, on the tag).
+
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
 a leaf is not verified, which is the one thing a reader of the opt-out needs. **Diagnoses:** a `ci:` that is
@@ -253,10 +260,13 @@ without `by:` or `by:` without `pages:`, a `by:` that is not `<group> <name>`, t
 derived, a `by:` command with a leaf that may not run with nobody watching or with no `docs:site` leaf in its
 plan, a declared release job named `docs` or `pages`, an `after:` that is no list of job keys or names a job
 not declared beside the release, and a `website:` that is no mapping.
-The derived ci.yml keeping each `path:` artifact release.yml consumes for #789 added one diagnosis: such an
-artifact that ci.yml also hands from its main job to a cell job, because the hand-off already holds that name in
-the run and the upload that keeps it would be red. One produced only in a cell, a gate file or a cadence file is
-not refused: ci.yml's note names it as not kept.
+si#862 had the derived ci.yml keep each `path:` artifact release.yml consumes for a later release to promote,
+and added two diagnoses with it: such an artifact that ci.yml also hands from its main job to a cell job, and
+one named like the report upload, because upload-artifact refuses a second artifact of one name in a run and the
+keeping upload would have been red on every push run. #789 removed both, with the upload. The release now
+builds what it consumes in its own run (the `artifacts` job), so no run is read by another and nothing in ci.yml
+is kept for it: the two names cannot collide, and a refusal for a collision that cannot happen would be a rule
+with no cause. Two diagnoses went and no expression rule moved; the table above is the census.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an

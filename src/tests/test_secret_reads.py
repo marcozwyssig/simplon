@@ -593,6 +593,7 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.homebrewformula", "build"): _GENERATED,
     ("simplon.tasks.homebrewtap", "check"): _RECORD,
     ("simplon.tasks.image", "_resolver_passed_through"): _HOST,
+    ("simplon.tasks.image", "_write_archive_digests"): _RECORD,
     ("simplon.tasks.image", "_write_built"): _RECORD,
     ("simplon.tasks.image", "record"): _RECORD,
     ("simplon.tasks.image", "smoke"): _RECORD,

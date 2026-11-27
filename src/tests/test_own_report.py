@@ -41,11 +41,9 @@ HANDOFF_PREFIX = workflowgen.HANDOFF_ARCHIVE.split("{artifact}")[0].format()
 
 
 def _uploads_the_report(step: dict) -> bool:
-    """An upload-artifact step that is not the kernel's hand-off between jobs, nor a derived ci.yml's upload of an
-    artifact the release consumes (si#862, #789), which waits for its producer and never archives a report."""
+    """An upload-artifact step that is not the kernel's hand-off between jobs."""
     return (ARTIFACT_ACTION in str(step.get("uses", ""))
-            and not str((step.get("with") or {}).get("path", "")).startswith(HANDOFF_PREFIX)
-            and cipipeline._PROMOTED_EVENTS not in str(step.get("if", "")))
+            and not str((step.get("with") or {}).get("path", "")).startswith(HANDOFF_PREFIX))
 
 
 def _manifest() -> dict:

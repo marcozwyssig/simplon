@@ -197,10 +197,15 @@ again with `dry_run` off. From a terminal:
 gh workflow run release.yml -f version=v0.1.13 -f dry_run=true
 ```
 
-The run is `release all`, the same aggregate a checkout runs: the pytest suite,
-the type gate, the staleness gate and the release-notes guard, then the notes,
-then `release tag`, which cuts and pushes the tag. A red test therefore leaves
-no tag behind. After the tag, the wheel goes to PyPI via Trusted Publishing, and
+The run is `release all`, the same aggregate a checkout runs: the release check,
+which refuses a commit without a green `ci.yml` run on `main`, then the notes,
+then `release tag`, which cuts and pushes the tag. The tests are not rerun: the
+green `main` run stands in for them, so a commit without green main CI gets no
+tag. On the tag, the `artifacts` job builds the wheel and the image and runs the
+image's test, whose arm64 half no `main` run covers: if it goes red, the tag stays and nothing is
+published; rerun the failed job (only while the hand-off still holds what it
+built, the `retention-days` of its upload steps in `release.yml`; after that the
+whole run reruns and rebuilds) or cut the next patch version. After the tag, the wheel goes to PyPI via Trusted Publishing, and
 then the Homebrew formula in `marcozwyssig/homebrew-tap`, the website and the
 kernel image go up. A dry run builds and checks all of it, and publishes
 nothing: no tag, no wheel, no formula, no site, no image, no pin.
@@ -224,8 +229,9 @@ failed job. Never cut a second tag for the same release.
 are both published by the release run. A merged documentation fix appears when
 the next release is cut, and not before.
 
-The release run archives the test report of the run that gated it, green or
-red, as its `allure-report` artifact (si#509).
+The release run runs no tests and archives no test report (si#789): the green
+`main` run it relies on holds the report. A red run on a tag is rerun, never
+retagged, and a real defect gets the next patch version.
 
 The full story, including what the guard deliberately does not check, is on the
 site: <https://marcozwyssig.github.io/simplon/how/releasing/>.

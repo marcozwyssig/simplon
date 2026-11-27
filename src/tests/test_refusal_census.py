@@ -1368,11 +1368,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
         DIAGNOSIS,
     # si#860 final review: a cell leaf would produce its artifact once per cell, and a run hands it over once.
     ("cipipeline", "_refuse_cell_producers", "so it runs once per cell and would"): DIAGNOSIS,
-    # si#862, #789: an artifact release.yml consumes that the hand-off already uploads under its name inside ci.yml
-    # (main job to a cell job); one run holds one artifact of a name, so the promotion upload would be red.
-    ("cipipeline", "_refuse_promoted_crossings", "so it cannot also be kept"): DIAGNOSIS,
-    # si#862, #789: a kept artifact named like the report upload; both uploads run in the main job.
-    ("cipipeline", "_refuse_promoted_report_name", "the name the report upload after"): DIAGNOSIS,
     # si#861: a gate member runs in its gate's file with nobody watching, so one that may not, one that opts out
     # of a main job it is not in, or one whose cadence or cells its gate's file already decides would not run as
     # written; and artifacts do not cross workflow files, so a hand-off between a gate and another run would
@@ -1417,6 +1412,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
         EXPRESSION,
     ("releasepipeline", "_refuse_beside_the_release", "one workflow is a rollout or a release"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "and the derived job is named"): DIAGNOSIS,
+    # si#789: the derived `artifacts` job's name, as `release`'s above; none of the eight reachable manifests
+    # declares a release job by that name (measured 2026-11-27).
+    ("releasepipeline", "_refuse_beside_the_release", "the name of the derived job that runs the release's producers"):
+        DIAGNOSIS,
+    # si#789 meets si#903: a producer on the tag whose required parameter only `ci: params:` binds; the
+    # `artifacts` job does not apply them, so its step would be red on every release.
+    ("releasepipeline", "_refuse_unbound_on_tag", "so its step would be red on every release"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is the dispatch input's"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is a mapping of scope -> level"): DIAGNOSIS,
     # si#862, plan decision 3: two ReleaseCommands would each derive release.yml. A product could declare two
