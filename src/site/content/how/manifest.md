@@ -1542,7 +1542,9 @@ empty default refused by the body counts. A product's own task has no model, so 
 says it (si#903): a parameter without a default is one the command line reads as a positional, and the
 derived step passes none, so it is refused the same way. That reads the body at generation, as the CLI
 does to run it: a body the generator cannot import is one the step could not run either. A leaf that is
-skipped or left out is not asked.
+skipped or left out is not asked. The release's `artifacts` job (si#789), which runs a leaf once more on the
+tag, does not apply `ci: { params: }`: a leaf it selects whose parameter only `ci: { params: }` binds is
+refused there, and the way out is binding it in the command's `with:`.
 
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in

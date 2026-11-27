@@ -827,6 +827,45 @@ def test_the_producer_of_what_a_selected_test_consumes_is_selected_and_the_evide
                if str(s.get("uses", "")).startswith("actions/download-artifact"))
 
 
+#: CLOSURE with `make` running `target_and_mode(target, mode="fast")`: the body cannot run without `target`.
+_PICKY = CLOSURE.replace('make: { impl: "simplon.test_impls:nullary"', 'make: { impl: "simplon.test_impls:target_and_mode"', 1)
+
+
+def test_a_producer_on_the_tag_whose_required_parameter_only_ci_params_binds_is_refused():
+    """si#903 meets si#789: ci.yml applies `ci: params:` and so binds `target`; the `artifacts` job does not (the
+    release builds what it publishes), so its step would hand `make` nothing and be red on every release. Refused
+    at generation, naming the step and the job."""
+    # arrange
+    product = _PICKY.replace("bin: { task: make, produces: { file: app-bin } }",
+                             'bin: { task: make, produces: { file: app-bin }, ci: { params: { target: "a" } } }', 1)
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        _workflows(product)
+    message = str(refused.value)
+    assert f"release job '{releasepipeline.ARTIFACTS_JOB}'" in message and "'build bin'" in message
+    assert "`target`" in message and "`mode`" not in message
+    assert "`ci: { params: }`" in message and "`with:`" in message
+
+
+def test_a_producer_on_the_tag_whose_required_parameter_with_binds_is_derived():
+    # arrange
+    product = _PICKY.replace("bin: { task: make, produces: { file: app-bin } }",
+                             'bin: { task: make, produces: { file: app-bin }, with: { target: "a" } }', 1)
+
+    from simplon.manifest import artifactsection
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+
+    # act
+    jobs = yaml.safe_load(workflowgen.render(_workflows(product)["release"], manifest=loaded, product="app",
+                                             source="app.yaml",
+                                             artifacts=artifactsection.declared(yaml.safe_load(product))))["jobs"]
+
+    # assert
+    runs = _leaf_runs(jobs[releasepipeline.ARTIFACTS_JOB])
+    assert [run for run in runs if "build bin" in run] == ["exec ./app.sh build bin"]
+
+
 @pytest.mark.parametrize("product", [PRODUCT, CLOSURE.split("workflows:\n")[0]], ids=["nothing-selected", "selected"])
 def test_a_declared_release_job_named_artifacts_is_refused(product):
     """A DIAGNOSIS, as for `release`, `docs` and `pages`: two jobs under one key, one would silently replace the

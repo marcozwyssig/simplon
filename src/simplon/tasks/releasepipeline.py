@@ -450,6 +450,8 @@ def _artifacts(manifest: Manifest, data: Mapping[str, object], spec: ReleaseComm
         return ()
     where = f"release job '{ARTIFACTS_JOB}'"
     leaves = [_leaf_step(leaf.spec, leaf.words, where) for leaf in selected]
+    for leaf, step in zip(selected, leaves):
+        _refuse_unbound_on_tag(leaf, step, where)
     steps = [workflowschema.Step(kernel_step=PROVISION)]
     if spec.ci.emulates:
         steps.append(workflowschema.Step(kernel_step=EMULATION))
@@ -461,6 +463,20 @@ def _artifacts(manifest: Manifest, data: Mapping[str, object], spec: ReleaseComm
     return (workflowschema.Job(key=ARTIFACTS_JOB, runner=release.runner, needs=(release,), step=tuple(steps),
                                timeout_minutes=release.timeout_minutes,
                                permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,)),)
+
+
+def _refuse_unbound_on_tag(leaf: cipipeline.Leaf, step: workflowschema.Step, where: str) -> None:
+    """si#903 on the tag (si#789): a selected leaf whose task cannot run without a parameter that neither its
+    `with:` nor the step binds (the step binds only `tag`, from the version) is refused here. ci.yml would apply
+    the leaf's `ci: params:`; the `artifacts` job does not (`_leaf_step`), so a parameter bound only there reaches
+    ci.yml and not this step, which would be red on every release. A DIAGNOSIS."""
+    missing = cipipeline.unbound_required(leaf, {*leaf.spec.with_, *(param.param_name for param in step.params)})
+    if missing:
+        names = ", ".join(f"`{param}`" for param in missing)
+        raise ValueError(
+            f"{where}: '{leaf.words}' runs `{leaf.spec.task}` on the tag, which cannot run without {names}, and its "
+            f"`with:` does not bind it - the job does not apply `ci: {{ params: }}`, which narrows a CI run, so its "
+            f"step would be red on every release. Bind it in the command's `with:`")
 
 
 def refuse_pages_nobody_derives(data: Mapping[str, object], why: str) -> None:

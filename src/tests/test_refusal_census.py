@@ -1416,6 +1416,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # declares a release job by that name (measured 2026-11-27).
     ("releasepipeline", "_refuse_beside_the_release", "the name of the derived job that runs the release's producers"):
         DIAGNOSIS,
+    # si#789 meets si#903: a producer on the tag whose required parameter only `ci: params:` binds; the
+    # `artifacts` job does not apply them, so its step would be red on every release.
+    ("releasepipeline", "_refuse_unbound_on_tag", "so its step would be red on every release"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is the dispatch input's"): DIAGNOSIS,
     ("releasepipeline", "_refuse_beside_the_release", "is a mapping of scope -> level"): DIAGNOSIS,
     # si#862, plan decision 3: two ReleaseCommands would each derive release.yml. A product could declare two

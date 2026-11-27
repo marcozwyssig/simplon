@@ -16,7 +16,7 @@ import dataclasses
 import re
 import shlex
 import textwrap
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Collection, Mapping, Sequence, Set
 from typing import TYPE_CHECKING, NamedTuple
 
 from simplon.kernel import log
@@ -1021,6 +1021,19 @@ def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Se
                               runner=workflowschema.Runner(kind=kind, labels=labels))
 
 
+def unbound_required(leaf: Leaf, bound: Collection[str]) -> list[str]:
+    """The parameters `leaf`'s task cannot run without (see `_refuse_unbound_required`) that `bound` does not
+    name, in the task's order. Shared with `releasepipeline`, whose `artifacts` job binds a different set (si#789)."""
+    task = leaf.spec.task
+    # `class_ref(task)`, not `leaf.spec.impl`: a catalogue coordinate always maps to its generated class.
+    if ":" in task:
+        required = task_class(class_ref(task), task, where=leaf.words).REQUIRED
+    else:
+        required = tuple(param.name for param in signatures.bindable(body_of(leaf.spec, where=leaf.words))
+                         if param.required)
+    return [param for param in required if param not in bound]
+
+
 def _refuse_unbound_required(leaf: Leaf, *, gate: str = "") -> None:
     """si#887: a leaf whose task cannot run without a parameter (`REQUIRED`, the model's `TaskParam.required`)
     that neither its `with:` nor its `ci: { params: }` binds is refused here, at generation: its derived step
@@ -1037,15 +1050,7 @@ def _refuse_unbound_required(leaf: Leaf, *, gate: str = "") -> None:
 
     `gate` is the words of the gate aggregate `leaf` is a member of, "" for a main or cadence leaf: a member's
     `ci: { skip: }` is refused (`_refuse_member`), so the way out offered there is leaving the gate."""
-    task = leaf.spec.task
-    # `class_ref(task)`, not `leaf.spec.impl`: a catalogue coordinate always maps to its generated class.
-    if ":" in task:
-        required = task_class(class_ref(task), task, where=leaf.words).REQUIRED
-    else:
-        required = tuple(param.name for param in signatures.bindable(body_of(leaf.spec, where=leaf.words))
-                         if param.required)
-    bound = {*leaf.spec.with_, *leaf.spec.ci.params}
-    missing = [param for param in required if param not in bound]
+    missing = unbound_required(leaf, {*leaf.spec.with_, *leaf.spec.ci.params})
     if missing:
         names = ", ".join(f"`{param}`" for param in missing)
         out = (f"take it out of `{gate}`: a gate member cannot declare `ci: skip:`" if gate else

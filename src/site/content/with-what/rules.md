@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 365 | nothing - the declaration had no working meaning |
+| diagnosis | 366 | nothing - the declaration had no working meaning |
 | expression rule | 55 | something it could otherwise have said |
-| **all load-time refusals** | **420** | |
+| **all load-time refusals** | **421** | |
 
 si#888 made the census follow a function imported with `from ... import` and called bare, as it already
 followed `module.function(...)`. The count grew without a rule being written: the path refusals of
@@ -81,10 +81,12 @@ followed `module.function(...)`. The count grew without a rule being written: th
 refusal of a group declared in both the catalogue's and the product's `taxonomy:` (an expression rule on
 the platform/product seam, shadowed at load by the refusal of a product `taxonomy:`).
 
-si#789 added one diagnosis: a job declared under `workflows: release: jobs:` named `artifacts`, the name of
-the derived job that runs the release's producers on the tag. Beside the derived one under the same key, one
+si#789 added two diagnoses. A job declared under `workflows: release: jobs:` named `artifacts`, the name of
+the derived job that runs the release's producers on the tag: beside the derived one under the same key, one
 of the pair would be silently replaced. It is refused whether or not anything is selected for that job. None
-of the reachable manifests declares a release job by that name (measured 2026-11-27).
+of the reachable manifests declares a release job by that name (measured 2026-11-27). And a producer selected
+for that job whose task cannot run without a parameter that only its `ci: params:` binds: the job does not
+apply them, so its step would be red on every release (si#903's check, on the tag).
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
