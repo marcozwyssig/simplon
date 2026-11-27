@@ -847,15 +847,20 @@ def test_a_declared_release_job_named_artifacts_is_refused(product):
     assert "rename yours" in message
 
 
-@pytest.mark.parametrize("old, new, named", [
-    # the build leaf may not run unattended, so `producers_on_tag` leaves it out and its file is made nowhere
+@pytest.mark.parametrize("old, new, said", [
+    # the build leaf may not run unattended, so `producers_on_tag` leaves it out and its file is made nowhere.
+    # The derived CI refuses first, naming the CI leaf that consumes the file (`test bin`), not the release
+    # step (`support ship`) that consumes the evidence `test bin` would write.
     ('make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: true,',
-     'make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: false,', "'app-bin'"),
-    # no leaf produces what the release step consumes at all
+     'make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: false,',
+     "derived CI: 'test bin' consumes 'app-bin', which 'build bin' produces, and 'build bin' is not run by the "
+     "CI (it needs a person at the terminal (`unattended: false`))"),
+    # no leaf produces what the release step consumes at all: the load's own rule 2, naming the release step
     ("ship: { task: ship, consumes: { evidence: app-checked } }",
-     "ship: { task: ship, consumes: { evidence: app-orphan } }", "'app-orphan'"),
+     "ship: { task: ship, consumes: { evidence: app-orphan } }",
+     "command 'support ship' consumes 'app-orphan', and no command produces it"),
 ], ids=["only-producer-not-unattended", "no-producer"])
-def test_a_release_consumed_artifact_nothing_on_the_tag_produces_is_refused_naming_it(old, new, named):
+def test_a_release_consumed_artifact_nothing_on_the_tag_produces_is_refused_naming_it(old, new, said):
     """si#789 (4a's silent drop): an artifact a release step consumes that no CI candidate and no release step
     produces is not dropped quietly - generation refuses, naming the artifact and the step that consumes it. The
     refusals are the existing ones (the derived CI's, and `handoff.plan`'s "no job in this workflow produces
@@ -874,5 +879,4 @@ def test_a_release_consumed_artifact_nothing_on_the_tag_produces_is_refused_nami
                            artifacts=artifactsection.declared(yaml.safe_load(product)))
 
     # assert
-    message = str(refused.value)
-    assert named in message and ("produces it" in message or "is not run by the CI" in message), message
+    assert said in str(refused.value), str(refused.value)

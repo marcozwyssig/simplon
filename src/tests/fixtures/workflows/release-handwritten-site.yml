@@ -187,7 +187,7 @@ jobs:
   # The wheel `artifacts` built from the tagged commit (si#789: handed over as `dist`, not built
   # again), published to PyPI by Trusted Publishing - an OIDC token, no API token in the repository. PyPI's publisher is bound to this file's name and the
   # `pypi` environment, which is why neither moves.
-  # D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
+  # D12: an exception because promotion is not derived yet (#916); #864 makes it a counted `exception:`.
   publish:
     runs-on: ubuntu-latest
     needs:
@@ -758,7 +758,7 @@ jobs:
   # (si#365). After `publish`, so the image carries the version PyPI serves. Since si#789 it builds
   # nothing and needs no emulator: `release push-image` pushes the OCI archive `artifacts` built and
   # tested, handed over with its test record. A rehearsal checks the archive offline and pushes nothing.
-  # D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
+  # D12: an exception because promotion is not derived yet (#916); #864 makes it a counted `exception:`.
   image:
     runs-on: ubuntu-latest
     needs:

@@ -909,7 +909,7 @@ workflows:
   # the `docs` and `pages` jobs from `website: pages:` (si#862); the three jobs below are ADDED by this
   # product, and each one runs after the tag exists. Since si#789 they promote what the derived `artifacts`
   # job built (the hand-off brings `dist`, the image's archive and its evidence) instead of building it. They
-  # stay D12 exceptions because promotion is not derived yet (follow-up ticket); #864 makes each a counted
+  # stay D12 exceptions because promotion is not derived yet (#916); #864 makes each a counted
   # `exception:`.
   release:
     name: release
@@ -938,7 +938,7 @@ workflows:
           The wheel `artifacts` built from the tagged commit (si#789: handed over as `dist`, not built
           again), published to PyPI by Trusted Publishing - an OIDC token, no API token in the repository. PyPI's publisher is bound to this file's name and the
           `pypi` environment, which is why neither moves.
-          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
+          D12: an exception because promotion is not derived yet (#916); #864 makes it a counted `exception:`.
         needs: release
         runs-on: ubuntu-latest
         python: "3.12"
@@ -1032,7 +1032,7 @@ workflows:
           steps: the commit reads the handed-over formula and PyPI, not the checkout's version. A dry run
           still rehearses the hand-off and skips the commit. The run's own token only reads: the tap is
           written with the App's, and `contents: write` is the release job's own block (si#719), not this one's.
-          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
+          D12: an exception because promotion is not derived yet (#916); #864 makes it a counted `exception:`.
         runs-on: ubuntu-latest
         python: "3.12"
         permissions:
@@ -1048,7 +1048,7 @@ workflows:
           (si#365). After `publish`, so the image carries the version PyPI serves. Since si#789 it builds
           nothing and needs no emulator: `release push-image` pushes the OCI archive `artifacts` built and
           tested, handed over with its test record. A rehearsal checks the archive offline and pushes nothing.
-          D12: an exception because promotion is not derived yet (follow-up ticket); #864 makes it a counted `exception:`.
+          D12: an exception because promotion is not derived yet (#916); #864 makes it a counted `exception:`.
         needs: publish
         runs-on: ubuntu-latest
         python: "3.12"

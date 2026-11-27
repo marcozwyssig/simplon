@@ -2304,6 +2304,31 @@ def test_a_bool_parameter_given_anything_but_true_or_false_is_refused():
         workflowgen._parameters(loaded, "test", "aim", {"dry_run": "yes"}, where="argv")
 
 
+def test_false_for_a_flag_that_defaults_to_true_is_refused_rather_than_dropped():
+    """Review of si#789: `test:image`'s body (`image.smoke`) takes `user: bool = True`, and the CLI offers `--user`
+    and no `--no-user` (measured on the Typer app `cli._bound` builds). Omitting the flag would run the step with
+    `user=True`, green - the opposite of what the step said. Refused, naming the step, the parameter and its
+    default; `true` still renders the flag."""
+    import types
+
+    from simplon.model.command import ParamPresentation, TaskCommand
+
+    # arrange: the real catalogue coordinate, so the real body's signature decides
+    entry = catalogue_mod.load().tasks["test:image"]
+    spec = TaskCommand(impl=entry["impl"], task="test:image",
+                       params={k: ParamPresentation(**(v or {})) for k, v in entry["params"].items()})
+    placed = types.SimpleNamespace(commands={"test": {"image": spec}})
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        workflowgen._parameters(placed, "test", "image", {"user": "false"}, where="workflow 'ci', job 'j', step 3")
+    assert str(refused.value) == (
+        "workflow 'ci', job 'j', step 3: `test image` reads `user` as a flag that defaults to true and has no "
+        "`--no-user`, so `false` cannot be said on its command line - leaving the flag out would run it with "
+        "`user` true. Drop the parameter, or bind it with `with:` where the body reads it")
+    assert workflowgen._parameters(placed, "test", "image", {"user": "true"}, where="x") == " --user"
+
+
 def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli_reads(kernel_manifest):
     # act
     text = _render(kernel_manifest, _RELEASE_TAG)
