@@ -101,6 +101,38 @@ def test_a_directory_another_command_wrote_is_not_covered_by_the_images_test():
         _load(text)
 
 
+def test_a_sibling_pair_under_a_port_that_does_not_verify_it_is_refused_as_on_main():
+    """si#789 ruling: the widening holds only where the consuming release port declares that it verifies the
+    sibling against the evidence (`release:image`'s `archive`). A product task taking the same pair on ports
+    that declare nothing gets rule 6 exactly as strict as before."""
+    # arrange
+    text = ARCHIVED.replace('image: { task: "release:image", consumes: { image: app, archive: app-oci, evidence: [app-checked] } }',
+                            "image: { task: ship, consumes: { image: app, archive: app-oci, evidence: [app-checked] } }") + """tasks:
+  ship: { impl: "simplon.test_impls:nullary", help: ship, unattended: true,
+          input: { image: { accepts: image }, archive: { accepts: directory }, evidence: { accepts: test-result } } }
+"""
+    assert text != ARCHIVED
+
+    # act / assert
+    with pytest.raises(ValueError, match="releases 'app-oci', and no test produces a result about it"):
+        _load(text)
+
+
+def test_simplons_image_release_needs_its_port_to_declare_the_verification(monkeypatch):
+    """The declaration is what lets simplon's `release push-image` take `kernel-oci` on `kernel-checked`: without
+    it, simplon's own manifest is refused by rule 6."""
+    # arrange
+    from conftest import ROOT
+    from simplon.model import artifactschema
+    text = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
+    _load(text)  # loads as it is
+    monkeypatch.setattr(artifactschema, "VERIFIED_AGAINST_EVIDENCE", frozenset(), raising=False)
+
+    # act / assert
+    with pytest.raises(ValueError, match="releases 'kernel-oci', and no test produces a result about it"):
+        _load(text)
+
+
 def test_an_untested_release_is_refused_naming_the_artifact():
     # arrange: no test consumes `app`
     text = HEAD + """

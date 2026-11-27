@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from simplon.manifest import artifactsection
 
+from simplon.model import artifactschema
 from simplon.model.artifactschema import PORTS, Port
 from simplon.model.command import AggregateCommand, Command, ReleaseCommand, TaskCommand
 from simplon.kernel.plan import PlanNode, parallel_siblings, schedule_of
@@ -438,11 +439,13 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
     result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
     (decided 2026-10-14). "About" is direct: a result is about what its producer consumes.
 
-    One widening (si#789): a result about X is also about an artifact Y the command that produced X produced
-    beside it, when the release consumes BOTH - `build image` writes the image's OCI archive in the same bake,
-    `test image` runs the image, and `release push-image` takes the image for its declaration and the archive for
-    its bytes (and holds the archive's children against what the test ran before it pushes). A release that
-    takes Y without X binds nothing that says what was tested, and stays refused."""
+    One widening (si#789, Marco's ruling): a result about X is also about an artifact Y the command that produced X
+    produced beside it, when the release consumes BOTH and binds Y to a port the catalogue declares
+    `verifies_against_evidence` (`artifactschema.VERIFIED_AGAINST_EVIDENCE`): its body holds Y against what the
+    evidence ran before it publishes. Today that is `release:image`'s `archive` alone - `build image` writes the
+    image's OCI archive in the same bake, `test image` runs the image, and `_untested_in_archive` holds the
+    archive's images against the test's. On any other port, product tasks included, rule 6 is as strict as
+    without the widening."""
     together: dict[str, set[str]] = {}
     for members in manifest.commands.values():
         for spec in members.values():
@@ -456,12 +459,15 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
             where = f"{group} {name}"
             consumed = [a for names in _bound(spec, "consumes").values() for a in names]
             evidence = {a for a in consumed if artifactsection.accepts(kinds, "test-result", declared[a].kind)}
+            verified = {a for port, names in _bound(spec, "consumes").items() for a in names
+                        if (getattr(spec, "task", ""), port) in artifactschema.VERIFIED_AGAINST_EVIDENCE}
             for subject in consumed:
                 if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):
                     continue
                 wanted = set(about.get(subject, set()))
-                for sibling in together.get(subject, set()) & set(consumed):
-                    wanted |= about.get(sibling, set())
+                if subject in verified:
+                    for sibling in together.get(subject, set()) & set(consumed):
+                        wanted |= about.get(sibling, set())
                 if not wanted:
                     raise ValueError(
                         f"command '{where}' releases '{subject}', and no test produces a result about it - add "

@@ -1472,10 +1472,13 @@ release_image typeOf simplon.pipeline.CatalogueTask {
   }
   // si#789: the archive `build:image` wrote beside the image, pushed as it is with oras, so the published index
   // is the one the build recorded and `test:image` ran the children of - no daemon, no second bake.
+  // `_untested_in_archive` holds the archive's platform images against what the evidence ran, so a test of the
+  // image `build:image` wrote beside the archive is a test of the archive (rule 6's one widening).
   input archive typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.directory
     param = "archive"
     needs = simplon.vocabulary.artifact.f_path
+    verifies_against_evidence = true
   }
   input evidence typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.test_result

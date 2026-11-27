@@ -75,6 +75,13 @@ Port typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..N
   }
+  // si#789 (rule 6): an INPUT port of a release task whose body holds the artifact it reads against the evidence
+  // the command consumes, before it publishes. Only on such a port does a test about an artifact the same command
+  // produced beside this one count as a test about this one (`ports._check_release`); written only where true.
+  property verifies_against_evidence typeOf firn.core.Attribute {
+    range = firn.core.BooleanLiteral
+    subjectCardinality = 0..1
+  }
 }
 
 // A task's `key` is its coordinate, and a task without one is firn's E004 (si#400 part 4, decision 4): two
