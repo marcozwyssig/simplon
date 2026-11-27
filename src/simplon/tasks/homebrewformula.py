@@ -230,7 +230,7 @@ def build(wheel: str = "", formula: str = "", shape: str = "", source: str = "",
             return 1
         resources = [_sdist(d.name, d.version) for d in homebrewclosure.added(dists, meta.name)]
         text = render(meta, url, sha256, resources, form)
-    except (pypi.PyPIError, ValueError) as refused_with:
+    except (pypi.PyPIError, TaskRefused) as refused_with:
         log.error(f"no formula was written for {meta.filename}: {refused_with}")
         return 1
     out.parent.mkdir(parents=True, exist_ok=True)

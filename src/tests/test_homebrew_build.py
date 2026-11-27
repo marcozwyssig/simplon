@@ -163,6 +163,24 @@ def test_a_closure_refusal_is_logged_and_nothing_is_written(product, pypi, monke
     assert not (root / "build" / "homebrew" / "simplon.rb").exists()
 
 
+def test_a_bug_inside_the_build_crashes_and_is_not_read_as_a_refusal(product, pypi, monkeypatch, capsys):
+    """si#891: only a refusal (`TaskRefused`, or a PyPI error) is "no formula was written"; a plain ValueError
+    is what a genuine bug raises (`int('x')`), and it must keep its traceback instead of reading as rc 1."""
+    # arrange
+    root, _ = product
+
+    def bug(*args):
+        return int("x")
+    monkeypatch.setattr(homebrewclosure, "measure", bug)
+
+    # act / assert
+    with pytest.raises(ValueError, match="invalid literal for int") as raised:
+        _build(source="local")
+    assert not isinstance(raised.value, TaskRefused)
+    assert "no formula was written" not in _said(capsys)
+    assert not (root / "build" / "homebrew" / "simplon.rb").exists()
+
+
 def test_a_refused_build_removes_the_formula_an_earlier_run_left(product, pypi, capsys):
     # a refusal must not leave yesterday's formula where the test and the tap read today's
     root, _ = product
