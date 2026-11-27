@@ -1573,18 +1573,18 @@ archiving `suites: reports:`, which a product with a `test:report` leaf therefor
 `after_all` leaf that produces what another leaf consumes is refused: last, it would run after its
 consumer.
 
-**ci.yml keeps what the release consumes** (si#862, #789). Every artifact with a `path:` that a leaf of
-the derived release.yml consumes (the release aggregate's plan, a command step of a job declared under
-`workflows: release:`, the `website: by:` command) and a leaf of ci.yml's main job produces is uploaded
-after the last leaf, before the report's upload, under its manifest name and from its declared path. It
-is kept for 90 days, so a release cut days after the merge still finds the run of its commit. Only push
-and dispatch runs upload it: a pull request's run is not one a release promotes. Each upload waits for
-its producer's success and fails on a missing file. An artifact with no `path:` (an image) is not
-uploaded: it goes to its registry. One that ci.yml cannot keep once is named in the job's note with the
-reason, not refused, because CI still verifies it: produced only in `ci: platforms:` cells, by a gate
-member or a `cadence:` leaf (another file's run), or by no leaf ci.yml runs (a skipped one, or a release
-member such as `release notes`). One that ci.yml also hands from its main job to a cell job is refused:
-the hand-off already holds that name in the run. Without a derived release.yml nothing is kept.
+**ci.yml keeps nothing for the release** (si#789). A release does not promote what an earlier run of ci.yml
+built: it builds again, on the tag, in its own run. The derived release.yml gets an `artifacts` job after
+`release`, which selects the CI leaves (a build or test command ci.yml would run, unattended, with no
+`ci: { skip: }`) that produce an artifact a leaf of release.yml consumes, and the tests whose `evidence:` a
+release step consumes, then the producers of what those consume. What release.yml makes itself is not rebuilt.
+The job runs on the release job's machine, with its emulation and time limit, and with the release's
+parameters, not a leaf's `ci: params:`, so what is built and tested is what the release publishes. It hands
+each artifact over to the jobs that consume it in the same run. On a real run it requires the tag the
+`release` job pushed to be on origin at this commit; on a dry run, which pushes no tag, it cuts the tag in
+its own checkout, so the build is stamped with the version a real run would release. A product whose CI
+builds nothing the release consumes gets no `artifacts` job. Which commands those are for your manifest is
+shown by `support github workflows`, which writes the job into release.yml.
 
 **The machine is the product's top-level `runner:`**, the same kinds a job's `runner:` takes. Absent,
 it is `github-ubuntu`:

@@ -222,9 +222,8 @@ def test_simplons_own_ci_renders_byte_identical_and_hands_over_only_the_canary()
     assert rendered["handoff-canary"].count("actions/upload-artifact@") == 1
     assert rendered["handoff-canary"].count("actions/download-artifact@") == 1
     assert "name: handoff-canary" in rendered["handoff-canary"]
-    # the allure report's, and since si#862 one per artifact release.yml consumes that ci.yml keeps for #789
-    kept = cipipeline._promotion(loaded, data, cipipeline.derive(loaded, data).selection).kept
-    assert rendered["ci"].count("actions/upload-artifact@") == 1 + len(kept)
+    # the allure report's alone: nothing is kept for a release to promote (si#789)
+    assert rendered["ci"].count("actions/upload-artifact@") == 1
     assert rendered["ci"].count("actions/download-artifact@") == 0
 
 

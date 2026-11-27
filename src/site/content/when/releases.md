@@ -136,12 +136,10 @@ on the old behaviour:
   way `ci.yml` is. Two ReleaseCommands are refused, and the si#487 check-first rule holds for every
   ReleaseCommand. New `website: { pages: release, by: <command>, after: [<job>] }` derives the `docs`
   and `pages` jobs with si#851's boundary; `docs` waits for `release` and what `after:` names, and
-  carries the release's time limit. `ci.yml` keeps every `path:` artifact a release consumes for 90
-  days, from `push` and `workflow_dispatch` runs only; one whose producer runs in CI with
-  `ci: { params: }` is not kept and is named with that reason, and a kept artifact named like the
-  report upload is refused. simplon's `publish`, `homebrew-tap` and `image` jobs stay hand-written
-  under `workflows: release:`. Not yet measured: the promotion uploads on a real CI run, and the
-  `docs` job without `setup-python` on a real release.
+  carries the release's time limit. `ci.yml` kept every `path:` artifact a release consumes for 90
+  days; #789 removed that upload and its two diagnoses (the release builds on the tag in an `artifacts`
+  job). simplon's `publish`, `homebrew-tap` and `image` jobs stay hand-written
+  under `workflows: release:`. Not yet measured: the `docs` job without `setup-python` on a real release.
 
 ### Support and test tasks (si#867, si#859)
 

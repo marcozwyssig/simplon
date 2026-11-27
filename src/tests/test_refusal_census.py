@@ -1368,11 +1368,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
         DIAGNOSIS,
     # si#860 final review: a cell leaf would produce its artifact once per cell, and a run hands it over once.
     ("cipipeline", "_refuse_cell_producers", "so it runs once per cell and would"): DIAGNOSIS,
-    # si#862, #789: an artifact release.yml consumes that the hand-off already uploads under its name inside ci.yml
-    # (main job to a cell job); one run holds one artifact of a name, so the promotion upload would be red.
-    ("cipipeline", "_refuse_promoted_crossings", "so it cannot also be kept"): DIAGNOSIS,
-    # si#862, #789: a kept artifact named like the report upload; both uploads run in the main job.
-    ("cipipeline", "_refuse_promoted_report_name", "the name the report upload after"): DIAGNOSIS,
     # si#861: a gate member runs in its gate's file with nobody watching, so one that may not, one that opts out
     # of a main job it is not in, or one whose cadence or cells its gate's file already decides would not run as
     # written; and artifacts do not cross workflow files, so a hand-off between a gate and another run would

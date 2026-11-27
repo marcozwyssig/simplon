@@ -399,7 +399,7 @@ def producers_on_tag(manifest: Manifest, data: Mapping[str, object]) -> tuple[ci
 
     A leaf is a candidate when ci.yml would run it: a `TaskCommand` in a `build` or `test` group of the CI area
     that declares no `ci: { skip: }` and runs unattended. Selected are the candidates that produce an artifact a
-    leaf of release.yml consumes, registry images included (unlike `consumed`, which keeps only what has a file),
+    leaf of release.yml consumes, registry images included,
     and with it the `evidence:` a release step consumes, which a test produces; then the producers of what a
     selected leaf consumes, so the job never consumes what nothing in this run built.
 
@@ -461,20 +461,6 @@ def _artifacts(manifest: Manifest, data: Mapping[str, object], spec: ReleaseComm
     return (workflowschema.Job(key=ARTIFACTS_JOB, runner=release.runner, needs=(release,), step=tuple(steps),
                                timeout_minutes=release.timeout_minutes,
                                permission=_permissions({"contents": "read"}), env=(_VERSION_ENV,)),)
-
-
-def consumed(manifest: Manifest, data: Mapping[str, object]) -> tuple[str, ...]:
-    """si#862, #789: the artifacts with a `path:` that a leaf release.yml runs consumes, in the manifest's
-    `artifacts:` order; () where no release.yml is derived (no ReleaseCommand, or a `handwritten:` release).
-
-    The leaves are every one release.yml runs: the ReleaseCommand's plan, every command step of the jobs declared
-    under `workflows: release:`, and the `website: by:` plan of the derived `docs` job. An artifact with no `path:`
-    (an image, a tag) has no file to keep. Whether release.yml also produces one itself before consuming it is not
-    asked: until #789 the release rebuilds, and these are what it will take from CI instead."""
-    wanted = {artifact for leaf in _release_leaves(manifest, data)
-              for names in leaf.consumes.values() for artifact in names}
-    return tuple(name for name, declared in artifactsection.declared(data).items()
-                 if name in wanted and declared.path)
 
 
 def refuse_pages_nobody_derives(data: Mapping[str, object], why: str) -> None:

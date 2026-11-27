@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 367 | nothing - the declaration had no working meaning |
+| diagnosis | 365 | nothing - the declaration had no working meaning |
 | expression rule | 55 | something it could otherwise have said |
-| **all load-time refusals** | **422** | |
+| **all load-time refusals** | **420** | |
 
 si#888 made the census follow a function imported with `from ... import` and called bare, as it already
 followed `module.function(...)`. The count grew without a rule being written: the path refusals of
@@ -258,10 +258,13 @@ without `by:` or `by:` without `pages:`, a `by:` that is not `<group> <name>`, t
 derived, a `by:` command with a leaf that may not run with nobody watching or with no `docs:site` leaf in its
 plan, a declared release job named `docs` or `pages`, an `after:` that is no list of job keys or names a job
 not declared beside the release, and a `website:` that is no mapping.
-The derived ci.yml keeping each `path:` artifact release.yml consumes for #789 added one diagnosis: such an
-artifact that ci.yml also hands from its main job to a cell job, because the hand-off already holds that name in
-the run and the upload that keeps it would be red. One produced only in a cell, a gate file or a cadence file is
-not refused: ci.yml's note names it as not kept.
+si#862 had the derived ci.yml keep each `path:` artifact release.yml consumes for a later release to promote,
+and added two diagnoses with it: such an artifact that ci.yml also hands from its main job to a cell job, and
+one named like the report upload, because upload-artifact refuses a second artifact of one name in a run and the
+keeping upload would have been red on every push run. #789 removed both, with the upload. The release now
+builds what it consumes in its own run (the `artifacts` job), so no run is read by another and nothing in ci.yml
+is kept for it: the two names cannot collide, and a refusal for a collision that cannot happen would be a rule
+with no cause. Two diagnoses went and no expression rule moved; the table above is the census.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
