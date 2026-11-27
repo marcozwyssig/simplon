@@ -405,7 +405,7 @@ def prepare_caches(cfg: Toolchain, product: str, instance: str, where: str,
     for cache in cfg.caches:
         if isinstance(cache, CacheDir):
             fault = cachedir.prepare(cachedir.directory(base, product, cache.dir, instance),
-                                     f"{where}: cache '{cache.dir}'")
+                                     f"{where}: cache '{cache.dir}'", base)
             if fault:
                 return fault
     return ""

@@ -41,6 +41,7 @@ host side.
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -80,24 +81,57 @@ def directory(base: Path, product: str, name: str, instance: str) -> Path:
     return base / product / f"{name}-{instance}"
 
 
-def prepare(path: Path, label: str) -> str:
-    """Make `path` exist as a directory the caller owns, or say why it cannot be, having run nothing.
+def prepare(path: Path, label: str, base: Path) -> str:
+    """Make `path` (`directory(base, ...)`) exist as a directory the caller owns, or say why it cannot be,
+    having run nothing. "" once it is there and the caller's.
 
     `label` opens every sentence (the command and the entry), so the reader is told which declaration to
-    look at. Returns "" once the directory is there and the caller's.
+    look at.
+
+    NO LINK BELOW THE ROOT (si#865 review). A cache root can be shared - a runner's tool cache, or a
+    `DELIVERY_DIR_CACHE` other users write to - and somebody who can write it could plant
+    `<root>/<product>` or the entry itself as a link to a directory the CALLER owns elsewhere; mounted,
+    the container would read and overwrite it. So the product directory and the entry are checked with
+    `lstat` - a real directory, the caller's - and the entry's resolved path must still be under the
+    resolved root, the rule `hostpath.mount_source` keeps for tree mounts. The root itself is followed:
+    it is the caller's own choice, and a runner's tool cache is often a link. What this kernel creates
+    below it is mode 0700, so the next caller's directory is nobody else's to plant in.
     """
-    # mkdir FIRST, with exist_ok: up to four steps run at once (`steps.py`), and two of them making one
-    # cache must both find it there rather than one of them losing a race to the other.
     try:
-        path.mkdir(parents=True, exist_ok=True)
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError as failed:
+        return (f"{label}: {base} could not be made ({failed}). Point {CACHE_ENV} at a directory you can "
+                f"write, and run this again.")
+    for held in (path.parent, path):
+        fault = _held(held, label)
+        if fault:
+            return fault
+    if not path.resolve().is_relative_to(base.resolve()):
+        return (f"{label} needs {path} under the cache root {base.resolve()}; it resolves to "
+                f"{path.resolve()}. Remove it (rm -rf {path}) and run this again.")
+    return ""
+
+
+def _held(path: Path, label: str) -> str:
+    """Make one level below the root, mode 0700, or rule on what is already there: a real directory the
+    caller owns, or a sentence naming the path and the repair."""
+    try:
+        # mkdir FIRST: up to four steps run at once (`steps.py`), and two of them making one cache must
+        # both find it there rather than one losing a race. A plain `mkdir` never follows a link.
+        path.mkdir(mode=0o700)
     except FileExistsError:
-        return f"{label} needs {path} as a directory; it is not one. Remove it and run this again."
+        pass
     except OSError as failed:
         return (f"{label}: {path} could not be made ({failed}). Point {CACHE_ENV} at a directory you can "
                 f"write, and run this again.")
+    found = os.lstat(path)
+    if stat.S_ISLNK(found.st_mode):
+        return (f"{label} needs {path} as a real directory; it is a symbolic link. Remove it (rm {path}) "
+                f"and run this again.")
+    if not stat.S_ISDIR(found.st_mode):
+        return f"{label} needs {path} as a directory; it is not one. Remove it and run this again."
     uid = os.getuid() if hasattr(os, "getuid") else None
-    owner = path.stat().st_uid
-    if uid is not None and owner != uid:
-        return (f"{label} needs {path} owned by uid {uid}; it is owned by uid {owner}. It is a cache: "
+    if uid is not None and found.st_uid != uid:
+        return (f"{label} needs {path} owned by uid {uid}; it is owned by uid {found.st_uid}. It is a cache: "
                 f"remove it (rm -rf {path}, a root shell if another uid owns it) and run this again.")
     return ""

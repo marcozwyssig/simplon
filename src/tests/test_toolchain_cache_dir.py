@@ -217,6 +217,95 @@ def test_a_directory_that_cannot_be_made_is_refused_and_nothing_runs(monkeypatch
     assert "firn build compile: cache 'gradle'" in errors[0] and "DELIVERY_DIR_CACHE" in errors[0]
 
 
+def _dir_cfg():
+    return toolchain.declared({"image": "img:1", "argv": ["x"], "caches": [{"dir": "gradle", "path": "/c"}]},
+                              where="b")
+
+
+def _elsewhere(tmp_path):
+    """A directory the caller owns outside the cache root, which a planted link would hand the container."""
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "secret").write_text("x", encoding="utf-8")
+    return target
+
+
+def test_a_symlinked_entry_is_refused_and_its_target_is_not_mounted(tmp_path):
+    # arrange: somebody who can write the shared root planted the entry as a link to the caller's own dir
+    base = tmp_path / "caches"
+    (base / "firn").mkdir(parents=True)
+    target = _elsewhere(tmp_path)
+    (base / "firn" / "gradle-main").symlink_to(target)
+
+    # act
+    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+
+    # assert: refused in words, naming the path and the repair
+    entry = base / "firn" / "gradle-main"
+    assert fault == (f"firn build compile: cache 'gradle' needs {entry} as a real directory; it is a "
+                     f"symbolic link. Remove it (rm {entry}) and run this again.")
+
+
+def test_a_symlinked_product_directory_is_refused(tmp_path):
+    # arrange
+    base = tmp_path / "caches"
+    base.mkdir()
+    target = _elsewhere(tmp_path)
+    (base / "firn").symlink_to(target)
+
+    # act
+    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+
+    # assert: refused, and nothing was made through the link
+    assert fault == (f"firn build compile: cache 'gradle' needs {base / 'firn'} as a real directory; it is a "
+                     f"symbolic link. Remove it (rm {base / 'firn'}) and run this again.")
+    assert sorted(p.name for p in target.iterdir()) == ["secret"]
+
+
+def test_a_product_directory_another_uid_owns_is_refused(tmp_path):
+    # arrange
+    if os.getuid() != 0:
+        pytest.skip("making a directory another uid owns takes root")
+    base = tmp_path / "caches"
+    (base / "firn").mkdir(parents=True)
+    os.chown(base / "firn", 4242, 4242)
+
+    # act
+    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+
+    # assert
+    assert fault.startswith(f"firn build compile: cache 'gradle' needs {base / 'firn'} owned by uid 0; it is "
+                            f"owned by uid 4242.")
+    assert not (base / "firn" / "gradle-main").exists()
+
+
+def test_the_product_directory_is_made_private_to_the_caller(tmp_path):
+    # arrange
+    base = tmp_path / "caches"
+
+    # act
+    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "firn build compile", base)
+
+    # assert
+    assert fault == ""
+    assert (base / "firn").stat().st_mode & 0o777 == 0o700
+
+
+def test_a_symlinked_cache_root_itself_is_followed(tmp_path):
+    # arrange: the ROOT is the caller's own choice (a runner's tool cache is often a link); only what is
+    # below it could have been planted by somebody else
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "root-link").symlink_to(real)
+
+    # act
+    fault = toolchain.prepare_caches(_dir_cfg(), "firn", "main", "b", tmp_path / "root-link")
+
+    # assert
+    assert fault == ""
+    assert (real / "firn" / "gradle-main").is_dir()
+
+
 def test_a_volume_only_command_makes_no_directory(monkeypatch, tmp_path):
     # arrange: the volume form stays what it was, and a command with no `dir:` touches no cache root
     (tmp_path / "tree").mkdir()
