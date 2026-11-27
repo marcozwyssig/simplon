@@ -349,6 +349,18 @@ def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, .
     )
 
 
+def _archive_directory(archive: str, root: Path) -> Path:
+    """The directory the `archive` artifact declares, under the product root (si#789)."""
+    ctx = context.current()
+    section = ctx.manifest_data().get(SECTION) or {}
+    if archive not in section:
+        raise ValueError(f"no artifact '{archive}' in {ctx.manifest_path.name}'s `{SECTION}:` section; "
+                         f"declared are: {', '.join(sorted(section)) or '(none)'}")
+    entry = artifactsection.entry(section, archive, artifactschema.DirectoryEntry, ctx.manifest_path.name,
+                                  "build:image", param="archive")
+    return root / str(entry.path)
+
+
 def _declared_for(name: str, coordinate: str) -> tuple[Image, Path]:
     """The declared image and the product root, or a ValueError that says which pin is missing."""
     if not name:
@@ -707,7 +719,7 @@ def _platform_lines(platforms: Mapping[str, tuple[str, str]]) -> str:
     return "".join(lines)
 
 
-def build(name: str = "", tag: str = "", platform: str = "") -> int:
+def build(name: str = "", tag: str = "", platform: str = "", archive: str = "") -> int:
     """Build the container image `name` declares, tagged with the reference it will be published under.
 
     `name` is normally pinned per command with `with: { name: ... }`, the shape `test:gate` and
@@ -718,9 +730,19 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     image is built for every declared platform, which is what a release needs; with it, the everyday
     "build the image I can run here" stays one native build on a host with no emulator, and a product
     pins it per command - firn's CI and devcontainer with `platform: linux/amd64`.
+
+    `archive` names the `directory` artifact (bound with `produces: { archive: ... }`) a build of every
+    declared platform also writes the OCI archive of the index into, with its digests (si#789). A
+    `platform:` build writes none, and an image without `platforms:` has no index to archive.
     """
     cfg, root = _declared_for(name, "build:image")
+    archive_dir = _archive_directory(archive, root) if archive else None
     if not _platform_declared(cfg, name, platform):
+        return 1
+    if archive and not cfg.platforms:
+        log.error(f"`archive: {archive}` was bound, but image '{name}' declares no `platforms:` - a "
+                  f"single-platform build makes no index to archive. Declare `platforms:` on "
+                  f"`{SECTION}.{name}`, or drop the `archive` binding")
         return 1
     # si#74, and the order is the point: the manifest's own paths are checked BEFORE the tool is demanded,
     # so a declaration that points at nothing is answered as itself on a host that has no docker either.
@@ -769,7 +791,7 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     if cfg.platforms:
         if not _runnable_where_it_is_run(cfg, name, (platform,) if platform else cfg.platforms):
             return 1
-        return _build_platforms(cfg, name, tag, root, platform)
+        return _build_platforms(cfg, name, tag, root, platform, archive_dir)
     args = build_arguments(cfg, root)
     if not _contexts_in_the_daemon(cfg, name, args.get(VERSION_ARG, "")):
         return 1
@@ -1271,8 +1293,13 @@ def _target_contexts(cfg: Image, version: str, root: Path) -> dict[str, str]:
             **file_contexts(cfg, root), **directory_contexts(cfg, root)}
 
 
+def archive_target(name: str) -> str:
+    """The bake target that writes every platform of `name` into one OCI archive (si#789)."""
+    return f"{name}__oci"
+
+
 def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path,
-                    platform: str = "") -> dict:
+                    platform: str = "", archive: Path | None = None) -> dict:
     """The bake file for `cfg`: its dependencies, the pushing target `name`, and one loading target per
     platform. Pure.
 
@@ -1284,6 +1311,11 @@ def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str],
     `platform` narrows EVERY target - the dependencies too - to that one platform (si#355): a narrowed
     build that still baked its contexts for each declared platform paid for, and needed an emulator for,
     exactly what `platform:` exists to avoid. Without it every declared platform is baked, as a release needs.
+
+    `archive` is the directory an un-narrowed build writes `<name>.oci.tar` into (si#789): one more target,
+    every platform, `type=oci`, baked in the same invocation as the loading targets so the archive and the
+    images `test image` runs are one build. A narrowed build writes none - it is not the image a release
+    publishes.
     """
     chosen = [platform] if platform else list(cfg.platforms)
 
@@ -1300,6 +1332,9 @@ def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str],
         targets[platform_target(name, each)] = {
             **target(cfg), "platforms": [each],
             "output": [f"type=docker,name={platform_reference(ref, each)}"]}
+    if archive is not None and not platform:
+        targets[archive_target(name)] = {**target(cfg), "tags": [ref],
+                                         "output": [f"type=oci,dest={archive / ARCHIVE.format(name=name)}"]}
     return {"target": targets}
 
 
@@ -1680,9 +1715,44 @@ def _recorded_for_every_platform(cfg: Image, name: str, ref: str) -> bool:
     return True
 
 
-def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str = "") -> int:
+#: What an un-narrowed `build:image` bound to an `archive` writes into that directory (si#789): the
+#: multi-platform index as an OCI archive, and the digests bake reported for it - the index and each
+#: platform's manifest - which a release's `image` job holds the push against.
+ARCHIVE = "{name}.oci.tar"
+DIGESTS = "{name}.digests.json"
+
+
+def archive_digests(text: str, name: str, platforms: Iterable[str]) -> dict | None:
+    """`{"index": ..., "platforms": {...}}` out of bake's `--metadata-file`, or None when it lacks the
+    index or a platform: a record that cannot hold the push is no record. Pure."""
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return None
+    entry = document.get(archive_target(name)) if isinstance(document, dict) else None
+    index = entry.get("containerimage.digest") if isinstance(entry, dict) else None
+    chosen = list(platforms)
+    digests = built_digests(text, name, chosen)
+    if not isinstance(index, str) or not index or len(digests) < len(chosen):
+        return None
+    return {"index": index, "platforms": digests}
+
+
+def _write_archive_digests(archive: Path, name: str, held: Mapping[str, object]) -> bool:
+    """Write `<archive>/<name>.digests.json`, or say why not: an archive without its record is red."""
+    try:
+        (archive / DIGESTS.format(name=name)).write_text(json.dumps(held, indent=2, sort_keys=True) + "\n",
+                                                         encoding="utf-8")
+        return True
+    except OSError as broken:
+        log.error(f"{archive / ARCHIVE.format(name=name)} was written, but its record could not be: {broken}")
+        return False
+
+
+def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str = "",
+                     archive: Path | None = None) -> int:
     """`build` for an image with `platforms:` - see the block above for the shape and why. `platform`
-    narrows it to one declared platform."""
+    narrows it to one declared platform; `archive` is where an un-narrowed build writes the OCI archive."""
     chosen = (platform,) if platform else cfg.platforms
     derived = provenance(root)
     resolved = resolve_tag(cfg, tag, {**derived, **cfg.build_args}.get(VERSION_ARG, ""))
@@ -1690,7 +1760,19 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str 
     ready, unrunnable = prepare_builder(chosen)
     if not ready:
         return 1
-    path = write_bake(bake_definition(cfg, name, ref, derived, root, platform), name)
+    if archive is not None and platform:
+        log.info(f"built for {platform} alone, so no OCI archive is written to {archive}: only a build of every "
+                 f"declared platform is the image a release publishes")
+        archive = None
+    if archive is not None:
+        try:
+            archive.mkdir(parents=True, exist_ok=True)
+            # A record from an earlier build must never stand beside this build's archive.
+            (archive / DIGESTS.format(name=name)).unlink(missing_ok=True)
+        except OSError as broken:
+            log.error(f"the archive directory {archive} could not be prepared, so nothing was built: {broken}")
+            return 1
+    path = write_bake(bake_definition(cfg, name, ref, derived, root, platform, archive), name)
     if path is None:
         return 1
     metadata = path.parent / f"bake-{name}.metadata.json"
@@ -1700,7 +1782,8 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str 
                 if cfg.contexts else ""))
     rc = stream(["docker", "buildx", "bake", "--builder", BUILDER, "--file", str(path),
                  "--metadata-file", str(metadata),
-                 *(platform_target(name, each) for each in chosen)], cwd=str(root))
+                 *(platform_target(name, each) for each in chosen),
+                 *([archive_target(name)] if archive is not None else [])], cwd=str(root))
     if rc != 0:
         log.error(f"docker buildx bake failed (rc={rc}); {ref} was not built for "
                   f"{', '.join(chosen)} (see output above)" + _emulation_advice(unrunnable))
@@ -1730,6 +1813,15 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str 
                  f"{', '.join(each for each in chosen if each not in digests)}; `release:image` will "
                  f"refuse to publish until a build records one")
     _write_built(name, ref, digests)
+    if archive is not None:
+        held = archive_digests(reported, name, chosen)
+        if held is None:
+            log.error(f"bake reported no index digest for {archive_target(name)}, or not every platform's, so "
+                      f"{archive / ARCHIVE.format(name=name)} has no record a release could hold its push "
+                      f"against; the build is red (bake's metadata: {metadata})")
+            return 1
+        if not _write_archive_digests(archive, name, held):
+            return 1
     written = record(ref, local_id(ref) if native in loaded else "", root,
                      platforms={each: (loaded_ref, local_id(loaded_ref)) for each, loaded_ref in loaded.items()})
     log.ok(f"built {ref} for {', '.join(chosen)}"

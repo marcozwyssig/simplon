@@ -43,7 +43,7 @@ def test_produces_binds_the_output_port_and_hands_the_name_to_its_parameter():
     assert spec.consumes == {}
     assert spec.with_ == {"name": "kernel"}
     assert spec.task == "build:image"
-    assert [p.name for p in spec.ports] == ["file", "image"]
+    assert [p.name for p in spec.ports] == ["file", "image", "archive"]
 
 
 def test_consumes_binds_the_input_port():
@@ -99,7 +99,7 @@ def test_a_port_name_the_task_does_not_have_is_refused_with_the_ones_it_has():
 
     # assert
     assert message == ("command 'build image' binds `produces: img`, and task 'build:image' has no output "
-                       "port 'img' - its output ports: image")
+                       "port 'img' - its output ports: archive, image")
 
 
 def test_a_binding_that_is_not_a_mapping_is_refused():

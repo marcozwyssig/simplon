@@ -32,6 +32,7 @@ simplon typeOf simplon.manifest.Product {
       key = "image"
       task = simplon.catalogue.build_image
       produces = product.simplon.simplon.a_kernel
+      produces = product.simplon.simplon.a_kernel_oci
     }
     command docs typeOf simplon.pipeline.AggregateCommand {
       key = "docs"
@@ -315,6 +316,11 @@ simplon typeOf simplon.manifest.Product {
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image
+  }
+  artifacts a_kernel_oci typeOf simplon.pipeline.Artifact {
+    key = "kernel-oci"
+    kind = simplon.vocabulary.directory
+    path = "build/image"
   }
   artifacts a_kernel_checked typeOf simplon.pipeline.TestResult {
     key = "kernel-checked"

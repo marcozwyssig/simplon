@@ -164,6 +164,9 @@ ci:
         task: "build:image"
         produces:
           image: kernel
+          # si#789: a build of both platforms also writes the index as an OCI archive with its digests, which
+          # release.yml's `image` job pushes as built. CI's `platform:` build writes none.
+          archive: kernel-oci
         # si#368: the image declares arm64 too, and building that here would put an emulated stage on this
         # runner on every push; a release builds both. `ci: params:` (si#863) binds the platform only where
         # the kernel derives the step, so a person typing `build image` and the release still build both.
@@ -757,6 +760,11 @@ artifacts:
     platforms: [linux/amd64, linux/arm64]
   # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
   # is derived from what that producer consumes.
+  # si#789: the directory `build image` writes kernel.oci.tar and kernel.digests.json into, when it builds
+  # every platform - the crossing from the release's `artifacts` job to its `image` job.
+  kernel-oci:
+    kind: directory
+    path: build/image
   kernel-checked:
     kind: test-result
     path: build/test/kernel-image.json

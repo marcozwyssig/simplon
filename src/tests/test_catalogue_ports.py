@@ -20,7 +20,8 @@ EVIDENCE = P("evidence", "input", "test-result", "", ())
 def test_the_ports_are_the_ones_measured_from_the_bodies():
     # assert: pinned as a literal - built from READERS on both sides, this could not see a wrong direction
     assert artifactschema.PORTS == {
-        "build:image": (P("file", "input", "file", "", ()), P("image", "output", "image", "name", IMAGE_NEEDS)),
+        "build:image": (P("file", "input", "file", "", ()), P("image", "output", "image", "name", IMAGE_NEEDS),
+                        P("archive", "output", "directory", "archive", ("path",))),
         "build:fetch": (P("file", "output", "file", "name", ("path", "url", "sha256")),),
         "test:image": (P("image", "input", "image", "name", IMAGE_NEEDS),
                        P("test-result", "output", "test-result", "results", ("path",))),

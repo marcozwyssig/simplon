@@ -1651,6 +1651,9 @@ _MULTI = """
     dockerfile: Dockerfile
     context: .
     contexts: [base]
+  multi-oci:
+    kind: directory
+    path: build/image
 """
 
 #: What `docker buildx ls --format json` prints for a bootstrapped builder that can run both - one JSON
@@ -1691,8 +1694,14 @@ def _multi(_product):
 _LOADED = {"linux/amd64": "sha256:4e89", "linux/arm64": "sha256:f674"}
 
 
-def _bake_reports(digests):
-    """A bake that writes its `--metadata-file` the way buildx v0.38.0 does for `type=docker` targets."""
+#: The index digest bake reports for the `type=oci` target (si#789): the archive's one root.
+_INDEX = "sha256:3473"
+
+
+def _bake_reports(digests, index=_INDEX):
+    """A bake that writes its `--metadata-file` the way buildx v0.38.0 does for `type=docker` targets, and
+    the way v0.39.1 does for the `type=oci` archive target: its `containerimage.digest` is the INDEX
+    (measured 2026-11-27, si#789: the archive's index.json names exactly that digest)."""
     def effect(argv):
         if "--metadata-file" not in argv:
             return
@@ -1700,15 +1709,17 @@ def _bake_reports(digests):
         document = {target: {"containerimage.digest": digests[platform]}
                     for target in targets for platform in digests
                     if target == image.platform_target("multi", platform)}
+        if image.archive_target("multi") in targets:
+            document[image.archive_target("multi")] = {"containerimage.digest": index} if index else {}
         Path(argv[argv.index("--metadata-file") + 1]).write_text(json.dumps(document), encoding="utf-8")
     return effect
 
 
-def _fake(monkeypatch, *, verdict=None, outputs=None, loaded=None) -> _Cli:
+def _fake(monkeypatch, *, verdict=None, outputs=None, loaded=None, index=_INDEX) -> _Cli:
     fake = _Cli(verdict=verdict, outputs={("docker", "buildx", "ls"): _BUILDER_BOTH,
                                           ("docker", "version"): "linux/amd64",
                                           **(outputs or {})},
-                effects={("docker", "buildx", "bake"): _bake_reports(loaded or _LOADED)})
+                effects={("docker", "buildx", "bake"): _bake_reports(loaded or _LOADED, index)})
     monkeypatch.setattr(image, "run", fake.run)
     monkeypatch.setattr(image, "stream", fake.stream)
     return fake
@@ -2973,6 +2984,106 @@ def test_a_build_records_the_digest_bake_reported_for_each_platform(monkeypatch,
 
     # assert
     assert image.read_built("multi", "ghcr.io/owner/demo-multi:1.0") == _LOADED
+
+
+# --- the archive a release promotes (si#789) --------------------------------------------------------------
+
+def test_the_archive_target_is_baked_for_every_platform_only_when_asked_and_unnarrowed(tmp_path):
+    # arrange
+    data = _images(app=_body(platforms=["linux/amd64", "linux/arm64"]))
+    cfg = image.declared(data, "app")
+    dest = tmp_path / "build" / "image"
+
+    # act
+    full = image.bake_definition(cfg, "app", "ghcr.io/owner/demo-app:1", {}, tmp_path, archive=dest)
+    narrowed = image.bake_definition(cfg, "app", "ghcr.io/owner/demo-app:1", {}, tmp_path, "linux/amd64",
+                                     archive=dest)
+    unasked = image.bake_definition(cfg, "app", "ghcr.io/owner/demo-app:1", {}, tmp_path)
+
+    # assert
+    target = full["target"][image.archive_target("app")]
+    assert (target["platforms"], target["tags"], target["output"]) == (
+        ["linux/amd64", "linux/arm64"], ["ghcr.io/owner/demo-app:1"], [f"type=oci,dest={dest / 'app.oci.tar'}"])
+    assert image.archive_target("app") not in narrowed["target"]
+    assert image.archive_target("app") not in unasked["target"]
+
+
+def test_a_full_build_bakes_the_archive_in_the_same_invocation_and_records_its_digests(monkeypatch,
+                                                                                      _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0", archive="multi-oci")
+
+    # assert
+    assert rc == 0
+    bakes = fake.argv_starting("docker", "buildx", "bake")
+    assert len(bakes) == 1
+    assert bakes[0][-3:] == ["multi__linux_amd64", "multi__linux_arm64", image.archive_target("multi")]
+    record = json.loads((_multi / "build" / "image" / "multi.digests.json").read_text(encoding="utf-8"))
+    assert record == {"index": _INDEX, "platforms": _LOADED}
+
+
+def test_a_narrowed_build_writes_no_archive_and_no_record(monkeypatch, _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0", platform="linux/amd64", archive="multi-oci")
+
+    # assert
+    assert rc == 0
+    assert image.archive_target("multi") not in fake.argv_starting("docker", "buildx", "bake")[0]
+    assert not (_multi / "build" / "image" / "multi.digests.json").exists()
+
+
+def test_an_archive_whose_index_digest_bake_did_not_report_is_a_failed_build(monkeypatch, _no_provenance,
+                                                                             _multi, capsys):
+    # arrange: a record from an earlier build must not pass for this one's
+    stale = _multi / "build" / "image" / "multi.digests.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps({"index": "sha256:old", "platforms": _LOADED}), encoding="utf-8")
+    _fake(monkeypatch, index="")
+
+    # act
+    rc = image.build(name="multi", tag="1.0", archive="multi-oci")
+
+    # assert
+    assert rc == 1
+    assert not stale.exists()
+    err = capsys.readouterr().err
+    assert "no index digest" in err and image.archive_target("multi") in err
+
+
+def test_an_archive_without_every_platforms_digest_is_a_failed_build(monkeypatch, _no_provenance, _multi,
+                                                                     capsys):
+    # arrange: bake reported the index but not arm64's manifest
+    _fake(monkeypatch, loaded={"linux/amd64": "sha256:4e89"})
+
+    # act
+    rc = image.build(name="multi", tag="1.0", archive="multi-oci")
+
+    # assert
+    assert rc == 1
+    assert not (_multi / "build" / "image" / "multi.digests.json").exists()
+
+
+def test_an_archive_bound_to_an_image_without_platforms_is_refused_before_anything_is_built(cli, _no_provenance,
+                                                                                          _multi, capsys):
+    # arrange / act
+    rc = image.build(name="app", tag="1.0", archive="multi-oci")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker") == []
+    assert "declares no `platforms:`" in capsys.readouterr().err
+
+
+def test_an_archive_naming_no_declared_artifact_is_refused_naming_the_declared_ones(_no_provenance, _multi):
+    # arrange / act / assert
+    with pytest.raises(ValueError, match="no artifact 'nope' in demo.yaml's `artifacts:` section; declared are: .*multi-oci"):
+        image.build(name="multi", tag="1.0", archive="nope")
 
 
 def test_a_one_platform_build_replaces_its_own_entry_and_keeps_the_others(monkeypatch, _no_provenance,

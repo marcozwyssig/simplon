@@ -716,6 +716,10 @@ build_image typeOf simplon.pipeline.CatalogueTask {
     key = "platform"
     help = "one of the image's declared `platforms:` to build; default every declared one"
   }
+  params p_archive typeOf simplon.pipeline.TaskParam {
+    key = "archive"
+    help = "the directory artifact an un-narrowed build writes the image's OCI archive and its digests into (normally bound with `produces:`)"
+  }
   output image typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.image
     param = "name"
@@ -723,6 +727,14 @@ build_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_repository
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
+  }
+  // si#789: the multi-platform index as an OCI archive, baked in the same invocation as the loaded platform
+  // images, with the index and platform digests bake reported beside it. A release's `image` job pushes it as
+  // it is, so the published index is the one `test image` ran against. A `platform:` build writes none.
+  output archive typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.directory
+    param = "archive"
+    needs = simplon.vocabulary.artifact.f_path
   }
   // si#343 (decided 2026-10-15): the `file` entries the image's own `contexts:` names, and never `consumes:` -
   // so no `param`: the body reads them off the image entry, and the loader derives the binding from there.
