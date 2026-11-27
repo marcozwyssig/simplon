@@ -2329,6 +2329,15 @@ def test_false_for_a_flag_that_defaults_to_true_is_refused_rather_than_dropped()
     assert workflowgen._parameters(placed, "test", "image", {"user": "true"}, where="x") == " --user"
 
 
+def test_false_for_a_flag_without_a_default_is_refused_saying_it_has_none():
+    # arrange
+    loaded = manifest_mod.load(_FLAG.replace("aim_with_a_flag", "aim_with_a_required_flag"), catalogue=catalogue_mod.load())
+
+    # act / assert
+    with pytest.raises(ValueError, match="reads `dry_run` as a flag that has no default and has no `--no-dry-run`"):
+        workflowgen._parameters(loaded, "test", "aim", {"dry_run": "false"}, where="argv")
+
+
 def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli_reads(kernel_manifest):
     # act
     text = _render(kernel_manifest, _RELEASE_TAG)

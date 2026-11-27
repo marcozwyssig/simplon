@@ -126,7 +126,7 @@ def test_simplons_image_release_needs_its_port_to_declare_the_verification(monke
     from simplon.model import artifactschema
     text = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
     _load(text)  # loads as it is
-    monkeypatch.setattr(artifactschema, "VERIFIED_AGAINST_EVIDENCE", frozenset(), raising=False)
+    monkeypatch.setattr(artifactschema, "VERIFIED_AGAINST_EVIDENCE", frozenset())
 
     # act / assert
     with pytest.raises(ValueError, match="releases 'kernel-oci', and no test produces a result about it"):

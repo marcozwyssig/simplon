@@ -61,10 +61,18 @@ template Docs {
     |port accepting `test-result`. A command under `ci: release:` that consumes an artifact must bind
     |every test result about it there, and at least one must exist (rule 6). A test result is about what its producer consumes, directly:
     |a unit test of the source is not a test of the image built from it. The notes, the tag, the bundle and the evidence
-    |itself need none. One widening (si#789): an artifact bound to an input port that verifies against the evidence
-    |(`release:image`'s `archive`, the only one) is covered by the tests about an artifact the same command produced
-    |beside it, when the release consumes that one too - the body holds the archive's images against what the test ran
-    |before it pushes. On every other port rule 6 is as strict as without it.
+    |itself need none. One widening (si#789): an artifact bound to an input port that declares
+    |`verifies_against_evidence` is covered by the tests about an artifact the same command produced beside it, when
+    |the release consumes that one too, because that port's body holds it against what the evidence ran before it
+    |publishes. On every other port rule 6 is as strict as without it. The ports that declare it:
+    |
+    for t : `simplon.pipeline.CatalogueTask` {
+      for p : t.input {
+        if p.verifies_against_evidence {
+          |- `${t.key}`, port `${p.name.replace("_", "-")}`
+        }
+      }
+    }
     |
     |The evidence is read before anything is published (si#434). The load checks the binding; at run time every bound
     |record is read before the publish body runs, and a record that is missing, red or without a verdict stops it.

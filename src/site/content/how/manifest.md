@@ -236,10 +236,11 @@ artifacts:
 Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#ports)):
 
 - **Rule 6.** A release command that consumes an artifact must bind every test result about it to `evidence`.
-  A test result is about what its producer consumes, directly - and, when the release consumes both, about what
-  the command that made that artifact made beside it (si#789: `build image`'s OCI archive, which a test of the
-  image covers because `release:image` holds the archive's images against what the test ran). With no such
-  test the load refuses: "... and no
+  A test result is about what its producer consumes, directly. One widening (si#789): on an input port that
+  declares `verifies_against_evidence`, an artifact is also covered by the tests about what the same command
+  produced beside it, when the release consumes that one too - the port's body holds it against what the
+  evidence ran. The kinds page lists [the ports that declare it](../../with-what/kinds/#ports); on every other
+  port the rule is as strict as without the widening. With no such test the load refuses: "... and no
   test produces a result about it - add a command under `ci: test:` ...". With one left unbound it refuses:
   "... so no release goes past a test that ran". The four kinds a release produces about itself
   (`test-result`, `release-notes`, `tag`, `release`) need no evidence.

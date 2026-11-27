@@ -1036,11 +1036,14 @@ def _parameters(manifest: Manifest, group: str, name: str,
         # `false` against a true default cannot be said; dropping it would run the step with the opposite value.
         if str(params[key]).lower() == "false" and signature[key].default is not False:
             flag = key.replace("_", "-")
+            required = signature[key].required
+            default = "" if required else str(signature[key].default).lower()
             raise ValueError(
-                f"{where}: `{group.replace('.', ' ')} {name}` reads `{key}` as a flag that defaults to "
-                f"{str(signature[key].default).lower()} and has no `--no-{flag}`, so `false` cannot be said on its "
-                f"command line - leaving the flag out would run it with `{key}` {str(signature[key].default).lower()}."
-                f" Drop the parameter, or bind it with `with:` where the body reads it")
+                f"{where}: `{group.replace('.', ' ')} {name}` reads `{key}` as a flag that "
+                f"{'has no default' if required else f'defaults to {default}'} and has no `--no-{flag}`, so `false` "
+                f"cannot be said on its command line - leaving the flag out would "
+                f"{'not say false either' if required else f'run it with `{key}` {default}'}. Drop the parameter, "
+                f"or bind it with `with:` where the body reads it")
     options = [f"--{key.replace('_', '-')}" if key in flags else f"--{key.replace('_', '-')} {_rendered(value)}"
                for key, value in params.items()
                if key not in reads_positionally and not (key in flags and str(value).lower() == "false")]

@@ -442,10 +442,9 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
     One widening (si#789, Marco's ruling): a result about X is also about an artifact Y the command that produced X
     produced beside it, when the release consumes BOTH and binds Y to a port the catalogue declares
     `verifies_against_evidence` (`artifactschema.VERIFIED_AGAINST_EVIDENCE`): its body holds Y against what the
-    evidence ran before it publishes. Today that is `release:image`'s `archive` alone - `build image` writes the
-    image's OCI archive in the same bake, `test image` runs the image, and `_untested_in_archive` holds the
-    archive's images against the test's. On any other port, product tasks included, rule 6 is as strict as
-    without the widening."""
+    evidence ran before it publishes. Which ports declare it is the generated table, listed on the kinds page
+    (with-what/kinds.md); simplon's own case is `build image`'s OCI archive beside the image it tests. On any other
+    port, product tasks included, rule 6 is as strict as without the widening."""
     together: dict[str, set[str]] = {}
     for members in manifest.commands.values():
         for spec in members.values():
