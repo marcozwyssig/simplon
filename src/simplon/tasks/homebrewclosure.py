@@ -8,8 +8,8 @@ the formulae.
 
 A FAILED MEASUREMENT IS NEVER AN EMPTY CLOSURE. An empty closure renders a formula without resources that
 `brew install` then fails on a user's machine. So the container's answer is read only after a fixed marker
-line, a run without that line is a `ValueError` carrying its last lines, and an answer that does not parse is
-one too. Every refusal here is a `ValueError` that names what was measured and the way out.
+line, a run without that line is a `TaskRefused` carrying its last lines, and an answer that does not parse is
+one too. Every refusal here is a `TaskRefused` that names what was measured and the way out (si#891).
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from typing import NamedTuple
 
 from simplon.adapters import docker, hostpath
 from simplon.kernel.run import run
+from simplon.manifest.context import TaskRefused
 from simplon.tasks import homebrewformula
 
 #: The image the closure is measured in, pinned by tag and digest and validated by the kernel's own image
@@ -108,8 +109,8 @@ def script(wheel_name: str, depends_on: Sequence[str], python: str) -> str:
     """The bash the container runs: install the formulae (retried), make the venv, install the wheel, report."""
     # One source for the form, looked up at call time so either module may import the other.
     if not homebrewformula._PYTHON_FORMULA.match(python):
-        raise ValueError(f"python must name a python formula of the form python@3.N, such as 'python@3.14', "
-                         f"got {python!r}")
+        raise TaskRefused(f"python must name a python formula of the form python@3.N, such as 'python@3.14', "
+                          f"got {python!r}")
     formulae = " ".join(shlex.quote(f) for f in sorted(set(depends_on) | {python}))
     interpreter = "python" + python.split("@", 1)[1]
     return "\n".join([
@@ -137,14 +138,14 @@ def _readable_by_the_container(wheel: Path) -> None:
     no uid concept (Windows) carries no ownership through the mount, so there is nothing to check there.
     """
     if not wheel.is_file():
-        raise ValueError(f"{wheel} does not exist or is not a file; build the wheel first")
+        raise TaskRefused(f"{wheel} does not exist or is not a file; build the wheel first")
     if not hasattr(os, "getuid"):
         return
     for path, needed, what, chmod in ((wheel.parent, 0o005, "read and search", "o+rx"), (wheel, 0o004, "read", "o+r")):
         mode = stat.S_IMODE(path.stat().st_mode)
         if mode & needed != needed:
-            raise ValueError(f"{path} has mode {mode:o}, so the brew image's user (uid 1000, not yours) cannot "
-                             f"{what} it through the mount; make it readable by others (chmod {chmod})")
+            raise TaskRefused(f"{path} has mode {mode:o}, so the brew image's user (uid 1000, not yours) cannot "
+                              f"{what} it through the mount; make it readable by others (chmod {chmod})")
 
 
 def measure(wheel: Path, depends_on: Sequence[str], python: str) -> tuple[Dist, ...]:
@@ -160,22 +161,22 @@ def measure(wheel: Path, depends_on: Sequence[str], python: str) -> tuple[Dist, 
         result = run(argv, timeout=CLOSURE_TIMEOUT_S)
     if result.timed_out:
         docker.remove(container)
-        raise ValueError(f"measuring the closure of {wheel.name} in {BREW_IMAGE} took longer than "
-                         f"CLOSURE_TIMEOUT_S ({CLOSURE_TIMEOUT_S} s) and was stopped; rerun it, and raise "
-                         f"CLOSURE_TIMEOUT_S if the bottle downloads are that slow")
+        raise TaskRefused(f"measuring the closure of {wheel.name} in {BREW_IMAGE} took longer than "
+                          f"CLOSURE_TIMEOUT_S ({CLOSURE_TIMEOUT_S} s) and was stopped; rerun it, and raise "
+                          f"CLOSURE_TIMEOUT_S if the bottle downloads are that slow")
     if not result.ok:
         both = result.err.rstrip("\n") + "\n" + result.out
-        raise ValueError(f"measuring the closure of {wheel.name} in {BREW_IMAGE} failed (rc {result.rc}); "
-                         f"after a bottle download failure rerunning is safe. Last lines:\n"
-                         f"{_tail(both)}")
+        raise TaskRefused(f"measuring the closure of {wheel.name} in {BREW_IMAGE} failed (rc {result.rc}); "
+                          f"after a bottle download failure rerunning is safe. Last lines:\n"
+                          f"{_tail(both)}")
     dists = parse(result.out)
     # A successful run whose venv does not show the product measured nothing pip installed: `added` would be
     # empty and the formula would ship without resources. The product's name is the wheel file name's first
     # field (`my_tool-1.0-...whl` for `My.Tool`), compared normalised.
     product = wheel.name.split("-", 1)[0]
     if not any(d.in_venv and _key(d.name) == _key(product) for d in dists):
-        raise ValueError(f"the venv shows no {product}; the measurement did not see pip's install of "
-                         f"{wheel.name}, so its closure is unknown. Last lines:\n{_tail(result.err)}")
+        raise TaskRefused(f"the venv shows no {product}; the measurement did not see pip's install of "
+                          f"{wheel.name}, so its closure is unknown. Last lines:\n{_tail(result.err)}")
     return dists
 
 
@@ -183,8 +184,8 @@ def parse(stdout: str) -> tuple[Dist, ...]:
     """The distributions in the JSON document printed after `MARKER`. No marker is a failed run."""
     lines = stdout.splitlines()
     if MARKER not in lines:
-        raise ValueError(f"the closure run printed no '{MARKER}' line, so it did not get to measure anything. "
-                         f"Last lines:\n{_tail(stdout)}")
+        raise TaskRefused(f"the closure run printed no '{MARKER}' line, so it did not get to measure anything. "
+                          f"Last lines:\n{_tail(stdout)}")
     document = "\n".join(lines[lines.index(MARKER) + 1:])
     try:
         return tuple(Dist(str(d["name"]), str(d["version"]), tuple(str(r) for r in d["requires"]),
@@ -193,8 +194,8 @@ def parse(stdout: str) -> tuple[Dist, ...]:
                                 for r, results in d["differs"]))
                      for d in json.loads(document))
     except (ValueError, TypeError, KeyError, AttributeError) as e:
-        raise ValueError(f"what followed '{MARKER}' is not the closure document ({e}). Last lines:\n"
-                         f"{_tail(stdout)}") from e
+        raise TaskRefused(f"what followed '{MARKER}' is not the closure document ({e}). Last lines:\n"
+                          f"{_tail(stdout)}") from e
 
 
 def refusals(dists: Sequence[Dist], product: str) -> list[str]:

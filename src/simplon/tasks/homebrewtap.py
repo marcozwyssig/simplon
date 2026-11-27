@@ -15,7 +15,7 @@ THE RECORD IS WRITTEN FOR EVERY VERDICT, RED INCLUDED, AND FOR NOTHING ELSE. A r
 formula changed after the test is not the one the record vouches for. A run that reaches no verdict (a bad
 `online`, a missing input, an audit container that did not get to audit) writes none and removes the one an
 earlier run left, so yesterday's green does not outlive today's refusal. A FAILED PYPI LOOKUP IS ONE OF THOSE:
-a 5xx, a timeout or a 404 ("not listed yet") says nothing about the formula, so it is a ValueError naming the
+a 5xx, a timeout or a 404 ("not listed yet") says nothing about the formula, so it is a TaskRefused naming the
 file and the cause, never a red verdict. Red is what PyPI answered: no such file, or another sha256.
 
 `tap` is the body of `release:homebrew-tap`. It commits the formula as `Formula/<name>.rb` to the tap
@@ -42,6 +42,7 @@ from simplon.adapters import docker, pypi, repofile
 from simplon.kernel import log, secrets
 from simplon.kernel.run import run
 from simplon.manifest import artifactsection, context, results as results_mod
+from simplon.manifest.context import TaskRefused
 from simplon.model import artifactschema
 from simplon.tasks import homebrewformula
 from simplon.tasks.homebrewformula import Resource
@@ -80,7 +81,7 @@ def _unruby(text: str) -> str:
 
 def _digests(text: str) -> Digests:
     """The formula's top-level `url` and `sha256`, and each resource block's. A formula without them is not
-    one `build:homebrew-formula` rendered: a ValueError names what is missing."""
+    one `build:homebrew-formula` rendered: a TaskRefused names what is missing."""
     url = sha = ""
     resources: list[Resource] = []
     current: dict[str, str] | None = None
@@ -88,8 +89,8 @@ def _digests(text: str) -> Digests:
         if current is not None:
             if line == "  end":
                 if not current.get("url") or not current.get("sha256"):
-                    raise ValueError(f"the formula's resource '{current['name']}' has no url or no sha256; "
-                                     f"render it again with build:homebrew-formula")
+                    raise TaskRefused(f"the formula's resource '{current['name']}' has no url or no sha256; "
+                                      f"render it again with build:homebrew-formula")
                 resources.append(Resource(current["name"], current["url"], current["sha256"]))
                 current = None
             elif m := _RES_URL.match(line):
@@ -103,11 +104,11 @@ def _digests(text: str) -> Digests:
         elif m := _TOP_SHA.match(line):
             sha = _unruby(m.group(1))
     if current is not None:
-        raise ValueError(f"the formula's resource '{current['name']}' has no closing `end`; render it again "
-                         f"with build:homebrew-formula")
+        raise TaskRefused(f"the formula's resource '{current['name']}' has no closing `end`; render it again "
+                          f"with build:homebrew-formula")
     if not url or not sha:
-        raise ValueError("the formula has no top-level url or no top-level sha256; render it again with "
-                         "build:homebrew-formula")
+        raise TaskRefused("the formula has no top-level url or no top-level sha256; render it again with "
+                          "build:homebrew-formula")
     return Digests(url, sha, resources)
 
 
@@ -126,14 +127,14 @@ def check(formula: str = "", wheel: str = "", results: str = "", online: str = "
     # case-blind: workflowgen renders `params: {online: false}` as `--online False` (measured)
     given, online = online, online.strip().lower()
     if online not in ONLINE:
-        raise ValueError(f"online must be 'true' (a real run, after the PyPI upload) or 'false' (a dry run), got "
-                         f"{given!r}; bind it with `params:` on each of the two steps")
+        raise TaskRefused(f"online must be 'true' (a real run, after the PyPI upload) or 'false' (a dry run), got "
+                          f"{given!r}; bind it with `params:` on each of the two steps")
     ctx = context.current()
     formula_rel = Path(str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry).path))
     wheel_dir = ctx.root / str(_entry(wheel, "wheel", artifactschema.DirectoryEntry).path)
     path = ctx.root / formula_rel
     if not path.is_file():
-        raise ValueError(f"{formula_rel} does not exist; render it first with build:homebrew-formula")
+        raise TaskRefused(f"{formula_rel} does not exist; render it first with build:homebrew-formula")
     raw = path.read_bytes()
     text = raw.decode("utf-8")
     found = _digests(text)
@@ -143,9 +144,9 @@ def check(formula: str = "", wheel: str = "", results: str = "", online: str = "
     # anything but the wheel would be a setup fault reported as a red audit
     wanted = re.sub(r"[-_.]+", "-", meta.name).lower()
     if name != wanted:
-        raise ValueError(f"the formula file {formula_rel} is named {name!r}, and its wheel's formula is {wanted!r} "
-                         f"(class {homebrewformula.class_name(meta.name)}); name the artifact's path "
-                         f"{wanted}.rb")
+        raise TaskRefused(f"the formula file {formula_rel} is named {name!r}, and its wheel's formula is {wanted!r} "
+                          f"(class {homebrewformula.class_name(meta.name)}); name the artifact's path "
+                          f"{wanted}.rb")
     is_online = online == "true"
 
     problems = _top_problems(found, meta, is_online) + [p for r in found.resources for p in _resource_problems(r)]
@@ -188,8 +189,8 @@ def _top_problems(found: Digests, meta: homebrewformula.WheelMeta, online: bool)
     try:
         listed = pypi.files(meta.name, meta.version, index=homebrewformula.PYPI_INDEX)
     except pypi.PyPIError as e:
-        raise ValueError(f"PyPI's digest for {meta.filename} could not be read, so there is no verdict on the "
-                         f"formula's sha256: {e}") from e
+        raise TaskRefused(f"PyPI's digest for {meta.filename} could not be read, so there is no verdict on the "
+                          f"formula's sha256: {e}") from e
     on_pypi = [f for f in listed if f.filename == meta.filename]
     if not on_pypi:
         out.append(f"PyPI lists {meta.name} {meta.version} but not as the file {meta.filename} (it lists: "
@@ -212,8 +213,8 @@ def _resource_problems(res: Resource) -> list[str]:
     try:
         listed = pypi.files(res.name, version, index=homebrewformula.PYPI_INDEX)
     except pypi.PyPIError as e:
-        raise ValueError(f"resource '{res.name}': PyPI's digest for {filename} could not be read, so there is no "
-                         f"verdict on its sha256: {e}") from e
+        raise TaskRefused(f"resource '{res.name}': PyPI's digest for {filename} could not be read, so there is no "
+                          f"verdict on its sha256: {e}") from e
     found = [f for f in listed if f.filename == filename]
     if not found:
         return [f"resource '{res.name}': PyPI lists {res.name} {version} but not the file {filename} (it lists: "
@@ -248,7 +249,7 @@ def audit(text: str, name: str, online: bool) -> tuple[int, int]:
 
     The formula reaches the container on stdin, so no host path has to be readable by the image's own user,
     and the container reports the sha256 of the file it tapped: a file that is not the bytes sent (the record's
-    `id`) is a ValueError. So is a run that does not print both result lines: it did not get to audit, and that
+    `id`) is a TaskRefused. So is a run that does not print both result lines: it did not get to audit, and that
     is no verdict, never a red one.
     """
     # lazy: the closure module validates its pinned image at import, and the part above imports anywhere
@@ -260,8 +261,8 @@ def audit(text: str, name: str, online: bool) -> tuple[int, int]:
         result = run(argv, timeout=AUDIT_TIMEOUT_S, input_text=text)
     if result.timed_out:
         docker.remove(container)
-        raise ValueError(f"auditing {name} in {BREW_IMAGE} took longer than AUDIT_TIMEOUT_S ({AUDIT_TIMEOUT_S} s) "
-                         f"and was stopped; rerun it, and raise AUDIT_TIMEOUT_S if brew is that slow")
+        raise TaskRefused(f"auditing {name} in {BREW_IMAGE} took longer than AUDIT_TIMEOUT_S ({AUDIT_TIMEOUT_S} s) "
+                          f"and was stopped; rerun it, and raise AUDIT_TIMEOUT_S if brew is that slow")
     if result.out:
         log.info(result.out.rstrip("\n"))
     rcs = parse(result.out, result.err)
@@ -270,9 +271,9 @@ def audit(text: str, name: str, online: bool) -> tuple[int, int]:
     sent = hashlib.sha256(text.encode("utf-8")).hexdigest()
     tapped = [m.group(1) for line in result.out.splitlines() if (m := _TAPPED.match(line))]
     if tapped != [sent]:
-        raise ValueError(f"the container tapped {tapped[0] if tapped else 'no file it reported'} as sha256, and the "
-                         f"formula sent was {sent}: the verdict would be about other bytes than the record names, "
-                         f"so there is none. Rerun it")
+        raise TaskRefused(f"the container tapped {tapped[0] if tapped else 'no file it reported'} as sha256, and the "
+                          f"formula sent was {sent}: the verdict would be about other bytes than the record names, "
+                          f"so there is none. Rerun it")
     return rcs
 
 
@@ -285,23 +286,23 @@ def parse(stdout: str, stderr: str) -> tuple[int, int]:
     missing = [step for step in ("audit", "style") if step not in rcs]
     if missing:
         tail = "\n".join((stderr.rstrip("\n") + "\n" + stdout).rstrip("\n").splitlines()[-TAIL_LINES:])
-        raise ValueError(f"the brew run printed no {' and no '.join(missing)} result line, so it did not get to "
-                         f"check the formula and there is no verdict. Last lines:\n{tail}")
+        raise TaskRefused(f"the brew run printed no {' and no '.join(missing)} result line, so it did not get to "
+                          f"check the formula and there is no verdict. Last lines:\n{tail}")
     return rcs["audit"], rcs["style"]
 
 
 def tap(formula: str = "", repository: str = "", branch: str = "main") -> int:
     """Commit the tested formula to the tap repository as Formula/<name>.rb."""
     if not repository:
-        raise ValueError("which tap? bind `repository` as <owner>/<repo> with `with:` on the command, or pass "
-                         "--repository")
+        raise TaskRefused("which tap? bind `repository` as <owner>/<repo> with `with:` on the command, or pass "
+                          "--repository")
     ctx = context.current()
     formula_rel = Path(str(_entry(formula, "formula", artifactschema.Homebrew_formulaEntry,
                                   coordinate=TAP_COORDINATE).path))
     path = ctx.root / formula_rel
     if not path.is_file():
-        raise ValueError(f"{formula_rel} does not exist; render it with build:homebrew-formula and check it "
-                         f"with test:homebrew-formula first")
+        raise TaskRefused(f"{formula_rel} does not exist; render it with build:homebrew-formula and check it "
+                          f"with test:homebrew-formula first")
     raw = path.read_bytes()
     target = f"Formula/{path.stem}.rb"
     token = secrets.read(APP_TOKEN_ENV).strip()
@@ -348,8 +349,8 @@ def _wheel_of(url: str, formula_rel: Path) -> tuple[str, str, str]:
     filename = unquote(urlparse(url).path.rsplit("/", 1)[-1])
     parts = filename.split("-")
     if not filename.endswith(".whl") or len(parts) < 5:
-        raise ValueError(f"{formula_rel}'s url {url} names no wheel (<name>-<version>-<tags>.whl), so the "
-                         f"commit cannot name the version; render it again with build:homebrew-formula")
+        raise TaskRefused(f"{formula_rel}'s url {url} names no wheel (<name>-<version>-<tags>.whl), so the "
+                          f"commit cannot name the version; render it again with build:homebrew-formula")
     return parts[0], parts[1], filename
 
 
@@ -380,11 +381,11 @@ def _entry(name: str, param: str, wanted: type[artifactsection.Entry],
            coordinate: str = COORDINATE) -> artifactsection.Entry:
     """The `artifacts:` entry the port binding `param` names, validated as `wanted`'s kind."""
     if not name:
-        raise ValueError(f"which artifact? bind `{param}` with `consumes:` or `produces:` from the "
-                         f"`{ARTIFACTS}:` section, or pass --{param}")
+        raise TaskRefused(f"which artifact? bind `{param}` with `consumes:` or `produces:` from the "
+                          f"`{ARTIFACTS}:` section, or pass --{param}")
     ctx = context.current()
     section = ctx.manifest_data().get(ARTIFACTS) or {}
     if name not in section:
-        raise ValueError(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` section; "
-                         f"declared are: {', '.join(sorted(section)) or '(none)'}")
+        raise TaskRefused(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` section; "
+                          f"declared are: {', '.join(sorted(section)) or '(none)'}")
     return artifactsection.entry(section, name, wanted, ctx.manifest_path.name, coordinate, param=param)
