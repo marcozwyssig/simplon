@@ -902,9 +902,11 @@ workflows:
       The release, started from the button with the version and a rehearsal switch (si#491). The
       derived `release` job runs `release all`: the release check, which refuses a commit without a
       green `ci.yml` run on `main`, then the notes, then the tag - so a red test leaves no tag behind.
-      What follows it publishes: the wheel to PyPI, then the site and the image, each of which describes the version
-      PyPI now serves. The release job, `docs` and `pages` are derived; `publish`, `homebrew-tap` and
-      `image` are added by this entry.
+      The derived `artifacts` job then builds on the tag what the release consumes (si#789): the wheel,
+      the image and the image's test. What follows publishes: the wheel to PyPI, then the site and the
+      image, each of which describes the version PyPI now serves. The release job, `artifacts`, `docs`
+      and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and until
+      si#789 task 5 they still build the wheel and the image themselves.
 
       A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
       second tag. A commit `main` does not carry is refused by `release tag`, and there is no other

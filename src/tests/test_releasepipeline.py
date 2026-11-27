@@ -616,3 +616,206 @@ def test_a_pages_switch_the_release_cannot_derive_is_refused(product, extra, sai
     with pytest.raises(ValueError) as refused:
         _workflows(product, extra)
     assert said in str(refused.value), str(refused.value)
+
+
+# --- si#789 task 4a: the producers run once more, on the tag, in the derived `artifacts` job --------------------
+
+
+def _simplon_jobs() -> dict:
+    """simplon's release.yml as the renderer writes it, parsed: the `artifacts` job beside the others."""
+    from simplon.manifest import artifactsection
+    manifest, data, entry = _simplon()
+    release = releasepipeline.to_workflow(releasepipeline.derive(manifest, data, entry), manifest, data, entry,
+                                          product="simplon")
+    text = workflowgen.render(release, manifest=manifest, product="simplon", source="simplon.yaml",
+                              artifacts=artifactsection.declared(data), reports=workflowgen.report_dir(data))
+    return yaml.safe_load(text)["jobs"]
+
+
+def _leaf_runs(job) -> list[str]:
+    return [str(step.get("run", "")) for step in job["steps"] if str(step.get("run", "")).startswith("exec ./")]
+
+
+def test_simplons_producers_on_tag_are_wheel_image_and_its_test():
+    """Design 4.3: the leaves whose artifact a release step consumes, and the test whose evidence one consumes.
+    The suite, the type gate and the model tests do not run again; the green `main` run is their evidence."""
+    # arrange
+    manifest, data, _ = _simplon()
+
+    # act
+    words = [leaf.words for leaf in releasepipeline.producers_on_tag(manifest, data)]
+
+    # assert
+    assert words == ["build wheel", "build image", "test image"]
+
+
+def test_the_artifacts_job_builds_without_ci_params():
+    """No `ci: params:`: the image builds and is tested on every platform the release publishes, so
+    `kernel-checked` is about what goes out. The release's own parameter, the tag, is bound as in `release`."""
+    # act
+    runs = _leaf_runs(_simplon_jobs()[releasepipeline.ARTIFACTS_JOB])
+
+    # assert
+    assert runs == ["exec ./simplon.sh build wheel",
+                    'exec ./simplon.sh build image --tag "$RELEASE_VERSION"',
+                    'exec ./simplon.sh test image --tag "$RELEASE_VERSION"']
+    assert not any("--platform" in run for run in runs)
+
+
+def test_the_artifacts_job_runs_where_the_release_runs():
+    """The release aggregate's `ci: { runner: github-ubuntu, emulates: [linux/arm64] }`, not the CI default:
+    ghr-8 is LXC and cannot register emulation (#722). The claim Task 3's deleted release-job test made."""
+    # act
+    jobs = _simplon_jobs()
+    job = jobs[releasepipeline.ARTIFACTS_JOB]
+
+    # assert
+    assert job["runs-on"] == "ubuntu-latest" == jobs["release"]["runs-on"]
+    assert job["needs"] == "release"
+    assert job["timeout-minutes"] == jobs["release"]["timeout-minutes"]
+    steps = job["steps"]
+    qemu = next(i for i, s in enumerate(steps) if s.get("uses") == workflowgen.QEMU_ACTION)
+    build = next(i for i, s in enumerate(steps) if str(s.get("run", "")).startswith("exec ./simplon.sh build image"))
+    assert steps[qemu]["with"]["platforms"] == "linux/arm64"
+    assert qemu < build
+
+
+def test_the_artifacts_job_cuts_on_a_rehearsal_and_requires_the_tag_on_a_real_run():
+    """Design 4.3: a real run builds the pushed tag, a rehearsal cuts it locally; the stamp before the first leaf,
+    so the rehearsal also builds with the real version (Review Focus 3)."""
+    # act
+    steps = _simplon_jobs()[releasepipeline.ARTIFACTS_JOB]["steps"]
+
+    # assert
+    runs = [s.get("run") for s in steps]
+    cut = runs.index(workflowgen.RELEASE_CUT)
+    origin = runs.index(workflowgen.RELEASE_ON_ORIGIN)
+    stamp = runs.index(workflowgen.RELEASE_STAMP)
+    first = next(i for i, run in enumerate(runs) if str(run).startswith("exec ./simplon.sh build "))
+    assert steps[cut]["if"] == "${{ inputs.dry_run }}"
+    assert steps[origin]["if"] == "${{ !inputs.dry_run }}"
+    assert "if" not in steps[stamp]
+    assert cut < origin < stamp < first
+
+
+def test_a_release_consuming_nothing_built_gets_no_artifacts_job():
+    """Review Focus 4: a build leaf whose artifact no release step consumes is not run on the tag, and with
+    nothing selected there is no job, rather than a job of kernel steps that builds nothing."""
+    # arrange
+    product = PRODUCT.replace("artifacts:\n", "artifacts:\n  app-dist: { kind: directory, path: dist }\n", 1).replace(
+        "ci:\n", "ci:\n  build:\n    commands:\n      wheel: { task: pack, produces: { directory: app-dist } }\n", 1
+    ) + ('tasks:\n  pack: { impl: "simplon.test_impls:nullary", help: "Pack.", unattended: true,\n'
+         '          output: { directory: { accepts: directory } } }\n')
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+
+    # act
+    selected = releasepipeline.producers_on_tag(loaded, yaml.safe_load(product))
+    doc = _rendered(product)
+
+    # assert
+    assert selected == ()
+    assert list(doc["jobs"]) == ["release"]
+
+
+def test_an_artifact_the_release_workflow_produces_is_not_rebuilt():
+    """The formula needs a tagged commit and a wheel on PyPI (`ci: skip:`); `publish` renders it after the upload,
+    so the tag's producers do not. A leaf ci.yml does not run is not one of them."""
+    # arrange
+    manifest, data, _ = _simplon()
+
+    # act
+    words = [leaf.words for leaf in releasepipeline.producers_on_tag(manifest, data)]
+
+    # assert
+    assert "build homebrew-formula" not in words and "test homebrew-formula" not in words
+
+
+def test_the_jobs_stand_in_the_order_release_artifacts_declared_website():
+    # act
+    jobs = list(_simplon_jobs())
+
+    # assert
+    assert jobs[:2] == ["release", releasepipeline.ARTIFACTS_JOB]
+    assert jobs[-2:] == [releasepipeline.DOCS_JOB, releasepipeline.PAGES_JOB]
+
+
+def test_what_the_release_aggregate_builds_is_not_rebuilt():
+    """An aggregate that still builds and tests what it publishes (the demo product of the golden) has it on the
+    tag before `artifacts` would start: the `release` job ran the plan. Rebuilding it would be a second build of
+    one artifact in one run."""
+    # arrange
+    from test_workflowgen import _RELEASE_PRODUCT
+    loaded = manifest_mod.load(_RELEASE_PRODUCT, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+
+    # act
+    selected = releasepipeline.producers_on_tag(loaded, yaml.safe_load(_RELEASE_PRODUCT))
+
+    # assert
+    assert selected == ()
+    assert list(_rendered(_RELEASE_PRODUCT)["jobs"]) == ["release"]
+
+
+def test_a_handwritten_release_has_no_producers_on_tag():
+    """No release.yml is derived, so nothing is run on the tag by the kernel; the same aggregate derived selects
+    the build and the test whose evidence it consumes."""
+    # arrange
+    product = CLOSURE.split("workflows:\n")[0].replace("depends_on: [check, notes, tag]",
+                                                       "depends_on: [check, notes, ship, tag]")
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    derived = yaml.safe_load(product)
+    handwritten = {**derived, "workflows": {"release": {"handwritten": "ours"}}}
+
+    # act
+    selected = [leaf.words for leaf in releasepipeline.producers_on_tag(loaded, derived)]
+
+    # assert
+    assert selected == ["build bin", "test bin"]
+    assert releasepipeline.producers_on_tag(loaded, handwritten) == ()
+
+
+#: A release step that consumes only a test's evidence, and the test consumes a file a build leaf makes: the build
+#: is selected through the test, and the evidence crosses to the declared job by the hand-off.
+CLOSURE = PRODUCT.replace("artifacts:\n", "artifacts:\n  app-bin: { kind: file, path: build/app.bin }\n"
+                          "  app-checked: { kind: test-result, path: build/test/app.json }\n", 1).replace("ci:\n", """ci:
+  build:
+    commands:
+      bin: { task: make, produces: { file: app-bin } }
+  test:
+    commands:
+      bin: { task: check, consumes: { file: app-bin }, produces: { result: app-checked } }
+""", 1) + """tasks:
+  make: { impl: "simplon.test_impls:nullary", help: "Make.", unattended: true, output: { file: { accepts: file } } }
+  check: { impl: "simplon.test_impls:nullary", help: "Check.", unattended: true, input: { file: { accepts: file } },
+           output: { result: { accepts: test-result } } }
+  ship: { impl: "simplon.test_impls:nullary", help: "Ship.", unattended: true,
+          input: { evidence: { accepts: test-result } } }
+support:
+  commands:
+    ship: { task: ship, consumes: { evidence: app-checked } }
+workflows:
+  release:
+    jobs:
+      ship: { needs: release, runs-on: ubuntu-latest, steps: [{ command: support ship }] }
+"""
+
+
+def test_the_producer_of_what_a_selected_test_consumes_is_selected_and_the_evidence_crosses():
+    # arrange
+    from simplon.manifest import artifactsection
+    loaded = manifest_mod.load(CLOSURE, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = yaml.safe_load(CLOSURE)
+
+    # act
+    words = [leaf.words for leaf in releasepipeline.producers_on_tag(loaded, data)]
+    release = _workflows(CLOSURE)["release"]
+    jobs = yaml.safe_load(workflowgen.render(release, manifest=loaded, product="app", source="app.yaml",
+                                             artifacts=artifactsection.declared(data)))["jobs"]
+
+    # assert
+    assert words == ["build bin", "test bin"]
+    assert list(jobs) == ["release", releasepipeline.ARTIFACTS_JOB, "ship"]
+    assert jobs["ship"]["needs"] == ["release", releasepipeline.ARTIFACTS_JOB]
+    assert any(s.get("with", {}).get("name") == "app-checked" for s in jobs[releasepipeline.ARTIFACTS_JOB]["steps"]
+               if str(s.get("uses", "")).startswith("actions/upload-artifact"))
+    assert any(s.get("with", {}).get("name") == "app-checked" for s in jobs["ship"]["steps"]
+               if str(s.get("uses", "")).startswith("actions/download-artifact"))
