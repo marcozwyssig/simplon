@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import dataclasses
-import re
 import textwrap
 
 import pytest
@@ -10,7 +9,7 @@ import yaml
 
 from simplon.manifest import artifactsection, catalogue, context, load as manifest_mod
 from simplon.model import workflowschema
-from simplon.tasks import cipipeline, releasepipeline, workflowgen
+from simplon.tasks import cipipeline, workflowgen
 from simplon.tasks import workflows as workflows_task
 
 

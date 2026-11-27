@@ -999,7 +999,7 @@ def _merged(selections: Sequence[Selection]) -> Selection:
 
 def _job(manifest: Manifest, data: Mapping[str, object], key: str, selection: Selection, runner: runners.Runner,
          labels: tuple[str, ...], kernel: Mapping[str, object], path: str, *, condition: str = "") -> workflowschema.Job:
-    """One derived job over `selection`'s leaves: the preparation, the leaves in order, the `after_all` leaves, and the report upload, the cleanup (see `derive`)."""
+    """One derived job over `selection`'s leaves: the preparation, the leaves in order, the `after_all` leaves, the report upload and the cleanup (see `derive`)."""
     runs = _runs(selection)
     last = [leaf for leaf in selection.leaves if leaf.spec.after_all and not leaf.spec.ci.platforms]
     if not runs:
@@ -1269,9 +1269,7 @@ def to_workflow(derivation: Derivation, manifest: Manifest, data: Mapping[str, o
     also waits for that producer's success (the producer carries an id for it): a consumer whose producer went
     red is skipped rather than red on the missing file, so one cause shows as one red step. An `after_all` leaf
     and the upload run `always()`, so the report still says what it found; the cleanup keeps `_disk_steps`'s
-    `always()` and `continue-on-error`. An upload that keeps a release's artifact (si#862, #789) runs
-    `!cancelled()`, after its producers' success, and not on a pull request. `on:` is the model's triggers,
-    written through `_TRIGGERS`.
+    `always()` and `continue-on-error`. `on:` is the model's triggers, written through `_TRIGGERS`.
 
     si#860: every job of the model is written the same way (`_to_job`); a cadence workflow also gets a
     `concurrency:` that queues the next run behind one in progress rather than cancelling it. `product` names
