@@ -761,13 +761,38 @@ with:
   empty root-owned directory stays in the tree. So before the run the kernel makes the source, and the
   target's place in the tree when the target lies inside it. It refuses instead, having made nothing, when
   a path is a file or belongs to another uid.
-- **The working alternative to `caches:`.** A `caches:` volume is created by docker, owned by root, so a
-  run that is not root cannot write into it (#278, si#319). A directory under the output directory, mounted
-  this way, is the caller's.
+- **Not a cache.** `rm -rf build`, a fresh checkout and every CI job take a mount under the tree with
+  them. A cache that outlives the tree is `caches:`'s `dir:` form, below.
 - **From Python.** A product that calls `docker_argv` itself passes `Toolchain(..., mounts=[Mount(source,
   target)])` and calls `toolchain.prepare_mounts(cfg, root, where)` before the run. That function returns
   the refusal, or `""` once both ends exist. `simplon.adapters.hostpath.mount_argv` spells one translated
   `-v` for anything else.
+
+**A cache that outlives the tree: `caches:` (si#95, si#865).** Each entry is one of two forms:
+
+```yaml
+with:
+  env: { GRADLE_USER_HOME: /cache/gradle }
+  caches: [{ dir: gradle, path: /cache/gradle }]
+```
+
+- **`dir:`, a host directory made as you.** It lives at `<cache root>/<product>/<dir>-<instance>`, outside
+  the tree, so `clean`, a fresh checkout and actions/checkout leave it alone. The cache root is
+  `DELIVERY_DIR_CACHE`, else `$RUNNER_TOOL_CACHE/simplon/caches` on a CI runner, else
+  `${XDG_CACHE_HOME:-~/.cache}/simplon/caches`. The kernel makes the directory before the run, as you, and
+  refuses before the run when it cannot be made or another uid owns it. The refusal names the directory
+  and the repair. The check is shallow: the directory's own owner, not every file in it. The name is one
+  plain directory name: no `/`, `\`, `:`, `.` or `..`.
+- **`volume:`, a named docker volume** `<product>-<volume>-<instance>`. Docker creates it with the owner of
+  the mount point in the image, root when the image has no such directory. A container run as you then
+  cannot write into it: `touch: /cache/gradle/x: Permission denied`, measured with `--user 1000:1000`
+  (si#865). It works only when the image makes that path writable itself.
+- **Exactly one of the two per entry**, and `path:` always.
+- **On the container route** the launcher mounts the cache root into the kernel's container at
+  `/cache/dirs` and tells the kernel both sides, the way it does for the tree. A cache root that cannot be
+  mounted is one warning. A `dir:` cache is then refused by name before its command runs.
+- **From Python.** A product that calls `docker_argv` itself passes `CacheDir(dir, path)` in `caches=` and
+  calls `toolchain.prepare_caches(cfg, product, instance, where)` before the run.
 
 ## Where to go next
 

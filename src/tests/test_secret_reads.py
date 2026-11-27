@@ -341,6 +341,8 @@ _LAUNCHER = "the launcher's own parameter, set by the kernel's rendered launcher
 PLAIN: dict[str, str] = {
     "COLIMA_PROFILE": _DOCKER,
     "DELIVERY_DEGRADED_FILE": _PATH,
+    "DELIVERY_DIR_CACHE": _PATH,
+    "DELIVERY_DIR_CACHE_HOST": _PATH,
     "DELIVERY_DIST_CACHE": _PATH,
     "DELIVERY_DOCKER_BOOTSTRAP": _SWITCH,
     "DELIVERY_ENV_PASS": "the launcher's list of forwarded NAMES, never their values",

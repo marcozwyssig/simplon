@@ -213,6 +213,8 @@ if /i "%~1"=="DELIVERY_HOST_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_MOUNT_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_ENV_PASS" goto :eof
 if /i "%~1"=="DELIVERY_DIST_CACHE" goto :eof
+if /i "%~1"=="DELIVERY_DIR_CACHE" goto :eof
+if /i "%~1"=="DELIVERY_DIR_CACHE_HOST" goto :eof
 if /i "%~1"=="PYTHONPATH" goto :eof
 if /i "%~1"=="PYTHONUSERBASE" goto :eof
 if /i "%~1"=="HOME" goto :eof

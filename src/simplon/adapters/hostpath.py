@@ -90,6 +90,14 @@ from simplon.manifest.layout import validate_relative_dir
 HOST_ROOT_ENV = "DELIVERY_HOST_ROOT"
 MOUNT_ROOT_ENV = "DELIVERY_MOUNT_ROOT"
 
+#: THE SECOND BIND MOUNT (si#865), which is the trigger the module head names: a product task that must
+#: mount something outside its tree. `caches:`'s `dir:` form lives under a cache root outside the tree
+#: (`simplon.adapters.cachedir`), so the launcher's container route mounts that root too and declares its
+#: two sides here - the container side under `cachedir`'s own variable, the host side under this one.
+#: Absent on the venv route, where the cache root is a host path already and nothing is mapped.
+CACHE_MOUNT_ENV = "DELIVERY_DIR_CACHE"
+CACHE_HOST_ENV = "DELIVERY_DIR_CACHE_HOST"
+
 #: The files a container runtime writes into its own filesystem. Docker's is `/.dockerenv` (measured
 #: present in the kernel image); podman and the other OCI runtimes write `/run/.containerenv`. Neither is
 #: a promise, which is why they are only consulted to sharpen a REFUSAL - a missing marker never turns a
@@ -122,6 +130,9 @@ def translate(path: str | Path) -> str:
     byte-identical rather than merely equivalent.
     """
     given = str(path)
+    cached = _cache_side(given)
+    if cached:
+        return cached
     host, mount = declared_mount()
     if not host and not mount:
         if in_a_container():
@@ -166,6 +177,24 @@ def translate(path: str | Path) -> str:
         log.die(f"cannot mount {given} from inside this container: it is not under {mount}, which is the "
                 f"only directory bind-mounted from the host ({host}), so the daemon has no path for it. "
                 f"A directory a container hands to another container has to live in the mount")
+    return str(Path(host).joinpath(*inside.parts))
+
+
+def _cache_side(given: str) -> str:
+    """`given` on the host side of the cache mount (si#865), or "" when no cache mapping is declared or
+    `given` is not under it. Only the HOST half turns the mapping on: on the venv route the container
+    half is the cache root a person named, and there is nothing to map."""
+    host = os.environ.get(CACHE_HOST_ENV, "").strip()
+    if not host:
+        return ""
+    mount = os.environ.get(CACHE_MOUNT_ENV, "").strip()
+    if not mount:
+        log.die(f"a bind mount is two paths and only one is declared ({CACHE_HOST_ENV}='{host}', "
+                f"{CACHE_MOUNT_ENV}=''). Half a mapping cannot be applied to {given}")
+    try:
+        inside = Path(os.path.normpath(given)).relative_to(mount)
+    except ValueError:
+        return ""
     return str(Path(host).joinpath(*inside.parts))
 
 

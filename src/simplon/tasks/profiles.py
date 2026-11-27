@@ -320,7 +320,9 @@ PROFILES: dict[str, Profile] = {
         # already measured dead in this repository. `case-java.md`: a named docker volume is created
         # ROOT-owned, `--user <uid>:<gid>` cannot write into it, and gradle died unpacking a shared
         # object with no mention of permissions anywhere. `toolchain:run` runs EVERY container as the
-        # caller, so no `caches:` entry in any profile could ever be written into.
+        # caller, so no `caches:` entry in any profile could ever be written into. [si#865: true of the
+        # `volume:` form only. The `dir:` form is a host directory made as the caller and is writable;
+        # whether this profile should move its tools there is not decided here.]
         #
         # SO THE TOOLS GO INTO THE BIND MOUNT, the one directory in the container the caller provably
         # owns, through a `deps` command of its own - the two-command shape si#121 named, with the

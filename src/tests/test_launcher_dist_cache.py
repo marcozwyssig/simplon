@@ -93,7 +93,8 @@ def test_off_mounts_nothing_creates_nothing_and_says_off_inside(tmp_path):
     last = done.docker[-1]
     assert MOUNT not in last.replace(f"DELIVERY_DIST_CACHE={MOUNT}", "")
     assert "-e DELIVERY_DIST_CACHE=off" in last
-    assert not (tmp_path / "xdg").exists()
+    # si#865: the directory cache root is made beside it under `simplon/caches`; `off` is about `dist`
+    assert not (tmp_path / "xdg" / "simplon" / "dist").exists()
     assert not (tmp_path / "home").exists()
 
 

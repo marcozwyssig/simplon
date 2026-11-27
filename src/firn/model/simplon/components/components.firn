@@ -163,6 +163,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_brew typeOf simplon.architecture.Module {
     path = "adapters.brew"
   }
+  module m_adapters_cachedir typeOf simplon.architecture.Module {
+    path = "adapters.cachedir"
+  }
   module m_adapters_checksum typeOf simplon.architecture.Module {
     path = "adapters.checksum"
   }
