@@ -1365,9 +1365,9 @@ support:
 def test_a_group_named_in_the_taxonomy_block_keeps_its_own_members_from_groups():
     # arrange: this used to be rejected as "declared in BOTH the catalogue and the product manifest". It is
     # not a contradiction: both halves come from ONE file, and it is the only way a group can have members
-    # AND children (netctl#1444, plan 5). The catalogue-vs-product clash the message describes is still
-    # guarded, on merge_trees itself, where a catalogue tree really is one of the inputs
-    # (test_clitaxonomy.py) - the loader merges no catalogue tree, so it could never produce that case.
+    # AND children (netctl#1444, plan 5). The catalogue-vs-product clash the message described is
+    # `_enforce_the_catalogue_owns_the_groups`'s refusal of a product `taxonomy:`; merge_trees' own check
+    # was measured unreachable and deleted (si#888).
     text = """
 tasks:
   build: { impl: "simplon.test_impls:nullary", help: "Build it." }

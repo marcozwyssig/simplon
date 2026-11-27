@@ -1484,8 +1484,9 @@ def _flat_tree(members: dict[str, tuple[str, ...]],
     catalogue was involved and both halves came from the same file. Its own members are not lost by the
     skip: `_catalogue_tree` attaches them by PATH, so `members["support"]` lands on the declared node.
 
-    The merge rule still catches what it was written for, a group owned by the CATALOGUE and redeclared by
-    the product, because that clash is between two files rather than two sections of one.
+    The catalogue-vs-product clash that merge rule was written for is `_enforce_the_catalogue_owns_the_groups`'s
+    now: a product may not declare `taxonomy:` beside a catalogue's, and si#888 deleted the merge's own
+    check as unreachable.
     """
     return {name: TaxonomyNode(name=name, commands=cmds)
             for name, cmds in members.items() if "." not in name and name not in declared}

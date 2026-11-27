@@ -861,13 +861,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): EXPRESSION,
     ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         EXPRESSION,
-    # si#888: `clitaxonomy.merge_trees`, which `load` calls as a bare imported name and the walk did not follow
-    # until si#888. An expression rule by its own docstring: a group in both `taxonomy:` blocks is refused
-    # "rather than a precedence rule", and a precedence rule would have worked, merely differently. It sits on
-    # the platform/product seam like the rule above, and it is SHADOWED by it: `load` refuses a product
-    # `taxonomy:` before this merge whenever the catalogue has one, and with no catalogue taxonomy the first
-    # half is empty, so from `load` the clash is not reachable (read from the code, not run).
-    ("clitaxonomy", "merge_trees", "declared in BOTH the catalogue and the product manifest"): EXPRESSION,
     ("load", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
     # si#578. A pinned `with:` value whose type contradicts the body parameter's scalar annotation:
     # `bootstrap: true` for `bootstrap: str` died in `.strip()` as a traceback (cleon-firn, measured on
@@ -1517,7 +1510,6 @@ REACH: dict[tuple[str, str, str], str] = {
     ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): REACH_SEAM,
     ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         REACH_SEAM,
-    ("clitaxonomy", "merge_trees", "declared in BOTH the catalogue and the product manifest"): REACH_SEAM,
     ("treeform", "merge", "names a group the platform's tree does not declare"): REACH_SEAM,
     ("treeform", "merge", "shape_is_the_platforms"): REACH_SEAM,
     ("treeform", "_merge_commands", "is declared as one kind of command and refined as another"): REACH_MERGED,
@@ -2631,9 +2623,8 @@ def test_no_expression_rule_exempts_the_kernel_from_itself():
 # there is nothing there for a rule to be denied.
 
 #: The modules on the merge path, where a manifest has a platform half and a product half (ports since
-#: si#344 C.3: its rules run on the loaded, merged Manifest; clitaxonomy since si#888: `load` hands
-#: `merge_trees` the catalogue's taxonomy and the product's, and the walk now follows that bare imported call).
-TREE_MODULES = ("load", "treeform", "ports", "clitaxonomy")
+#: si#344 C.3: its rules run on the loaded, merged Manifest).
+TREE_MODULES = ("load", "treeform", "ports")
 
 #: The two expression rules pydantic runs, and why they need naming instead of wrapping. Both are
 #: validators on `_ManifestModel` - a field validator and a model validator - so no expression in the

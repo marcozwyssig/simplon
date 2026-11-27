@@ -72,14 +72,16 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 366 | nothing - the declaration had no working meaning |
-| expression rule | 55 | something it could otherwise have said |
-| **all load-time refusals** | **421** | |
+| expression rule | 54 | something it could otherwise have said |
+| **all load-time refusals** | **420** | |
 
 si#888 made the census follow a function imported with `from ... import` and called bare, as it already
 followed `module.function(...)`. The count grew without a rule being written: the path refusals of
-`layout.validate_relative_dir` (diagnosis), which `outputs:` reaches, and `clitaxonomy.merge_trees`'s
-refusal of a group declared in both the catalogue's and the product's `taxonomy:` (an expression rule on
-the platform/product seam, shadowed at load by the refusal of a product `taxonomy:`).
+`layout.validate_relative_dir` (diagnosis), which `outputs:` reaches. The same change also reached
+`clitaxonomy.merge_trees`'s refusal of a group declared in both the catalogue's and the product's
+`taxonomy:`. It was measured rather than counted: with the check made a no-op, the only tests that noticed
+called `merge_trees` directly, and a manifest declaring the group in both was refused first by the rule
+against a product `taxonomy:`. Unreachable from either seam, it was deleted, not counted.
 
 si#858 added a command's `ci: { skip: "<reason>" }`, the opt-out from the derived CI. **Expression rules:**
 a boolean `ci:` (`ci: false`) and a skip with no reason (missing, empty or not a string). Both would have worked, and both say nowhere why
@@ -351,7 +353,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 | reach | count | meaning |
 | --- | --- | --- |
 | the kernel is held to it too | 47 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
-| a statement about the platform/product seam | 8 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
+| a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
 **That last row used to say one, and how it got to zero is the point of measuring it.** The rule was

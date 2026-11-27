@@ -334,29 +334,6 @@ def test_a_catalogue_group_and_a_product_group_merge_into_one_tree():
     assert merged["deploy"].env_first is True
 
 
-def test_a_group_declared_in_both_manifests_is_an_error():
-    # arrange: the same group in both is a contradiction, not a precedence question
-    catalogue = {"build": TaxonomyNode(name="build", commands=("build",))}
-    product = {"build": TaxonomyNode(name="build", commands=("gradle",))}
-
-    # act / assert: the message must NAME the group, so the fix is obvious from the failure alone
-    with pytest.raises(ValueError, match="build"):
-        clitaxonomy.merge_trees(catalogue, product)
-
-
-def test_the_error_names_every_clashing_group_not_only_the_first():
-    # arrange: a wave migration can clash on several groups at once; reporting one at a time
-    # turns one fix into three rounds
-    catalogue = {"build": TaxonomyNode(name="build"), "test": TaxonomyNode(name="test")}
-    product = {"build": TaxonomyNode(name="build"), "test": TaxonomyNode(name="test")}
-
-    # act / assert
-    with pytest.raises(ValueError) as err:
-        clitaxonomy.merge_trees(catalogue, product)
-    assert "build" in str(err.value)
-    assert "test" in str(err.value)
-
-
 def test_an_empty_catalogue_leaves_the_product_tree_untouched():
     # arrange: this IS netctl's state throughout netctl#1431 - no catalogue exists yet
     product = {"deploy": TaxonomyNode(name="deploy", commands=("up",))}

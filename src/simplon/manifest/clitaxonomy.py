@@ -94,23 +94,16 @@ def merge_trees(catalogue: dict[str, TaxonomyNode],
     """Merge the platform catalogue's taxonomy with the product's own.
 
     Both arguments are SHAPE declarations - a `taxonomy:` block in one file each. A group declared in both
-    is an error rather than a precedence rule: with a winner, a reader has to know which file won in order
-    to predict the surface, and the shadowed declaration is invisible in the one that lost. With an error
-    there is no winner to reason about, only a contradiction to fix - which is what lets the catalogue take
-    the tree over one group at a time, leaving a half-migrated tree that works rather than one that
-    silently disagrees with itself.
+    used to be refused here as a contradiction. si#888 measured that refusal unreachable and deleted it:
+    `load` refuses a product `taxonomy:` (`_enforce_the_catalogue_owns_the_groups`) whenever the catalogue
+    declares one, and without one the catalogue half is empty, so no load ever handed this function a
+    clash - over the whole suite, only its own unit tests did. Reopens if `load` ever lets a product state
+    a shape beside a catalogue's.
 
-    What is NOT a contradiction, and never reaches here: a product's bare `groups:` key naming a group the
-    catalogue shapes. That key carries the group's MEMBERS, and contributing members to a catalogue group
-    is the entire point of the catalogue owning the loop (netctl#1444). The loader filters those out
-    before merging; passing them in would have made "the platform owns the tree" unimplementable.
+    What never reaches here: a product's bare `groups:` key naming a group the catalogue shapes. That key
+    carries the group's MEMBERS, and contributing members to a catalogue group is the entire point of the
+    catalogue owning the loop (netctl#1444). The loader filters those out before merging.
     """
-    clashes = sorted(set(catalogue) & set(product))
-    if clashes:
-        raise ValueError(
-            f"group(s) declared in BOTH the catalogue and the product manifest: {', '.join(clashes)}. "
-            f"A group belongs to exactly one of them - remove it from the product manifest once the "
-            f"catalogue owns it.")
     return {**catalogue, **product}
 
 
