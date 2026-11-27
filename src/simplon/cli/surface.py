@@ -156,7 +156,7 @@ NOT_CONSUMERS = {
 #: `artifacts` on purpose - `test_no_module_is_promised_under_a_task_body_s_name` refuses a library module
 #: named like the task body `simplon.tasks.artifact`.
 LIBRARY = frozenset({
-    "adapters.backend", "adapters.checksum", "adapters.clablifecycle", "adapters.clabrender",
+    "adapters.backend", "adapters.cachedir", "adapters.checksum", "adapters.clablifecycle", "adapters.clabrender",
     "adapters.compose", "adapters.credentials", "adapters.devcontainer", "adapters.disk", "adapters.docker",
     "adapters.fetch", "adapters.githubpackages", "adapters.healthgate", "adapters.host", "adapters.hostpath",
     "adapters.imagenames", "adapters.interact", "adapters.labegress", "adapters.labhost",

@@ -265,6 +265,27 @@ if [ "$DELIVERY_ROUTE" = container ]; then
             "$LAUNCH_PRODUCT" "$DIST_CACHE" >&2
         DOCKER_RUN+=(-e DELIVERY_DIST_CACHE=off)
     fi
+    # THE DIRECTORY CACHES, MOUNTED BY DEFAULT (si#865). A `caches:` entry of the `dir:` form is a host
+    # directory under `simplon.adapters.cachedir.root()`, which is outside the tree, and the kernel hands
+    # it to a SIBLING container - so the daemon needs its host path, which only this launcher knows. The
+    # chain is cachedir's, mounted at a fixed path, and BOTH sides are declared, as for the tree: the
+    # kernel works in /cache/dirs and `hostpath.translate` maps it back (both names are off the by-name
+    # loop below). There is no `off`: a root that cannot be mounted is one warning and nothing declared,
+    # and a command that then declares a `dir:` cache is refused by the kernel, by name, before it runs.
+    DIR_CACHE="${DELIVERY_DIR_CACHE:-}"
+    if [ -z "$DIR_CACHE" ]; then
+        if [ -n "${RUNNER_TOOL_CACHE:-}" ]; then DIR_CACHE="$RUNNER_TOOL_CACHE/simplon/caches"
+        else DIR_CACHE="${XDG_CACHE_HOME:-${HOME:-}/.cache}/simplon/caches"; fi
+    fi
+    if [[ "$DIR_CACHE" == *:* ]]; then
+        printf '%s: the directory cache root %s contains a colon, which docker -v splits on; it is not mounted.\n' \
+            "$LAUNCH_PRODUCT" "$DIR_CACHE" >&2
+    elif mkdir -p "$DIR_CACHE" 2>/dev/null && DIR_CACHE="$(cd "$DIR_CACHE" && pwd)"; then
+        DOCKER_RUN+=(-v "$DIR_CACHE:/cache/dirs" -e DELIVERY_DIR_CACHE=/cache/dirs -e "DELIVERY_DIR_CACHE_HOST=$DIR_CACHE")
+    else
+        printf '%s: the directory cache root %s could not be created; it is not mounted.\n' \
+            "$LAUNCH_PRODUCT" "$DIR_CACHE" >&2
+    fi
     # WHICH VARIABLES CROSS. The venv route inherits the caller's whole environment and this one inherits
     # nothing, so the difference has to be named rather than left to be discovered. Two namespaces plus
     # the handful of variables a CI runner speaks: the kernel's own DELIVERY_*, this product's, and
@@ -287,7 +308,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     DOCKER_PASS=()
     while read -r _name; do
         case "$_name" in
-            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|DELIVERY_DIST_CACHE|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
+            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|DELIVERY_DIST_CACHE|DELIVERY_DIR_CACHE|DELIVERY_DIR_CACHE_HOST|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
             DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN|GH_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
             *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_PASS+=(-e "$_name") ;; esac ;;

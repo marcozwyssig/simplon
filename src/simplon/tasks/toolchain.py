@@ -48,7 +48,7 @@ import typer
 import yaml
 
 from simplon.manifest import context, launcherenv, layout, outputs, yamllines
-from simplon.adapters import docker, hostpath, labinstance
+from simplon.adapters import cachedir, docker, hostpath, labinstance
 from simplon.kernel import log
 from simplon.tasks import profiles
 
@@ -58,6 +58,18 @@ class Cache:
     """A named volume mounted into the container, so a dependency graph survives the run."""
 
     volume: str
+    path: str
+
+
+@dataclass(frozen=True)
+class CacheDir:
+    """A host directory mounted into the container, made as the caller outside the product tree (si#865).
+
+    The form a container run as the caller can write into: a named volume is created root-owned (see
+    `simplon.adapters.cachedir`, which owns where the directory lives and how it is made).
+    """
+
+    dir: str
     path: str
 
 
@@ -78,7 +90,7 @@ class Toolchain:
     argv: list[str]
     workdir: str = "/work"
     env: dict[str, str] = field(default_factory=dict)
-    caches: list[Cache] = field(default_factory=list)
+    caches: list[Cache | CacheDir] = field(default_factory=list)
     cwd: str = ""
     # LAST, so a product that builds a Toolchain positionally (biz-cockpit does) keeps its meaning.
     mounts: list[Mount] = field(default_factory=list)
@@ -116,7 +128,8 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
                 build_root: str = "", home: str = "", name: str = "",
-                passes: tuple[str, ...] = (), entrypoint: str = "") -> list[str]:
+                passes: tuple[str, ...] = (), entrypoint: str = "",
+                cache_dirs: Mapping[str, Path] | None = None) -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -147,10 +160,21 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
 
     `entrypoint` (si#568) is the kernel's, never the manifest's: `build:model`/`test:model` with `binary:`
     run a product's own firn in an image whose ENTRYPOINT may be `/firn`. Empty adds nothing.
+
+    A `dir:` cache (si#865) is a BIND mount of `<root>/<product>/<dir>-<instance>`, the same name the
+    volume form gives its volume, through `hostpath.translate` like every other source. `cache_dirs` is
+    what `prepare_caches` handed back - the RESOLVED path it checked, by `dir:` name - and that path is
+    the one mounted. A name it does not carry falls back to the lexical path under `cachedir.root()`,
+    which is unchecked: a caller that skips `prepare_caches` gets no guarantee about it.
     """
     volumes: list[str] = []
     for cache in cfg.caches:
-        volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
+        if isinstance(cache, CacheDir):
+            held = (cache_dirs or {}).get(cache.dir) or cachedir.directory(cachedir.root(), product, cache.dir,
+                                                                           instance)
+            volumes += ["-v", f"{hostpath.translate(held)}:{cache.path}"]
+        else:
+            volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
     # si#511: AFTER the caches and, like every flag, before the image - after it docker would hand the
     # flag to the tool as an argument. The points already exist: `invocation` made them, as the caller.
     for mount in cfg.mounts:
@@ -282,7 +306,11 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     outputs.ensure_home()
     # si#511, for the same reason and in the same place: a mount point docker has to create is created
     # root-owned, so the kernel makes every one first, as the caller - or refuses before making any.
-    fault = prepare_mounts(cfg, product.root, where) or docker.ownership_fault([outputs.root()], product.root)
+    fault = prepare_mounts(cfg, product.root, where)
+    cache_dirs: dict[str, Path] = {}
+    if not fault:
+        cache_dirs, fault = prepare_caches(cfg, product.name, instance, where)
+    fault = fault or docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
         return None
@@ -292,7 +320,7 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network, name=name,
-                       passes=launcherenv.running(), entrypoint=entrypoint)
+                       passes=launcherenv.running(), entrypoint=entrypoint, cache_dirs=cache_dirs)
     return line, name
 
 
@@ -334,21 +362,60 @@ def _env(raw: object, where: str) -> dict[str, str]:
     return {str(key): str(value) for key, value in raw.items()}
 
 
-def _caches(raw: object, where: str) -> list[Cache]:
-    """The named volumes, each of which needs BOTH halves: without a path there is nothing to mount."""
+_CACHE_FORMS = ("{ volume: <name>, path: <path in the container> } or "
+                "{ dir: <name>, path: <path in the container> }")
+
+
+def _caches(raw: object, where: str) -> list[Cache | CacheDir]:
+    """The caches, each a named volume or a host directory (si#865) and each with a path to mount it at.
+
+    EXACTLY ONE OF `volume:` AND `dir:`, because the two are different places: an entry naming both would
+    leave the kernel to pick which cache the tool writes into.
+    """
     if raw is None:
         return []
     if not isinstance(raw, Sequence) or isinstance(raw, str):
-        log.die(f"{where}: `caches:` must be a list of "
-                f"{{ volume: <name>, path: <path in the container> }} entries")
+        log.die(f"{where}: `caches:` must be a list of {_CACHE_FORMS} entries")
         raise SystemExit(1)
-    out: list[Cache] = []
+    out: list[Cache | CacheDir] = []
     for entry in raw:
-        if not isinstance(entry, Mapping) or "volume" not in entry or "path" not in entry:
-            log.die(f"{where}: a `caches:` entry needs both `volume:` and `path:`, got {entry!r}")
+        if (not isinstance(entry, Mapping) or "path" not in entry
+                or ("volume" in entry) == ("dir" in entry)):
+            log.die(f"{where}: a `caches:` entry needs `path:` and exactly one of `volume:` and `dir:` "
+                    f"({_CACHE_FORMS}), got {entry!r}")
             raise SystemExit(1)
-        out.append(Cache(volume=str(entry["volume"]), path=str(entry["path"])))
+        if "dir" in entry:
+            fault = cachedir.name_fault(str(entry["dir"]))
+            if fault:
+                log.die(f"{where}: `caches:` dir {fault}")
+                raise SystemExit(1)
+            out.append(CacheDir(dir=str(entry["dir"]), path=str(entry["path"])))
+        else:
+            out.append(Cache(volume=str(entry["volume"]), path=str(entry["path"])))
     return out
+
+
+def prepare_caches(cfg: Toolchain, product: str, instance: str, where: str,
+                   cache_root: Path | None = None) -> tuple[dict[str, Path], str]:
+    """Make every `dir:` cache exist as a directory the caller owns: `(checked paths by dir name, "")`, or
+    `({}, why not)` (si#865). Hand the paths to `docker_argv` as `cache_dirs`, so the line mounts what was
+    checked.
+
+    BEFORE THE LINE, for the reason `prepare_mounts` gives: a source docker has to create is created
+    root-owned, and the container run as the caller then cannot write into it. A volume entry is left to
+    docker, as it always was. A product that builds a Toolchain in Python and runs `docker_argv` itself
+    calls this first, as it calls `prepare_mounts`.
+    """
+    base = cache_root or cachedir.root()
+    checked: dict[str, Path] = {}
+    for cache in cfg.caches:
+        if isinstance(cache, CacheDir):
+            held, fault = cachedir.prepare(cachedir.directory(base, product, cache.dir, instance),
+                                           f"{where}: cache '{cache.dir}'", base)
+            if held is None:
+                return {}, fault
+            checked[cache.dir] = held
+    return checked, ""
 
 
 _MOUNT_FORM = "`<path under the tree>:<absolute path in the container>`, optionally followed by `:ro`"

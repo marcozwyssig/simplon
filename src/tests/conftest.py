@@ -28,7 +28,7 @@ sys.path.append(str(ROOT / "deploy" / "orchestrator" / "src" / "python"))
 from simplon.adapters import hostpath   # noqa: E402  (needs the sys.path line above)
 
 #: The environment variables that change what a PURE kernel function returns, cleared for every test.
-AMBIENT = ("DELIVERY_HOST_ROOT", "DELIVERY_MOUNT_ROOT")
+AMBIENT = ("DELIVERY_HOST_ROOT", "DELIVERY_MOUNT_ROOT", "DELIVERY_DIR_CACHE", "DELIVERY_DIR_CACHE_HOST")
 
 
 @pytest.fixture(autouse=True)
