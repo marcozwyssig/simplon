@@ -1532,8 +1532,11 @@ the workflow is refused, naming the command, the parameter and the two ways out:
 run with `ci: { params: }`, or keep the leaf out with `ci: { skip: }` (for a gate member, which cannot
 declare `ci: { skip: }`, take it out of the gate). Which parameters a task cannot run
 without is the catalogue's (`required` on the task's parameter in its model), not the signature's: an
-empty default refused by the body counts. A leaf that is skipped or left out is not asked, and a leaf
-of a product's own task is not checked: its body may still need a parameter nothing binds.
+empty default refused by the body counts. A product's own task has no model, so its body's signature
+says it (si#903): a parameter without a default is one the command line reads as a positional, and the
+derived step passes none, so it is refused the same way. That reads the body at generation, as the CLI
+does to run it: a body the generator cannot import is one the step could not run either. A leaf that is
+skipped or left out is not asked.
 
 **The order is manifest order, a consumer after its producer.** Manifest order is the loaded
 manifest's: the platform's group order (`build`, then `test`, then nested groups such as `test.x` in
