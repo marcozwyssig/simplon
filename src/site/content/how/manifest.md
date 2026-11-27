@@ -255,8 +255,9 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
 and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](#passes-what-an-aggregate-hands-its-leaves)
 it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to every member that
 takes one. simplon's own `release.yml` is the first workflow derived from such an aggregate (si#491):
-`release all` is its release aggregate, so its job runs the test leaves, the notes and the
-tag in this order, so a red test leaves no tag behind. Typed in a checkout, `release all` still ends by
+`release all` is its release aggregate, so its job runs the release check, the notes and the
+tag in this order, so a commit without green main CI gets no tag (si#789). The image's arm64 test runs on the
+tag after it is pushed: if it goes red, the tag stays and nothing is published. Typed in a checkout, `release all` still ends by
 pushing the tag - and for simplon nothing then publishes it, because only the button does; if `main`
 moves before the button is pressed, that version is refused there as taken. PyPI, the site and the image publish in product
 jobs after it, and a publish that fails there is finished by rerunning that job.

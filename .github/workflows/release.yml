@@ -6,20 +6,23 @@
 
 # The release, started from the button with the version and a rehearsal switch (si#491). The
 # derived `release` job runs `release all`: the release check, which refuses a commit without a
-# green `ci.yml` run on `main`, then the notes, then the tag - so a red test leaves no tag behind.
-# The derived `artifacts` job then builds on the tag what the release consumes (si#789): the wheel,
-# the image and the image's test. What follows publishes: the wheel to PyPI, then the site and the
-# image, each of which describes the version PyPI now serves. The release job, `artifacts`, `docs`
-# and `pages` are derived; `publish`, `homebrew-tap` and `image` are added by this entry, and they take
-# what `artifacts` built - the wheel, the image's OCI archive and its test record - by the hand-off,
-# so nothing is built twice and what goes out is what was tested. A missing artifact is a red job
-# that names it, never a second build.
+# green `ci.yml` run on `main`, then the notes, then the tag - so a commit without green main CI
+# gets no tag. The derived `artifacts` job then builds on the tag what the release consumes
+# (si#789): the wheel, the image and the image's test, whose arm64 half runs only here, after the
+# tag is pushed. What follows publishes: the wheel to PyPI, then the site and the image, each of which
+# describes the version PyPI now serves. The release job, `artifacts`, `docs` and `pages` are
+# derived; `publish`, `homebrew-tap` and `image` are added by this entry. `publish` and `image`
+# take what `artifacts` built - the wheel, the image's OCI archive and its test record - by the
+# hand-off, so nothing is built twice and what goes out is what was tested; `homebrew-tap` takes
+# the formula `publish` wrote. A missing artifact is a red job that names it, never a second build.
 #
-# A publish that fails after the tag is FINISHED, not repeated: rerun the failed job, never cut a
-# second tag. A commit `main` does not carry is refused by `release tag`, and there is no other
-# route - a hotfix merges first. A red run on a tag is rerun, never retagged, and a real defect
-# gets the next patch version. The tests are not rerun here: the release job archives no report,
-# because the green `main` run it relies on holds it.
+# A run that goes red after the tag is FINISHED, not repeated: the tag stays, and if the tag
+# run's own tests go red nothing is published. Rerun the failed job, or cut the next patch version
+# for a real defect; never cut a second tag for the same version. A rerun of one job works only
+# while the hand-off still holds what it takes, the `retention-days` of its upload steps below;
+# after that the whole run reruns and rebuilds. A commit `main` does not carry is refused by `release tag`, and there is no other
+# route - a hotfix merges first. The release job archives no report, because the green `main` run
+# it relies on holds it.
 name: release
 on:
   workflow_dispatch:
