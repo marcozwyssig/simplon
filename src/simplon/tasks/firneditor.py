@@ -28,9 +28,13 @@ def runtime_file(env: Mapping[str, str] | None = None) -> Path:
 
 
 def _stored(path: Path) -> str | None:
-    if not path.is_file():
+    if not os.path.lexists(path):
         return None
-    text = path.read_text()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise ValueError(f"{path} exists but cannot be read as the stored runtime ({type(e).__name__}: {e}). "
+                         f"Delete it or pass --runtime to replace it.") from e
     for runtime in RUNTIMES:
         if text == f"{runtime}\n":
             return runtime
@@ -54,4 +58,6 @@ def choose_runtime(flag: str, release_of: Callable[[], firnrelease.Release],
     binary = firnrelease.host_binary_name(release.tag)
     if binary is not None and binary in release.assets:
         return Choice("local", f"default ({binary} is in firn {release.tag})")
-    return Choice("docker", f"default ({binary or 'no binary named for this host'} is not in firn {release.tag})")
+    if binary is None:
+        return Choice("docker", "default (no firn binary exists for this OS and architecture, so docker)")
+    return Choice("docker", f"default (firn {release.tag} has no asset {binary}, so docker)")

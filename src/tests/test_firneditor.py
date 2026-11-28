@@ -104,3 +104,32 @@ def test_a_bad_flag_names_the_two_values(env):
     with pytest.raises(ValueError, match="local.*docker"):
         firneditor.choose_runtime("podman", _never, env)
     assert not firneditor.runtime_file(env).exists()
+
+
+def test_a_directory_at_the_runtime_path_is_not_nothing_stored(env):
+    path = firneditor.runtime_file(env)
+    path.mkdir(parents=True)
+    with pytest.raises(ValueError, match=re.escape(str(path))):
+        firneditor.choose_runtime("", _never, env)
+
+
+def test_a_dangling_symlink_at_the_runtime_path_is_not_nothing_stored(env):
+    path = firneditor.runtime_file(env)
+    path.parent.mkdir(parents=True)
+    path.symlink_to(path.parent / "missing")
+    with pytest.raises(ValueError, match=re.escape(str(path))):
+        firneditor.choose_runtime("", _never, env)
+
+
+def test_a_file_that_is_not_utf8_names_the_file(env):
+    path = firneditor.runtime_file(env)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(ValueError, match=re.escape(str(path))):
+        firneditor.choose_runtime("", _never, env)
+
+
+def test_no_binary_for_this_os_or_arch_says_so_and_that_docker_is_the_default(env, monkeypatch):
+    monkeypatch.setattr(firnrelease, "host_binary_name", lambda tag, system=None, machine=None: None)
+    choice = firneditor.choose_runtime("", lambda: _release_with(HOST_BINARY), env)
+    assert "no firn binary exists for this OS and architecture" in choice.source and "docker" in choice.source
