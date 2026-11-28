@@ -1,12 +1,15 @@
 """si#900: the firn runtime of `support install` is chosen by flag, remembered per host, and defaulted from the
 release only when nothing was said before. AAA; the name states the behaviour under test."""
 import re
+import shlex
 from types import SimpleNamespace
 
 import pytest
 
-from simplon.adapters import firnrelease
+from simplon.adapters import firnrelease, hostinstall, tools
+from simplon.adapters.hostinstall import State
 from simplon.tasks import firneditor
+from simplon.tasks.firneditor import Choice
 
 TAG = "v0.19.0"
 HOST_BINARY = f"firn-{TAG}-linux-amd64"
@@ -133,3 +136,102 @@ def test_no_binary_for_this_os_or_arch_says_so_and_that_docker_is_the_default(en
     monkeypatch.setattr(firnrelease, "host_binary_name", lambda tag, system=None, machine=None: None)
     choice = firneditor.choose_runtime("", lambda: _release_with(HOST_BINARY), env)
     assert "no firn binary exists for this OS and architecture" in choice.source and "docker" in choice.source
+
+
+@pytest.fixture
+def bin_dir(tmp_path, monkeypatch):
+    path = tmp_path / "bin"
+    monkeypatch.setattr(tools, "bin_dir", lambda: path)
+    return path
+
+
+def test_docker_script_mounts_the_host_path_quoted(tmp_path):
+    root = tmp_path / "my 'odd' tree"
+    text = firneditor.docker_script(root, "ghcr.io/marcozwyssig/firn:v0.19.0", 1000, 1000)
+    assert text.startswith("#!/bin/sh\n")
+    argv = shlex.split(text.splitlines()[-1])
+    assert argv[:4] == ["exec", "docker", "run", "-i"]
+    assert argv[argv.index("-v") + 1] == f"{root}:{root}" and argv[argv.index("-w") + 1] == str(root)
+    assert argv[-2:] == ["ghcr.io/marcozwyssig/firn:v0.19.0", "$@"] and "/workspace" not in text
+
+
+def test_local_present_at_the_tag_is_nothing_to_do(tmp_path, bin_dir):
+    bin_dir.mkdir()
+    (bin_dir / HOST_BINARY).write_text("x")
+    (bin_dir / HOST_BINARY).chmod(0o755)
+    outcome, binary = firneditor.runtime_gate(Choice("local", "stored"), TAG, _never, tmp_path)
+    assert outcome.state is State.PRESENT and binary == bin_dir / HOST_BINARY
+
+
+def test_local_file_that_is_not_executable_is_fetched_again(tmp_path, bin_dir, monkeypatch):
+    bin_dir.mkdir()
+    (bin_dir / HOST_BINARY).write_text("old")
+    (bin_dir / HOST_BINARY).chmod(0o644)
+    monkeypatch.setattr(firnrelease, "fetch_checked", lambda r, n, dest: dest.write_text("new") or dest)
+    outcome, binary = firneditor.runtime_gate(Choice("local", "stored"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    assert outcome.state is State.INSTALLED and binary.read_text() == "new"
+
+
+def test_local_downloads_checked_and_executable(tmp_path, bin_dir, monkeypatch):
+    calls = []
+    release = _release_with(HOST_BINARY)
+
+    def fetch(rel, name, dest):
+        calls.append((rel, name, dest))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("bin")
+        return dest
+
+    monkeypatch.setattr(firnrelease, "fetch_checked", fetch)
+    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, lambda: release, tmp_path)
+    assert outcome.state is State.INSTALLED and binary == bin_dir / HOST_BINARY
+    assert calls == [(release, HOST_BINARY, binary)] and binary.stat().st_mode & 0o111
+
+
+def test_local_without_a_binary_for_this_host_fails_naming_it(tmp_path, bin_dir, monkeypatch):
+    monkeypatch.setattr(firnrelease, "host_binary_name", lambda tag, system=None, machine=None: None)
+    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "no firn binary" in outcome.detail and binary is None
+
+
+@pytest.mark.parametrize("exc", [firnrelease.NoToken("t"), firnrelease.ReleaseUnreadable("u"),
+                                 firnrelease.AssetMissing("a"), firnrelease.ChecksumMismatch("c")])
+def test_local_turns_each_release_exception_into_failed(tmp_path, bin_dir, monkeypatch, exc):
+    def boom(*args):
+        raise exc
+
+    monkeypatch.setattr(firnrelease, "fetch_checked", boom)
+    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    assert outcome.state is State.FAILED and outcome.detail == str(exc) and binary is None
+    assert not (bin_dir / HOST_BINARY).exists()
+
+
+def test_local_release_read_failure_is_failed(tmp_path, bin_dir):
+    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, _unreadable, tmp_path)
+    assert outcome.state is State.FAILED and outcome.detail == "no release" and binary is None
+
+
+def test_docker_without_a_running_docker_fails(tmp_path, bin_dir, monkeypatch):
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: False)
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "docker" in outcome.detail and binary is None
+    assert not (bin_dir / "firn-docker").exists()
+
+
+def test_docker_that_hangs_is_failed_not_absent(tmp_path, bin_dir, monkeypatch):
+    def hang(tool, env=None):
+        raise hostinstall.NoAnswer("docker --version gave no answer")
+
+    monkeypatch.setattr(hostinstall, "runs", hang)
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "could not ask docker" in outcome.detail and binary is None
+
+
+def test_docker_rewrites_the_script_when_the_pin_changed(tmp_path, bin_dir, monkeypatch):
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: True)
+    first, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    again, same = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    moved, _ = firneditor.runtime_gate(Choice("docker", "flag"), "v0.20.0", _never, tmp_path)
+    assert (first.state, again.state, moved.state) == (State.INSTALLED, State.PRESENT, State.INSTALLED)
+    assert path == same == bin_dir / "firn-docker" and path.stat().st_mode & 0o777 == 0o755
+    assert "firn:v0.20.0" in path.read_text()

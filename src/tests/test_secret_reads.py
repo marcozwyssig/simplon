@@ -590,6 +590,7 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.cliref", "reference"): _GENERATED,
     ("simplon.tasks.completiongen", "write"): _GENERATED,
     ("simplon.tasks.fetchfile", "_record"): _RECORD,
+    ("simplon.tasks.firneditor", "_docker_gate"): _GENERATED,
     ("simplon.tasks.githubrelease", "_attached"): f"{_FETCHED}, and {_RECORD}",
     ("simplon.tasks.homebrewformula", "build"): _GENERATED,
     ("simplon.tasks.homebrewtap", "check"): _RECORD,

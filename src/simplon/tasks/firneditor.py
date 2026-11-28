@@ -6,11 +6,12 @@ so a later release that gains this host's binary changes it. A release that cann
 (NoToken, ReleaseUnreadable propagate): guessing docker there would turn "could not tell" into an answer.
 """
 import os
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon.adapters import firnrelease
+from simplon.adapters import firnrelease, hostinstall, tools
 
 RUNTIMES = ("local", "docker")
 
@@ -61,3 +62,57 @@ def choose_runtime(flag: str, release_of: Callable[[], firnrelease.Release],
     if binary is None:
         return Choice("docker", "default (no firn binary exists for this OS and architecture, so docker)")
     return Choice("docker", f"default (firn {release.tag} has no asset {binary}, so docker)")
+
+
+def docker_script(root: Path, image: str, uid: int, gid: int) -> str:
+    """The stdio wrapper an editor runs as `firn.binary`: the product tree is mounted at its own host path, so
+    the paths firn reports are the paths the editor knows."""
+    mount = shlex.quote(f"{root}:{root}")
+    return ("#!/bin/sh\n"
+            f"exec docker run -i --rm -u {uid}:{gid} -v {mount} -w {shlex.quote(str(root))} "
+            f"{shlex.quote(image)} \"$@\"\n")
+
+
+def _local_gate(tag: str, release_of: Callable[[], firnrelease.Release]) -> tuple[hostinstall.Outcome, Path | None]:
+    name = firnrelease.host_binary_name(tag)
+    if name is None:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   "no firn binary exists for this OS and architecture; use --runtime docker"), None
+    binary = tools.bin_dir() / name
+    if binary.is_file() and os.access(binary, os.X_OK):
+        return hostinstall.Outcome(hostinstall.State.PRESENT, f"{binary}"), binary
+    try:
+        firnrelease.fetch_checked(release_of(), name, binary)
+    except (firnrelease.NoToken, firnrelease.ReleaseUnreadable, firnrelease.AssetMissing,
+            firnrelease.ChecksumMismatch) as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, str(e)), None
+    binary.chmod(0o755)
+    return hostinstall.Outcome(hostinstall.State.INSTALLED, f"{binary}"), binary
+
+
+def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None]:
+    try:
+        up = hostinstall.runs("docker")
+    except hostinstall.NoAnswer as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask docker: {e}"), None
+    if not up:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   "docker is not available; install it or use --runtime local"), None
+    script = tools.bin_dir() / "firn-docker"
+    text = docker_script(root, f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}", os.getuid(), os.getgid())
+    current = script.read_text(encoding="utf-8") if script.is_file() else None
+    state = hostinstall.State.PRESENT
+    if current != text:
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(text, encoding="utf-8")
+        state = hostinstall.State.INSTALLED
+    script.chmod(0o755)
+    return hostinstall.Outcome(state, f"{script}"), script
+
+
+def runtime_gate(choice: Choice, tag: str, release_of: Callable[[], firnrelease.Release],
+                 root: Path) -> tuple[hostinstall.Outcome, Path | None]:
+    """Make the chosen runtime ready; the path is the `firn.binary` target, None when the gate left none."""
+    if choice.runtime == "local":
+        return _local_gate(tag, release_of)
+    return _docker_gate(tag, root)
