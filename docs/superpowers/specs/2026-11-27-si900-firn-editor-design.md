@@ -148,7 +148,7 @@ builder's (6); "could not tell" must not read as "none".
 
 ### 4.6 Asked of firn
 
-Filed on firn after this design is approved, each with the measurement of 5:
+Filed on firn 2026-11-28 (firn#1460, firn#1461, firn#1462), each with the measurement of 5:
 
 - The server loads each project's Java functions itself (from `firn.toml` or the project's
   `build/firn/lsp.args`), so one window serves every project. When it lands, the naming of 4.5 goes.
