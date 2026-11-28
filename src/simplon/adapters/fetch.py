@@ -59,6 +59,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import IO, Any
 from urllib.parse import urlsplit
@@ -459,23 +460,34 @@ def _resume_point(part: Path, source: Path, url: str) -> tuple[int, str]:
     return have, recorded[1]
 
 
-def _request(url: str, offset: int, validator: str) -> urllib.request.Request:
-    """The request, with the two headers a resume needs.
+def _request(url: str, offset: int, validator: str,
+             headers: Mapping[str, str] | None = None) -> urllib.request.Request:
+    """The request, with the two headers a resume needs, and the caller's `headers` for this host only.
 
     urllib's redirect handler carries both across a hop, including to another host, which is what the
     oras call site needs - GitHub redirects a release asset to objects.githubusercontent.com, and a
     `Range` lost there would silently re-download the whole thing. It is also safe by construction
     rather than by luck: a validator the target does not recognise makes it answer `200` with the whole
     object, which `_served_offset` reads as "truncate and start over".
+
+    The caller's `headers` are the opposite case, and are added UNREDIRECTED: a credential is for the host
+    that was asked, never for whichever host a `Location` names. A private release asset is the case
+    (si#900): the API answers `302` to a signed URL on release-assets.githubusercontent.com, which needs no
+    token. si#900 expected that storage to refuse a forwarded `Authorization` with a 400; measured
+    2026-11-28, it accepted the forwarded token and served the file. So the reason that holds today is
+    that a token sent onward reaches a host it was not issued for, and a stricter store is a second one.
     """
     request = urllib.request.Request(url)
+    for key, value in (headers or {}).items():
+        request.add_unredirected_header(key, value)
     if offset > 0:
         request.add_header("Range", f"bytes={offset}-")
         request.add_header("If-Range", validator)
     return request
 
 
-def _respond(url: str, timeout: float, offset: int, validator: str) -> Any:
+def _respond(url: str, timeout: float, offset: int, validator: str,
+             headers: Mapping[str, str] | None = None) -> Any:
     """Open the transfer, and answer a `416` by asking again for the whole thing.
 
     The one retry is not a retry policy. `416` says the partial file is at least as long as the object
@@ -483,12 +495,12 @@ def _respond(url: str, timeout: float, offset: int, validator: str) -> Any:
     question, and there is no third.
     """
     try:
-        return _opener().open(_request(url, offset, validator), timeout=timeout)
+        return _opener().open(_request(url, offset, validator, headers), timeout=timeout)
     except urllib.error.HTTPError as refusal:
         if refusal.code != _RANGE_NOT_SATISFIABLE or offset == 0:
             raise
         refusal.close()
-        return _opener().open(_request(url, 0, ""), timeout=timeout)
+        return _opener().open(_request(url, 0, "", headers), timeout=timeout)
 
 
 def _served_offset(response: http.client.HTTPResponse, asked: int) -> int:
@@ -587,7 +599,8 @@ def _sink(part: Path, opened: IO[bytes] | None, offset: int) -> IO[bytes]:
 
 
 def download(url: str, dest: str | Path, *, label: str = "",
-             timeout: float = DEFAULT_TIMEOUT_S, resume: bool = False, sha256: str = "") -> Path:
+             timeout: float = DEFAULT_TIMEOUT_S, resume: bool = False, sha256: str = "",
+             headers: Mapping[str, str] | None = None) -> Path:
     """Fetch `url` to `dest`, saying how far along it is, and return `dest`.
 
     `label` is what the progress line calls the thing; it defaults to the last segment of the URL,
@@ -611,6 +624,9 @@ def download(url: str, dest: str | Path, *, label: str = "",
     received digest, with nothing written - not under `dest`, and no part kept to resume from, because a
     part that completes into the wrong file would complete into the same refusal on every later call.
     Empty, the default, checks nothing; every pinned download in this kernel passes one.
+
+    `headers` (si#900) go with the request to `url` and to no host a redirect leads to: a token for a
+    private release asset is the case (see `_request`).
 
     Raises `DownloadError` - and only `DownloadError` - for a refused scheme, an HTTP error, a timeout,
     a truncated body or any transport failure, with the original exception attached as its cause.
@@ -638,7 +654,7 @@ def download(url: str, dest: str | Path, *, label: str = "",
     # whole change exists to stop.
     keep = offset > 0
     try:
-        with _respond(url, timeout, offset, validator) as response:
+        with _respond(url, timeout, offset, validator, headers) as response:
             _refuse_other_schemes(response.url, after_redirect=True)
             offset = _served_offset(response, offset)
             total = _served_total(response, offset)
