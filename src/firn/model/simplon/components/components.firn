@@ -345,6 +345,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_fetchfile typeOf simplon.architecture.Module {
     path = "tasks.fetchfile"
   }
+  module m_tasks_firneditor typeOf simplon.architecture.Module {
+    path = "tasks.firneditor"
+  }
   module m_tasks_firngen typeOf simplon.architecture.Module {
     path = "tasks.firngen"
   }

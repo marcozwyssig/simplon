@@ -381,6 +381,7 @@ PLAIN: dict[str, str] = {
     "SIMPLON_SETUP_FAILED": _PATH,
     "SUDO": "the command that escalates, `sudo` by default",
     "XDG_CACHE_HOME": _PATH,
+    "XDG_CONFIG_HOME": _PATH,
 }
 
 #: Reads whose name the walk cannot resolve, by (module, function), with what the name is and why its
@@ -597,6 +598,7 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.image", "_write_built"): _RECORD,
     ("simplon.tasks.image", "record"): _RECORD,
     ("simplon.tasks.image", "smoke"): _RECORD,
+    ("simplon.tasks.firneditor", "choose_runtime"): _RECORD,
     ("simplon.tasks.image", "write_bake"): _GENERATED,
     ("simplon.tasks.imagefile", "check"): _RECORD,
     ("simplon.tasks.manifestcheck", "stage"): _GENERATED,
