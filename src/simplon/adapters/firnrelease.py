@@ -74,14 +74,11 @@ def _firn_tag(image: str) -> str | None:
     return tag if repository == FIRN_IMAGE_REPOSITORY else None
 
 
-def pinned_tag(data: Mapping[str, object], source: str) -> str:
-    """The one tag of `ghcr.io/marcozwyssig/firn` the manifest's commands run, read off the raw document.
-
-    None, or more than one, is a ValueError naming `source`, and for several the commands at each tag: the
-    editor follows the model's firn, and two of them leave nothing to follow.
-    """
+def firn_commands(data: Mapping[str, object]) -> list[tuple[str, Mapping[str, object], str, str]]:
+    """The commands of a raw manifest document that run firn's image, in manifest order, as `(where, with,
+    image, tag)`: `where` names the command as a person types it, `tag` is "" for an image with no tag."""
     _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
-    found: dict[str, list[str]] = {}
+    found = []
     for group, members in flat.items():
         for name, spec in (members or {}).items():
             if not isinstance(spec, Mapping) or not isinstance(spec.get("with"), Mapping):
@@ -92,11 +89,23 @@ def pinned_tag(data: Mapping[str, object], source: str) -> str:
                 continue
             parts = group.split(".")
             where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
-            if not tag:
-                raise ValueError(f"{source}: command '{where}' runs {image}, which has no tag - the firn "
-                                 f"release the editor comes from is named by the tag. Write "
-                                 f"{FIRN_IMAGE_REPOSITORY}:<tag>@sha256:... to keep the digest")
-            found.setdefault(tag, []).append(where)
+            found.append((where, spec["with"], image, tag))
+    return found
+
+
+def pinned_tag(data: Mapping[str, object], source: str) -> str:
+    """The one tag of `ghcr.io/marcozwyssig/firn` the manifest's commands run, read off the raw document.
+
+    None, or more than one, is a ValueError naming `source`, and for several the commands at each tag: the
+    editor follows the model's firn, and two of them leave nothing to follow.
+    """
+    found: dict[str, list[str]] = {}
+    for where, _, image, tag in firn_commands(data):
+        if not tag:
+            raise ValueError(f"{source}: command '{where}' runs {image}, which has no tag - the firn "
+                             f"release the editor comes from is named by the tag. Write "
+                             f"{FIRN_IMAGE_REPOSITORY}:<tag>@sha256:... to keep the digest")
+        found.setdefault(tag, []).append(where)
     if not found:
         raise ValueError(f"{source}: no command runs {FIRN_IMAGE_REPOSITORY}:<tag>, so there is no firn version to "
                          f"install the editor for. A command with `with: image: {FIRN_IMAGE_REPOSITORY}:<tag>` "

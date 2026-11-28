@@ -7,7 +7,9 @@ so a later release that gains this host's binary changes it. A release that cann
 """
 import os
 import shlex
+import json
 import shutil
+import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,7 @@ from pathlib import Path
 from simplon.adapters import firnrelease, hostinstall, tools
 from simplon.kernel import limits
 from simplon.kernel.run import run
+from simplon.tasks import gitops
 
 RUNTIMES = ("local", "docker")
 EXTENSION_ID = "zwyssig.firn"
@@ -206,3 +209,101 @@ def extension_gate(tag: str, release_of: Callable[[], firnrelease.Release], scra
                                    f"code --install-extension failed: "
                                    f"{(installed.err or installed.not_started).strip() or installed.rc}")
     return hostinstall.Outcome(hostinstall.State.INSTALLED, f"{EXTENSION_ID}@{version}")
+
+
+WORKSPACE_TOML = "firn-workspace.toml"
+JAVA_ISSUE = "firn#1460"
+
+
+def _model_folders(data: Mapping[str, object]) -> list[str]:
+    folders: list[str] = []
+    for where, with_, _, _ in firnrelease.firn_commands(data):
+        cwd = with_.get("cwd", ".")
+        if not isinstance(cwd, str):
+            raise ValueError(f"command '{where}' has `with: cwd: {cwd!r}`, which is not a folder name")
+        folder = Path(cwd).as_posix()
+        if folder not in folders:
+            folders.append(folder)
+    return folders
+
+
+def projects(root: Path, data: Mapping[str, object]) -> list[str]:
+    """The firn projects of the product as relative POSIX paths: `firn-workspace.toml`'s `projects` when the
+    product has one, else the folder each model command runs in. A folder that does not exist is named."""
+    toml = Path(root) / WORKSPACE_TOML
+    if toml.is_file():
+        try:
+            listed = tomllib.loads(toml.read_text(encoding="utf-8")).get("projects")
+        except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as e:
+            raise ValueError(f"{toml} cannot be read ({type(e).__name__}: {e})") from e
+        if not isinstance(listed, list) or not all(isinstance(p, str) for p in listed):
+            raise ValueError(f"{toml}: `projects` must be a list of folder names, got {listed!r}")
+        folders = [Path(p).as_posix() for p in listed]
+        source = str(toml)
+    else:
+        folders = _model_folders(data)
+        source = "the commands that run firn's image"
+    for folder in folders:
+        if not (Path(root) / folder).is_dir():
+            raise ValueError(f"project folder {folder} (from {source}) does not exist under {root}")
+    return folders
+
+
+def _walk_failed(error: OSError) -> None:
+    raise error
+
+
+def java_projects(root: Path, projects: list[str]) -> list[str]:
+    """The projects whose folder holds a `*.java` file outside its `build/`. A folder that cannot be walked
+    raises OSError: it is not "no Java"."""
+    carrying = []
+    for project in projects:
+        base = Path(root) / project
+        for here, dirs, files in os.walk(base, onerror=_walk_failed):
+            if Path(here).relative_to(base).parts[:1] == ("build",):
+                dirs[:] = []
+                continue
+            if any(f.endswith(".java") for f in files):
+                carrying.append(project)
+                break
+    return carrying
+
+
+def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, object]) -> hostinstall.Outcome:
+    """`<product>.code-workspace` at the product root: the firn projects as folders, `firn.binary` the runtime
+    gate's target relative to the root. It is generated per host, so it must be git-ignored; it stays written
+    and the gate fails when it is not."""
+    root = Path(root)
+    try:
+        folders = projects(root, data)
+        java = java_projects(root, folders)
+    except ValueError:
+        raise
+    except OSError as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"could not tell which projects carry Java functions: {e}")
+    relative = Path(os.path.relpath(binary, root)).as_posix()
+    text = json.dumps({"folders": [{"path": f} for f in folders],
+                       "settings": {"firn.mode": "stdio", "firn.binary": relative}}, indent=2) + "\n"
+    name = f"{product}.code-workspace"
+    path = root / name
+    try:
+        current = path.read_text(encoding="utf-8") if path.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        current = None
+    state = hostinstall.State.PRESENT
+    if current != text:
+        path.write_text(text, encoding="utf-8")
+        state = hostinstall.State.INSTALLED
+    asked = gitops.git(root, "check-ignore", "-q", name)
+    if asked.timed_out or asked.not_started or asked.rc not in (0, 1):
+        why = "no answer in time" if asked.timed_out else (asked.not_started or asked.err.strip() or asked.rc)
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask git whether {name} is ignored ({why})")
+    if asked.rc == 1:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"{path} is written but not git-ignored; add the line /{name} to .gitignore")
+    detail = str(path)
+    if java:
+        detail += (f"; the editor uses the stock firn for: {', '.join(java)} "
+                   f"(their own binary needs {JAVA_ISSUE})")
+    return hostinstall.Outcome(state, detail)

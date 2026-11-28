@@ -600,6 +600,7 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.image", "record"): _RECORD,
     ("simplon.tasks.image", "smoke"): _RECORD,
     ("simplon.tasks.firneditor", "choose_runtime"): _RECORD,
+    ("simplon.tasks.firneditor", "workspace_gate"): _GENERATED,
     ("simplon.tasks.image", "write_bake"): _GENERATED,
     ("simplon.tasks.imagefile", "check"): _RECORD,
     ("simplon.tasks.manifestcheck", "stage"): _GENERATED,

@@ -1,6 +1,8 @@
 """si#900: the firn runtime of `support install` is chosen by flag, remembered per host, and defaulted from the
 release only when nothing was said before. AAA; the name states the behaviour under test."""
+import json
 import re
+import subprocess
 import shlex
 from types import SimpleNamespace
 
@@ -416,3 +418,129 @@ def test_install_that_hangs_is_failed_not_installed(tmp_path, code, monkeypatch)
     code.install = Result(-9, "", "timed out", timed_out=True)
     outcome = firneditor.extension_gate(TAG, _vsix_release, tmp_path)
     assert outcome.state is State.FAILED and "could not ask code" in outcome.detail
+
+
+# --- the workspace gate -----------------------------------------------------------------------------------------
+
+BINARY_REL = "build/tools/bin/firn-v0.19.0-linux-amd64"
+
+
+def _manifest(*cwds):
+    """The real shape: {phase: {group: {commands: {name: {task, with: {image, cwd}}}}}}."""
+    commands = {}
+    for i, cwd in enumerate(cwds):
+        w = {"image": f"ghcr.io/marcozwyssig/firn:{TAG}"}
+        if cwd is not None:
+            w["cwd"] = cwd
+        commands[f"model{i}"] = {"task": "x", "with": w}
+    return {"ci": {"build": {"commands": commands}}}
+
+
+def _git_init(root):
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def _gate(root, binary=None, data=None):
+    return firneditor.workspace_gate(root, "p", binary or root / BINARY_REL, data or _manifest("src"))
+
+
+def _project(root, rel, java=False):
+    (root / rel).mkdir(parents=True, exist_ok=True)
+    if java:
+        (root / rel / "F.java").write_text("class F {}")
+
+
+def test_folders_come_from_firn_workspace_toml(tmp_path):
+    (tmp_path / "b/x").mkdir(parents=True)
+    (tmp_path / "a/y").mkdir(parents=True)
+    (tmp_path / "firn-workspace.toml").write_text('# c\nprojects = ["b/x", "a/y"]  # c\n')
+    assert firneditor.projects(tmp_path, _manifest("src")) == ["b/x", "a/y"]
+
+
+def test_without_firn_workspace_toml_the_model_cwd_is_the_folder(tmp_path):
+    (tmp_path / "src").mkdir()
+    assert firneditor.projects(tmp_path, _manifest("src")) == ["src"]
+    assert firneditor.projects(tmp_path, _manifest(None)) == ["."]
+
+
+def test_several_model_commands_give_one_folder_each_deduplicated(tmp_path):
+    for d in ("src", "other"):
+        (tmp_path / d).mkdir()
+    assert firneditor.projects(tmp_path, _manifest("src", "other", "src")) == ["src", "other"]
+
+
+@pytest.mark.parametrize("text", ["projects = [", "projects = 3", 'projects = ["a", 1]'])
+def test_a_broken_firn_workspace_toml_names_the_file(tmp_path, text):
+    (tmp_path / "firn-workspace.toml").write_text(text)
+    with pytest.raises(ValueError, match="firn-workspace.toml"):
+        firneditor.projects(tmp_path, _manifest("src"))
+
+
+def test_a_listed_folder_that_does_not_exist_is_named(tmp_path):
+    (tmp_path / "firn-workspace.toml").write_text('projects = ["src/firn/gone"]\n')
+    with pytest.raises(ValueError, match="src/firn/gone"):
+        firneditor.projects(tmp_path, _manifest("src"))
+
+
+def test_workspace_json_carries_mode_and_relative_binary(tmp_path):
+    _project(tmp_path, "src")
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("/p.code-workspace\n")
+    out = _gate(tmp_path)
+    assert out.state is State.INSTALLED, out.detail
+    ws = json.loads((tmp_path / "p.code-workspace").read_text())
+    assert ws["folders"] == [{"path": "src"}]
+    assert ws["settings"] == {"firn.mode": "stdio", "firn.binary": BINARY_REL}
+    assert _gate(tmp_path).state is State.PRESENT
+
+
+def test_not_git_ignored_fails_naming_the_line(tmp_path):
+    _project(tmp_path, "src")
+    _git_init(tmp_path)
+    out = _gate(tmp_path)
+    assert out.state is State.FAILED
+    assert "/p.code-workspace" in out.detail
+    assert (tmp_path / "p.code-workspace").is_file()
+
+
+def test_not_a_git_repository_is_could_not_ask_git(tmp_path):
+    _project(tmp_path, "src")
+    out = _gate(tmp_path)
+    assert out.state is State.FAILED
+    assert "could not ask git" in out.detail
+
+
+def test_java_projects_are_named_in_the_outcome(tmp_path):
+    _project(tmp_path, "src/j", java=True)
+    _project(tmp_path, "src/k")
+    (tmp_path / "firn-workspace.toml").write_text('projects = ["src/j", "src/k"]\n')
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("/p.code-workspace\n")
+    out = _gate(tmp_path)
+    assert out.state is State.INSTALLED
+    assert "src/j" in out.detail and "firn#1460" in out.detail
+    assert "src/k" not in out.detail
+
+
+def test_java_files_under_build_do_not_count(tmp_path):
+    _project(tmp_path, "a")
+    (tmp_path / "a/build/gen").mkdir(parents=True)
+    (tmp_path / "a/build/gen/F.java").write_text("x")
+    assert firneditor.java_projects(tmp_path, ["a"]) == []
+    (tmp_path / "a/src").mkdir()
+    (tmp_path / "a/src/G.java").write_text("x")
+    assert firneditor.java_projects(tmp_path, ["a"]) == ["a"]
+
+
+def test_an_unreadable_project_folder_raises_not_none(tmp_path, monkeypatch):
+    _project(tmp_path, "a")
+    def walk(top, onerror=None, **kw):
+        onerror(PermissionError(13, "denied", str(top)))
+        return iter(())
+    monkeypatch.setattr(firneditor.os, "walk", walk)
+    with pytest.raises(OSError):
+        firneditor.java_projects(tmp_path, ["a"])
+    _git_init(tmp_path)
+    out = _gate(tmp_path, data=_manifest("a"))
+    assert out.state is State.FAILED
+    assert "could not tell which projects carry Java functions" in out.detail
