@@ -8,9 +8,9 @@ so a later release that gains this host's binary changes it. A release that cann
 (NoToken, ReleaseUnreadable propagate): guessing docker there would turn "could not tell" into an answer.
 """
 import contextlib
+import json
 import os
 import shlex
-import json
 import shutil
 import tempfile
 import tomllib
@@ -20,8 +20,8 @@ from pathlib import Path
 
 from simplon.adapters import firnrelease, hostinstall, tools
 from simplon.kernel import limits, log
-from simplon.manifest import context
 from simplon.kernel.run import run
+from simplon.manifest import context
 from simplon.tasks import gitops
 
 RUNTIMES = ("local", "docker")
@@ -127,10 +127,13 @@ def _local_gate(tag: str, release_of: Callable[[], firnrelease.Release]) -> tupl
         return hostinstall.Outcome(hostinstall.State.PRESENT, f"{binary}"), binary
     try:
         firnrelease.fetch_checked(release_of(), name, binary)
-    except (firnrelease.NoToken, firnrelease.ReleaseUnreadable, firnrelease.AssetMissing,
-            firnrelease.ChecksumMismatch) as e:
+        binary.chmod(0o755)
+    except firnrelease.AssetMissing as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"{e}; or use --firn-runtime docker"), None
+    except (firnrelease.NoToken, firnrelease.ReleaseUnreadable, firnrelease.ChecksumMismatch) as e:
         return hostinstall.Outcome(hostinstall.State.FAILED, str(e)), None
-    binary.chmod(0o755)
+    except OSError as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not write {binary}: {e}"), None
     return hostinstall.Outcome(hostinstall.State.INSTALLED, f"{binary}"), binary
 
 
@@ -171,12 +174,11 @@ def _docker_ready(image: str) -> hostinstall.Outcome | None:
     return None
 
 
-def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None]:
+def _docker_gate(image: str, root: Path) -> tuple[hostinstall.Outcome, Path | None]:
     if ":" in str(root):
         return hostinstall.Outcome(hostinstall.State.FAILED,
                                    f"the product root {root} contains a colon, and docker's -v cannot mount a "
                                    f"path with a colon; use --firn-runtime local or a root without one"), None
-    image = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}"
     not_ready = _docker_ready(image)
     if not_ready is not None:
         return not_ready, None
@@ -199,11 +201,12 @@ def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None
 
 
 def runtime_gate(choice: Choice, tag: str, release_of: Callable[[], firnrelease.Release],
-                 root: Path) -> tuple[hostinstall.Outcome, Path | None]:
-    """Make the chosen runtime ready; the path is the `firn.binary` target, None when the gate left none."""
+                 root: Path, *, image: str) -> tuple[hostinstall.Outcome, Path | None]:
+    """Make the chosen runtime ready; the path is the `firn.binary` target, None when the gate left none.
+    `image` is the manifest's own reference at `tag` (a digest included), so docker runs what the build runs."""
     if choice.runtime == "local":
         return _local_gate(tag, release_of)
-    return _docker_gate(tag, root)
+    return _docker_gate(image, root)
 
 
 def _code_unanswered(what: str) -> hostinstall.Outcome:
@@ -219,9 +222,8 @@ def extension_gate(tag: str, release_of: Callable[[], firnrelease.Release], scra
     version = tag.removeprefix("v")
     code = shutil.which("code")
     if code is None:
-        return hostinstall.Outcome(hostinstall.State.FAILED,
-                                   "`code` is not on PATH; install VS Code and its `code` command, or skip "
-                                   "the editor gates")
+        return hostinstall.Outcome(hostinstall.State.NO_ROUTE,
+                                   "`code` is not on PATH; install VS Code and its `code` command")
     listed = run([code, "--list-extensions", "--show-versions"], timeout=hostinstall.VERSION_TIMEOUT_S,
                  terminal=False)
     if not listed.ok:
@@ -237,6 +239,8 @@ def extension_gate(tag: str, release_of: Callable[[], firnrelease.Release], scra
     except (firnrelease.NoToken, firnrelease.ReleaseUnreadable, firnrelease.AssetMissing,
             firnrelease.ChecksumMismatch) as e:
         return hostinstall.Outcome(hostinstall.State.FAILED, str(e))
+    except OSError as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not write {vsix}: {e}")
     installed = run([code, "--install-extension", str(vsix), "--force"], timeout=hostinstall.INSTALL_TIMEOUT_S,
                     terminal=False)
     if installed.timed_out:
@@ -255,7 +259,8 @@ JAVA_ISSUE = "firn#1460"
 def _model_folders(data: Mapping[str, object]) -> list[str]:
     folders: list[str] = []
     for _, with_, _, _ in firnrelease.firn_commands(data):
-        folder = Path(with_.get("cwd", ".")).as_posix()  # a string: firn_commands refuses any other cwd
+        cwd = with_.get("cwd")  # a string or null: firn_commands refuses any other cwd
+        folder = Path("." if cwd is None else cwd).as_posix()
         if folder not in folders:
             folders.append(folder)
     return folders
@@ -297,25 +302,38 @@ def java_projects(root: Path, projects: list[str]) -> list[str]:
             if Path(here).relative_to(base).parts[:1] == ("build",):
                 dirs[:] = []
                 continue
+            dirs[:] = [d for d in dirs if d != ".git"]
             if any(f.endswith(".java") for f in files):
                 carrying.append(project)
                 break
     return carrying
 
 
-def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, object]) -> hostinstall.Outcome:
+def _outside(root: Path, folders: list[str]) -> list[str]:
+    """The folders that do not lie under `root`, symlinks resolved: absolute elsewhere, or escaping by `..`."""
+    real = os.path.realpath(root)
+    return [f for f in folders if os.path.commonpath([real, os.path.realpath(root / f)]) != real]
+
+
+def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, object], *,
+                   docker: bool = False) -> hostinstall.Outcome:
     """`<product>.code-workspace` at the product root: the firn projects as folders, `firn.binary` the runtime
     gate's target relative to the root. It is generated per host, so it must be git-ignored; it stays written
-    and the gate fails when it is not."""
+    and the gate fails when it is not. With `docker`, the container sees only the product root, so a project
+    outside it fails the gate and nothing is written: the server would answer it with nothing (spec 2)."""
     root = Path(root)
     try:
         folders = projects(root, data)
         java = java_projects(root, folders)
-    except ValueError:
-        raise
     except OSError as e:
         return hostinstall.Outcome(hostinstall.State.FAILED,
                                    f"could not tell which projects carry Java functions: {e}")
+    outside = _outside(root, folders) if docker else []
+    if outside:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"project folder {', '.join(outside)} lies outside the product root {root}, "
+                                   f"and the docker runtime mounts only that root, so firn would answer it with "
+                                   f"nothing; use --firn-runtime local or move the project under the root")
     relative = Path(os.path.relpath(binary, root)).as_posix()
     text = json.dumps({"folders": [{"path": f} for f in folders],
                        "settings": {"firn.mode": "stdio", "firn.binary": relative}}, indent=2) + "\n"
@@ -333,6 +351,10 @@ def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, ob
         why = "no answer in time" if asked.timed_out else (asked.not_started or asked.err.strip() or asked.rc)
         return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask git whether {name} is ignored ({why})")
     if asked.rc == 1:
+        if gitops.git(root, "ls-files", "--error-unmatch", name).rc == 0:
+            return hostinstall.Outcome(hostinstall.State.FAILED,
+                                       f"{path} is written but tracked by git, which no .gitignore line "
+                                       f"overrides; untrack it with: git rm --cached {name}")
         return hostinstall.Outcome(hostinstall.State.FAILED,
                                    f"{path} is written but not git-ignored; add the line /{name} to .gitignore")
     detail = str(path)
@@ -364,11 +386,14 @@ def _once(read: Callable[[], firnrelease.Release]) -> Callable[[], firnrelease.R
     return release_of
 
 
-def _pinned(document: Mapping[str, object], source: str) -> tuple[Mapping[str, object], str]:
-    """The manifest document and the firn tag its commands run. The one function `editor` hands the document
-    to, so the refusal census walks what is decided on the manifest with nothing run yet: the pin. The
-    workspace gate's own refusals come after the runtime gate has consulted docker or the release."""
-    return document, firnrelease.pinned_tag(document, source)
+def _pinned(document: Mapping[str, object], source: str) -> tuple[Mapping[str, object], str, str]:
+    """The manifest document, the firn tag its commands run, and the image reference the first of them names
+    (a digest included), which the docker runtime runs. The one function `editor` hands the document to, so
+    the refusal census walks what is decided on the manifest with nothing run yet: the pin. The workspace
+    gate's own refusals come after the runtime gate has consulted docker or the release."""
+    tag = firnrelease.pinned_tag(document, source)
+    image = next(image for _, _, image, at in firnrelease.firn_commands(document) if at == tag)
+    return document, tag, image
 
 
 def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
@@ -377,15 +402,19 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
     route and in CI all three are SKIPPED before the manifest's pin or the release is read. False when any
     gate failed."""
     if "firn" not in declared:
+        if flag:
+            log.info(f"--firn-runtime {flag} ignored: `firn` is not in toolchains:")
         return True
     skip = hostinstall.machine_skip_reason(os.environ, container, "editor tools")
     if skip:
+        if flag:
+            log.info(f"--firn-runtime {flag} ignored: the firn editor gates are skipped ({skip})")
         for name in EDITOR_GATES:
             hostinstall.report(name, hostinstall.Outcome(hostinstall.State.SKIPPED, skip))
         return True
     ctx = context.current()
     try:
-        data, tag = _pinned(ctx.manifest_data(), str(ctx.manifest_path))
+        data, tag, image = _pinned(ctx.manifest_data(), str(ctx.manifest_path))
     except (ValueError, RuntimeError) as e:  # RuntimeError: an unreadable manifest (context.py)
         log.error(f"firn editor: {e}; not run: {', '.join(EDITOR_GATES)}")
         return False
@@ -396,8 +425,14 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
         log.info(f"firn runtime: {choice.runtime} ({choice.source})")
     except (ValueError, OSError, firnrelease.NoToken, firnrelease.ReleaseUnreadable) as e:
         unchosen = str(e)
-    with tempfile.TemporaryDirectory(prefix="simplon-firn-vsix-") as scratch:
-        extension = extension_gate(tag, release_of, Path(scratch))
+    try:
+        scratch = tempfile.TemporaryDirectory(prefix="simplon-firn-vsix-", ignore_cleanup_errors=True)
+    except OSError as e:
+        extension = hostinstall.Outcome(hostinstall.State.FAILED,
+                                        f"could not make a scratch directory for the .vsix: {e}")
+    else:
+        with scratch as directory:
+            extension = extension_gate(tag, release_of, Path(directory))
     hostinstall.report("firn extension", extension)
     ok = hostinstall.rc(extension) == 0
     if choice is None:
@@ -405,7 +440,7 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
         log.error(f"firn runtime: could not be chosen: {unchosen}")
         runtime, binary = hostinstall.Outcome(hostinstall.State.FAILED, unchosen), None
     else:
-        runtime, binary = runtime_gate(choice, tag, release_of, ctx.root)
+        runtime, binary = runtime_gate(choice, tag, release_of, ctx.root, image=image)
         hostinstall.report("firn runtime", runtime)
     ok = ok and hostinstall.rc(runtime) == 0
     if binary is None:
@@ -413,7 +448,7 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
                   f"at ({runtime.state.value})")
         return False
     try:
-        workspace = workspace_gate(ctx.root, ctx.name, binary, data)
+        workspace = workspace_gate(ctx.root, ctx.name, binary, data, docker=choice.runtime == "docker")
     except ValueError as e:
         workspace = hostinstall.Outcome(hostinstall.State.FAILED, str(e))
     hostinstall.report("firn workspace", workspace)

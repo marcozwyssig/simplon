@@ -150,6 +150,15 @@ def bin_dir(tmp_path, monkeypatch):
     return path
 
 
+IMAGE = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{TAG}"
+
+
+def _runtime_gate(choice, tag, release_of, root, image=None):
+    """The runtime gate with the image a manifest without a digest names at `tag`."""
+    return firneditor.runtime_gate(choice, tag, release_of, root,
+                                   image=image or f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}")
+
+
 def test_docker_script_mounts_the_host_path_quoted(tmp_path):
     root = tmp_path / "my 'odd' tree"
     text = firneditor.docker_script(root, "ghcr.io/marcozwyssig/firn:v0.19.0", 1000, 1000)
@@ -164,7 +173,7 @@ def test_local_present_at_the_tag_is_nothing_to_do(tmp_path, bin_dir):
     bin_dir.mkdir()
     (bin_dir / HOST_BINARY).write_text("x")
     (bin_dir / HOST_BINARY).chmod(0o755)
-    outcome, binary = firneditor.runtime_gate(Choice("local", "stored"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("local", "stored"), TAG, _never, tmp_path)
     assert outcome.state is State.PRESENT and binary == bin_dir / HOST_BINARY
 
 
@@ -173,7 +182,7 @@ def test_local_file_that_is_not_executable_is_fetched_again(tmp_path, bin_dir, m
     (bin_dir / HOST_BINARY).write_text("old")
     (bin_dir / HOST_BINARY).chmod(0o644)
     monkeypatch.setattr(firnrelease, "fetch_checked", lambda r, n, dest: dest.write_text("new") or dest)
-    outcome, binary = firneditor.runtime_gate(Choice("local", "stored"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    outcome, binary = _runtime_gate(Choice("local", "stored"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
     assert outcome.state is State.INSTALLED and binary.read_text() == "new"
 
 
@@ -188,14 +197,14 @@ def test_local_downloads_checked_and_executable(tmp_path, bin_dir, monkeypatch):
         return dest
 
     monkeypatch.setattr(firnrelease, "fetch_checked", fetch)
-    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, lambda: release, tmp_path)
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, lambda: release, tmp_path)
     assert outcome.state is State.INSTALLED and binary == bin_dir / HOST_BINARY
     assert calls == [(release, HOST_BINARY, binary)] and binary.stat().st_mode & 0o111
 
 
 def test_local_without_a_binary_for_this_host_fails_naming_it(tmp_path, bin_dir, monkeypatch):
     monkeypatch.setattr(firnrelease, "host_binary_name", lambda tag, system=None, machine=None: None)
-    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "no firn binary" in outcome.detail and binary is None
 
 
@@ -206,13 +215,13 @@ def test_local_turns_each_release_exception_into_failed(tmp_path, bin_dir, monke
         raise exc
 
     monkeypatch.setattr(firnrelease, "fetch_checked", boom)
-    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
-    assert outcome.state is State.FAILED and outcome.detail == str(exc) and binary is None
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    assert outcome.state is State.FAILED and outcome.detail.startswith(str(exc)) and binary is None
     assert not (bin_dir / HOST_BINARY).exists()
 
 
 def test_local_release_read_failure_is_failed(tmp_path, bin_dir):
-    outcome, binary = firneditor.runtime_gate(Choice("local", "flag"), TAG, _unreadable, tmp_path)
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, _unreadable, tmp_path)
     assert outcome.state is State.FAILED and outcome.detail == "no release" and binary is None
 
 
@@ -221,7 +230,7 @@ def test_docker_that_hangs_is_failed_not_absent(tmp_path, bin_dir, monkeypatch):
         raise hostinstall.NoAnswer("docker --version gave no answer")
 
     monkeypatch.setattr(hostinstall, "runs", hang)
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "could not ask docker" in outcome.detail and binary is None
 
 
@@ -248,20 +257,20 @@ def docker(monkeypatch):
 
 def test_docker_cli_absent_is_failed_naming_the_cli(tmp_path, bin_dir, monkeypatch):
     monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: False)
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "docker CLI" in outcome.detail and binary is None
 
 
 def test_docker_daemon_down_is_failed_naming_the_daemon(tmp_path, bin_dir, docker):
     docker.answers["version"] = Result(1, "", "Cannot connect")
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "daemon" in outcome.detail and binary is None
     assert [c[0] for c in docker.calls] == ["version"]
 
 
 def test_docker_image_missing_is_pulled_with_the_pull_limit(tmp_path, bin_dir, docker):
     docker.answers["inspect"] = Result(1, "", "No such image")
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.INSTALLED and binary is not None
     pulled = [c for c in docker.calls if c[0] == "pull"]
     assert pulled[0][1] == ["docker", "pull", f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{TAG}"]
@@ -271,7 +280,7 @@ def test_docker_image_missing_is_pulled_with_the_pull_limit(tmp_path, bin_dir, d
 def test_docker_pull_refused_is_failed_naming_the_pull(tmp_path, bin_dir, docker):
     docker.answers["inspect"] = Result(1, "", "No such image")
     docker.answers["pull"] = Result(1, "", "denied")
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "pull" in outcome.detail and "denied" in outcome.detail
     assert binary is None and not (bin_dir / "firn-docker").exists()
 
@@ -280,13 +289,13 @@ def test_docker_pull_refused_is_failed_naming_the_pull(tmp_path, bin_dir, docker
 def test_docker_probe_that_hangs_is_could_not_ask(tmp_path, bin_dir, docker, hangs):
     docker.answers["inspect"] = Result(1, "", "No such image")
     docker.answers[hangs] = Result(-9, "", "timed out", timed_out=True)
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and "could not ask docker" in outcome.detail and binary is None
 
 
 def test_docker_root_with_a_colon_is_failed_naming_the_path(tmp_path, bin_dir, docker):
     root = tmp_path / "a:b"
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, root)
+    outcome, binary = _runtime_gate(Choice("docker", "flag"), TAG, _never, root)
     assert outcome.state is State.FAILED and str(root) in outcome.detail and "colon" in outcome.detail
     assert binary is None and docker.calls == []
 
@@ -294,20 +303,20 @@ def test_docker_root_with_a_colon_is_failed_naming_the_path(tmp_path, bin_dir, d
 def test_docker_script_that_is_not_utf8_is_rewritten(tmp_path, bin_dir, docker):
     bin_dir.mkdir()
     (bin_dir / "firn-docker").write_bytes(b"\xff\xfe")
-    outcome, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, path = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.INSTALLED and path.read_text().startswith("#!/bin/sh\n")
 
 
 def test_docker_script_path_that_is_a_directory_is_failed_naming_it(tmp_path, bin_dir, docker):
     (bin_dir / "firn-docker").mkdir(parents=True)
-    outcome, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, path = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     assert outcome.state is State.FAILED and str(bin_dir / "firn-docker") in outcome.detail and path is None
 
 
 def test_docker_rewrites_the_script_when_the_pin_changed(tmp_path, bin_dir, docker):
-    first, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
-    again, same = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
-    moved, _ = firneditor.runtime_gate(Choice("docker", "flag"), "v0.20.0", _never, tmp_path)
+    first, path = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    again, same = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    moved, _ = _runtime_gate(Choice("docker", "flag"), "v0.20.0", _never, tmp_path)
     assert (first.state, again.state, moved.state) == (State.INSTALLED, State.PRESENT, State.INSTALLED)
     assert path == same == bin_dir / "firn-docker" and path.stat().st_mode & 0o777 == 0o755
     assert "firn:v0.20.0" in path.read_text()
@@ -352,10 +361,11 @@ def _fetches(monkeypatch):
     return got
 
 
-def test_no_code_on_path_fails_and_says_so(tmp_path, monkeypatch):
+def test_no_code_on_path_is_no_route_naming_vs_code_and_no_skip_that_does_not_exist(tmp_path, monkeypatch):
     monkeypatch.setattr(firneditor.shutil, "which", lambda name, path=None: None)
     outcome = firneditor.extension_gate(TAG, _never, tmp_path)
-    assert outcome.state is State.FAILED and "code" in outcome.detail and "PATH" in outcome.detail
+    assert outcome.state is State.NO_ROUTE and hostinstall.rc(outcome) == 1
+    assert outcome.detail == "`code` is not on PATH; install VS Code and its `code` command"
 
 
 def test_installed_at_the_tag_is_present(tmp_path, code):
@@ -588,7 +598,7 @@ def test_a_symlink_at_the_docker_script_path_is_replaced_not_followed(tmp_path, 
     (bin_dir / "firn-docker").symlink_to(target)
 
     # act
-    outcome, script = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, script = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
 
     # assert
     assert outcome.state is State.INSTALLED, outcome.detail
@@ -620,7 +630,7 @@ def test_a_symlink_to_a_directory_at_the_docker_script_path_is_replaced_not_refu
     (bin_dir / "firn-docker").symlink_to(target, target_is_directory=True)
 
     # act
-    outcome, script = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    outcome, script = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
 
     # assert
     assert outcome.state is State.INSTALLED, outcome.detail
@@ -653,3 +663,110 @@ def test_a_failed_fdopen_closes_the_descriptor_and_leaves_no_temporary_file(tmp_
     with pytest.raises(OSError, match="fdopen refused"):
         firneditor._replace(tmp_path / "f", "x\n")
     assert len(closed) == 1 and list(tmp_path.iterdir()) == []
+
+
+# --- final review: OSError is a FAILED outcome, never an abort of `support install` ------------------------------
+
+
+def test_local_fetch_that_raises_oserror_is_failed_not_raised(tmp_path, bin_dir, monkeypatch):
+    def refuse(release, name, dest):
+        raise PermissionError(13, "Permission denied", str(dest.parent))
+    monkeypatch.setattr(firnrelease, "fetch_checked", refuse)
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    assert outcome.state is State.FAILED and "Permission denied" in outcome.detail and binary is None
+
+
+def test_local_chmod_that_raises_oserror_is_failed_not_raised(tmp_path, bin_dir, monkeypatch):
+    def fetch(release, name, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("bin")
+        return dest
+
+    def refuse(self, mode, **kw):
+        raise PermissionError(1, "Operation not permitted", str(self))
+    monkeypatch.setattr(firnrelease, "fetch_checked", fetch)
+    monkeypatch.setattr(firneditor.Path, "chmod", refuse)
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with(HOST_BINARY), tmp_path)
+    assert outcome.state is State.FAILED and "Operation not permitted" in outcome.detail and binary is None
+
+
+def test_extension_fetch_that_raises_oserror_is_failed_and_installs_nothing(tmp_path, code, monkeypatch):
+    def refuse(release, name, dest):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(firnrelease, "fetch_checked", refuse)
+    outcome = firneditor.extension_gate(TAG, _vsix_release, tmp_path)
+    assert outcome.state is State.FAILED and "No space left on device" in outcome.detail
+    assert all("--install-extension" not in c[0] for c in code.calls)
+
+
+# --- final review: the docker script runs the manifest's own image -----------------------------------------------
+
+
+def test_docker_runs_the_manifests_image_digest_included(tmp_path, bin_dir, docker):
+    image = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{TAG}@sha256:{'a' * 64}"
+    outcome, script = _runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path, image=image)
+    assert outcome.state is State.INSTALLED, outcome.detail
+    assert shlex.split(script.read_text().splitlines()[-1])[-2:] == [image, "$@"]
+    assert [c[1] for c in docker.calls if c[0] == "inspect"] == [["docker", "image", "inspect", image]]
+
+
+def test_pinned_hands_on_the_image_of_the_pinned_commands(tmp_path):
+    image = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{TAG}@sha256:{'b' * 64}"
+    data = {"ci": {"build": {"commands": {"model": {"task": "x", "with": {"image": image}}}}}}
+    assert firneditor._pinned(data, "x.yaml") == (data, TAG, image)
+
+
+# --- final review: a local runtime with no binary for this host names the docker way out -------------------------
+
+
+def test_local_without_the_hosts_asset_names_the_docker_runtime(tmp_path, bin_dir):
+    outcome, binary = _runtime_gate(Choice("local", "flag"), TAG, lambda: _release_with("firn-v0.19.0-darwin-arm64"),
+                                    tmp_path)
+    assert outcome.state is State.FAILED and HOST_BINARY in outcome.detail and binary is None
+    assert outcome.detail.endswith("; or use --firn-runtime docker")
+
+
+# --- final review: the workspace gate ---------------------------------------------------------------------------
+
+
+def test_a_null_cwd_is_the_product_root(tmp_path):
+    data = _manifest(None)
+    data["ci"]["build"]["commands"]["model0"]["with"]["cwd"] = None
+    assert firneditor.projects(tmp_path, data) == ["."]
+
+
+@pytest.mark.parametrize("listed", ["../elsewhere", "ABSOLUTE"])
+def test_docker_route_refuses_a_project_outside_the_product_root(tmp_path, listed):
+    root = tmp_path / "tree"
+    _project(root, "src")
+    (tmp_path / "elsewhere").mkdir()
+    folder = str(tmp_path / "elsewhere") if listed == "ABSOLUTE" else listed
+    (root / "firn-workspace.toml").write_text(f'projects = ["src", "{folder}"]\n')
+    _git_init(root)
+    (root / ".gitignore").write_text("/p.code-workspace\n")
+    out = firneditor.workspace_gate(root, "p", root / BINARY_REL, _manifest("src"), docker=True)
+    assert out.state is State.FAILED and folder in out.detail and "outside" in out.detail
+    assert not (root / "p.code-workspace").exists()
+    local = firneditor.workspace_gate(root, "p", root / BINARY_REL, _manifest("src"))
+    assert local.state is State.INSTALLED, local.detail
+
+
+def test_a_tracked_workspace_says_git_rm_cached_not_add_the_line(tmp_path):
+    _project(tmp_path, "src")
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("/p.code-workspace\n")
+    (tmp_path / "p.code-workspace").write_text("{}\n")
+    subprocess.run(["git", "add", "-f", "p.code-workspace"], cwd=tmp_path, check=True)
+    out = _gate(tmp_path)
+    assert out.state is State.FAILED
+    assert "tracked" in out.detail and "git rm --cached p.code-workspace" in out.detail
+    assert "add the line" not in out.detail
+
+
+def test_java_projects_of_the_root_project_do_not_walk_git(tmp_path):
+    (tmp_path / ".git/objects/x").mkdir(parents=True)
+    (tmp_path / ".git/objects/x/F.java").write_text("x")
+    assert firneditor.java_projects(tmp_path, ["."]) == []
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/G.java").write_text("x")
+    assert firneditor.java_projects(tmp_path, ["."]) == ["."]

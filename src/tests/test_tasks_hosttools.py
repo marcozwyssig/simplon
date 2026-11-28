@@ -436,14 +436,16 @@ def firn(gates, monkeypatch, tmp_path):
             return Outcome(State.FAILED, str(e))
         return answers.get("firn extension", Outcome(State.PRESENT))
 
-    def runtime(choice, tag, release_of, root):
+    def runtime(choice, tag, release_of, root, *, image):
         order.append("firn runtime")
+        assert image == f"ghcr.io/marcozwyssig/firn:{FIRN_TAG}", image
         release_of()
         outcome = answers.get("firn runtime", Outcome(State.PRESENT))
         return outcome, (None if outcome.state is State.FAILED else root / "build/tools/bin/firn-docker")
 
-    def workspace(root, product, binary, data):
+    def workspace(root, product, binary, data, *, docker):
         order.append("firn workspace")
+        assert docker is (choice_runtime(binary) == "docker")
         return answers.get("firn workspace", Outcome(State.PRESENT))
 
     monkeypatch.setattr(firneditor, "extension_gate", extension)
@@ -455,13 +457,18 @@ def firn(gates, monkeypatch, tmp_path):
 FIRN_GATES = ["firn extension", "firn runtime", "firn workspace"]
 
 
+def choice_runtime(binary):
+    """The runtime the fake runtime gate's target stands for."""
+    return "docker" if Path(binary).name == "firn-docker" else "local"
+
+
 def test_firn_not_declared_says_nothing_and_reads_nothing(firn, tmp_path, capsys):
     # arrange: a firn image in the commands, but no `firn` toolchain
     order, _, reads = firn
     _declare_firn(tmp_path, toolchains=())
 
     # act
-    rc = hosttools.install(firn_runtime="docker")
+    rc = hosttools.install()
 
     # assert
     said = capsys.readouterr()
@@ -469,6 +476,22 @@ def test_firn_not_declared_says_nothing_and_reads_nothing(firn, tmp_path, capsys
     assert not set(FIRN_GATES) & set(order)
     assert reads == []
     assert "firn" not in said.out + said.err
+    assert not firneditor.runtime_file().exists()
+
+
+def test_a_runtime_flag_with_firn_not_declared_is_one_line_saying_it_was_ignored(firn, tmp_path, capsys):
+    # arrange
+    order, _, reads = firn
+    _declare_firn(tmp_path, toolchains=())
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert: said once, and nothing stored or read
+    out = "".join(capsys.readouterr())
+    assert rc == 0, out
+    assert out.count("--firn-runtime docker ignored: `firn` is not in toolchains:") == 1, out
+    assert not set(FIRN_GATES) & set(order) and reads == []
     assert not firneditor.runtime_file().exists()
 
 
@@ -508,6 +531,46 @@ def test_ci_skips_all_three_firn_gates(firn, tmp_path, monkeypatch, capsys):
     assert not firneditor.runtime_file().exists()
     for gate in FIRN_GATES:
         assert f"{gate} skipped: CI=true: editor tools are for a machine somebody develops on" in out, out
+    assert out.count("--firn-runtime docker ignored: the firn editor gates are skipped (CI=true") == 1, out
+
+
+def test_a_runtime_flag_on_the_container_route_is_said_to_be_ignored(firn, tmp_path, monkeypatch, capsys):
+    # arrange
+    order, _, reads = firn
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="local")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 0, out
+    assert out.count(f"--firn-runtime local ignored: the firn editor gates are skipped "
+                     f"({hostinstall.CONTAINER_ROUTE_SKIP})") == 1, out
+    assert not set(FIRN_GATES) & set(order) and reads == []
+    assert not firneditor.runtime_file().exists()
+
+
+def test_a_vsix_scratch_directory_that_cannot_be_made_fails_the_extension_and_the_others_still_run(
+        firn, tmp_path, monkeypatch, capsys):
+    # arrange
+    order, _, _ = firn
+
+    def refuse(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(firneditor.tempfile, "TemporaryDirectory", refuse)
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1, out
+    assert order[-2:] == ["firn runtime", "firn workspace"]
+    assert "firn extension: install failed: could not make a scratch directory for the .vsix" in out, out
+    assert "No space left on device" in out, out
 
 
 def test_a_failing_firn_gate_fails_install_but_every_gate_runs(firn, tmp_path, capsys):
@@ -631,7 +694,7 @@ def test_a_workspace_gate_that_refuses_is_reported_failed(firn, tmp_path, monkey
     # arrange: `projects` refuses a folder firn-workspace.toml lists and the disk does not have
     order, _, _ = firn
 
-    def refuse(root, product, binary, data):
+    def refuse(root, product, binary, data, *, docker):
         order.append("firn workspace")
         raise ValueError("project folder src/gone (from firn-workspace.toml) does not exist")
     monkeypatch.setattr(firneditor, "workspace_gate", refuse)

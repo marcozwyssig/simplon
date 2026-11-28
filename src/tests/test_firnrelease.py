@@ -71,6 +71,13 @@ def test_pinned_tag_refuses_a_firn_command_whose_cwd_is_no_folder_name():
         firnrelease.pinned_tag(data, "x.yaml")
 
 
+def test_pinned_tag_reads_a_null_cwd_as_the_mount_itself():
+    # `cwd: null` is what toolchain._cwd reads as "the mount itself": the pin must not refuse what the build runs
+    data = _manifest(f"{FIRN}:v0.19.0", f"{FIRN}:v0.19.0")
+    data["ci"]["build"]["commands"]["model"]["with"]["cwd"] = None
+    assert firnrelease.pinned_tag(data, "x.yaml") == "v0.19.0"
+
+
 # --- the host binary --------------------------------------------------------------------------------
 
 

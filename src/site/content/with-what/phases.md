@@ -672,14 +672,15 @@ instead. `firn` brings both: its commands, and three editor gates in `support in
   - **failed:** the plugin is named.
 - **Exit codes:** the launcher never fails a command over a plugin; `support install` is rc 1 on a
   failure.
-- **`firn`: the editor** (si#900). `support install` provisions VS Code for the firn release the
+- **`firn`: the editor** (si#900). `support install` requires VS Code and provisions the firn extension,
+  its language server and a workspace for the firn release the
   manifest's commands run (the one tag of `ghcr.io/marcozwyssig/firn`; none or several is a diagnosis
   naming the commands). Three gates, in this order, each in its own words, every one attempted:
   - **firn extension:** `zwyssig.firn` at the pinned version, installed from the release's checked
-    `.vsix` through `code`; no `code` on PATH fails the gate.
+    `.vsix` through `code`; with no `code` on PATH the gate says there is no way to install it here.
   - **firn runtime:** `--firn-runtime local` (the release's checked binary for this host, under
     `build/tools/bin`) or `docker` (a stdio wrapper, `build/tools/bin/firn-docker`, that runs the pinned
-    image over the tree mounted at its own host path). A flag is remembered per host in
+    image the manifest names, digest included, over the tree mounted at its own host path). A flag is remembered per host in
     `${XDG_CONFIG_HOME:-~/.config}/simplon/firn-runtime`; without a flag or a stored value the default is
     `local` when the release ships a binary for this host, else `docker`. Every run names the runtime and
     its source (`flag`, `stored`, or `default (<why>)`). A release that cannot be read, with nothing
@@ -687,13 +688,17 @@ instead. `firn` brings both: its commands, and three editor gates in `support in
   - **firn workspace:** `<product>.code-workspace` at the product root, one folder per project in
     `firn-workspace.toml` (else the folder each model command runs in), `firn.binary` pointing at the
     runtime. Written per host, so it must be git-ignored; when it is not, the gate fails and names the
-    line to add. Not written when the runtime gate left no binary, and the run says so.
+    line to add (or, for a tracked file, the `git rm --cached` to run). Not written when the runtime gate
+    left no binary, and the run says so, nor on `docker` when a project lies outside the product root,
+    which the container cannot see. A project holding `*.java` files outside its `build/` is named in the
+    gate's line: the editor runs the stock firn for it, because its own binary needs firn#1460.
   The release is read once per run; without a token, without access, or without the asset, the gate
   says which.
 - **The container route provisions nothing** (si#710). Inside the kernel container `support install`
   skips brew, gh, the gh extensions, the plugins and the firn editor gates, each with one line saying to
-  run it on the venv route, and the skip is rc 0. In CI the firn editor gates are skipped the same way. Until then the gates saw the image's own gh and installed into the
-  throwaway container.
+  run it on the venv route, and the skip is rc 0. Before si#710 the gates saw the image's own gh and
+  installed into the throwaway container. In CI the firn editor gates are skipped the same way, and a
+  `--firn-runtime` given there, or without `firn` declared, is said to be ignored and is not stored.
 
 **And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the
 si#95 design's own command table had put at `test unit` and `test analyse`. The split the kernel keeps is
