@@ -610,3 +610,46 @@ def test_a_symlink_at_the_runtime_file_is_replaced_not_followed(env, tmp_path):
     # assert
     assert target.read_text() == "outside\n"
     assert not path.is_symlink() and path.read_text() == "docker\n"
+
+
+def test_a_symlink_to_a_directory_at_the_docker_script_path_is_replaced_not_refused(tmp_path, bin_dir, docker):
+    # arrange: `is_dir()` follows the link; the link itself is what stands at the path
+    bin_dir.mkdir()
+    target = tmp_path.parent / f"{tmp_path.name}-outside-dir"
+    target.mkdir()
+    (bin_dir / "firn-docker").symlink_to(target, target_is_directory=True)
+
+    # act
+    outcome, script = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+
+    # assert
+    assert outcome.state is State.INSTALLED, outcome.detail
+    assert not script.is_symlink() and script.is_file() and list(target.iterdir()) == []
+
+
+def test_a_failed_replace_leaves_no_temporary_file_and_raises_its_own_error(tmp_path, monkeypatch):
+    # arrange
+    def refuse(src, dst):
+        raise PermissionError("replace refused")
+    monkeypatch.setattr(firneditor.os, "replace", refuse)
+
+    # act / assert: the original error, not one from the cleanup
+    with pytest.raises(PermissionError, match="replace refused"):
+        firneditor._replace(tmp_path / "f", "x\n")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failed_fdopen_closes_the_descriptor_and_leaves_no_temporary_file(tmp_path, monkeypatch):
+    # arrange
+    closed = []
+    real_close = os.close
+
+    def failing_fdopen(fd, *args, **kwargs):
+        raise OSError("fdopen refused")
+    monkeypatch.setattr(firneditor.os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(firneditor.os, "close", lambda fd: closed.append(fd) or real_close(fd))
+
+    # act / assert
+    with pytest.raises(OSError, match="fdopen refused"):
+        firneditor._replace(tmp_path / "f", "x\n")
+    assert len(closed) == 1 and list(tmp_path.iterdir()) == []

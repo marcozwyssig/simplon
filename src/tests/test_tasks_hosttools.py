@@ -568,7 +568,8 @@ def test_a_runtime_that_cannot_be_chosen_fails_the_runtime_and_still_runs_the_ex
     out = "".join(capsys.readouterr())
     assert rc == 1
     assert order[-1] == "firn extension"
-    assert "firn runtime: install failed: unknown firn runtime 'podman'" in out, out
+    assert "firn runtime: could not be chosen: unknown firn runtime 'podman'" in out, out
+    assert "firn runtime: install failed" not in out, out
     assert "firn workspace: not written" in out, out
 
 
@@ -589,7 +590,7 @@ def test_an_unreadable_release_with_no_flag_fails_the_runtime_never_docker(firn,
     # assert: the failed read is not repeated within the run
     out = "".join(capsys.readouterr())
     assert rc == 1
-    assert "firn runtime: install failed: could not read firn's release v0.19.0" in out, out
+    assert "firn runtime: could not be chosen: could not read firn's release v0.19.0" in out, out
     assert "firn runtime: docker" not in out
     assert calls == [FIRN_TAG]
 
@@ -608,3 +609,38 @@ def test_a_broken_pin_is_one_failed_line_naming_the_gates_not_run(firn, tmp_path
     assert not set(FIRN_GATES) & set(order)
     assert reads == []
     assert "which has no tag" in out and "not run: firn extension, firn runtime, firn workspace" in out, out
+
+
+def test_a_failed_workspace_gate_fails_install(firn, tmp_path, capsys):
+    # arrange
+    order, answers, _ = firn
+    answers["firn workspace"] = Outcome(State.FAILED, "written but not git-ignored")
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert order[-3:] == FIRN_GATES
+    assert "firn workspace: install failed: written but not git-ignored" in out, out
+
+
+def test_a_workspace_gate_that_refuses_is_reported_failed(firn, tmp_path, monkeypatch, capsys):
+    # arrange: `projects` refuses a folder firn-workspace.toml lists and the disk does not have
+    order, _, _ = firn
+
+    def refuse(root, product, binary, data):
+        order.append("firn workspace")
+        raise ValueError("project folder src/gone (from firn-workspace.toml) does not exist")
+    monkeypatch.setattr(firneditor, "workspace_gate", refuse)
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert "firn workspace: install failed: project folder src/gone" in out, out

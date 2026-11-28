@@ -7,6 +7,7 @@ comes from the release: `local` when it ships a binary for this host, else `dock
 so a later release that gains this host's binary changes it. A release that cannot be read gives no default
 (NoToken, ReleaseUnreadable propagate): guessing docker there would turn "could not tell" into an answer.
 """
+import contextlib
 import os
 import shlex
 import json
@@ -45,12 +46,18 @@ def _replace(path: Path, text: str, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        try:
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with stream:
             stream.write(text)
         os.chmod(temporary, mode)
         os.replace(temporary, path)
     except BaseException:
-        os.unlink(temporary)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
         raise
 
 
@@ -174,7 +181,7 @@ def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None
     if not_ready is not None:
         return not_ready, None
     script = tools.bin_dir() / "firn-docker"
-    if script.is_dir():
+    if script.is_dir() and not script.is_symlink():  # a symlink, even to a directory, is replaced below
         return hostinstall.Outcome(hostinstall.State.FAILED,
                                    f"{script} is a directory, so the docker wrapper cannot be written there; "
                                    f"remove it"), None
@@ -388,16 +395,18 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
         choice = choose_runtime(flag, release_of)
         log.info(f"firn runtime: {choice.runtime} ({choice.source})")
     except (ValueError, OSError, firnrelease.NoToken, firnrelease.ReleaseUnreadable) as e:
-        unchosen = hostinstall.Outcome(hostinstall.State.FAILED, str(e))
+        unchosen = str(e)
     with tempfile.TemporaryDirectory(prefix="simplon-firn-vsix-") as scratch:
         extension = extension_gate(tag, release_of, Path(scratch))
     hostinstall.report("firn extension", extension)
     ok = hostinstall.rc(extension) == 0
     if choice is None:
-        runtime, binary = unchosen, None
+        # nothing was installed, so not the gate's "install failed": the runtime could not be chosen
+        log.error(f"firn runtime: could not be chosen: {unchosen}")
+        runtime, binary = hostinstall.Outcome(hostinstall.State.FAILED, unchosen), None
     else:
         runtime, binary = runtime_gate(choice, tag, release_of, ctx.root)
-    hostinstall.report("firn runtime", runtime)
+        hostinstall.report("firn runtime", runtime)
     ok = ok and hostinstall.rc(runtime) == 0
     if binary is None:
         log.error(f"firn workspace: not written, because the runtime gate left no firn binary to point the editor "
