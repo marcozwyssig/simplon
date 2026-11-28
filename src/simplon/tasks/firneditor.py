@@ -7,6 +7,7 @@ so a later release that gains this host's binary changes it. A release that cann
 """
 import os
 import shlex
+import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from simplon.kernel import limits
 from simplon.kernel.run import run
 
 RUNTIMES = ("local", "docker")
+EXTENSION_ID = "zwyssig.firn"
 
 
 @dataclass(frozen=True)
@@ -162,3 +164,45 @@ def runtime_gate(choice: Choice, tag: str, release_of: Callable[[], firnrelease.
     if choice.runtime == "local":
         return _local_gate(tag, release_of)
     return _docker_gate(tag, root)
+
+
+def _code_unanswered(what: str) -> hostinstall.Outcome:
+    return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask code ({what})")
+
+
+def extension_gate(tag: str, release_of: Callable[[], firnrelease.Release], scratch: Path) -> hostinstall.Outcome:
+    """firn's VS Code extension at `tag`: PRESENT when `code` lists it at that version, else the release's
+    checked `.vsix` (downloaded into `scratch`, which the caller owns) is installed.
+
+    A `code` that cannot list is not "not installed": nothing is installed over a tool that did not answer.
+    """
+    version = tag.removeprefix("v")
+    code = shutil.which("code")
+    if code is None:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   "`code` is not on PATH; install VS Code and its `code` command, or skip "
+                                   "the editor gates")
+    listed = run([code, "--list-extensions", "--show-versions"], timeout=hostinstall.VERSION_TIMEOUT_S,
+                 terminal=False)
+    if not listed.ok:
+        why = "no answer in time" if listed.timed_out else (listed.not_started or listed.err.strip()
+                                                            or f"exit code {listed.rc}")
+        return _code_unanswered(f"code --list-extensions: {why}")
+    if f"{EXTENSION_ID}@{version}" in listed.out.split():
+        return hostinstall.Outcome(hostinstall.State.PRESENT, f"{EXTENSION_ID}@{version}")
+    name = f"firn-{tag}.vsix"
+    vsix = Path(scratch) / name
+    try:
+        firnrelease.fetch_checked(release_of(), name, vsix)
+    except (firnrelease.NoToken, firnrelease.ReleaseUnreadable, firnrelease.AssetMissing,
+            firnrelease.ChecksumMismatch) as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, str(e))
+    installed = run([code, "--install-extension", str(vsix), "--force"], timeout=hostinstall.INSTALL_TIMEOUT_S,
+                    terminal=False)
+    if installed.timed_out:
+        return _code_unanswered("code --install-extension: no answer in time")
+    if not installed.ok:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"code --install-extension failed: "
+                                   f"{(installed.err or installed.not_started).strip() or installed.rc}")
+    return hostinstall.Outcome(hostinstall.State.INSTALLED, f"{EXTENSION_ID}@{version}")

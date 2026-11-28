@@ -308,3 +308,111 @@ def test_docker_rewrites_the_script_when_the_pin_changed(tmp_path, bin_dir, dock
     assert (first.state, again.state, moved.state) == (State.INSTALLED, State.PRESENT, State.INSTALLED)
     assert path == same == bin_dir / "firn-docker" and path.stat().st_mode & 0o777 == 0o755
     assert "firn:v0.20.0" in path.read_text()
+
+
+# ---- the extension gate -------------------------------------------------------------------------------
+
+VSIX = f"firn-{TAG}.vsix"
+
+
+class _Code:
+    """A scripted `code`: `listing` answers --list-extensions, `install` answers --install-extension."""
+
+    def __init__(self, listing, install=Result(0, "", "")):
+        self.listing, self.install, self.calls = listing, install, []
+
+    def __call__(self, argv, **kw):
+        self.calls.append((argv, kw))
+        return self.listing if "--list-extensions" in argv else self.install
+
+
+@pytest.fixture
+def code(monkeypatch):
+    fake = _Code(Result(0, "ms-python.python@1.0.0\n", ""))
+    monkeypatch.setattr(firneditor.shutil, "which", lambda name, path=None: "/usr/bin/code")
+    monkeypatch.setattr(firneditor, "run", fake)
+    return fake
+
+
+def _vsix_release():
+    return _release_with(VSIX, f"{VSIX}.sha256")
+
+
+def _fetches(monkeypatch):
+    got = []
+
+    def fake(release, name, dest):
+        got.append((name, dest))
+        dest.write_text("vsix")
+        return dest
+    monkeypatch.setattr(firnrelease, "fetch_checked", fake)
+    return got
+
+
+def test_no_code_on_path_fails_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(firneditor.shutil, "which", lambda name, path=None: None)
+    outcome = firneditor.extension_gate(TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "code" in outcome.detail and "PATH" in outcome.detail
+
+
+def test_installed_at_the_tag_is_present(tmp_path, code):
+    code.listing = Result(0, "a.b@1\nzwyssig.firn@0.19.0\n", "")
+    outcome = firneditor.extension_gate(TAG, _never, tmp_path)
+    assert outcome.state is State.PRESENT and "0.19.0" in outcome.detail
+    assert len(code.calls) == 1 and code.calls[0][1]["timeout"] == hostinstall.VERSION_TIMEOUT_S
+
+
+def test_other_version_installs_the_checked_vsix(tmp_path, code, monkeypatch):
+    code.listing = Result(0, "zwyssig.firn@0.18.0\n", "")
+    got = _fetches(monkeypatch)
+    outcome = firneditor.extension_gate(TAG, _vsix_release, tmp_path)
+    assert outcome.state is State.INSTALLED and "0.19.0" in outcome.detail
+    assert got == [(VSIX, tmp_path / VSIX)]
+    argv, kw = code.calls[-1]
+    assert argv[1:] == ["--install-extension", str(tmp_path / VSIX), "--force"]
+    assert kw["timeout"] == hostinstall.INSTALL_TIMEOUT_S
+
+
+def test_not_installed_at_all_installs(tmp_path, code, monkeypatch):
+    _fetches(monkeypatch)
+    assert firneditor.extension_gate(TAG, _vsix_release, tmp_path).state is State.INSTALLED
+
+
+def test_a_longer_version_with_the_tag_as_prefix_is_not_the_tag(tmp_path, code, monkeypatch):
+    code.listing = Result(0, "zwyssig.firn@0.19.01\nzwyssig.firn-other@0.19.0\n", "")
+    _fetches(monkeypatch)
+    assert firneditor.extension_gate(TAG, _vsix_release, tmp_path).state is State.INSTALLED
+
+
+@pytest.mark.parametrize("listing", [Result(1, "", "boom"), Result(-9, "", "slow", timed_out=True),
+                                     Result(127, "", "nope", not_started="exec failed")])
+def test_unanswering_code_is_could_not_ask_and_installs_nothing(tmp_path, code, listing):
+    code.listing = listing
+    outcome = firneditor.extension_gate(TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "could not ask code" in outcome.detail
+    assert all("--install-extension" not in c[0] for c in code.calls)
+
+
+def test_release_without_vsix_names_tag_and_asset(tmp_path, code):
+    outcome = firneditor.extension_gate(TAG, lambda: _release_with(), tmp_path)
+    assert outcome.state is State.FAILED and VSIX in outcome.detail and TAG in outcome.detail
+    assert all("--install-extension" not in c[0] for c in code.calls)
+
+
+@pytest.mark.parametrize("raising", [_no_token, _unreadable])
+def test_unreadable_release_is_failed(tmp_path, code, raising):
+    assert firneditor.extension_gate(TAG, raising, tmp_path).state is State.FAILED
+
+
+def test_failed_install_is_failed_with_codes_words(tmp_path, code, monkeypatch):
+    _fetches(monkeypatch)
+    code.install = Result(1, "", "bad vsix")
+    outcome = firneditor.extension_gate(TAG, _vsix_release, tmp_path)
+    assert outcome.state is State.FAILED and "bad vsix" in outcome.detail
+
+
+def test_install_that_hangs_is_failed_not_installed(tmp_path, code, monkeypatch):
+    _fetches(monkeypatch)
+    code.install = Result(-9, "", "timed out", timed_out=True)
+    outcome = firneditor.extension_gate(TAG, _vsix_release, tmp_path)
+    assert outcome.state is State.FAILED and "could not ask code" in outcome.detail
