@@ -18,7 +18,7 @@ from typing import Callable
 from simplon.kernel import log
 from simplon.adapters import brew, gh, hostinstall, oras
 from simplon.manifest import context
-from simplon.tasks import claudeplugins, profiles
+from simplon.tasks import claudeplugins, firneditor, profiles
 
 # Every gate this command drives, in the order a fresh machine wants them. One entry today; the point
 # of the list is that the next tool is a row rather than a rewrite. The gate is wrapped in a lambda
@@ -95,9 +95,11 @@ def _gh_extensions(extensions: tuple[gh.Extension, ...], gate: hostinstall.Outco
     return ok
 
 
-def install() -> int:
+def install(firn_runtime: str = "") -> int:
     """Provision the host tooling the delivery kernel needs: Homebrew and gh when `toolchains:` names them,
-    the gh extensions `gh:` declares, oras always, and the plugins of the `claude` toolchain; idempotent.
+    the gh extensions `gh:` declares, oras always, the plugins of the `claude` toolchain, and with `firn`
+    declared the firn editor (si#900: VS Code extension, language server runtime, workspace); idempotent.
+    `firn_runtime` is `local` or `docker`, remembered per host; empty uses the remembered or default one.
 
     Homebrew goes first, so that oras and gh can install through it. Every gate is attempted even when an
     earlier one failed - a setup command that stops at the first problem hides the second one until the
@@ -131,4 +133,6 @@ def install() -> int:
         failed.append("gh extensions")
     if not _claude_plugins(container):
         failed.append("claude")
+    if not firneditor.editor(container, firn_runtime, declared):
+        failed.append("firn editor")
     return 1 if failed else 0

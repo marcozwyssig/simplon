@@ -1,4 +1,6 @@
-"""si#900: which runtime runs firn for `support install`'s editor gates, `local` or `docker`.
+"""si#900: `support install`'s firn editor gates (`editor`): the VS Code extension, the runtime that runs firn's
+language server (`local` or `docker`) and the product's code-workspace. Each file they write goes through a
+temporary file and `os.replace`, so a symlink at its path is replaced, never followed.
 
 The flag wins and is remembered per host; with no flag the stored choice is used; with neither, the default
 comes from the release: `local` when it ships a binary for this host, else `docker`. A default is never stored,
@@ -9,13 +11,15 @@ import os
 import shlex
 import json
 import shutil
+import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from simplon.adapters import firnrelease, hostinstall, tools
-from simplon.kernel import limits
+from simplon.kernel import limits, log
+from simplon.manifest import context
 from simplon.kernel.run import run
 from simplon.tasks import gitops
 
@@ -35,6 +39,32 @@ def runtime_file(env: Mapping[str, str] | None = None) -> Path:
     return Path(base) / "simplon" / "firn-runtime"
 
 
+def _replace(path: Path, text: str, mode: int = 0o644) -> None:
+    """Write `text` to `path` through a temporary file in the same directory and `os.replace`: whatever stood at
+    `path`, a symlink included, is replaced, never followed. A symlink there may point outside the tree."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
+def _current(path: Path) -> str | None:
+    """The text of the regular file at `path`, or None: a symlink, anything not a file, or an unreadable file
+    counts as differing, so it is rewritten (and a symlink replaced)."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def _stored(path: Path) -> str | None:
     if not os.path.lexists(path):
         return None
@@ -42,12 +72,12 @@ def _stored(path: Path) -> str | None:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise ValueError(f"{path} exists but cannot be read as the stored runtime ({type(e).__name__}: {e}). "
-                         f"Delete it or pass --runtime to replace it.") from e
+                         f"Delete it or pass --firn-runtime to replace it.") from e
     for runtime in RUNTIMES:
         if text == f"{runtime}\n":
             return runtime
     raise ValueError(f"{path} holds {text!r}; it must hold exactly one of {' | '.join(RUNTIMES)} and a newline. "
-                     f"Delete it or pass --runtime to replace it.")
+                     f"Delete it or pass --firn-runtime to replace it.")
 
 
 def choose_runtime(flag: str, release_of: Callable[[], firnrelease.Release],
@@ -56,8 +86,7 @@ def choose_runtime(flag: str, release_of: Callable[[], firnrelease.Release],
     if flag:
         if flag not in RUNTIMES:
             raise ValueError(f"unknown firn runtime {flag!r}; use one of {' | '.join(RUNTIMES)}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{flag}\n")
+        _replace(path, f"{flag}\n")
         return Choice(flag, "flag")
     stored = _stored(path)
     if stored is not None:
@@ -84,7 +113,8 @@ def _local_gate(tag: str, release_of: Callable[[], firnrelease.Release]) -> tupl
     name = firnrelease.host_binary_name(tag)
     if name is None:
         return hostinstall.Outcome(hostinstall.State.FAILED,
-                                   "no firn binary exists for this OS and architecture; use --runtime docker"), None
+                                   "no firn binary exists for this OS and architecture; "
+                                   "use --firn-runtime docker"), None
     binary = tools.bin_dir() / name
     if binary.is_file() and os.access(binary, os.X_OK):
         return hostinstall.Outcome(hostinstall.State.PRESENT, f"{binary}"), binary
@@ -112,7 +142,8 @@ def _docker_ready(image: str) -> hostinstall.Outcome | None:
         return _could_not_ask("docker --version")
     if not cli:
         return hostinstall.Outcome(hostinstall.State.FAILED,
-                                   "the docker CLI is not installed or does not run; install it or use --runtime local")
+                                   "the docker CLI is not installed or does not run; "
+                                   "install it or use --firn-runtime local")
     daemon = run(["docker", "version"], timeout=hostinstall.VERSION_TIMEOUT_S, terminal=False)
     if daemon.timed_out:
         return _could_not_ask("docker version")
@@ -137,7 +168,7 @@ def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None
     if ":" in str(root):
         return hostinstall.Outcome(hostinstall.State.FAILED,
                                    f"the product root {root} contains a colon, and docker's -v cannot mount a "
-                                   f"path with a colon; use --runtime local or a root without one"), None
+                                   f"path with a colon; use --firn-runtime local or a root without one"), None
     image = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}"
     not_ready = _docker_ready(image)
     if not_ready is not None:
@@ -148,16 +179,15 @@ def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None
                                    f"{script} is a directory, so the docker wrapper cannot be written there; "
                                    f"remove it"), None
     text = docker_script(root, image, os.getuid(), os.getgid())
-    try:
-        current = script.read_text(encoding="utf-8") if script.is_file() else None
-    except (OSError, UnicodeDecodeError):
-        current = None  # unreadable counts as differing: it is rewritten below
     state = hostinstall.State.PRESENT
-    if current != text:
-        script.parent.mkdir(parents=True, exist_ok=True)
-        script.write_text(text, encoding="utf-8")
-        state = hostinstall.State.INSTALLED
-    script.chmod(0o755)
+    try:
+        if _current(script) != text:
+            _replace(script, text, 0o755)
+            state = hostinstall.State.INSTALLED
+        else:
+            script.chmod(0o755)
+    except OSError as e:
+        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not write {script}: {e}"), None
     return hostinstall.Outcome(state, f"{script}"), script
 
 
@@ -287,13 +317,12 @@ def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, ob
                        "settings": {"firn.mode": "stdio", "firn.binary": relative}}, indent=2) + "\n"
     name = f"{product}.code-workspace"
     path = root / name
-    try:
-        current = path.read_text(encoding="utf-8") if path.is_file() else None
-    except (OSError, UnicodeDecodeError):
-        current = None
     state = hostinstall.State.PRESENT
-    if current != text:
-        path.write_text(text, encoding="utf-8")
+    if _current(path) != text:
+        try:
+            _replace(path, text)
+        except OSError as e:
+            return hostinstall.Outcome(hostinstall.State.FAILED, f"could not write {path}: {e}")
         state = hostinstall.State.INSTALLED
     asked = gitops.git(root, "check-ignore", "-q", name)
     if asked.timed_out or asked.not_started or asked.rc not in (0, 1):
@@ -307,3 +336,79 @@ def workspace_gate(root: Path, product: str, binary: Path, data: Mapping[str, ob
         detail += (f"; the editor uses the stock firn for: {', '.join(java)} "
                    f"(their own binary needs {JAVA_ISSUE})")
     return hostinstall.Outcome(state, detail)
+
+
+EDITOR_GATES = ("firn extension", "firn runtime", "firn workspace")
+
+
+def _once(read: Callable[[], firnrelease.Release]) -> Callable[[], firnrelease.Release]:
+    """`read`, asked at most once: its release, or its exception, is the answer for the rest of this run. The
+    exception is raised again, never turned into a release, so a failed read stays a failure."""
+    answer: list[firnrelease.Release] = []
+    failure: list[Exception] = []
+
+    def release_of() -> firnrelease.Release:
+        if failure:
+            raise failure[0]
+        if not answer:
+            try:
+                answer.append(read())
+            except Exception as e:
+                failure.append(e)
+                raise
+        return answer[0]
+    return release_of
+
+
+def _pinned(document: Mapping[str, object], source: str) -> tuple[Mapping[str, object], str]:
+    """The manifest document and the firn tag its commands run. The one function `editor` hands the document
+    to, so the refusal census walks what is decided on the manifest with nothing run yet: the pin. The
+    workspace gate's own refusals come after the runtime gate has consulted docker or the release."""
+    return document, firnrelease.pinned_tag(document, source)
+
+
+def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
+    """`support install`'s firn editor gates (si#900): extension, runtime, workspace, in that order, each
+    reported in its own words. Says nothing and reads nothing when `firn` is not declared; on the container
+    route and in CI all three are SKIPPED before the manifest's pin or the release is read. False when any
+    gate failed."""
+    if "firn" not in declared:
+        return True
+    skip = hostinstall.machine_skip_reason(os.environ, container, "editor tools")
+    if skip:
+        for name in EDITOR_GATES:
+            hostinstall.report(name, hostinstall.Outcome(hostinstall.State.SKIPPED, skip))
+        return True
+    ctx = context.current()
+    try:
+        data, tag = _pinned(ctx.manifest_data(), str(ctx.manifest_path))
+    except (ValueError, RuntimeError) as e:  # RuntimeError: an unreadable manifest (context.py)
+        log.error(f"firn editor: {e}; not run: {', '.join(EDITOR_GATES)}")
+        return False
+    release_of = _once(lambda: firnrelease.read(tag))
+    choice: Choice | None = None
+    try:
+        choice = choose_runtime(flag, release_of)
+        log.info(f"firn runtime: {choice.runtime} ({choice.source})")
+    except (ValueError, OSError, firnrelease.NoToken, firnrelease.ReleaseUnreadable) as e:
+        unchosen = hostinstall.Outcome(hostinstall.State.FAILED, str(e))
+    with tempfile.TemporaryDirectory(prefix="simplon-firn-vsix-") as scratch:
+        extension = extension_gate(tag, release_of, Path(scratch))
+    hostinstall.report("firn extension", extension)
+    ok = hostinstall.rc(extension) == 0
+    if choice is None:
+        runtime, binary = unchosen, None
+    else:
+        runtime, binary = runtime_gate(choice, tag, release_of, ctx.root)
+    hostinstall.report("firn runtime", runtime)
+    ok = ok and hostinstall.rc(runtime) == 0
+    if binary is None:
+        log.error(f"firn workspace: not written, because the runtime gate left no firn binary to point the editor "
+                  f"at ({runtime.state.value})")
+        return False
+    try:
+        workspace = workspace_gate(ctx.root, ctx.name, binary, data)
+    except ValueError as e:
+        workspace = hostinstall.Outcome(hostinstall.State.FAILED, str(e))
+    hostinstall.report("firn workspace", workspace)
+    return ok and hostinstall.rc(workspace) == 0

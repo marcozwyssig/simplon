@@ -943,6 +943,11 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     ours = surface["commands"]["support"].get("claude-plugins")
     if ours and ours["help"].startswith("Install the Claude Code plugins of the `claude` toolchain"):
         ours["help"] = golden["commands"]["support"]["claude-plugins"]["help"]
+    # si#900 dropped "today oras" from `support:install`'s help: a product that kept the coordinate's own help
+    # sees the new wording, only that
+    install = surface["commands"]["support"].get("install")
+    if install and install["help"] == "Provision the host tooling the kernel needs; idempotent.":
+        install["help"] = golden["commands"]["support"]["install"]["help"]
     assert surface == golden
 
 

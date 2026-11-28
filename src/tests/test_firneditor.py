@@ -1,5 +1,6 @@
 """si#900: the firn runtime of `support install` is chosen by flag, remembered per host, and defaulted from the
 release only when nothing was said before. AAA; the name states the behaviour under test."""
+import os
 import json
 import re
 import subprocess
@@ -544,3 +545,68 @@ def test_an_unreadable_project_folder_raises_not_none(tmp_path, monkeypatch):
     out = _gate(tmp_path, data=_manifest("a"))
     assert out.state is State.FAILED
     assert "could not tell which projects carry Java functions" in out.detail
+
+
+# --- a symlink at a path the gates write is replaced, never followed ------------------------------------------
+
+
+def _outside(tmp_path, text):
+    target = tmp_path.parent / f"{tmp_path.name}-outside"
+    target.write_text(text)
+    return target
+
+
+@pytest.mark.parametrize("same", [False, True], ids=["other-text", "the-very-text"])
+def test_a_symlink_at_the_workspace_path_is_replaced_not_followed(tmp_path, same):
+    # arrange: the workspace path links outside the tree; once to other text, once to exactly the text the
+    # gate writes (a gate that compared through the link would leave the link in place)
+    root = tmp_path / "tree"
+    _project(root, "src")
+    _git_init(root)
+    (root / ".gitignore").write_text("/p.code-workspace\n")
+    assert _gate(root).state is State.INSTALLED
+    text = (root / "p.code-workspace").read_text()
+    (root / "p.code-workspace").unlink()
+    target = _outside(tmp_path, text if same else "outside\n")
+    (root / "p.code-workspace").symlink_to(target)
+
+    # act
+    outcome = _gate(root)
+
+    # assert
+    assert outcome.state is State.INSTALLED, outcome.detail
+    assert target.read_text() == (text if same else "outside\n")
+    assert not (root / "p.code-workspace").is_symlink()
+    assert (root / "p.code-workspace").read_text() == text
+
+
+def test_a_symlink_at_the_docker_script_path_is_replaced_not_followed(tmp_path, bin_dir, docker):
+    # arrange
+    bin_dir.mkdir()
+    target = _outside(tmp_path, "outside\n")
+    target.chmod(0o644)
+    (bin_dir / "firn-docker").symlink_to(target)
+
+    # act
+    outcome, script = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+
+    # assert
+    assert outcome.state is State.INSTALLED, outcome.detail
+    assert target.read_text() == "outside\n" and (target.stat().st_mode & 0o777) == 0o644
+    assert not script.is_symlink() and script.read_text().startswith("#!/bin/sh\n")
+    assert os.access(script, os.X_OK)
+
+
+def test_a_symlink_at_the_runtime_file_is_replaced_not_followed(env, tmp_path):
+    # arrange
+    path = firneditor.runtime_file(env)
+    path.parent.mkdir(parents=True)
+    target = _outside(tmp_path, "outside\n")
+    path.symlink_to(target)
+
+    # act
+    firneditor.choose_runtime("docker", _never, env)
+
+    # assert
+    assert target.read_text() == "outside\n"
+    assert not path.is_symlink() and path.read_text() == "docker\n"

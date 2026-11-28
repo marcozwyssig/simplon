@@ -1457,6 +1457,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "which this manifest does not declare"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "names no command in group"): DIAGNOSIS,
+    # si#900: `support install`'s firn editor gates follow the firn release the manifest's commands run, named by
+    # the tag of `ghcr.io/marcozwyssig/firn`. A firn image with no tag, none, or two tags leave no release to
+    # install the editor from; asked only with `firn` in `toolchains:`, off the container route and CI.
+    ("firnrelease", "pinned_tag", "which has no tag - the firn release the editor comes from"): DIAGNOSIS,
+    ("firnrelease", "pinned_tag", "so there is no firn version to install the editor for"): DIAGNOSIS,
+    ("firnrelease", "pinned_tag", "at more than one tag"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

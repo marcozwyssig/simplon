@@ -590,7 +590,6 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.cliref", "reference"): _GENERATED,
     ("simplon.tasks.completiongen", "write"): _GENERATED,
     ("simplon.tasks.fetchfile", "_record"): _RECORD,
-    ("simplon.tasks.firneditor", "_docker_gate"): _GENERATED,
     ("simplon.tasks.githubrelease", "_attached"): f"{_FETCHED}, and {_RECORD}",
     ("simplon.tasks.homebrewformula", "build"): _GENERATED,
     ("simplon.tasks.homebrewtap", "check"): _RECORD,
@@ -599,8 +598,8 @@ UNREDACTED: dict[tuple[str, str], str] = {
     ("simplon.tasks.image", "_write_built"): _RECORD,
     ("simplon.tasks.image", "record"): _RECORD,
     ("simplon.tasks.image", "smoke"): _RECORD,
-    ("simplon.tasks.firneditor", "choose_runtime"): _RECORD,
-    ("simplon.tasks.firneditor", "workspace_gate"): _GENERATED,
+    # si#900: the runtime file (a record), the docker wrapper and the code-workspace (generated), one writer
+    ("simplon.tasks.firneditor", "_replace"): f"{_RECORD}, or {_GENERATED}",
     ("simplon.tasks.image", "write_bake"): _GENERATED,
     ("simplon.tasks.imagefile", "check"): _RECORD,
     ("simplon.tasks.manifestcheck", "stage"): _GENERATED,

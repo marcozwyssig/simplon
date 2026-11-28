@@ -447,8 +447,12 @@ support_nexus typeOf simplon.pipeline.CatalogueTask {
 support_install typeOf simplon.pipeline.CatalogueTask {
   key = "support:install"
   body = "simplon.tasks.hosttools:install"
-  help = "Provision the host tooling the kernel needs - today oras; idempotent."
+  help = "Provision the host tooling the kernel needs; idempotent."
   unattended = true
+  params p_firn_runtime typeOf simplon.pipeline.TaskParam {
+    key = "firn_runtime"
+    help = "how the editor reaches firn's language server: local (the binary) or docker (the image); remembered per host"
+  }
 }
 support_sources typeOf simplon.pipeline.CatalogueTask {
   key = "support:sources"

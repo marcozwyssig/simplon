@@ -656,7 +656,7 @@ change how a product builds.
 **Every toolchain is named in `toolchains:`** (si#525), and two of them bring no commands. `support
 toolchain <name>` adds the name to that top-level list. For `python`, `java`, `cpp`, `dotnet` and `firn`
 it also writes the commands. `claude` and `gh` are host tools: they bring a step in `support install`
-instead.
+instead. `firn` brings both: its commands, and three editor gates in `support install`.
 
 - **`claude`:** `support install` installs simplon's plugin default (eight base plugins, plus one LSP
   plugin for each language in the list), and so does the launcher right after it refreshed its deps. A
@@ -672,9 +672,27 @@ instead.
   - **failed:** the plugin is named.
 - **Exit codes:** the launcher never fails a command over a plugin; `support install` is rc 1 on a
   failure.
+- **`firn`: the editor** (si#900). `support install` provisions VS Code for the firn release the
+  manifest's commands run (the one tag of `ghcr.io/marcozwyssig/firn`; none or several is a diagnosis
+  naming the commands). Three gates, in this order, each in its own words, every one attempted:
+  - **firn extension:** `zwyssig.firn` at the pinned version, installed from the release's checked
+    `.vsix` through `code`; no `code` on PATH fails the gate.
+  - **firn runtime:** `--firn-runtime local` (the release's checked binary for this host, under
+    `build/tools/bin`) or `docker` (a stdio wrapper, `build/tools/bin/firn-docker`, that runs the pinned
+    image over the tree mounted at its own host path). A flag is remembered per host in
+    `${XDG_CONFIG_HOME:-~/.config}/simplon/firn-runtime`; without a flag or a stored value the default is
+    `local` when the release ships a binary for this host, else `docker`. Every run names the runtime and
+    its source (`flag`, `stored`, or `default (<why>)`). A release that cannot be read, with nothing
+    stored, fails the gate: it never falls to `docker`.
+  - **firn workspace:** `<product>.code-workspace` at the product root, one folder per project in
+    `firn-workspace.toml` (else the folder each model command runs in), `firn.binary` pointing at the
+    runtime. Written per host, so it must be git-ignored; when it is not, the gate fails and names the
+    line to add. Not written when the runtime gate left no binary, and the run says so.
+  The release is read once per run; without a token, without access, or without the asset, the gate
+  says which.
 - **The container route provisions nothing** (si#710). Inside the kernel container `support install`
-  skips brew, gh, the gh extensions and the plugins, each with one line saying to run it on the venv
-  route, and the skip is rc 0. Until then the gates saw the image's own gh and installed into the
+  skips brew, gh, the gh extensions, the plugins and the firn editor gates, each with one line saying to
+  run it on the venv route, and the skip is rc 0. In CI the firn editor gates are skipped the same way. Until then the gates saw the image's own gh and installed into the
   throwaway container.
 
 **And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the

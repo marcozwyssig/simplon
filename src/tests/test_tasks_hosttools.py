@@ -397,3 +397,214 @@ def test_on_the_venv_route_the_gates_run_as_before(gates, tmp_path, monkeypatch)
     # assert
     assert rc == 0
     assert seen == [{"container": False}]
+
+
+# --- si#900: the firn editor gates --------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from simplon.adapters import firnrelease  # noqa: E402
+from simplon.tasks import firneditor  # noqa: E402
+
+FIRN_TAG = "v0.19.0"
+
+
+def _declare_firn(tmp_path, toolchains=("firn",), image=f"ghcr.io/marcozwyssig/firn:{FIRN_TAG}"):
+    manifest = {"product": "sample", "toolchains": list(toolchains),
+                "ci": {"build": {"commands": {"model": {"task": "build:model", "with": {"image": image}}}}}}
+    (tmp_path / "sample.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+
+@pytest.fixture
+def firn(gates, monkeypatch, tmp_path):
+    """The three firn gates replaced by recorders; the release read counted. A developer's machine: no CI,
+    the venv route, the runtime file under tmp_path."""
+    for variable in ("CI", "GITHUB_ACTIONS", "DELIVERY_ROUTE"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    order, answers = gates
+    reads = []
+    monkeypatch.setattr(firnrelease, "read",
+                        lambda tag: reads.append(tag) or firnrelease.Release(tag, {}))
+
+    def extension(tag, release_of, scratch):
+        order.append("firn extension")
+        assert Path(scratch).is_dir()
+        try:
+            release_of()
+        except firnrelease.ReleaseUnreadable as e:  # as the real gate does
+            return Outcome(State.FAILED, str(e))
+        return answers.get("firn extension", Outcome(State.PRESENT))
+
+    def runtime(choice, tag, release_of, root):
+        order.append("firn runtime")
+        release_of()
+        outcome = answers.get("firn runtime", Outcome(State.PRESENT))
+        return outcome, (None if outcome.state is State.FAILED else root / "build/tools/bin/firn-docker")
+
+    def workspace(root, product, binary, data):
+        order.append("firn workspace")
+        return answers.get("firn workspace", Outcome(State.PRESENT))
+
+    monkeypatch.setattr(firneditor, "extension_gate", extension)
+    monkeypatch.setattr(firneditor, "runtime_gate", runtime)
+    monkeypatch.setattr(firneditor, "workspace_gate", workspace)
+    return order, answers, reads
+
+
+FIRN_GATES = ["firn extension", "firn runtime", "firn workspace"]
+
+
+def test_firn_not_declared_says_nothing_and_reads_nothing(firn, tmp_path, capsys):
+    # arrange: a firn image in the commands, but no `firn` toolchain
+    order, _, reads = firn
+    _declare_firn(tmp_path, toolchains=())
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    said = capsys.readouterr()
+    assert rc == 0
+    assert not set(FIRN_GATES) & set(order)
+    assert reads == []
+    assert "firn" not in said.out + said.err
+    assert not firneditor.runtime_file().exists()
+
+
+def test_container_route_skips_all_three_firn_gates_without_reading(firn, tmp_path, monkeypatch, capsys):
+    # arrange: and a manifest whose pin is broken, to show it is not even read
+    order, _, reads = firn
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+    _declare_firn(tmp_path, image="ghcr.io/marcozwyssig/firn")
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    said = capsys.readouterr()
+    out = said.out + said.err
+    assert rc == 0, out
+    assert not set(FIRN_GATES) & set(order)
+    assert reads == []
+    for gate in FIRN_GATES:
+        assert f"{gate} skipped: {hostinstall.CONTAINER_ROUTE_SKIP}" in out, out
+
+
+def test_ci_skips_all_three_firn_gates(firn, tmp_path, monkeypatch, capsys):
+    # arrange
+    order, _, reads = firn
+    monkeypatch.setenv("CI", "true")
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 0, out
+    assert not set(FIRN_GATES) & set(order)
+    assert reads == []
+    assert not firneditor.runtime_file().exists()
+    for gate in FIRN_GATES:
+        assert f"{gate} skipped: CI=true: editor tools are for a machine somebody develops on" in out, out
+
+
+def test_a_failing_firn_gate_fails_install_but_every_gate_runs(firn, tmp_path, capsys):
+    # arrange
+    order, answers, reads = firn
+    answers["firn extension"] = Outcome(State.FAILED, "`code` is not on PATH")
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert: in order, after the existing gates, and the release read once for all of them
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert order[-3:] == FIRN_GATES
+    assert reads == [FIRN_TAG]
+    assert "firn extension: install failed: `code` is not on PATH" in out, out
+
+
+def test_the_run_names_runtime_and_source(firn, tmp_path, capsys):
+    # arrange
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 0, out
+    assert "firn runtime: docker (flag)" in out, out
+
+
+def test_a_failed_runtime_gate_leaves_the_workspace_unwritten_and_says_why(firn, tmp_path, capsys):
+    # arrange
+    order, answers, _ = firn
+    answers["firn runtime"] = Outcome(State.FAILED, "the docker daemon does not answer")
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="docker")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert order[-2:] == ["firn extension", "firn runtime"]
+    assert "firn workspace: not written" in out and "runtime gate" in out, out
+
+
+def test_a_runtime_that_cannot_be_chosen_fails_the_runtime_and_still_runs_the_extension(firn, tmp_path, capsys):
+    # arrange
+    order, _, _ = firn
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install(firn_runtime="podman")
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert order[-1] == "firn extension"
+    assert "firn runtime: install failed: unknown firn runtime 'podman'" in out, out
+    assert "firn workspace: not written" in out, out
+
+
+def test_an_unreadable_release_with_no_flag_fails_the_runtime_never_docker(firn, tmp_path, monkeypatch, capsys):
+    # arrange: no flag, nothing stored, and the release cannot be read
+    order, _, _ = firn
+    calls = []
+
+    def unreadable(tag):
+        calls.append(tag)
+        raise firnrelease.ReleaseUnreadable(f"could not read firn's release {tag}")
+    monkeypatch.setattr(firnrelease, "read", unreadable)
+    _declare_firn(tmp_path)
+
+    # act
+    rc = hosttools.install()
+
+    # assert: the failed read is not repeated within the run
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert "firn runtime: install failed: could not read firn's release v0.19.0" in out, out
+    assert "firn runtime: docker" not in out
+    assert calls == [FIRN_TAG]
+
+
+def test_a_broken_pin_is_one_failed_line_naming_the_gates_not_run(firn, tmp_path, capsys):
+    # arrange
+    order, _, reads = firn
+    _declare_firn(tmp_path, image="ghcr.io/marcozwyssig/firn")
+
+    # act
+    rc = hosttools.install()
+
+    # assert
+    out = "".join(capsys.readouterr())
+    assert rc == 1
+    assert not set(FIRN_GATES) & set(order)
+    assert reads == []
+    assert "which has no tag" in out and "not run: firn extension, firn runtime, firn workspace" in out, out
