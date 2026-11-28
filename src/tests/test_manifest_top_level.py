@@ -169,6 +169,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     # si#526: which host gates (brew, gh) support install asks; si#630: the gh extensions, through
     # `gh.declared_extensions`
     "tasks.hosttools": ("toolchains", "gh"),
+    # si#900: hands the document to `firnrelease.pinned_tag` (through `_pinned`), which reads the firn image tag
+    # off the command areas, the loader's keys like `cli.__init__`'s; `toolchains:` comes from hosttools
+    "tasks.firneditor": (),
     "tasks.sources": ("sources",),                      # si#873: through sources.declared
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)

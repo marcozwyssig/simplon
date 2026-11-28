@@ -196,6 +196,9 @@ adapters typeOf simplon.architecture.Component {
   module m_adapters_fetch typeOf simplon.architecture.Module {
     path = "adapters.fetch"
   }
+  module m_adapters_firnrelease typeOf simplon.architecture.Module {
+    path = "adapters.firnrelease"
+  }
   module m_adapters_gh typeOf simplon.architecture.Module {
     path = "adapters.gh"
   }
@@ -341,6 +344,9 @@ tasks typeOf simplon.architecture.Component {
   }
   module m_tasks_fetchfile typeOf simplon.architecture.Module {
     path = "tasks.fetchfile"
+  }
+  module m_tasks_firneditor typeOf simplon.architecture.Module {
+    path = "tasks.firneditor"
   }
   module m_tasks_firngen typeOf simplon.architecture.Module {
     path = "tasks.firngen"

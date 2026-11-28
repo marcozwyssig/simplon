@@ -248,6 +248,20 @@ READS_INLINE = {
                            "and are caught, with RuntimeError from an unreadable document, into rc 1 (si#346)",
 }
 
+#: Functions that hand the manifest document OUT through their return value, each with why the reads it reaches
+#: in the caller may stay unwalked. The walk follows the document into callees, never back out to a caller
+#: (the blind spot named below `_reader_functions`), so every such helper is a door the census does not see
+#: through; `test_every_helper_that_returns_the_document_is_named` computes them and holds this set EXACTLY.
+RETURNS_THE_DOCUMENT: dict[tuple[str, str], str] = {
+    ("tasks.manifestmodel", "_load"): "its caller hands the document, with the validated Manifest, to "
+                                      "`manifestmodel.export`, whose refusals are run time (READS_INLINE above)",
+    ("tasks.firneditor", "_pinned"): "si#900: the document is walked INTO `_pinned` (the pin, and a command's "
+                                     "`with: cwd:`); what `editor` then hands it to is `workspace_gate`, whose "
+                                     "refusals are decided on disk (a project folder, `firn-workspace.toml`) or "
+                                     "come after the runtime gate consulted docker or the release, and git",
+}
+
+
 #: Modules that use ANOTHER module's manifest reader without calling the accessor themselves (si#331).
 #:
 #: `tasks/maven.py` first imported `_declared` from `tasks/nuget`, refused on what it returned, and every
@@ -1457,6 +1471,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "resolve_command", "must name a group and a command"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "which this manifest does not declare"): DIAGNOSIS,
     ("workflowgen", "resolve_command", "names no command in group"): DIAGNOSIS,
+    # si#900: `support install`'s firn editor gates follow the firn release the manifest's commands run, named by
+    # the tag of `ghcr.io/marcozwyssig/firn`. A firn image with no tag, none, or two tags leave no release to
+    # install the editor from; asked only with `firn` in `toolchains:`, off the container route and CI.
+    ("firnrelease", "pinned_tag", "which has no tag - the firn release the editor comes from"): DIAGNOSIS,
+    ("firnrelease", "pinned_tag", "so there is no firn version to install the editor for"): DIAGNOSIS,
+    ("firnrelease", "pinned_tag", "at more than one tag"): DIAGNOSIS,
+    # si#900 review: a firn command's `with: cwd:` that is neither a string nor null (null is the mount itself,
+    # as `toolchain._cwd` reads it) names no folder for the workspace (nor for `toolchain:run`); decided on the
+    # manifest alone, so it is checked where the pin is read, not past a tool.
+    ("firnrelease", "firn_commands", "which is not a folder name"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
@@ -1863,7 +1887,9 @@ def _borrowers() -> dict[str, tuple[str, ...]]:
 # review and not followed:
 #   - the document flowing OUT through a return value. The walk follows it into callees, never back to
 #     a caller, so a helper that returns the parsed document hands it to reads nobody walks.
-#     `tasks/manifestmodel._load` is the one there is, and it is in `READS_INLINE` for that reason;
+#     `tasks/manifestmodel._load` (in `READS_INLINE` for that reason) and `tasks/firneditor._pinned` are the
+#     ones there are, named with their reasons in `RETURNS_THE_DOCUMENT` and computed by
+#     `test_every_helper_that_returns_the_document_is_named`, so a third one goes red;
 #   - a starred or double-starred hand-off (`f(*args)`, `f(**data)`): `positions` and `keywords` see
 #     only plain arguments, so the parameter that receives the document is never marked;
 #   - `_model_fields` reads a model's own annotated fields only - not a `ClassVar` (which it wrongly
@@ -2299,6 +2325,71 @@ def test_every_module_that_reads_the_manifest_is_accounted_for():
         f"READS_INLINE names a module that no longer reads the manifest: "
         f"{sorted(set(READS_INLINE) - touching)}")
 
+
+
+def _helpers_returning_the_document() -> set[tuple[str, str]]:
+    """Every kernel function whose `return` IS the document (alone or in a tuple): `manifest_data()`'s result
+    itself, or the parameter a call site hands `manifest_data()` to. A value computed from it is not counted:
+    that is what a reader returns. A document first bound to a local name is not seen (said, not found)."""
+    found: set[tuple[str, str]] = set()
+
+    def is_document(value, names) -> bool:
+        """The returned value IS the document (or a tuple carrying it), not something computed from it."""
+        if isinstance(value, ast.Tuple):
+            return any(is_document(element, names) for element in value.elts)
+        if isinstance(value, ast.Name):
+            return value.id in names
+        return (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                and value.func.attr == DOCUMENT_ACCESSOR)
+
+    def returns(function, names) -> bool:
+        return any(isinstance(node, ast.Return) and node.value is not None and is_document(node.value, names)
+                   for node in ast.walk(function))
+
+    for dotted in _kernel_modules():
+        module = _module(dotted)
+        for name, bodies in module.funcs.items():
+            if any(returns(body, set()) for body in bodies):
+                found.add((dotted, name))
+        for call in ast.walk(module.tree):
+            if not isinstance(call, ast.Call):
+                continue
+            handed = [(i, None) for i, arg in enumerate(call.args)
+                      if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                      and arg.func.attr == DOCUMENT_ACCESSOR]
+            handed += [(None, kw.arg) for kw in call.keywords
+                       if isinstance(kw.value, ast.Call) and isinstance(kw.value.func, ast.Attribute)
+                       and kw.value.func.attr == DOCUMENT_ACCESSOR]
+            if not handed:
+                continue
+            if isinstance(call.func, ast.Name):
+                target = (dotted, call.func.id)
+            elif isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name) \
+                    and module.imports.get(call.func.value.id):
+                target = (module.imports[call.func.value.id], call.func.attr)
+            else:
+                continue
+            for body in _module(target[0]).funcs.get(target[1], []):
+                params = _positional(body)
+                names = {params[i] if i is not None and i < len(params) else keyword for i, keyword in handed}
+                if returns(body, names):
+                    found.add(target)
+    return found
+
+
+def test_every_helper_that_returns_the_document_is_named():
+    """si#900 review: the walk never follows the document back out through a return value, so a helper that
+    returns it opens reads the census cannot see. Each one is named with its reason, and the set is held
+    EXACTLY: a new one goes red, and so does an entry outliving its helper."""
+    # act
+    found = _helpers_returning_the_document()
+
+    # assert
+    assert found == set(RETURNS_THE_DOCUMENT), (
+        "a function hands the manifest document out through its return value (or a named one no longer "
+        "does): name it in RETURNS_THE_DOCUMENT with why what its caller does with the document may stay "
+        f"unwalked, or hand the document on instead. unnamed: {sorted(found - set(RETURNS_THE_DOCUMENT))}, "
+        f"stale: {sorted(set(RETURNS_THE_DOCUMENT) - found)}")
 
 
 def test_a_module_that_borrows_another_modules_reader_is_accounted_for():

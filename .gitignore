@@ -47,3 +47,5 @@ tests/reports/
 # was a leftover). The line stays for a one-target run and a test's copy; what `firn gen` writes is committed
 # (`generated:` in simplon.yaml).
 src/.firn-cache/
+# The firn editor's workspace, written per host by `support install` (si#900): it names this host's runtime.
+/simplon.code-workspace

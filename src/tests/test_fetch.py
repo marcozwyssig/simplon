@@ -151,6 +151,18 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Location", ROUTES[self.path])
             self.send_header("Content-Length", "0")
             self.end_headers()
+        elif self.path == "/storage":
+            # Object storage behind a signed URL that refuses a second credential: a request still carrying
+            # the API's `Authorization` is a 400, not the file (si#900). GitHub's own storage accepted it
+            # when measured on 2026-11-28; the strict store is what makes forwarding observable here.
+            SEEN.append((self.path, self.headers.get("Authorization"), self.headers.get("Accept")))
+            if self.headers.get("Authorization"):
+                self.send_error(400)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(BODY)))
+            self.end_headers()
+            self.wfile.write(BODY)
         elif self.path == "/blackhole":
             # Accepts, answers nothing. Bounded so a broken test cannot wedge the suite for a minute.
             time.sleep(20)
@@ -1353,3 +1365,32 @@ def test_a_resumed_body_that_does_not_match_its_pin_keeps_no_part_to_resume_from
 
     # assert
     assert list(tmp_path.iterdir()) == [], "a part that can only complete into a refusal was kept"
+
+
+# --- headers for the first hop only (si#900) --------------------------------------------------------
+
+
+def test_download_sends_headers_unredirected():
+    """The token is for the host asked, never for the host a redirect names."""
+    request = fetch._request("https://api.github.com/x", 0, "", headers={"Authorization": "token t"})
+    assert request.unredirected_hdrs.get("Authorization") == "token t"
+    assert "Authorization" not in request.headers
+
+
+def test_a_private_asset_redirect_reaches_storage_without_the_token(base, tmp_path, monkeypatch):
+    """A private release asset: the API is asked with the token, answers with a redirect to object
+    storage, and this storage refuses a request still carrying `Authorization` - so the download only
+    works when the header stays on the first hop, and the test cannot pass with the token forwarded."""
+    # arrange
+    monkeypatch.setitem(ROUTES, "/asset", f"{base}/storage")
+    SEEN.clear()
+    dest = tmp_path / "f.bin"
+
+    # act
+    with _capture(tty=False):
+        fetch.download(f"{base}/asset", dest,
+                       headers={"Authorization": "token t", "Accept": "application/octet-stream"})
+
+    # assert
+    assert dest.read_bytes() == BODY
+    assert SEEN == [("/storage", None, None)], SEEN

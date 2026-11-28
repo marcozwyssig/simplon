@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 366 | nothing - the declaration had no working meaning |
+| diagnosis | 370 | nothing - the declaration had no working meaning |
 | expression rule | 55 | something it could otherwise have said |
-| **all load-time refusals** | **421** | |
+| **all load-time refusals** | **425** | |
 
 si#888 made the census follow a function imported with `from ... import` and called bare, as it already
 followed `module.function(...)`. The count grew without a rule being written: the path refusals of
