@@ -260,7 +260,7 @@ def _model_folders(data: Mapping[str, object]) -> list[str]:
     folders: list[str] = []
     for _, with_, _, _ in firnrelease.firn_commands(data):
         cwd = with_.get("cwd")  # a string or null: firn_commands refuses any other cwd
-        folder = Path("." if cwd is None else cwd).as_posix()
+        folder = Path("." if cwd is None else str(cwd)).as_posix()
         if folder not in folders:
             folders.append(folder)
     return folders
@@ -448,7 +448,7 @@ def editor(container: bool, flag: str, declared: tuple[str, ...]) -> bool:
                   f"at ({runtime.state.value})")
         return False
     try:
-        workspace = workspace_gate(ctx.root, ctx.name, binary, data, docker=choice.runtime == "docker")
+        workspace = workspace_gate(ctx.root, ctx.name, binary, data, docker=choice is not None and choice.runtime == "docker")
     except ValueError as e:
         workspace = hostinstall.Outcome(hostinstall.State.FAILED, str(e))
     hostinstall.report("firn workspace", workspace)

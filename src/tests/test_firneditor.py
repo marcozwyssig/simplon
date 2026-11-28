@@ -548,11 +548,12 @@ def test_an_unreadable_project_folder_raises_not_none(tmp_path, monkeypatch):
     def walk(top, onerror=None, **kw):
         onerror(PermissionError(13, "denied", str(top)))
         return iter(())
-    monkeypatch.setattr(firneditor.os, "walk", walk)
-    with pytest.raises(OSError):
-        firneditor.java_projects(tmp_path, ["a"])
     _git_init(tmp_path)
-    out = _gate(tmp_path, data=_manifest("a"))
+    with monkeypatch.context() as scoped:     # scoped, as above: os.walk is the module's
+        scoped.setattr(firneditor.os, "walk", walk)
+        with pytest.raises(OSError):
+            firneditor.java_projects(tmp_path, ["a"])
+        out = _gate(tmp_path, data=_manifest("a"))
     assert out.state is State.FAILED
     assert "could not tell which projects carry Java functions" in out.detail
 
@@ -641,11 +642,14 @@ def test_a_failed_replace_leaves_no_temporary_file_and_raises_its_own_error(tmp_
     # arrange
     def refuse(src, dst):
         raise PermissionError("replace refused")
-    monkeypatch.setattr(firneditor.os, "replace", refuse)
+    # The patch is scoped: `os.replace` is the module's, so a patch left until teardown also refuses pytest's
+    # own tmp_path cleanup (seen on Python 3.14 in CI, an ExceptionGroup at teardown).
+    with monkeypatch.context() as scoped:
+        scoped.setattr(firneditor.os, "replace", refuse)
 
-    # act / assert: the original error, not one from the cleanup
-    with pytest.raises(PermissionError, match="replace refused"):
-        firneditor._replace(tmp_path / "f", "x\n")
+        # act / assert: the original error, not one from the cleanup
+        with pytest.raises(PermissionError, match="replace refused"):
+            firneditor._replace(tmp_path / "f", "x\n")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -656,12 +660,13 @@ def test_a_failed_fdopen_closes_the_descriptor_and_leaves_no_temporary_file(tmp_
 
     def failing_fdopen(fd, *args, **kwargs):
         raise OSError("fdopen refused")
-    monkeypatch.setattr(firneditor.os, "fdopen", failing_fdopen)
-    monkeypatch.setattr(firneditor.os, "close", lambda fd: closed.append(fd) or real_close(fd))
+    with monkeypatch.context() as scoped:     # scoped, as above: the os functions are the module's
+        scoped.setattr(firneditor.os, "fdopen", failing_fdopen)
+        scoped.setattr(firneditor.os, "close", lambda fd: closed.append(fd) or real_close(fd))
 
-    # act / assert
-    with pytest.raises(OSError, match="fdopen refused"):
-        firneditor._replace(tmp_path / "f", "x\n")
+        # act / assert
+        with pytest.raises(OSError, match="fdopen refused"):
+            firneditor._replace(tmp_path / "f", "x\n")
     assert len(closed) == 1 and list(tmp_path.iterdir()) == []
 
 
