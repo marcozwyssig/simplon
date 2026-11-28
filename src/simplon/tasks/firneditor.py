@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from simplon.adapters import firnrelease, hostinstall, tools
+from simplon.kernel import limits
+from simplon.kernel.run import run
 
 RUNTIMES = ("local", "docker")
 
@@ -90,17 +92,61 @@ def _local_gate(tag: str, release_of: Callable[[], firnrelease.Release]) -> tupl
     return hostinstall.Outcome(hostinstall.State.INSTALLED, f"{binary}"), binary
 
 
-def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None]:
+def _could_not_ask(what: str) -> hostinstall.Outcome:
+    return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask docker ({what} gave no answer in time)")
+
+
+def _docker_ready(image: str) -> hostinstall.Outcome | None:
+    """None when the CLI runs, the daemon answers and `image` is local (pulled when it was not); else why not.
+
+    Presence of the CLI is not capability: each step is the smallest real instance of what the script needs.
+    """
     try:
-        up = hostinstall.runs("docker")
-    except hostinstall.NoAnswer as e:
-        return hostinstall.Outcome(hostinstall.State.FAILED, f"could not ask docker: {e}"), None
-    if not up:
+        cli = hostinstall.runs("docker")
+    except hostinstall.NoAnswer:
+        return _could_not_ask("docker --version")
+    if not cli:
         return hostinstall.Outcome(hostinstall.State.FAILED,
-                                   "docker is not available; install it or use --runtime local"), None
+                                   "the docker CLI is not installed or does not run; install it or use --runtime local")
+    daemon = run(["docker", "version"], timeout=hostinstall.VERSION_TIMEOUT_S, terminal=False)
+    if daemon.timed_out:
+        return _could_not_ask("docker version")
+    if not daemon.ok:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"the docker daemon does not answer: {daemon.err.strip()}")
+    inspected = run(["docker", "image", "inspect", image], timeout=hostinstall.VERSION_TIMEOUT_S, terminal=False)
+    if inspected.timed_out:
+        return _could_not_ask("docker image inspect")
+    if inspected.ok:
+        return None
+    pulled = run(["docker", "pull", image], timeout=limits.DOCKER_PULL, terminal=False)
+    if pulled.timed_out:
+        return _could_not_ask(f"docker pull {image}")
+    if not pulled.ok:
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"docker pull {image} failed: {(pulled.err or pulled.not_started).strip()}")
+    return None
+
+
+def _docker_gate(tag: str, root: Path) -> tuple[hostinstall.Outcome, Path | None]:
+    if ":" in str(root):
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"the product root {root} contains a colon, and docker's -v cannot mount a "
+                                   f"path with a colon; use --runtime local or a root without one"), None
+    image = f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}"
+    not_ready = _docker_ready(image)
+    if not_ready is not None:
+        return not_ready, None
     script = tools.bin_dir() / "firn-docker"
-    text = docker_script(root, f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{tag}", os.getuid(), os.getgid())
-    current = script.read_text(encoding="utf-8") if script.is_file() else None
+    if script.is_dir():
+        return hostinstall.Outcome(hostinstall.State.FAILED,
+                                   f"{script} is a directory, so the docker wrapper cannot be written there; "
+                                   f"remove it"), None
+    text = docker_script(root, image, os.getuid(), os.getgid())
+    try:
+        current = script.read_text(encoding="utf-8") if script.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        current = None  # unreadable counts as differing: it is rewritten below
     state = hostinstall.State.PRESENT
     if current != text:
         script.parent.mkdir(parents=True, exist_ok=True)

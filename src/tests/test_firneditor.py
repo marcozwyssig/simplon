@@ -8,6 +8,8 @@ import pytest
 
 from simplon.adapters import firnrelease, hostinstall, tools
 from simplon.adapters.hostinstall import State
+from simplon.kernel import limits
+from simplon.kernel.run import Result
 from simplon.tasks import firneditor
 from simplon.tasks.firneditor import Choice
 
@@ -211,13 +213,6 @@ def test_local_release_read_failure_is_failed(tmp_path, bin_dir):
     assert outcome.state is State.FAILED and outcome.detail == "no release" and binary is None
 
 
-def test_docker_without_a_running_docker_fails(tmp_path, bin_dir, monkeypatch):
-    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: False)
-    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
-    assert outcome.state is State.FAILED and "docker" in outcome.detail and binary is None
-    assert not (bin_dir / "firn-docker").exists()
-
-
 def test_docker_that_hangs_is_failed_not_absent(tmp_path, bin_dir, monkeypatch):
     def hang(tool, env=None):
         raise hostinstall.NoAnswer("docker --version gave no answer")
@@ -227,8 +222,86 @@ def test_docker_that_hangs_is_failed_not_absent(tmp_path, bin_dir, monkeypatch):
     assert outcome.state is State.FAILED and "could not ask docker" in outcome.detail and binary is None
 
 
-def test_docker_rewrites_the_script_when_the_pin_changed(tmp_path, bin_dir, monkeypatch):
+class _Docker:
+    """A scripted docker: `answers` maps the subcommand (version, image inspect, pull) to a Result."""
+
+    def __init__(self, **answers):
+        self.answers = {"version": Result(0, "", ""), "inspect": Result(0, "", ""), "pull": Result(0, "", ""), **answers}
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        key = {"version": "version", "image": "inspect", "pull": "pull"}[argv[1]]
+        self.calls.append((key, argv, kwargs.get("timeout")))
+        return self.answers[key]
+
+
+@pytest.fixture
+def docker(monkeypatch):
+    fake = _Docker()
     monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: True)
+    monkeypatch.setattr(firneditor, "run", fake)
+    return fake
+
+
+def test_docker_cli_absent_is_failed_naming_the_cli(tmp_path, bin_dir, monkeypatch):
+    monkeypatch.setattr(hostinstall, "runs", lambda tool, env=None: False)
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "docker CLI" in outcome.detail and binary is None
+
+
+def test_docker_daemon_down_is_failed_naming_the_daemon(tmp_path, bin_dir, docker):
+    docker.answers["version"] = Result(1, "", "Cannot connect")
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "daemon" in outcome.detail and binary is None
+    assert [c[0] for c in docker.calls] == ["version"]
+
+
+def test_docker_image_missing_is_pulled_with_the_pull_limit(tmp_path, bin_dir, docker):
+    docker.answers["inspect"] = Result(1, "", "No such image")
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.INSTALLED and binary is not None
+    pulled = [c for c in docker.calls if c[0] == "pull"]
+    assert pulled[0][1] == ["docker", "pull", f"{firnrelease.FIRN_IMAGE_REPOSITORY}:{TAG}"]
+    assert pulled[0][2] == limits.DOCKER_PULL
+
+
+def test_docker_pull_refused_is_failed_naming_the_pull(tmp_path, bin_dir, docker):
+    docker.answers["inspect"] = Result(1, "", "No such image")
+    docker.answers["pull"] = Result(1, "", "denied")
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "pull" in outcome.detail and "denied" in outcome.detail
+    assert binary is None and not (bin_dir / "firn-docker").exists()
+
+
+@pytest.mark.parametrize("hangs", ["version", "inspect", "pull"])
+def test_docker_probe_that_hangs_is_could_not_ask(tmp_path, bin_dir, docker, hangs):
+    docker.answers["inspect"] = Result(1, "", "No such image")
+    docker.answers[hangs] = Result(-9, "", "timed out", timed_out=True)
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and "could not ask docker" in outcome.detail and binary is None
+
+
+def test_docker_root_with_a_colon_is_failed_naming_the_path(tmp_path, bin_dir, docker):
+    root = tmp_path / "a:b"
+    outcome, binary = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, root)
+    assert outcome.state is State.FAILED and str(root) in outcome.detail and "colon" in outcome.detail
+    assert binary is None and docker.calls == []
+
+
+def test_docker_script_that_is_not_utf8_is_rewritten(tmp_path, bin_dir, docker):
+    bin_dir.mkdir()
+    (bin_dir / "firn-docker").write_bytes(b"\xff\xfe")
+    outcome, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.INSTALLED and path.read_text().startswith("#!/bin/sh\n")
+
+
+def test_docker_script_path_that_is_a_directory_is_failed_naming_it(tmp_path, bin_dir, docker):
+    (bin_dir / "firn-docker").mkdir(parents=True)
+    outcome, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
+    assert outcome.state is State.FAILED and str(bin_dir / "firn-docker") in outcome.detail and path is None
+
+
+def test_docker_rewrites_the_script_when_the_pin_changed(tmp_path, bin_dir, docker):
     first, path = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     again, same = firneditor.runtime_gate(Choice("docker", "flag"), TAG, _never, tmp_path)
     moved, _ = firneditor.runtime_gate(Choice("docker", "flag"), "v0.20.0", _never, tmp_path)
