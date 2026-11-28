@@ -63,6 +63,14 @@ def test_pinned_tag_refuses_a_firn_image_with_no_tag():
         firnrelease.pinned_tag(data, "x.yaml")
 
 
+def test_pinned_tag_refuses_a_firn_command_whose_cwd_is_no_folder_name():
+    # a refusal decided on the manifest alone, so it is on the path the census walks (no disk, no git)
+    data = _manifest(f"{FIRN}:v0.19.0", f"{FIRN}:v0.19.0")
+    data["ci"]["build"]["commands"]["model"]["with"]["cwd"] = ["src"]
+    with pytest.raises(ValueError, match=r"build model.*cwd: \['src'\].*not a folder name"):
+        firnrelease.pinned_tag(data, "x.yaml")
+
+
 # --- the host binary --------------------------------------------------------------------------------
 
 

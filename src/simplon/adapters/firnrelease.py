@@ -76,7 +76,8 @@ def _firn_tag(image: str) -> str | None:
 
 def firn_commands(data: Mapping[str, object]) -> list[tuple[str, Mapping[str, object], str, str]]:
     """The commands of a raw manifest document that run firn's image, in manifest order, as `(where, with,
-    image, tag)`: `where` names the command as a person types it, `tag` is "" for an image with no tag."""
+    image, tag)`: `where` names the command as a person types it, `tag` is "" for an image with no tag. A `cwd`
+    that is no string is refused here, on the manifest alone, where the refusal census walks."""
     _, flat = treeform.lower(treeform.tree_from_areas(dict(data), {}))
     found = []
     for group, members in flat.items():
@@ -89,6 +90,9 @@ def firn_commands(data: Mapping[str, object]) -> list[tuple[str, Mapping[str, ob
                 continue
             parts = group.split(".")
             where = " ".join([*(parts[1:] if parts[0] in ("ci", "cd") else parts), str(name)])
+            cwd = spec["with"].get("cwd", ".")
+            if not isinstance(cwd, str):
+                raise ValueError(f"command '{where}' has `with: cwd: {cwd!r}`, which is not a folder name")
             found.append((where, spec["with"], image, tag))
     return found
 

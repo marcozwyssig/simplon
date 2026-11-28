@@ -1463,6 +1463,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("firnrelease", "pinned_tag", "which has no tag - the firn release the editor comes from"): DIAGNOSIS,
     ("firnrelease", "pinned_tag", "so there is no firn version to install the editor for"): DIAGNOSIS,
     ("firnrelease", "pinned_tag", "at more than one tag"): DIAGNOSIS,
+    # si#900 review: a firn command's `with: cwd:` that is no string names no folder for the workspace (nor for
+    # `toolchain:run`); decided on the manifest alone, so it is checked where the pin is read, not past a tool.
+    ("firnrelease", "firn_commands", "which is not a folder name"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

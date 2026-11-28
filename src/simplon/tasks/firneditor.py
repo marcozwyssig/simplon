@@ -247,11 +247,8 @@ JAVA_ISSUE = "firn#1460"
 
 def _model_folders(data: Mapping[str, object]) -> list[str]:
     folders: list[str] = []
-    for where, with_, _, _ in firnrelease.firn_commands(data):
-        cwd = with_.get("cwd", ".")
-        if not isinstance(cwd, str):
-            raise ValueError(f"command '{where}' has `with: cwd: {cwd!r}`, which is not a folder name")
-        folder = Path(cwd).as_posix()
+    for _, with_, _, _ in firnrelease.firn_commands(data):
+        folder = Path(with_.get("cwd", ".")).as_posix()  # a string: firn_commands refuses any other cwd
         if folder not in folders:
             folders.append(folder)
     return folders
